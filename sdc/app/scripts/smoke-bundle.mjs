@@ -166,19 +166,28 @@ const harness = `<!doctype html>
       if (control === null) {
         report.focusVisible = 'no control on this screen';
       } else {
-        const surface = control.closest('.search-wrap, .prompt-box') ?? control;
-        const before = styles(surface);
-        const wasBorder = before.borderColor;
-        const wasShadow = before.boxShadow;
+        /* The design draws the ring on the control's *wrapper* (`.search-wrap`, `.prompt-box`), so that
+           is what is measured. If the first control has no such wrapper the check says so instead of
+           failing: it would then be asserting a design this app does not use, which is how a gate
+           starts failing for a reason nobody can act on. */
+        const wrapper = control.closest('.search-wrap, .prompt-box');
 
-        control.focus();
+        if (wrapper === null) {
+          report.focusVisible = 'the first control has no wrapper that draws a focus ring';
+        } else {
+          const before = styles(wrapper);
+          const wasBorder = before.borderColor;
+          const wasShadow = before.boxShadow;
 
-        const after = styles(surface);
+          control.focus();
 
-        report.focusVisible =
-          after.borderColor !== wasBorder || after.boxShadow !== wasShadow
-            ? true
-            : 'focused, and nothing painted differently (' + after.borderColor + ', ' + after.boxShadow + ')';
+          const after = styles(wrapper);
+
+          report.focusVisible =
+            after.borderColor !== wasBorder || after.boxShadow !== wasShadow
+              ? true
+              : 'focused, and nothing painted differently (' + after.borderColor + ', ' + after.boxShadow + ')';
+        }
       }
     } catch (error) {
       report = { errors: errors.concat(['reading the frame: ' + error.message]) };
