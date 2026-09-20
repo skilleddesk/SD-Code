@@ -23,6 +23,13 @@ export const strings = {
     close: 'Close',
   },
 
+  /** A labelled input and its own actions (`src/panels/ui/Field.tsx`). */
+  field: {
+    show: 'Show',
+    hide: 'Hide',
+    paste: 'Paste',
+  },
+
   /** Topbar - spec section 7.1, in the order the buttons appear (left to right). */
   topbar: {
     brandInitial: 'S',
@@ -495,6 +502,33 @@ export const strings = {
     submitCode: 'Submit code',
     authenticated: 'Signed in',
     authenticatedBody: 'The CLI is signed in. The card now says connected.',
+    verifiedBadge: 'connected',
+    notConnectedBadge: 'not connected',
+    close: 'Close',
+    pageTitle: 'The page to open',
+    note: 'SDC never sees the credential: the CLI writes it, in the CLI’s own store.',
+    outputHint: 'last 12 lines',
+    copyOutput: 'Copy output',
+    keyTitle: 'Credential',
+    keyLabel: 'API key',
+    keyPlaceholder: 'sk-… (the key the provider gave you)',
+    keySaved: 'saved',
+    keyNotSaved: 'not saved yet',
+    keyEditing: 'unsaved change',
+    keyHint: (provider: string): string =>
+      `Pasted here and sent straight to the OS keychain. ${provider} is called by the daemon with it; SDC never shows it again after saving.`,
+    keyNote:
+      'A key that is rejected is reported in the provider’s own words — press Refresh under MODELS after saving to see what it listed.',
+    saveKey: 'Save key',
+    refresh: 'Refresh',
+    modelsHint: (shown: number, total: number, snapshot: string): string =>
+      shown === total ? `${total} rows · bundled ${snapshot}` : `${shown} of ${total} rows`,
+    modelFilter: 'Filter models…',
+    modelNoMatch: 'No model matches that filter.',
+    footer: {
+      login: 'The credential is written by the CLI, never by SDC.',
+      api: 'Save the key, then pick a model above.',
+    },
     signedInNote:
       'The card now says connected, and a chat on this provider works from here. The credential is in the CLI’s own store — SDC never sees it.',
     pageLabel: 'The page the CLI opened',
@@ -528,7 +562,7 @@ export const strings = {
     use: 'Use',
     modelsFailed: 'Could not load the models',
     modelFailed: 'Could not record that model',
-    context: (ctx: number) => `${Math.round(ctx / 1000)}K context`,
+    context: (ctx: number) => (ctx <= 0 ? 'context not listed' : `${Math.round(ctx / 1000)}K context`),
   },
 
   /** Toast stack - spec section 9.14. */

@@ -60,7 +60,19 @@ export function Toast() {
           role="alert"
           className="toast pointer-events-auto flex max-w-[520px] animate-toast-in items-center gap-[12px] rounded-lg border border-border-default bg-bg-overlay px-[16px] py-[10px] text-[12.5px] text-text-primary shadow-lg"
         >
-          <span>{toast.message}</span>
+          <span
+            /*
+             * Two lines, however long the sentence is.
+             *
+             * A toast is a message, not a report: the daemon used to push the whole `ssh` refusal here
+             * and three of them covered the Provider Hub. The full sentence lives on the row it is about
+             * (the host's status line, the error card), so this clamps and keeps the title for the rest.
+             */
+            className="toast-text line-clamp-2"
+            title={toast.message}
+          >
+            {toast.message}
+          </span>
           {toast.action === null ? null : (
             <button
               type="button"

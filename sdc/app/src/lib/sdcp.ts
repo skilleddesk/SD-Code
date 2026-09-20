@@ -35,6 +35,8 @@ import { StandInDaemon } from './standin';
 
 let transport: SdcpTransport | null = null;
 let unsubscribe: (() => void) | null = null;
+/* Clears the catch-up window's timer (`getTransport`), so a closed window leaves no callback behind. */
+let stopCatchUp: (() => void) | null = null;
 
 /**
  * The Tauri bridge, or null in a plain browser. `@tauri-apps/api` is safe to *import* outside a
@@ -76,10 +78,31 @@ export function getTransport(): SdcpTransport {
    * Every notification goes into the log, and the log is what the store folds (spec section 3.3).
    * The client therefore has exactly one job on the inbound path, and the reducer has no idea
    * whether the event came from Rust or from a `setTimeout`.
+   *
+   * One exception, and it is the reason this comment is longer than the code. The first connection
+   * hands the window the daemon's whole backlog as notifications, which is what draws the session list
+   * and the turn history - but a replayed `Toast` is not news. It is the same sentence the person
+   * already read when it happened, and a log that happens to contain a few long ones (the `ssh`
+   * refusals a failed host probe writes) put them over the Provider Hub at every single launch. So a
+   * toast is the one event type the catch-up window drops. A toast raised by the UI is not affected:
+   * it is dispatched locally and never arrives through the transport.
    */
+  let catchingUp = true;
+  const catchUpTimer = window.setTimeout(() => {
+    catchingUp = false;
+  }, 1500);
+
   unsubscribe = transport.subscribe((notification: Notification) => {
+    if (catchingUp && (notification.event.type === 'Toast' || notification.event.type === 'ToastDismissed')) {
+      return;
+    }
+
     eventLog.accept(notification);
   });
+
+  stopCatchUp = () => {
+    window.clearTimeout(catchUpTimer);
+  };
 
   return transport;
 }
@@ -101,6 +124,8 @@ export function sdcpSubscribe(handler: (notification: Notification) => void): ()
 export function disconnect(): void {
   unsubscribe?.();
   unsubscribe = null;
+  stopCatchUp?.();
+  stopCatchUp = null;
   transport?.close();
   transport = null;
 }

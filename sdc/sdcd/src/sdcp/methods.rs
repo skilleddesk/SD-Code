@@ -312,7 +312,16 @@ impl Daemon {
 
                 match installed {
                     Ok(sentence) => {
-                        notifier.push(event::toast(&sentence, None, None), None, None);
+                        /* The sentence goes on the *status* line rather than into a `Toast`.
+                           A toast is written to the event log and replayed on the next launch, so a
+                           four-line explanation became four lines of furniture over the Provider Hub
+                           every time the app started. The card shows the detail itself, which is where
+                           a fact about a host belongs. */
+                        notifier.push(
+                            event::host_status(&probe_host_id, &probe_label, "vps", "connecting", Some(&sentence)),
+                            None,
+                            None,
+                        );
                     }
                     Err(error) => {
                         /* The install is the whole reason the password was asked for, so its failure is
@@ -326,7 +335,6 @@ impl Daemon {
                             None,
                             None,
                         );
-                        notifier.push(event::toast(&error.message, None, None), None, None);
 
                         return;
                     }
@@ -339,12 +347,15 @@ impl Daemon {
 
             let _ = state.store.upsert_host(&probe_host_id, &probe_label, "ssh", Some(&target), &status, None);
 
+            /* One event, not two. The `HostStatus` carries the sentence and the card renders it; the
+               `Toast` that used to accompany it was written to the log as well, so a machine that could
+               not be reached produced the same four-line paragraph again on every launch. A fact about a
+               host belongs on the host's row. */
             notifier.push(
                 event::host_status(&probe_host_id, &probe_label, "vps", &status, Some(&detail)),
                 None,
                 None,
             );
-            notifier.push(event::toast(&detail, None, None), None, None);
         });
 
         Ok(json!({ "hostId": host_id, "reused": false }))
