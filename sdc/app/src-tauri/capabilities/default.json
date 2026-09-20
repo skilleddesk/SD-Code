@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "STEP 1 capability set for the SDC main window: Tauri core defaults, opening external links, and native dialogs. Filesystem access is deliberately not granted yet - it is added together with explicit scopes.",
+  "windows": ["main"],
+  "permissions": ["core:default", "shell:default", "dialog:default"]
+}

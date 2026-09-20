@@ -1,0 +1,4 @@
+{"type":"vcr","engine":"claude_code","kinds":["Thinking","Delta","Done"]}
+{"type":"thinking","delta":"Vector over Filebeat: less to configure."}
+{"type":"assistant_text","text":"Added a vector.toml pipeline."}
+{"type":"result","summary":"Done","meta":"35s · 2,400 tokens · $0.03","pass":true}

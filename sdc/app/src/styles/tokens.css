@@ -1,0 +1,177 @@
+/* SDC design tokens - the CSS form of design/tokens.json (spec sections 8.1-8.4).
+ *
+ *   :root                 dark theme. It is the default, so every dark value applies with no
+ *                         attribute on <html> at all.
+ *   [data-theme="light"]  light theme. It re-declares only the tokens the spec's light block
+ *                         lists, so every other token keeps its dark value through the ordinary
+ *                         CSS cascade. That is exactly why switching from `data-theme="light"`
+ *                         back to `data-theme=""` flips the whole app at once.
+ *
+ * design/tokens.json is the source of truth and this file is its 1:1 mirror: one custom property
+ * per JSON key, same name, same value (README.md: `pnpm tokens:gen` generates this file from it).
+ * Colours are spec section 8.1 verbatim, typography 8.2, radius and shadow 8.3, motion 8.4.
+ *
+ * Two scope notes:
+ *   - The ten light values the spec's light block does not list (bg-glass, accent-glow, the four
+ *     *-subtle tints and the four diff-*) come from design/ui-prototype.html, which wins wherever
+ *     the document is silent (spec section 7).
+ *   - --state-idle is deliberately absent from the light block: the spec does not redefine it.
+ *
+ * Rule (spec section 8.1): no component may hardcode a colour - semantic token names only, and
+ * colour never carries meaning on its own (spec section 8.6). ESLint enforces the rule for
+ * src/panels and src/modals (app/eslint.config.js).
+ */
+
+:root {
+  /* Colour - dark (default) - spec section 8.1 */
+  --bg-base: #0A0B0F;
+  --bg-raised: #101218;
+  --bg-overlay: #161921;
+  --bg-input: #06070A;
+  --bg-hover: #1A1E27;
+  --bg-active: #20252F;
+  --bg-glass: rgba(22,25,33,.85);
+
+  --border-subtle: #1B1F29;
+  --border-default: #282E3B;
+  --border-strong: #3A4252;
+  --border-focus: #5B9CFF;
+
+  --text-primary: #E9EEF5;
+  --text-secondary: #96A1B3;
+  --text-muted: #5C677A;
+  --text-faint: #3A4354;
+
+  --accent: #5B9CFF;
+  --accent-hover: #7CB0FF;
+  --accent-subtle: rgba(91,156,255,.10);
+  --accent-glow: rgba(91,156,255,.35);
+
+  --purple: #A78BFA;
+  --purple-subtle: rgba(167,139,250,.12);
+  --green: #3DD68C;
+  --green-subtle: rgba(61,214,140,.12);
+  --orange: #F5A524;
+  --orange-subtle: rgba(245,165,36,.12);
+  --red: #F25E68;
+  --red-subtle: rgba(242,94,104,.12);
+  /* The brighter red the error card's title uses on its own tint; light theme re-declares it. */
+  --red-bright: #FFB0B5;
+
+  --state-idle: #5C677A;
+  --state-running: #5B9CFF;
+  --state-waiting: #F5A524;
+  --state-success: #3DD68C;
+  --state-error: #F25E68;
+
+  --diff-add-bg: rgba(61,214,140,.12);
+  --diff-remove-bg: rgba(242,94,104,.12);
+  --diff-add-text: #6EE7A8;
+  --diff-remove-text: #FF8A91;
+
+  /* Gradients and "on accent" text.
+   *
+   * The prototype writes these as literals inside component CSS (design/ui-prototype.html):
+   * `linear-gradient(135deg,#5B9CFF,#7B5CFF)` for the brand mark, two host-icon gradients,
+   * the attachment/checkpoint thumbnail, the Preview frame, and `#fff` for text sitting on an
+   * accent fill. Spec section 8.1 forbids a hardcoded colour in a component, and these are the
+   * same picture in a dozen places, so they are named by role here instead:
+   *
+   *   --grad-brand          brand mark, custom-provider logo       (spec 7.1, 9.10)
+   *   --grad-host-local     a local host's 18x18 icon              (spec 7.3)
+   *   --grad-host-vps       a VPS host's 18x18 icon                (spec 7.3)
+   *   --grad-thumb          attachment / checkpoint preview        (spec 7.5, 7.9)
+   *   --grad-preview        the Preview tab's placeholder page     (spec 7.7)
+   *   --grad-preview-glow   the two soft corners inside that frame (spec 7.7)
+   *   --text-on-accent      text on --accent or --purple           (spec 7.1, 7.3, 7.6)
+   *
+   * Only --grad-preview differs by theme; the light value is in the block below. */
+  --grad-brand: linear-gradient(135deg, #5B9CFF, #7B5CFF);
+  --grad-host-local: linear-gradient(135deg, #2E4257, #3D566E);
+  --grad-host-vps: linear-gradient(135deg, #3D3060, #4A3560);
+  --grad-thumb: linear-gradient(135deg, #2A3550, #4A3560);
+  --grad-preview: linear-gradient(135deg, #1A2530, #221A30);
+  --grad-preview-glow:
+    radial-gradient(ellipse at top left, rgba(91, 156, 255, 0.18), transparent 50%),
+    radial-gradient(ellipse at bottom right, rgba(167, 139, 250, 0.18), transparent 50%);
+  --text-on-accent: #FFFFFF;
+
+  /* Typography - spec section 8.2 */
+  --font-ui: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', Menlo, Consolas, monospace;
+  --base-size: 13px;
+  --line-height: 1.5;
+  --letter-spacing: -0.005em;
+
+  /* Radius and shadow - spec section 8.3 */
+  --r-xs: 3px;
+  --r-sm: 5px;
+  --r-md: 7px;
+  --r-lg: 10px;
+  --r-xl: 14px;
+  --r-full: 9999px;
+
+  --shadow-sm: 0 1px 2px rgba(0,0,0,.5);
+  --shadow-md: 0 6px 20px rgba(0,0,0,.5);
+  --shadow-lg: 0 18px 44px rgba(0,0,0,.65);
+  --shadow-xl: 0 32px 80px rgba(0,0,0,.8);
+
+  /* Motion - spec section 8.4 */
+  --fast: 90ms;
+  --base: 150ms;
+  --slow: 220ms;
+  --ease: cubic-bezier(.4,0,.2,1);
+  --ease-out: cubic-bezier(0,0,.2,1);
+  --spring: cubic-bezier(.34,1.56,.64,1);
+}
+
+[data-theme="light"] {
+  /* Colour - light - spec section 8.1 */
+  --bg-base: #F6F8FC;
+  --bg-raised: #FFFFFF;
+  --bg-overlay: #FFFFFF;
+  --bg-input: #FFFFFF;
+  --bg-hover: #EDF1F8;
+  --bg-active: #E1E8F3;
+  --bg-glass: rgba(255,255,255,.85);
+
+  --border-subtle: #E4E9F2;
+  --border-default: #CFD7E4;
+  --border-strong: #A9B5CA;
+  --border-focus: #2C7BFF;
+
+  --text-primary: #111827;
+  --text-secondary: #4E5A72;
+  --text-muted: #8A95A9;
+  --text-faint: #C5CDDB;
+
+  --accent: #2C7BFF;
+  --accent-hover: #1B6CE8;
+  --accent-subtle: rgba(44,123,255,.08);
+  --accent-glow: rgba(44,123,255,.25);
+
+  --purple: #7C3AED;
+  --purple-subtle: rgba(124,58,237,.08);
+  --green: #16A34A;
+  --green-subtle: rgba(22,163,74,.08);
+  --orange: #D97706;
+  --orange-subtle: rgba(217,119,6,.08);
+  --red: #DC2626;
+  --red-subtle: rgba(220,38,38,.08);
+  /* The prototype keeps #FFB0B5 here, which is 1.9:1 on the light tint - below the 4.5:1 that
+     spec section 8.6 requires, so the light theme uses the dark red instead. */
+  --red-bright: #B91C1C;
+
+  --state-success: #16A34A;
+  --state-error: #DC2626;
+  --state-waiting: #D97706;
+  --state-running: #2C7BFF;
+
+  --diff-add-bg: rgba(22,163,74,.09);
+  --diff-remove-bg: rgba(220,38,38,.09);
+  --diff-add-text: #15803D;
+  --diff-remove-text: #B91C1C;
+
+  /* The one gradient surface that differs in the light theme (spec section 7.7). */
+  --grad-preview: linear-gradient(135deg, #E8EEF7, #F0E8F7);
+}

@@ -1,0 +1,161 @@
+# ===========================================================================
+# SDC (Skilleddesk Code) — repository ignore rules
+#
+# This file sits at the git root and is authoritative for the whole repository.
+# sdc/.gitignore adds the subproject's own generated paths on top of it.
+#
+# The order is deliberate: secrets first, because a mistake in that section costs
+# a leaked credential rather than a dirty working tree. Everything below it is
+# regenerable build output, then editor/OS noise, then local scratch.
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# 1. Secrets and credentials — never commit, never `git add -f`
+# ---------------------------------------------------------------------------
+
+# Local environment files. .env.example is the exception: it documents the shape
+# and holds no values, which is the whole point of it existing.
+.env
+.env.*
+.envrc
+!.env.example
+
+# Keys and certificates
+*.key
+*.pem
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.ppk
+
+# SSH material, in case a key is ever generated inside the tree
+id_rsa
+id_rsa.*
+id_ed25519
+id_ed25519.*
+.ssh/
+
+# Cloud / CI credential files that tooling drops in a working directory
+.aws/
+.gcloud/
+.azure/
+.terraform/
+*.tfstate
+*.tfstate.*
+kubeconfig
+.kube/
+
+# Token stores. .npmrc is ignored because it is the usual place a registry token
+# ends up; if this project ever needs a committed one, force-add a token-free
+# file deliberately (`git add -f .npmrc`) and review it in the diff.
+.npmrc
+.yarnrc
+.yarnrc.yml
+.pypirc
+.netrc
+.secrets
+.secrets.*
+*.secret
+*credentials*.json
+*service-account*.json
+
+# ---------------------------------------------------------------------------
+# 2. Local databases — they hold chat history and tokens (spec §3.4)
+# ---------------------------------------------------------------------------
+
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+*.sqlite-journal
+
+# Encrypted backup archives (spec §9.11)
+*.age
+*.tar.age
+
+# ---------------------------------------------------------------------------
+# 3. Dependencies and build output — regenerable, and huge
+# ---------------------------------------------------------------------------
+
+node_modules/
+.pnpm-store/
+
+# Frontend bundle
+dist/
+dist-ssr/
+.vite/
+
+# Rust / Tauri build output (cargo target dirs, both crates)
+target/
+**/target/
+**/src-tauri/gen/
+
+# TypeScript incremental build info
+*.tsbuildinfo
+
+# Coverage and test output
+coverage/
+*.lcov
+test-results/
+
+# Logs
+*.log
+logs/
+pnpm-debug.log*
+npm-debug.log*
+yarn-error.log*
+
+# ---------------------------------------------------------------------------
+# 4. Editor and OS noise
+# ---------------------------------------------------------------------------
+
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+*.swo
+*~
+
+# Personal editor state. .vscode/settings.json is deliberately NOT ignored: the
+# repository ships it as shared project configuration.
+.idea/
+*.code-workspace
+
+# ---------------------------------------------------------------------------
+# 5. Local scratch (this machine only)
+# ---------------------------------------------------------------------------
+
+# The verification harness used while building the UI: headless-browser driver
+# scripts plus an Edge user-data profile. A browser profile is browsing state
+# (cookies, history, autofill) and must never be published, so the whole
+# directory is ignored rather than the profile inside it.
+_verify/
+
+# ---------------------------------------------------------------------------
+# 6. The owner's working documents - kept out of the published repository
+#
+# The three planning files at the repository root are ignored on purpose. They are
+# the owner's own scratch: a product roadmap, a byte-identical copy of the design
+# prototype, and a working note that logs this machine's setup (paths, versions,
+# what was tried). Publishing a clone is not the same as publishing those.
+#
+# They stay on disk. To include them in a commit after all, remove the leading '#'
+# from the three lines below - but do it deliberately, and remember that ignoring
+# a file that is already committed does not remove it from history:
+#
+#   git log --all --full-history -- "Full Plan.txt" UI.txt NOTES.md
+#
+# The specification a contributor needs is sdc/docs/MASTER_SPEC.md, which *is*
+# committed; nothing in the three files above is required to build or run SDC.
+# ---------------------------------------------------------------------------
+
+Full\ Plan.txt
+UI.txt
+NOTES.md
+
+# Release artefacts built on this machine (installers, portable zip). They are
+# products of the source tree, not part of it.
+release/

@@ -1,0 +1,6 @@
+{"type":"vcr","engine":"claude_code","kinds":["Delta","ToolStarted","ToolCompleted","Delta","Done"]}
+{"type":"assistant_text","text":"The session cookie was not set."}
+{"type":"tool_use","id":"c1","tool":"read","name":"Read","target":"src/login.tsx"}
+{"type":"tool_done","id":"c1","meta":"done · 42 ln","ok":true}
+{"type":"assistant_text","text":"Fixed the SameSite flag."}
+{"type":"result","summary":"Done","meta":"48s · 3,100 tokens · $0.04","pass":true}

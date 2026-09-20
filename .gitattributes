@@ -1,0 +1,107 @@
+# ===========================================================================
+# SDC (Skilleddesk Code) — git attributes
+#
+# Two jobs: make line endings deterministic across Windows, Linux and macOS, and
+# tell GitHub which files are not source.
+#
+# Why the first job matters here: this project is developed on Windows (where
+# `core.autocrlf` is often `true`) and built on Linux for the daemon. Without an
+# explicit rule the same file checks out as CRLF on one machine and LF on the
+# other, which shows up as whole-file diffs and, on the Rust side, as spurious
+# changes in `cargo fmt --check`. `* text=auto eol=lf` overrides `core.autocrlf`
+# for this repository, so a checkout is byte-identical everywhere and matches
+# .editorconfig's `end_of_line = lf`.
+# ===========================================================================
+
+# Normalise text files to LF in the repository and in the working tree.
+* text=auto eol=lf
+
+# Named explicitly so the intent survives a change of the auto-detection rules,
+# and so a new file type is a visible decision rather than a default.
+*.ts             text eol=lf
+*.tsx            text eol=lf
+*.js             text eol=lf
+*.jsx            text eol=lf
+*.json           text eol=lf
+*.css            text eol=lf
+*.html           text eol=lf
+*.md             text eol=lf
+*.txt            text eol=lf
+*.toml           text eol=lf
+*.rs             text eol=lf
+*.yml            text eol=lf
+*.yaml           text eol=lf
+*.svg            text eol=lf
+*.sh             text eol=lf
+Cargo.lock       text eol=lf
+pnpm-lock.yaml   text eol=lf
+.gitattributes   text eol=lf
+.gitignore       text eol=lf
+.editorconfig    text eol=lf
+
+# The three Windows-native script formats are the exception: cmd.exe wants CRLF,
+# and Windows PowerShell 5.1 (the default shell on the target machine, per
+# SETUP.md) reads CRLF more reliably than LF.
+*.bat            text eol=crlf
+*.cmd            text eol=crlf
+*.ps1            text eol=crlf
+
+# ---------------------------------------------------------------------------
+# Binary — never normalise, never attempt a text diff
+# ---------------------------------------------------------------------------
+
+*.png            binary
+*.jpg            binary
+*.jpeg           binary
+*.gif            binary
+*.webp           binary
+*.ico            binary
+*.icns           binary
+*.woff           binary
+*.woff2          binary
+*.ttf            binary
+*.otf            binary
+*.pdf            binary
+*.zip            binary
+*.gz             binary
+*.age            binary
+*.wasm           binary
+*.dll            binary
+*.exe            binary
+*.so             binary
+*.dylib          binary
+*.pdb            binary
+*.rlib           binary
+*.rmeta          binary
+
+# ---------------------------------------------------------------------------
+# Language statistics — keep the repository's headline honest
+# ---------------------------------------------------------------------------
+
+# The single-file UI prototype is the UI source of truth (spec §7). It is a
+# reference document that happens to contain CSS and JavaScript inline; counting
+# it as application source would overstate the code in this repository.
+sdc/design/ui-prototype.html   linguist-documentation
+
+# `docs/` and the root planning text files are prose, not code.
+sdc/docs/**                    linguist-documentation
+*.txt                          linguist-documentation
+
+# Generated lockfiles: real, reviewed, but not written by hand.
+pnpm-lock.yaml                 linguist-generated
+sdc/pnpm-lock.yaml             linguist-generated
+Cargo.lock                     linguist-generated
+
+# ---------------------------------------------------------------------------
+# Archive exports — what `git archive` (and GitHub's source tarballs) leave out
+#
+# Only CI and editor metadata. The licence and the security and contribution
+# notices deliberately stay IN: whoever receives a source archive needs to know
+# what the terms are and how to report a problem.
+# ---------------------------------------------------------------------------
+
+.github/          export-ignore
+.vscode/          export-ignore
+.editorconfig     export-ignore
+.gitattributes    export-ignore
+.gitignore        export-ignore

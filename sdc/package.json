@@ -1,0 +1,31 @@
+{
+  "name": "sdc",
+  "version": "0.4.1",
+  "private": true,
+  "description": "SDC (Skilleddesk Code) - pnpm workspace root: Tauri 2 desktop app in app/, host daemon (Rust) in sdcd/.",
+  "packageManager": "pnpm@10.34.5",
+  "engines": {
+    "node": ">=20.19.0",
+    "pnpm": ">=10.0.0"
+  },
+  "scripts": {
+    "dev": "pnpm --filter @sdc/app dev",
+    "build": "pnpm --filter @sdc/app build",
+    "tauri:dev": "pnpm --filter @sdc/app tauri:dev",
+    "tauri:build": "pnpm --filter @sdc/app tauri:build",
+    "lint": "pnpm --filter @sdc/app lint",
+    "typecheck": "pnpm --filter @sdc/app typecheck",
+    "test": "pnpm --filter @sdc/app test",
+    "sdcd:run": "cargo run --manifest-path sdcd/Cargo.toml",
+    "sdcd:check": "cargo check --manifest-path sdcd/Cargo.toml",
+    "sdcd:test": "cargo test --manifest-path sdcd/Cargo.toml",
+    "app:check": "cargo check --manifest-path app/src-tauri/Cargo.toml",
+    "rust:fmt": "cargo fmt --manifest-path sdcd/Cargo.toml",
+    "rust:clippy": "cargo clippy --manifest-path sdcd/Cargo.toml -- -D warnings"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  }
+}

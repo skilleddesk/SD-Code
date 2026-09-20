@@ -1,0 +1,38 @@
+[package]
+name = "sdc"
+version = "0.4.1"
+description = "SDC (Skilleddesk Code) - Tauri 2 desktop shell"
+authors = ["Skilleddesk"]
+edition = "2021"
+# Tauri 2 requires at least 1.77.2 (see docs/MASTER_SPEC.md section 4.1 and SETUP.md).
+rust-version = "1.77.2"
+publish = false
+
+# The library holds the app logic; the binary is a thin entry point. This is the Tauri 2
+# convention and is what keeps mobile targets possible later without restructuring.
+[lib]
+name = "sdc_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+# Plugins registered by the shell. `fs` is intentionally absent: the capability set grants no
+# filesystem access yet, and the plugin will be added together with its scopes.
+tauri-plugin-dialog = "2"
+tauri-plugin-shell = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# The SDCP bridge (src/sdcp.rs) holds two loopback sockets to the daemon and forwards what the
+# daemon pushes as Tauri events, so the UI never talks to a socket itself.
+tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "sync", "time", "macros", "process"] }
+
+# Release profile tuned for a smaller installer, per the Tauri size guidance.
+# If release build time becomes a problem, relax `lto` first.
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true

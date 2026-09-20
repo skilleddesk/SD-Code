@@ -1,0 +1,6 @@
+{"type":"vcr","engine":"native_api","kinds":["Delta","Thinking","Delta","Done"]}
+event: message_start
+data: {"delta":{"text":"I can see the error toast "}}
+data: {"delta":{"thinking":"The screenshot shows a 500 from /login."}}
+data: {"delta":{"text":"in your screenshot."}}
+data: [DONE]

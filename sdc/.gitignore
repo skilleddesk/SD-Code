@@ -1,0 +1,63 @@
+# SDC (Skilleddesk Code) — Git ignore rules
+
+# Node / pnpm dependencies
+node_modules/
+
+# Frontend build output
+dist/
+
+# Vite cache
+.vite/
+
+# Rust / Tauri build output
+target/
+
+# The daemon binary the installer bundles, produced by `pnpm daemon:package` (it is a copy of
+# sdcd/target/release/sdcd[.exe], named with the target triple because that is how Tauri's
+# `externalBin` tells platforms apart). Generated, so it is not committed.
+app/src-tauri/binaries/
+
+# Tauri-generated ACL schemas (rewritten on every build)
+app/src-tauri/gen/schemas/
+
+# Coverage output
+coverage/
+
+# Local environment files (never commit secrets). The template is the exception:
+# it carries variable names and comments, never values.
+.env
+.env.*
+!.env.example
+
+# Keys and certificates
+*.key
+*.pem
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.ppk
+id_rsa
+id_rsa.*
+id_ed25519
+id_ed25519.*
+
+# Local databases — chat history, prompts and the FTS index (spec §3.4)
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+*.sqlite-journal
+
+# Encrypted backup artifacts
+*.tar.age
+*.age
+
+# The repository root's .gitignore repeats these patterns, and it is the
+# authoritative file: rules listed in both places are deliberate redundancy, so a
+# checkout of sdc/ on its own is still protected.
+
+# macOS metadata
+.DS_Store

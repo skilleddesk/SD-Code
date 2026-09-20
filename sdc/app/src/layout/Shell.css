@@ -1,0 +1,234 @@
+/* SDC shell geometry - spec sections 7.0 and 7.2.
+ *
+ * Why this is a stylesheet and not Tailwind utilities: the shell is a small state machine of class
+ * combinations (#app -> .workspace -> the three regions), and the prototype writes it as real CSS
+ * rules (design/ui-prototype.html, the APP SHELL, WORKSPACE, SIDEBAR, MAIN, RIGHT PANEL and STATUS
+ * BAR blocks). Spec section 7 makes the prototype the UI source of truth, so those rules are ported
+ * 1:1 instead of being re-expressed as arbitrary variants, which would hide the cascade - and the
+ * cascade is exactly what decides the behaviour at 1200px and 900px. Everything *inside* a region
+ * stays Tailwind classes (spec section 4.1). Colours and metrics come from styles/tokens.css and
+ * styles/globals.css; nothing here is a literal.
+ *
+ * This file is plain CSS on purpose: Tailwind only accepts `@layer` in the stylesheet that carries
+ * the `@tailwind` directives (styles/globals.css), so these rules are not in a layer. They are
+ * therefore emitted after the utilities in the bundle - src/main.tsx imports styles/globals.css
+ * first and this file arrives with the layout module - which means that a later step wanting a
+ * utility class on one of the five region elements has to change the rule here instead.
+ *
+ * The classes `workspaceClassName()` (src/store/layout.ts) can set:
+ *
+ *   .no-sidebar             sidebar column 280px -> 0                 Ctrl+B
+ *   .no-right               right column  400px -> 0                  Ctrl+J
+ *   .show-right             right panel forced on, even at <=1200px   Ctrl+J / right-panel tab
+ *   .mobile-sidebar-open    sidebar drawer slides in, <=900px only
+ *   .mobile-backdrop        dim layer behind an open drawer, <=900px only
+ *
+ * `no-right` and `show-right` never appear together (one store field produces both), which is what
+ * keeps the media-query overrides below finite.
+ *
+ * Deliberate differences from the prototype, recorded because the prototype is the reference:
+ *
+ *   1. <=900px pins the workspace to one column for every state combination. The prototype writes
+ *      only `.workspace{grid-template-columns:1fr}` there, and both its <=1200px
+ *      `.workspace:not(.show-right)` (two classes) and `.workspace.no-sidebar.no-right` (three)
+ *      outrank it, so at 880px with the sidebar collapsed the prototype leaves a 280px hole where
+ *      the drawer used to be. Below 900px both side regions are drawers, so one column is what the
+ *      prototype's own drawer rules mean; the selector list below spells that out.
+ *   2. `.show-right` is declared before the two collapse rules rather than after them, so that the
+ *      sidebar and the right panel can still fold while the other one is forced on - spec section
+ *      7.2 gives both of them a fold. See the note at the rule itself.
+ *   3. `.workspace.focus-mode` is not ported: Focus Mode was removed in v3.0 (spec section 10, the
+ *      subtracted list) and nothing emits that class. Split view (spec section 9.15) splits
+ *      `.main-content`, which is STEP 6 work, not shell grid work.
+ *   4. Widths and heights read the metrics of styles/globals.css - --sidebar-w (280px),
+ *      --rightpanel-w (400px), --topbar-h (46px), --statusbar-h (30px) - instead of the prototype
+ *      literals. Same computed values, one place to change them.
+ *
+ * The 260ms column transition is the prototype's, not one of the three motion tokens
+ * (spec section 8.4); `prefers-reduced-motion` already switches every transition off globally in
+ * styles/globals.css.
+ */
+
+/* #app - spec section 7.0: topbar 46px / workspace flexible / statusbar 30px. */
+#app {
+  display: grid;
+  grid-template-rows: var(--topbar-h) 1fr var(--statusbar-h);
+  height: 100vh;
+  width: 100vw;
+}
+
+/* WORKSPACE - spec section 7.2: 280px / 1fr / 400px. */
+.workspace {
+  display: grid;
+  grid-template-columns: var(--sidebar-w) 1fr var(--rightpanel-w);
+  overflow: hidden;
+  transition: grid-template-columns 260ms var(--ease);
+  background: var(--bg-base);
+  position: relative;
+}
+
+/* `.show-right` is declared before the two collapse rules on purpose. Two rules of equal weight are
+   decided by source order, and the collapse has to win: spec section 7.2 gives the sidebar and the
+   right panel a fold each, and they fold independently. The prototype declares this rule last, so
+   there `.no-sidebar` loses to it and its own Ctrl+B looks like a no-op once Ctrl+J has set
+   `show-right`. What `show-right` is for is still here - it beats the base `.workspace` rule and it
+   cancels the <=1200px `.workspace:not(.show-right)` further down. */
+.workspace.show-right {
+  grid-template-columns: var(--sidebar-w) 1fr var(--rightpanel-w);
+}
+
+.workspace.no-sidebar {
+  grid-template-columns: 0 1fr var(--rightpanel-w);
+}
+
+.workspace.no-right {
+  grid-template-columns: var(--sidebar-w) 1fr 0;
+}
+
+.workspace.no-sidebar.no-right {
+  grid-template-columns: 0 1fr 0;
+}
+
+/* TOPBAR region (spec section 7.1). Its height is the first row of #app. */
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  background: var(--bg-base);
+  border-bottom: 1px solid var(--border-subtle);
+  user-select: none;
+  position: relative;
+  z-index: 100;
+  min-width: 0;
+}
+
+/* SIDEBAR region (spec section 7.3). */
+.sidebar {
+  background: var(--bg-base);
+  border-right: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-width: 0;
+  position: relative;
+  z-index: 50;
+}
+
+/* MAIN region (spec section 7.4). */
+.main {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg-base);
+  min-width: 0;
+}
+
+/* RIGHT PANEL region (spec sections 7.7-7.12). */
+.rightpanel {
+  background: var(--bg-base);
+  border-left: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-width: 0;
+}
+
+/* STATUS BAR region (spec section 7.15). Its height is the last row of #app.
+ *
+ * The three typographic declarations are part of the region, not of the segments: the prototype puts
+ * the bar's mono 10.5px on `.statusbar` and every segment inherits it, which is also what makes the
+ * segments' colours inherit rather than each one repeating `--text-secondary`. They were left out of
+ * the STEP 3 port (which was geometry only) and arrive with the segments that need them. */
+.statusbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 12px;
+  background: var(--bg-base);
+  border-top: 1px solid var(--border-subtle);
+  font-size: 10.5px;
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+  height: var(--statusbar-h);
+  overflow: hidden;
+}
+
+/* <=1200px: the right panel is off until `.show-right` is set (spec section 7.2). */
+@media (max-width: 1200px) {
+  .workspace:not(.show-right) {
+    grid-template-columns: var(--sidebar-w) 1fr 0;
+  }
+}
+
+/* <=900px: the workspace is one column and the two side regions are drawers over it. */
+@media (max-width: 900px) {
+  /* One column, whatever state the shell is in - difference (1) in the header. Every combination
+     the mapper can produce is listed, because a rule here has to match at least the specificity of
+     the rule it replaces further up: `.workspace` alone loses to the <=1200px
+     `.workspace:not(.show-right)` (two classes), and `.workspace.no-sidebar.no-right` is three. */
+  .workspace,
+  .workspace:not(.show-right),
+  .workspace.show-right,
+  .workspace.no-sidebar,
+  .workspace.no-right,
+  .workspace.no-sidebar.no-right {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: var(--sidebar-w);
+    z-index: 250;
+    transform: translateX(-100%);
+    transition: transform 260ms var(--ease);
+    box-shadow: var(--shadow-xl);
+  }
+
+  .workspace.mobile-sidebar-open .sidebar {
+    transform: translateX(0);
+  }
+
+  .rightpanel {
+    position: absolute;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    width: min(var(--rightpanel-w), 100%);
+    z-index: 250;
+    transform: translateX(100%);
+    transition: transform 260ms var(--ease);
+    box-shadow: var(--shadow-xl);
+  }
+
+  .workspace.show-right .rightpanel {
+    transform: translateX(0);
+  }
+
+  /* Not a design token: a plain dimming layer, exactly as in the prototype. */
+  .workspace.mobile-backdrop::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 200;
+  }
+}
+
+/* <=640px: the brand wordmark goes, and <=520px leaves the host pill with only its status dot
+   (spec section 7.2). Both elements arrive with the topbar in STEP 4, so these two rules are inert
+   until then. */
+@media (max-width: 640px) {
+  .brand-text {
+    display: none;
+  }
+}
+
+@media (max-width: 520px) {
+  .host-pill .host-label {
+    display: none;
+  }
+}

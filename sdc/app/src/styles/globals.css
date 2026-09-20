@@ -1,0 +1,315 @@
+/* SDC global stylesheet - imported once from src/main.tsx. It has four parts, in order:
+ *
+ *   1. `@import "./tokens.css"`      the design tokens (spec sections 8.1-8.4), one block per
+ *                                    theme; it mirrors design/tokens.json 1:1 and the
+ *                                    `pnpm tokens:gen` generator will own it (see README.md);
+ *   2. `@tailwind base|components|utilities`   Tailwind 3's three layers (spec section 4.1:
+ *                                    config-driven Tailwind, no styled-components, no CSS-in-JS);
+ *   3. shell metrics (spec section 7.2) - window-chrome measurements, not design tokens;
+ *   4. `@layer base`                 page metrics + typography (13px / 1.5 / -0.005em, spec
+ *                                    section 8.2), the 2px focus ring (spec sections 8.3 + 8.6),
+ *                                    the scrollbar (spec section 8.3) and the reduced-motion reset.
+ *
+ * Everything else is Tailwind utility classes inside components: this is the app's only
+ * stylesheet, and it stays that way.
+ *
+ * Rule (spec section 8.1): no component may hardcode a colour. Components read tokens through the
+ * Tailwind aliases in tailwind.config.ts - `bg-bg-raised`, `text-text-secondary`,
+ * `border-border-subtle`, `text-state-error` - never through a literal.
+ */
+
+@import "./tokens.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ---------------------------------------------------------------------------
+ * Shell metrics (spec section 7.2)
+ *
+ * These describe how wide the shell's regions are, not how the interface looks,
+ * so they are not design tokens and stay out of tokens.css. The Tailwind
+ * aliases that read them (`w-sidebar`, `min-w-rightpanel`, `h-topbar`,
+ * `h-statusbar`) are used by the layout modules M1-M3.
+ * ------------------------------------------------------------------------ */
+
+:root {
+  --sidebar-w: 280px;
+  --rightpanel-w: 400px;
+  --topbar-h: 46px;
+  --statusbar-h: 30px;
+  --sidebar-min-w: 200px;
+  --rightpanel-min-w: 320px;
+  --main-min-w: 480px;
+}
+
+/* ---------------------------------------------------------------------------
+ * Component classes (spec section 4.1: Tailwind, configured - not styled-components)
+ *
+ * Panels are written with utility classes. These three are the exceptions, because
+ * none of them is a plain box: each one is a marker drawn in a pseudo-element, which
+ * a utility cannot express without repeating the whole box in four arbitrary
+ * variants. They use the prototype's own class names (design/ui-prototype.html), so a
+ * component can be diffed against the reference markup by eye. Colours are tokens
+ * (spec section 8.1) - never a literal.
+ * ------------------------------------------------------------------------ */
+
+@layer components {
+  /* Topbar plug button (spec section 7.1, row 7): the class is only set while some provider
+     still needs authentication, so its presence *is* the message. */
+  .has-dot {
+    position: relative;
+  }
+
+  .has-dot::after {
+    content: '';
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    width: 6px;
+    height: 6px;
+    border-radius: var(--r-full);
+    background: var(--accent);
+    border: 1.5px solid var(--bg-base);
+  }
+
+  /* Active session (spec section 7.3): a 2px accent bar just inside the row's left edge. */
+  .session-item.active::before {
+    content: '';
+    position: absolute;
+    left: 14px;
+    top: 7px;
+    bottom: 7px;
+    width: 2px;
+    border-radius: 2px;
+    background: var(--accent);
+    box-shadow: 0 0 6px var(--accent-glow);
+  }
+
+  /* Active tab (spec section 7.4): the same bar along the bottom edge of the tab. */
+  .tab.active::after {
+    content: '';
+    position: absolute;
+    bottom: -1px;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: var(--accent);
+    box-shadow: 0 0 8px var(--accent-glow);
+  }
+
+  /* ---------------------------------------------------------------------------------------------
+   * Modal surfaces (spec sections 9.10-9.13)
+   *
+   * Same rule as the three above: these are the ones a utility class cannot express - a backdrop
+   * that blurs what is behind it, a dialog that springs in, a switch drawn in a pseudo-element and
+   * a `<mark>` that has to fight the browser's own yellow. Everything else on these surfaces is a
+   * Tailwind utility inside the component, like every other panel.
+   * ------------------------------------------------------------------------------------------ */
+
+  /* `.modal-bd` - the dimmed layer. Top-aligned by default (palette, search), `.center` for the
+     four dialogs of 9.10-9.13. */
+  .modal-bd {
+    position: fixed;
+    inset: 0;
+    z-index: 1500;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding-top: 10vh;
+    background: rgba(3, 4, 8, 0.72);
+    backdrop-filter: blur(12px);
+    animation: modalFade 150ms var(--ease-out);
+  }
+
+  .modal-bd.center {
+    align-items: center;
+    padding-top: 0;
+  }
+
+  /* `.dialog` - a centred surface: Add host (9.12), Permission (9.13) and the frames the hub and
+     Settings replace with their own. */
+  .dialog {
+    width: min(520px, 92vw);
+    max-height: 90vh;
+    overflow: hidden auto;
+    background: var(--bg-overlay);
+    border: 1px solid var(--border-default);
+    border-radius: var(--r-lg);
+    box-shadow: var(--shadow-xl);
+    animation: modalDrop 220ms var(--spring);
+  }
+
+  /* The 1.2s key test's and the 1.4s connect flow's spinner (spec sections 9.10, 9.12). */
+  .spinner {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+    border: 2px solid var(--border-default);
+    border-top-color: var(--accent);
+    border-radius: var(--r-full);
+    animation: spin 700ms linear infinite;
+  }
+
+  /* `.toggle` - the switch of spec section 9.11's seven tabs. Drawn in CSS because the knob is a
+     pseudo-element and its 14px travel is the whole interaction. */
+  .toggle {
+    position: relative;
+    width: 34px;
+    height: 20px;
+    flex-shrink: 0;
+    border-radius: 99px;
+    background: var(--border-default);
+    cursor: pointer;
+    transition: background var(--fast) var(--ease);
+  }
+
+  .toggle::after {
+    content: '';
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 16px;
+    height: 16px;
+    border-radius: var(--r-full);
+    background: var(--bg-overlay);
+    box-shadow: var(--shadow-sm);
+    transition: transform var(--fast) var(--ease);
+  }
+
+  .toggle.on {
+    background: var(--accent);
+  }
+
+  .toggle.on::after {
+    transform: translateX(14px);
+  }
+
+  /* Search's highlighted match (spec section 9.4). `<mark>` is the semantic element; this is the
+     only way to stop the browser painting it yellow. */
+  .search-hit mark {
+    background: var(--accent-glow);
+    color: var(--text-primary);
+    padding: 0 2px;
+    border-radius: 2px;
+  }
+
+  /* The provider cards' gradient logo circle (spec section 9.10). One gradient per provider, all of
+     them built from tokens - a card can never be the only place a colour appears. */
+  .prov-logo {
+    background-image: linear-gradient(135deg, var(--accent), var(--purple));
+  }
+
+  .prov-logo.claude,
+  .prov-logo.groq {
+    background-image: linear-gradient(135deg, var(--orange), var(--red));
+  }
+
+  .prov-logo.openai {
+    background-image: linear-gradient(135deg, var(--green), var(--accent));
+  }
+
+  .prov-logo.gemini {
+    background-image: linear-gradient(135deg, var(--accent), var(--purple));
+  }
+
+  .prov-logo.deepseek {
+    background-image: linear-gradient(135deg, var(--purple), var(--accent));
+  }
+
+  .prov-logo.openrouter {
+    background-image: linear-gradient(135deg, var(--purple), var(--red));
+  }
+
+  .prov-logo.ollama {
+    background-image: linear-gradient(135deg, var(--border-strong), var(--text-secondary));
+  }
+
+  @keyframes modalFade {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  @keyframes modalDrop {
+    from {
+      opacity: 0;
+      transform: translateY(-8px) scale(0.98);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+}
+
+@layer base {
+  html,
+  body {
+    /* The app owns its scrolling; the window itself never scrolls. */
+    height: 100%;
+    overflow: hidden;
+    background: var(--bg-base);
+    color: var(--text-primary);
+    font-family: var(--font-ui);
+    /* Spec section 8.2. The same three numbers are exposed as --base-size, --line-height and
+       --letter-spacing in tokens.css for code that needs them outside these two elements. */
+    font-size: 13px;
+    line-height: 1.5;
+    letter-spacing: -0.005em;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* #root fills the window so every panel can size itself against a known height. */
+  #root {
+    height: 100%;
+  }
+
+  /* Spec sections 8.3 and 8.6: a 2px ring in --border-focus, never `outline: none`. */
+  :focus-visible {
+    outline: 2px solid var(--border-focus);
+    outline-offset: 1px;
+  }
+
+  /* 10px scrollbar, thumb on --border-default, hover on --border-strong. */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: var(--border-default);
+    border: 3px solid transparent;
+    border-radius: var(--r-full);
+    background-clip: padding-box;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--border-strong);
+    background-clip: padding-box;
+  }
+}
+
+/* Spec section 8.4: with reduced motion, every transition and animation is switched off.
+ * `scroll-behavior` is included because it is motion too - `scrollIntoView` (the tab strip) and any
+ * smooth programmatic scroll would otherwise still animate for someone who asked for stillness. */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+    animation: none !important;
+    scroll-behavior: auto !important;
+  }
+}

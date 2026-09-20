@@ -1,0 +1,119 @@
+SDC (Skilleddesk Code) — PROPRIETARY SOFTWARE LICENCE
+Copyright (c) 2026 SkilledDesk. All rights reserved.
+
+Version 1.0 — 2026-09-20.
+Applies to this repository and to every file in it, including source code,
+documentation, the UI prototype, design assets and the master specification.
+
+BEFORE PUBLISHING: replace every <OWNER-CONTACT-EMAIL> below with the real
+licensing address. A placeholder that looks like a working address is worse than
+an obvious one, because permission requests sent to it are lost silently.
+
+
+1. OWNERSHIP
+
+   The software, its source code, its documentation, its design system, its user
+   interface and its visual assets (together, "the Software") are the exclusive
+   property of SkilledDesk and its licensors. Copyright in the Software is owned
+   by SkilledDesk. No title, ownership or intellectual-property right of any kind
+   is transferred by this document, by access to the Software, or by any act
+   permitted under it.
+
+
+2. NO LICENCE GRANTED
+
+   The Software is made available for viewing only. No licence, sublicence,
+   right, interest or permission of any kind is granted to you, whether by
+   implication, estoppel, exhaustion or otherwise, except for the limited,
+   revocable, non-transferable permission to read the Software as published.
+
+   In particular, you may not, without SkilledDesk's prior written permission:
+
+     a) copy, reproduce or store the Software, in whole or in part, other than a
+        single transient copy made by a web browser or a git client in the
+        ordinary course of viewing it;
+     b) modify, adapt, translate, transform or create derivative works from it;
+     c) distribute, publish, sublicense, sell, rent, lease, lend or otherwise
+        make it available to any third party;
+     d) use it, in whole or in part, in another product or service, including as
+        training data, evaluation data or reference material for a machine-
+        learning model;
+     e) reverse engineer, decompile or disassemble it, except to the extent that
+        such an act cannot lawfully be excluded;
+     f) remove, obscure or alter any copyright, licence, trade-mark or
+        attribution notice contained in it;
+     g) use its name, its logos or the names "SDC", "Skilleddesk Code" or
+        "SkilledDesk" except as required to refer to the Software factually.
+
+   The absence of a licence is not a dedication to the public domain, and the
+   fact that the Software may be publicly readable does not make it open source.
+   For the avoidance of doubt, no open-source licence (including, without
+   limitation, any MIT, Apache, BSD, GPL or MPL licence) applies to the Software.
+
+
+3. THIRD-PARTY COMPONENTS
+
+   The Software depends on third-party packages - among them Tauri, React,
+   Tailwind CSS, Lucide, Zustand and the Rust crates listed in each Cargo.toml.
+   Those components are not covered by this document; they are fetched from their
+   own registries at build time, remain the property of their authors, and are
+   governed by their own licences. Nothing here restricts the rights those
+   licences grant you in those components.
+
+   Two exceptions are redistributed inside this repository and keep their own
+   terms:
+
+     - the font packages @fontsource/inter and @fontsource/jetbrains-mono, and
+       the Inter and JetBrains Mono typefaces they carry, which are licensed
+       under the SIL Open Font License 1.1;
+     - the character of the bundled application icons is original work of
+       SkilledDesk, but the icon files themselves are generated from a template
+       and carry no third-party rights.
+
+   Consult app/package.json, the Cargo.toml files and their lockfiles for the
+   authoritative dependency list.
+
+
+4. CONTRIBUTIONS
+
+   Any contribution you submit is governed by CONTRIBUTING.md, under which you
+   assign your copyright in the contribution to SkilledDesk and grant the
+   rights needed for SkilledDesk to use and relicense it. A contribution does
+   not give you any right in the Software.
+
+
+5. NO WARRANTY
+
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+   FITNESS FOR A PARTICULAR PURPOSE, TITLE AND NON-INFRINGEMENT. YOU USE IT AT
+   YOUR OWN RISK. IN NO EVENT SHALL SKILLEDDESK OR ITS LICENSORS BE LIABLE FOR
+   ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT
+   OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+   USE OR OTHER DEALINGS IN IT.
+
+
+6. TERMINATION
+
+   Any permission granted under this document terminates automatically if you
+   breach any of its terms. On termination you must stop using the Software and
+   destroy every copy you hold. Sections 1, 2, 3, 5 and 7 survive termination.
+
+
+7. GENERAL
+
+   This document is the entire agreement between you and SkilledDesk concerning
+   the Software. If any provision is held unenforceable, the remaining
+   provisions continue in effect. A waiver is effective only in writing and only
+   for the instance it names. The governing law and exclusive forum are those
+   stated in SkilledDesk's published terms of use; where no such terms are
+   published, the courts of SkilledDesk's principal place of business have
+   exclusive jurisdiction.
+
+
+8. CONTACT
+
+   Licensing, commercial use and permission requests:
+   <OWNER-CONTACT-EMAIL>
+
+   Security vulnerabilities: see SECURITY.md. Do not report them by public issue.

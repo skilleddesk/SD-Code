@@ -1,0 +1,5 @@
+{"type":"vcr","engine":"claude_code","kinds":["Delta","ToolStarted","ToolCompleted","Failed"]}
+{"type":"assistant_text","text":"Running the deploy script."}
+{"type":"tool_use","id":"c1","tool":"run","name":"Run","target":"bash deploy.sh"}
+{"type":"tool_done","id":"c1","meta":"done · exit 0","ok":true}
+{"type":"error","message":"scp: /var/www: Permission denied"}
