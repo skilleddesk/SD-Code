@@ -1,6 +1,7 @@
-import { ChevronDown, Plus } from 'lucide-react';
+import { ChevronDown, Plus, ServerOff } from 'lucide-react';
 
 import { strings } from '../../strings';
+import { removeHost } from '../../store/intents';
 import { matchesFilter, orderedSessions, useSessionsStore, type Host } from '../../store/sessions';
 import { HostIcon } from '../ui/HostIcon';
 import { HOST_STATUS_CLASS, HOST_STATUS_LABEL } from '../ui/status';
@@ -37,6 +38,18 @@ export function HostGroup({ host, filter, activeTab, collapsed }: HostGroupProps
   const { toggleHostCollapsed, newChatOnHost } = useSessionsStore();
 
   const visible = orderedSessions(host.sessions).filter((session) => matchesFilter(session, filter));
+
+  /**
+   * `host.remove` - spec section 9.12's other half, and the control that was missing.
+   *
+   * The confirmation names what goes with the host (its chats), because that is the part a person
+   * cannot see from the sidebar: a host with a collapsed group looks empty either way.
+   */
+  const remove = (): void => {
+    if (window.confirm(strings.sidebar.removeHostConfirm(host.name, host.sessions.length))) {
+      void removeHost(host.id, host.name);
+    }
+  };
 
   return (
     <div className={'host-group mb-[2px]' + (collapsed ? ' collapsed' : '')} data-host={host.id}>
@@ -83,6 +96,25 @@ export function HostGroup({ host, filter, activeTab, collapsed }: HostGroupProps
         >
           <Plus size={11} aria-hidden="true" />
         </button>
+
+        {/* `local` is the machine this daemon runs on and the daemon refuses to remove it, so the
+            button is not offered for it: a control whose only outcome is an error is worse than no
+            control. Every other host gets one, because a host added by mistake (or added three times
+            under the same name) used to be permanent. */}
+        {host.id === 'local' ? null : (
+          <button
+            type="button"
+            className="host-remove grid h-[18px] w-[18px] shrink-0 place-items-center rounded-sm text-text-muted opacity-0 transition-all duration-fast ease-ease group-hover:opacity-100 hover:bg-red-subtle hover:text-state-error"
+            title={strings.sidebar.actions.removeHost}
+            aria-label={strings.sidebar.actions.removeHost}
+            onClick={(event) => {
+              event.stopPropagation();
+              remove();
+            }}
+          >
+            <ServerOff size={11} aria-hidden="true" />
+          </button>
+        )}
       </div>
 
       {collapsed ? null : (

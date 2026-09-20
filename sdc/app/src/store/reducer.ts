@@ -1,4 +1,4 @@
-import type { RegistryModel } from '../../../protocol/types';
+import type { HostRecord, RegistryModel } from '../../../protocol/types';
 import type {
   AppEvent,
   AppState,
@@ -115,6 +115,14 @@ function reduce(state: AppState, entry: AppEvent): AppState {
           : [...state.hosts, host],
       };
     }
+
+    case 'HostRemoved':
+      /* The row, its sessions and everything they carried are gone. Nothing is left behind on the
+         screen either: a host that is no longer in the list cannot be switched to. */
+      return {
+        ...state,
+        hosts: state.hosts.filter((host) => host.id !== event.hostId),
+      };
 
     case 'ProviderStatus': {
       const existing = state.providers.find((provider) => provider.id === event.id);
@@ -687,6 +695,43 @@ export function selectPermission(state: AppState): PermissionView | null {
 
 export function selectDoctor(state: AppState, hostId: string | null): DoctorCheckView[] {
   return hostId === null ? [] : (state.doctor[hostId] ?? []);
+}
+
+/**
+ * Records the answer to `session.list` - the host-and-session tree the daemon already had.
+ *
+ * A state patch rather than a stream of events, for the same reason `withDoctorRun` is one: the
+ * *list* is a read's result, and re-emitting an event per host on every launch would append a copy
+ * of the whole tree to the log each time the window opened. What is folded from events is what
+ * *happens* (`HostStatus`, `HostRemoved`, `SessionOpened`); what is read is read.
+ *
+ * Replacing rather than merging is the honest direction: the daemon's rows are the authority, so a
+ * host the daemon does not have is a host this window must stop drawing. `sdcd` survives because the
+ * list does not carry it - `host.status` is what reported it, and it is still true.
+ */
+export function withWorkspace(state: AppState, hosts: readonly HostRecord[]): AppState {
+  return {
+    ...state,
+    hosts: hosts.map((host) => ({
+      id: host.hostId,
+      name: host.name,
+      type: host.hostType,
+      status: host.status,
+      sdcd: state.hosts.find((known) => known.id === host.hostId)?.sdcd ?? '',
+      platform: host.platform ?? '',
+      sessions: host.sessions.map((session) => ({
+        id: session.sessionId,
+        title: session.title,
+        prompt: session.prompt,
+        state: session.state,
+        minutesAgo: session.minutesAgo,
+        unread: session.unread,
+        ...(session.attention === null || session.attention === undefined
+          ? {}
+          : { attention: session.attention }),
+      })),
+    })),
+  };
 }
 
 /**

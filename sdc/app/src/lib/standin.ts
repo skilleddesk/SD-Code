@@ -57,6 +57,8 @@ const NEEDS_DAEMON =
 export class StandInDaemon implements LoopbackDaemon {
   private sequence = 0;
   private readonly sessions: StandInSession[] = [];
+  /** Set by `host.remove`: a tab's host list is one row, and removing it is the whole list. */
+  private hostRemoved = false;
 
   handle(envelope: Envelope, push: Push, reply: Reply): void {
     const params = (envelope.params ?? {}) as Params;
@@ -147,17 +149,43 @@ export class StandInDaemon implements LoopbackDaemon {
 
       case 'session.list':
         ok(reply, envelope, {
-          hosts: [
-            {
-              id: 'browser',
-              name: strings.daemon.browserHostName,
-              type: 'local',
-              status: 'degraded',
-              sessions: this.sessions.map((session) => ({ ...session })),
-            },
-          ],
+          hosts: this.hostRemoved
+            ? []
+            : [
+                {
+                  hostId: 'browser',
+                  name: strings.daemon.browserHostName,
+                  hostType: 'local',
+                  status: 'degraded',
+                  platform: null,
+                  target: null,
+                  sessions: this.sessions.map((session) => ({
+                    sessionId: session.id,
+                    hostId: 'browser',
+                    title: session.title,
+                    prompt: '',
+                    state: session.state,
+                    unread: 0,
+                    minutesAgo: 0,
+                  })),
+                },
+              ],
         });
         return;
+
+      /*
+       * A tab has no host table, so the honest thing `host.remove` can do is the thing the real
+       * daemon does to its own list: forget the host and say so in the log.
+       */
+      case 'host.remove': {
+        const id = text(params, 'hostId');
+
+        this.hostRemoved = true;
+
+        emit({ type: 'HostRemoved', hostId: id, name: strings.daemon.browserHostName, sessions: 0 });
+        ok(reply, envelope, { removed: true, name: strings.daemon.browserHostName, sessions: 0 });
+        return;
+      }
 
       /* The catalogue is data this build ships, so it is real: what is missing is the provider's live
          answer, which only a daemon can fetch. */

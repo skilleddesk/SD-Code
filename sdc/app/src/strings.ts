@@ -79,7 +79,16 @@ export const strings = {
       rename: 'Rename',
       delete: 'Delete',
       newChatOnHost: 'New chat on this host',
+      removeHost: 'Remove this host',
     },
+    /** The confirmation before a host goes - it names what goes with it (spec section 9.12's other half). */
+    removeHostConfirm: (name: string, sessions: number): string =>
+      sessions === 0
+        ? `Remove "${name}" from the host list?`
+        : `Remove "${name}" and its ${sessions} chat${sessions === 1 ? '' : 's'}?`,
+    hostRemoved: (name: string): string => `Removed ${name}`,
+    hostRemovedWith: (name: string, sessions: number): string =>
+      `Removed ${name} · ${sessions} chat${sessions === 1 ? '' : 's'} went with it`,
     /** The badge is one character; its colour and meaning come from the class (spec section 7.3). */
     attentionBadge: '!',
     /** Seed host names and session titles - the prototype's demo data, verbatim. */
@@ -426,6 +435,15 @@ export const strings = {
    */
   daemon: {
     offline: 'sdcd did not answer · the daemon is not running',
+    /** Raised once, when the heartbeat stops answering. */
+    lost: 'Lost the daemon · sdcd is not answering; the app is retrying every 5s',
+    /** Raised once, when it answers again. */
+    backOnline: 'sdcd is answering again',
+    /** The banner above the chat while the heartbeat is failing. */
+    banner: 'Not connected to the daemon (sdcd). Actions will fail until it answers.',
+    /** The banner after several consecutive misses. */
+    bannerStale: 'sdcd has not answered for 15 seconds. Restart the app to start it again.',
+    retry: 'Retry now',
     /** The in-process stand-in a browser tab gets, and what it can honestly do (see `lib/standin.ts`). */
     browserHostName: 'Browser tab',
     browserSessionTitle: 'New chat',
@@ -614,6 +632,13 @@ export const strings = {
     connected: (label: string): string => `Connected: ${label}`,
     localAlready: 'Local host already connected',
     needTarget: 'Enter an SSH target like user@host',
+    /**
+     * The same `user@host` is one host, so a second Connect says what happened rather than adding a
+     * row that cannot be told apart from the first (see `host.add` in the daemon).
+     */
+    alreadyThere: (label: string): string => `${label} is already in the host list`,
+    /** `host.add` answered: the row exists. Whether it can be *reached* is the daemon's next sentence. */
+    added: (label: string): string => `Added ${label} · checking it can be reached…`,
     welcomeTitle: (label: string): string => `Welcome to ${label}`,
     welcomePrompt: 'Try the sample project',
   },

@@ -145,11 +145,17 @@ pub mod event {
             }),
         )
     }
+    /// `host.remove`: the host and its sessions are gone. `sessions` is the count that went with it,
+    /// so the toast that follows can say what was actually thrown away.
+    pub fn host_removed(host_id: &str, name: &str, sessions: i64) -> Value {
+        base("HostRemoved", json!({ "hostId": host_id, "name": name, "sessions": sessions }))
+    }
+
+
 
     pub fn provider_status(fields: Value) -> Value {
         base("ProviderStatus", fields)
     }
-
     pub fn registry_loaded(models: Value) -> Value {
         base("RegistryLoaded", json!({ "models": models }))
     }

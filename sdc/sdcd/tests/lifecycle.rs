@@ -292,3 +292,141 @@ fn a_daemon_started_by_hand_stays_where_it_is() {
     let _ = child.kill();
     let _ = child.wait();
 }
+
+/// The two halves of a host's life, measured on a real daemon over a socket.
+///
+/// Both halves were missing, and both were visible only from outside the daemon:
+///
+/// * adding the same `user@host` twice made a second row that the sidebar could not tell apart from
+///   the first - `Website, Website, Website`, with no way to know which one was which;
+/// * `host.remove` was declared in `protocol/types.ts` and answered `unknown method`, so a host
+///   added by mistake was permanent;
+/// * and `session.open` rewrote the host's row with the literals `Local` / `local` / `connected`, so
+///   opening a chat on a VPS erased its name, its kind and its `target` - the very field the
+///   duplicate check above keys on.
+///
+/// The `ssh` probe that `host.add` now starts is deliberately **not** asserted on: whether this
+/// runner can reach the internet is not a property of the daemon, and a test that depends on it
+/// would be a test that fails on a plane.
+#[test]
+fn a_host_is_added_once_and_can_be_removed_again() {
+    let directory = TempDir::new().expect("a temporary directory");
+    let (mut child, port) = start(&[], &directory);
+
+    let (first, _) = request_collect(
+        port,
+        "add-1",
+        "host.add",
+        serde_json::json!({ "type": "ssh", "target": "root@vps.example", "label": "VPS" }),
+    );
+
+    let host_id = first
+        .pointer("/result/hostId")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+
+    assert!(!host_id.is_empty(), "host.add answered no id: {first}");
+    assert_eq!(
+        first.pointer("/result/reused").and_then(serde_json::Value::as_bool),
+        Some(false),
+        "a fresh host must not report itself as a reuse: {first}"
+    );
+
+    let (second, _) = request_collect(
+        port,
+        "add-2",
+        "host.add",
+        serde_json::json!({ "type": "ssh", "target": "root@vps.example", "label": "VPS again" }),
+    );
+
+    assert_eq!(
+        second.pointer("/result/hostId").and_then(serde_json::Value::as_str),
+        Some(host_id.as_str()),
+        "the same `user@host` was added as a second host: {second}"
+    );
+    assert_eq!(
+        second.pointer("/result/reused").and_then(serde_json::Value::as_bool),
+        Some(true),
+        "the second add must say it reused the row: {second}"
+    );
+
+    /* A session on it, so the removal has something to take with it. */
+    let (session, _) = request_collect(
+        port,
+        "open-1",
+        "session.open",
+        serde_json::json!({ "hostId": host_id, "title": "On the VPS" }),
+    );
+
+    assert!(session.get("result").is_some(), "session.open failed: {session}");
+
+    let (listed, _) = request_collect(port, "list-1", "session.list", serde_json::json!({}));
+    let hosts = listed
+        .pointer("/result/hosts")
+        .and_then(serde_json::Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let added = hosts.iter().find(|host| host["hostId"] == serde_json::json!(host_id));
+
+    assert!(added.is_some(), "session.list does not carry the added host: {listed}");
+    assert_eq!(
+        added.and_then(|host| host["sessions"].as_array()).map(Vec::len),
+        Some(1),
+        "session.list dropped the host's sessions: {listed}"
+    );
+    assert_eq!(
+        added.and_then(|host| host["target"].as_str()),
+        Some("root@vps.example"),
+        "session.open overwrote the host's own row: {listed}"
+    );
+
+    let (removed, _) = request_collect(
+        port,
+        "remove-1",
+        "host.remove",
+        serde_json::json!({ "hostId": host_id }),
+    );
+
+    assert_eq!(
+        removed.pointer("/result/removed").and_then(serde_json::Value::as_bool),
+        Some(true),
+        "host.remove did not remove the host: {removed}"
+    );
+    assert_eq!(
+        removed.pointer("/result/sessions").and_then(serde_json::Value::as_i64),
+        Some(1),
+        "host.remove did not report the session it took with it: {removed}"
+    );
+
+    /* The row is gone from the list a restarting window folds. */
+    let (after, _) = request_collect(port, "list-2", "session.list", serde_json::json!({}));
+    let remaining = after
+        .pointer("/result/hosts")
+        .and_then(serde_json::Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+
+    assert!(
+        !remaining.iter().any(|host| host["hostId"] == serde_json::json!(host_id)),
+        "host.remove left the host behind: {after}"
+    );
+
+    /* `local` is the machine the daemon runs on, and refusing it is a sentence rather than a crash. */
+    let (refused, _) = request_collect(
+        port,
+        "remove-local",
+        "host.remove",
+        serde_json::json!({ "hostId": "local" }),
+    );
+
+    assert_eq!(
+        refused.pointer("/error/code").and_then(serde_json::Value::as_str),
+        Some("bad_request"),
+        "removing `local` must be refused with a reason: {refused}"
+    );
+
+    let _ = child.kill();
+    let _ = child.wait();
+}
+

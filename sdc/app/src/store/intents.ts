@@ -2,9 +2,11 @@ import type { PermissionDecision, PermissionRisk, TierName } from '../../../prot
 import { sdcpCall } from '../lib/sdcp';
 import { isSdcpError } from '../lib/transport';
 import { strings } from '../strings';
+import { useDaemonStore } from './daemon';
 import { useModelStore, tierName } from './model';
 import { useOverlayStore } from './overlays';
 import { usePrefsStore } from './prefs';
+import { withWorkspace } from './reducer';
 import { selectActiveSession, dispatch, useAppStore } from './store';
 
 /**
@@ -75,6 +77,15 @@ export async function connectDaemon(): Promise<boolean> {
      * already said the daemon is not answering.
      */
     await sdcpCall('provider.list', {});
+
+    /*
+     * And the list the window used to lose on every launch.
+     *
+     * `host.status` records *this* machine; `session.list` is what the daemon already had - every
+     * host that was ever added, and every chat under it. Without this call the sidebar showed one
+     * host after a restart and the added ones looked as though adding them had failed.
+     */
+    await loadWorkspace();
 
     return true;
   } catch (error) {
@@ -233,7 +244,7 @@ export async function closeSession(sessionId: string): Promise<void> {
   }
 }
 
-/** Spec section 9.12. The daemon answers immediately; the host turns `connected` 1.4s later. */
+/** Spec section 9.12. The daemon answers immediately and then *measures* the host. */
 export async function addHost(input: {
   type: 'local' | 'ssh';
   target?: string;
@@ -249,14 +260,127 @@ export async function addHost(input: {
     return null;
   }
 
+  const label = input.label?.trim() === '' || input.label === undefined ? input.target : input.label;
+
   try {
-    const { hostId } = await sdcpCall('host.add', input);
+    const { hostId, reused } = await sdcpCall('host.add', input);
+
+    /*
+     * Two sentences, because there are two facts and this function only knows the first.
+     *
+     * `reused` is the case that used to be invisible: the same `user@host` added twice, which is how
+     * a sidebar ends up as four hosts called `Website`. Whether the host can be *reached* is not
+     * known here - the daemon ran `ssh` in the background - so this says what `host.add` answered
+     * and the daemon's own `Toast` says the rest a moment later.
+     */
+    toast(reused ? strings.addHost.alreadyThere(label) : strings.addHost.added(label));
 
     return hostId;
   } catch (error) {
     reportFailure(error, 'Could not connect to that host');
     return null;
   }
+}
+
+/**
+ * Spec section 9.12's other half: take a host off the list.
+ *
+ * `host.remove` has been declared in `protocol/types.ts` since the schema was written and answered
+ * `unknown method` until it was implemented, so a host added by mistake - or added three times under
+ * the same name - could not be removed at all. The daemon deletes the row, its sessions and their
+ * turns, and appends `HostRemoved`; that event is what takes the rows off this window's screen, and
+ * off the next window's, because the log is what a reloading client replays.
+ */
+export async function removeHost(hostId: string, name: string): Promise<boolean> {
+  try {
+    const { sessions } = await sdcpCall('host.remove', { hostId });
+
+    toast(
+      sessions > 0
+        ? strings.sidebar.hostRemovedWith(name, sessions)
+        : strings.sidebar.hostRemoved(name),
+    );
+
+    return true;
+  } catch (error) {
+    reportFailure(error, 'Could not remove that host');
+    return false;
+  }
+}
+
+/**
+ * `session.list`, folded into the store - what makes an added host survive a restart.
+ *
+ * Nothing used to ask for this. `host.add` wrote a row in the daemon's database and pushed one event;
+ * the window folded that event and then lost the host the moment it was closed, and the next launch
+ * showed only `local`. The host had not gone anywhere - nothing had asked for it.
+ *
+ * The `local` row is why `host.status` runs first: `session.list` answers from the daemon's rows, so
+ * the machine this window is on has to be one of them (it is, because `host.status` records it).
+ */
+export async function loadWorkspace(): Promise<void> {
+  try {
+    const { hosts } = await sdcpCall('session.list', {});
+
+    useAppStore.setState((state) => withWorkspace(state, hosts));
+  } catch (error) {
+    reportFailure(error, strings.daemon.offline);
+  }
+}
+
+/**
+ * One heartbeat: is the daemon still answering?
+ *
+ * `event.subscribe` rather than `host.status`, and the difference is the log. `host.status` *pushes*
+ * a `HostStatus` event, so a five-second heartbeat against it would append 720 events an hour to a
+ * log whose entire purpose is to be a readable record of what happened. `event.subscribe` is a pure
+ * read - it answers `fromSeq` and appends nothing - and subscribing is what a client asks for anyway.
+ *
+ * A failure here is the one failure the event log cannot describe: the log's writer is the thing
+ * that stopped. So it lands in `store/daemon.ts`, which is presentation, not history.
+ */
+export async function heartbeat(): Promise<boolean> {
+  const beat = useDaemonStore.getState();
+  const wasOnline = beat.online;
+
+  try {
+    await sdcpCall('event.subscribe', {});
+
+    beat.beat(true);
+
+    if (!wasOnline) {
+      toast(strings.daemon.backOnline);
+    }
+
+    return true;
+  } catch (error) {
+    beat.beat(false, isSdcpError(error) ? error.message : strings.daemon.offline);
+
+    if (wasOnline) {
+      toast(strings.daemon.lost);
+    }
+
+    return false;
+  }
+}
+
+/** How often the window asks. Five seconds is fast enough to notice and slow enough to be free. */
+const HEARTBEAT_MS = 5000;
+
+/**
+ * Starts the heartbeat and returns its stop function, so `App.tsx` can hold it in one effect.
+ *
+ * The first beat is immediate: a window that opens against a daemon which is not there should say so
+ * at once rather than five seconds later.
+ */
+export function watchDaemon(): () => void {
+  void heartbeat();
+
+  const timer = window.setInterval(() => {
+    void heartbeat();
+  }, HEARTBEAT_MS);
+
+  return () => window.clearInterval(timer);
 }
 
 /* ------------------------------------------------------------------------------------------------

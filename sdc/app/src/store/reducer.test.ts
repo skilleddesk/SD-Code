@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { SdcpEvent } from '../../../protocol/types';
-import { applyEvent, applyEvents, createInitialState, EMPTY_STATE } from './reducer';
+import { applyEvent, applyEvents, createInitialState, EMPTY_STATE, withWorkspace } from './reducer';
 import type { AppEvent, AppState } from './types';
 
 /**
@@ -340,4 +340,70 @@ describe('reducer', () => {
 
     expect(state.duels[0]).toMatchObject({ kept: 'codex', resolved: true });
   });
+
+describe('the two host facts that were missing', () => {
+  const listed = [
+    { type: 'HostStatus', hostId: 'local', name: 'Local', hostType: 'local', status: 'connected' },
+    { type: 'HostStatus', hostId: 'h1', name: 'Website', hostType: 'vps', status: 'connecting' },
+    { type: 'SessionOpened', sessionId: 's1', hostId: 'h1', title: 'Fix it', prompt: 'Fix it' },
+  ] as const;
+
+  it('removes a host, and the chats under it, when the daemon says it is gone', () => {
+    let state = applyEvents(
+      EMPTY_STATE,
+      listed.map((event, index) => ({ seq: index + 1, ts: `2026-09-20T14:0${index}:00.000Z`, event })),
+    );
+
+    expect(state.hosts.map((host) => host.id)).toEqual(['local', 'h1']);
+
+    state = fold(state, { type: 'HostRemoved', hostId: 'h1', name: 'Website', sessions: 1 });
+
+    /* Nothing is left behind: a host that is no longer in the list cannot be switched to, and its
+       sessions went with it in the daemon too (`host.remove` deletes the rows). */
+    expect(state.hosts.map((host) => host.id)).toEqual(['local']);
+    expect(state.hosts.every((host) => host.sessions.every((session) => session.id !== 's1'))).toBe(true);
+  });
+
+  it('folds the list a restart would otherwise lose', () => {
+    /*
+     * What `session.list` answers on the next launch. `host.add` wrote the row and pushed one event;
+     * without this patch the window showed only `local` and every added host looked as though adding
+     * it had failed - the row was in the daemon's database the whole time.
+     */
+    const state = withWorkspace(EMPTY_STATE, [
+      {
+        hostId: 'local',
+        name: 'Local',
+        hostType: 'local',
+        status: 'connected',
+        platform: 'windows · x86_64',
+        target: null,
+        sessions: [],
+      },
+      {
+        hostId: 'h1',
+        name: 'Website',
+        hostType: 'vps',
+        status: 'offline',
+        platform: null,
+        target: 'root@vps.example',
+        sessions: [
+          {
+            sessionId: 'n7',
+            hostId: 'h1',
+            title: 'Fix it',
+            prompt: 'Fix it',
+            state: 'error',
+            unread: 2,
+            minutesAgo: 14,
+          },
+        ],
+      },
+    ]);
+
+    expect(state.hosts.map((host) => host.id)).toEqual(['local', 'h1']);
+    expect(state.hosts[1]?.sessions[0]).toMatchObject({ id: 'n7', title: 'Fix it', minutesAgo: 14, unread: 2 });
+  });
+});
+
 });

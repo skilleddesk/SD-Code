@@ -300,19 +300,36 @@ it is reached.
   not been run in CI yet.
 * **`protocol/` is not an npm package yet.** `types.ts` is real and imported by the app; it joins the
   workspace when a generator (schema → types) exists, so the two cannot drift.
-* **Federated/remote hosts beyond one SSH target.** `host.add` records an SSH host and the app's
-  switcher works; a second daemon on the far side of a tunnel is reached with `VITE_SDCP_URL` and is
-  not yet provisioned by the app.
+* **Federated/remote hosts beyond one SSH target.** `host.add` records an SSH host, says out loud
+  whether this machine can `ssh` to it, and `host.remove` takes it back off the list along with its
+  chats; the app's switcher works. A second daemon on the far side of a tunnel is reached with
+  `VITE_SDCP_URL` and is not yet provisioned by the app, so an added host is a *record* of a machine
+  rather than a second `sdcd` to talk to.
+* **A project (working-directory) browser.** The daemon's schema has had a `projects` table
+  (`host_id`, `root`, `name`) and `sessions.project_id` since the first migration, and `fs.list` /
+  `fs.read` / `fs.search` are real methods - but nothing in the app browses them. There is therefore
+  **no way to pick which directory on a host a chat works in**, and no file tree in the sidebar: a
+  session is a conversation with no working directory attached, and `session.open` has no `projectId`
+  to give it one. `fs.list` has no caller in `app/src` at all. This is the next thing to build, and it
+  is the one that decides whether SDC can be used for real work on more than one project.
 
 ## Next step
 
-1. `native_api`'s HTTPS transport: `rustls` + `hyper`, so a remote Anthropic/OpenAI key streams
+1. The project browser: `project.add` / `project.list` / `project.remove` on the daemon (the table is
+   already there), a `projectId` on `session.open`, a folder picker driven by `fs.list`, and the
+   project's path in the prompt area so "which directory am I in" is answerable. The engines then need
+   the project root as their working directory, which is the other half of the same gap.
+2. `native_api`'s HTTPS transport: `rustls` + `hyper`, so a remote Anthropic/OpenAI key streams
    instead of reporting the missing client — and so `provider.test` can answer `verified: true` for a
    saved key.
-2. Turn the `keychain` feature on for desktop builds (DPAPI / Keychain / Secret Service), with the
+3. Turn the `keychain` feature on for desktop builds (DPAPI / Keychain / Secret Service), with the
    file fallback kept for a box that has no store, and an ACL on the Windows fallback until then.
-3. The provider OAuth token exchange, wired to `provider.oauth.callback`.
-4. The `schema → protocol/types.ts` generator, and `protocol/` as a workspace package.
-5. `dmg` / `AppImage` / `deb` builds and code signing on their own hosts.
-6. An axe-core run in CI, and a screen-reader pass over the palette, the Permission modal and the
+4. The provider OAuth token exchange, wired to `provider.oauth.callback`.
+5. `cli.recipes` in the Connect modal, so "install `claude` first" is visible *before* a sign-in is
+   started rather than as the reason it failed.
+6. `session.fork`: the method is in the schema and `protocol/types.ts` and the daemon answers
+   `unknown method`.
+7. The `schema → protocol/types.ts` generator, and `protocol/` as a workspace package.
+8. `dmg` / `AppImage` / `deb` builds and code signing on their own hosts.
+9. An axe-core run in CI, and a screen-reader pass over the palette, the Permission modal and the
    Time Machine tab.
