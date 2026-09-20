@@ -47,23 +47,107 @@ pub struct LoginRecipe {
     pub success: &'static [&'static str],
     /// What the UI says about this recipe, including anything the user has to know first.
     pub note: &'static str,
+    /// Something the CLI needs *before* it will sign in, written to the CLI's own settings file.
+    pub prepare: Prepare,
+}
+
+/// The step before the login, for a CLI that refuses to start one until it has been told how.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Prepare {
+    /// Nothing: the CLI signs in when it is asked to.
+    Nothing,
+    /// Gemini CLI needs an auth method in its settings, or it exits with
+    /// "Please set an Auth method in your settings.json". `oauth-personal` is its own name for
+    /// `Login with Google` (verified in the installed package, `security.auth.selectedType`).
+    ///
+    /// Without this the flow cannot start at all in a pipe: the menu that would choose it needs a
+    /// terminal, which the daemon does not have. Writing the choice is the smallest honest way to make
+    /// the browser sign-in reachable from the app, and it is one key in a file the user owns - the
+    /// CLI's own menu can change it back at any time.
+    GeminiOauth,
+}
+
+/// The settings file the Gemini prepare step writes, under the user's home.
+pub fn gemini_settings_path() -> Option<std::path::PathBuf> {
+    let home = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME"))?;
+
+    Some(std::path::PathBuf::from(home).join(".gemini").join("settings.json"))
+}
+
+/// Runs a recipe's prepare step, returning the file it touched (for the answer the UI shows).
+pub fn prepare(recipe: &LoginRecipe) -> Result<Option<String>, String> {
+    match recipe.prepare {
+        Prepare::Nothing => Ok(None),
+        Prepare::GeminiOauth => {
+            let path = gemini_settings_path()
+                .ok_or_else(|| "no home directory to write the Gemini settings to".to_string())?;
+
+            merge_gemini_oauth(&path)?;
+
+            Ok(Some(path.display().to_string()))
+        }
+    }
+}
+
+/// Sets `security.auth.selectedType` to `oauth-personal`, keeping every other key the file has.
+///
+/// Merging rather than overwriting matters: this is the user's Gemini CLI configuration, which also
+/// holds their theme, their MCP servers and their trusted folders.
+pub fn merge_gemini_oauth(path: &std::path::Path) -> Result<(), String> {
+    let mut settings: Value = std::fs::read_to_string(path)
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_else(|| json!({}));
+
+    let Some(root) = settings.as_object_mut() else {
+        return Err(format!("{} is not a JSON object, so it was left alone", path.display()));
+    };
+
+    let security = root.entry("security").or_insert_with(|| json!({}));
+    let Some(security) = security.as_object_mut() else {
+        return Err(format!("security in {} is not an object, so it was left alone", path.display()));
+    };
+
+    let auth = security.entry("auth").or_insert_with(|| json!({}));
+    let Some(auth) = auth.as_object_mut() else {
+        return Err(format!("security.auth in {} is not an object, so it was left alone", path.display()));
+    };
+
+    auth.insert("selectedType".to_string(), json!("oauth-personal"));
+
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| format!("{}: {error}", parent.display()))?;
+    }
+
+    let text = serde_json::to_string_pretty(&settings).map_err(|error| error.to_string())?;
+
+    std::fs::write(path, text).map_err(|error| format!("{}: {error}", path.display()))
 }
 
 /// The three subscription providers, as data.
 ///
-/// `codex` takes a subcommand; `claude` and `gemini` put login behind their own prompt, so the daemon
-/// types the command for the user (`/login`, and the menu's first choice). If a CLI changes any of
-/// this, this table is the only thing that has to change - and the raw output the UI shows is what
-/// tells you it has.
+/// Two of these were corrected against the real CLIs (`_verify/cli-logins.mjs`, and the version strings
+/// reported by `cli.recipes`):
+///
+///   * **Claude Code has a subcommand.** `claude auth login` signs in without a terminal, and that is
+///     what this uses. The first version pumped `/login` into an interactive session instead, which
+///     needs a TTY: over the daemon's pipes the CLI printed nothing, so the flow sat at
+///     `waiting_for_url` forever with no URL to show;
+///   * **Codex prints two URLs** (its own callback server, then the approval page) - `extract_url` now
+///     prefers the `https://` one and trims the sentence's full stop.
+///
+/// `codex login` was already right. Gemini's recipe is the honest one: its first run asks how to sign
+/// in, and that menu needs a terminal, so the note says what the user has to do once.
 pub const RECIPES: &[LoginRecipe] = &[
     LoginRecipe {
         provider_id: "claude",
         label: "Claude Code",
         program: "claude",
-        args: &[],
-        pump: &["/login"],
+        args: &["auth", "login"],
+        pump: &[],
         success: &["successfully logged in", "login successful", "logged in as", "you are now logged in"],
         note: "Claude Code opens the approval page itself; the link is also printed here so it can be copied.",
+        prepare: Prepare::Nothing,
     },
     LoginRecipe {
         provider_id: "openai",
@@ -73,15 +157,21 @@ pub const RECIPES: &[LoginRecipe] = &[
         pump: &[],
         success: &["successfully logged in", "login successful", "authenticated"],
         note: "Codex waits for its browser callback; if the browser cannot reach it, paste the code from the page instead.",
+        prepare: Prepare::Nothing,
     },
     LoginRecipe {
         provider_id: "gemini",
         label: "Gemini",
         program: "gemini",
-        args: &[],
-        pump: &["1"],
+        /* `--skip-trust`: without it Gemini CLI stops at its trusted-folder question before it reaches
+           any sign-in, because the daemon drives it through pipes rather than a terminal. The flag is
+           scoped to this one process, and the process exists to open a login page - it does not run a
+           model action. */
+        args: &["--skip-trust"],
+        pump: &[],
         success: &["successfully logged in", "login successful", "authenticated", "signed in"],
-        note: "Gemini asks how to sign in first; the daemon answers with the browser option, which is the first choice.",
+        note: "Gemini CLI asks how to sign in the first time it runs, and that menu needs a terminal. SDC writes `security.auth.selectedType = oauth-personal` (Gemini's own name for Login with Google) into `~/.gemini/settings.json` so the browser sign-in can run here; the CLI's own menu can change it back.",
+        prepare: Prepare::GeminiOauth,
     },
 ];
 
@@ -90,13 +180,41 @@ pub fn recipe(provider_id: &str) -> Option<&'static LoginRecipe> {
     RECIPES.iter().find(|recipe| recipe.provider_id == provider_id)
 }
 
-/// The first URL in some output. A login page is the only URL a CLI prints on purpose, and the first
-/// one wins because a later address is usually the redirect that already carried the code.
+/// The login URL in some output.
+///
+/// Two rules, both learned by running the real CLIs:
+///
+///   * **an `https://` page wins over `http://localhost`.** Codex prints both - first the callback
+///     server it just started (`http://localhost:1455`), then the page the *user* has to open
+///     (`https://auth.openai.com/oauth/authorize?...`). "The first URL wins" showed the user the
+///     callback server, which is useless to them. A loopback address is still shown when it is all the
+///     CLI printed (it is the browser's landing page); a plain `http://` page on a *remote* host never
+///     is - that would be a login page over an unencrypted link;
+///   * **sentence punctuation is not part of a URL.** The line reads `Starting local login server on
+///     http://localhost:1455.` and the copy button handed over `http://localhost:1455.` - a link that
+///     does not resolve. Trailing `.`, `,`, `;`, `:`, `!`, `?` and closing brackets/quotes are trimmed
+///     repeatedly. (A URL ending in a media filename would lose its extension here. That is a trade
+///     this function can make: its contract is "the CLI's login page", and no login page ends in
+///     `.png`.)
 pub fn extract_url(text: &str) -> Option<String> {
-    text.split_whitespace()
-        .map(|token| token.trim_matches(|character: char| "()[]<>,;\"'".contains(character)))
-        .find(|token| token.starts_with("https://") || token.starts_with("http://localhost"))
-        .map(str::to_string)
+    let candidates: Vec<String> = text
+        .split_whitespace()
+        .filter_map(|token| {
+            let trimmed = token.trim();
+
+            if !trimmed.starts_with("https://") && !trimmed.starts_with("http://") {
+                return None;
+            }
+
+            Some(trimmed.trim_end_matches(['.', ',', ';', ':', '!', '?', ')', ']', '}', '"', '\'']).to_string())
+        })
+        .collect();
+
+    candidates
+        .iter()
+        .find(|candidate| candidate.starts_with("https://"))
+        .or_else(|| candidates.iter().find(|candidate| candidate.starts_with("http://localhost")))
+        .cloned()
 }
 
 /// True when the CLI said it finished. Matched case-insensitively against the whole tail, because the
@@ -342,6 +460,30 @@ pub fn extract_code(input: &str) -> Option<String> {
 mod tests {
     use super::*;
     use std::sync::Arc;
+
+    /// The URL the user is shown, from the output the real CLIs print.
+    ///
+    /// The first assertion is Codex verbatim (trimmed): it starts a callback server and prints that
+    /// address first, then the page to open. Before this rule the app offered
+    /// `http://localhost:1455.` - the callback server, with the sentence's full stop attached.
+    #[test]
+    fn the_login_page_wins_over_a_callback_server_and_loses_the_full_stop() {
+        let codex = "Starting local login server on http://localhost:1455.\n\n\
+                     If your browser did not open, navigate to this URL to authenticate:\n\n\
+                     https://auth.openai.com/oauth/authorize?response_type=code&state=abc\n";
+
+        assert_eq!(
+            extract_url(codex).as_deref(),
+            Some("https://auth.openai.com/oauth/authorize?response_type=code&state=abc")
+        );
+
+        assert_eq!(
+            extract_url("Starting local login server on http://localhost:1455.").as_deref(),
+            Some("http://localhost:1455")
+        );
+
+        assert_eq!(extract_url("no link here at all"), None);
+    }
 
     /// A stand-in CLI: prints a URL, waits for one line on stdin, then announces success. It is the
     /// whole login mechanism in three lines, and it runs on any machine - which is the point, because

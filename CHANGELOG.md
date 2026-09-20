@@ -15,6 +15,74 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [0.5.2] — the white box, the stray focus ring, and three CLIs that could not be found
+
+Three defects, all of them visible in one screenshot of the installed 0.5.1 build.
+
+### Fixed — a white rectangle in a dark window
+
+The sidebar's `Filter chats…` field painted **solid white** (`background-color: rgb(255, 255, 255)`,
+measured over CDP) inside its own dark rounded wrapper. The cause is one of those things a stylesheet
+has to say out loud: an `<input>` with no background of its own gets the platform's *field* style, and
+the component simply had no `bg-` class. The prompt box's textarea had a second, related artefact - a
+2px blue ring drawn by the engine on top of the design's own focus ring.
+
+* `styles/globals.css` now declares the token system as the default for `input`, `textarea` and
+  `select`: no background of their own (a field is a hole in the surface it sits on), `appearance: none`,
+  the token placeholder colour, and `color-scheme: dark` (light under `[data-theme="light"]`) so the
+  caret and the engine's own widgets follow the theme. The UA outline is replaced by the design's ring -
+  `.search-wrap` and `.prompt-box` already ring on `focus-within`, and the modal fields on
+  `focus:border-border-focus`.
+* `panels/sidebar/Sidebar.tsx` says `bg-transparent` where a reader is looking.
+* **Two new gates in `scripts/smoke-bundle.mjs`**, measured in a real browser: *every form control is
+  painted by a token* (no control may paint its own background) and *keyboard focus is visible* (focusing
+  the first control must change the paint). Both were proved by taking the fix away: the smoke then
+  failed with `input#sidebarSearch [216x18] bg=rgb(59,59,59)` and exit 1.
+
+### Fixed — the daemon could not find a CLI installed by npm
+
+`claude`, `codex` and `gemini` were installed (npm, global) and ran in any terminal, and the daemon
+reported all three as **not installed**: the Provider Hub said "install it", the doctor's row said
+`fail`, and `engine.start` answered with the missing-program sentence. Every subscription provider was
+unreachable on Windows while the user's own shell ran them fine.
+
+Two reasons, both in `std::process::Command`'s rules rather than in the CLIs:
+
+* npm installs a **`.cmd` shim** on Windows; `Command::new("claude")` looks for `claude.exe` and gives up;
+* npm also writes an **extensionless `claude`** (a POSIX shell script) beside it, and starting *that*
+  fails with `os error 193, %1 is not a valid Win32 application` - so the resolver must try the
+  extensions **first**, the way `cmd.exe` and PowerShell do.
+
+`host/program.rs` (new) resolves a name the way the platform's shell does, and wraps a batch file in
+`cmd.exe /c`, which `CreateProcess` requires. It is used by the doctor, the engines and `pty.open` -
+i.e. by every place that starts a program. Measured after the change: `cli.recipes` answers
+`installed=true` for all three.
+
+### Fixed — two recipes were wrong for the real CLIs
+
+With the CLIs finally reachable, the login flows were driven for real (`_verify/cli-logins.mjs`,
+which runs the daemon and asks each CLI to sign in). Three findings:
+
+* **Claude Code has a subcommand**: `claude auth login` signs in without a terminal. The recipe pumped
+  `/login` into an interactive session instead, which needs a TTY - over the daemon's pipes the CLI
+  printed nothing and the flow sat at `waiting_for_url` with no URL to show. Now it answers
+  `waiting_for_code` with `https://claude.com/cai/oauth/authorize?…`;
+* **Codex prints two URLs** - its own callback server (`http://localhost:1455.`, sentence full stop
+  included) and then the approval page. `extract_url` now prefers the `https://` page and trims
+  sentence punctuation, so the link the user copies is
+  `https://auth.openai.com/oauth/authorize?…`;
+* **Gemini CLI needs an auth method before it will start a sign-in** ("Please set an Auth method in
+  your settings.json"). The daemon now performs a `prepare` step for that recipe: it merges
+  `security.auth.selectedType = "oauth-personal"` (Gemini's own name for *Login with Google*, read out
+  of the installed package) into `~/.gemini/settings.json`, keeping every other key the file has, and
+  answers `prepared: <path>` so the modal can say what it wrote. `gemini --skip-trust` is passed too,
+  because its trusted-folder question blocks a piped run before the sign-in.
+
+**Where each one stands after the change** (measured, `_verify/cli-logins.txt`): `claude` and `openai`
+reach `waiting_for_code` with their real approval URLs; `gemini` now starts and reaches
+`waiting_for_url`. Completing a sign-in needs the account holder in a browser - that part is not
+mine to do, and the daemon never touches the credential the CLI writes.
+
 ## [0.5.1] — the daemon claimed three providers nobody had signed in to
 
 0.5.0 removed the demo from the window. Then the window was asked for the provider list, and the answer

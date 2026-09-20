@@ -44,6 +44,60 @@
 }
 
 /* ---------------------------------------------------------------------------
+ * Form controls, and the browser's idea of what one looks like
+ *
+ * WebView2, like every engine, paints `input` and `textarea` with the platform's
+ * *field* style unless a stylesheet says otherwise: an opaque white box with a
+ * grey hairline, whatever the page around it looks like. That is exactly what
+ * shipped in 0.5.1 - the sidebar's `Filter chats…` input had no background
+ * class of its own, so it drew a solid white rectangle
+ * (`background-color: rgb(255, 255, 255)`, measured) inside an otherwise dark
+ * rounded wrapper. A component forgetting a class must not be able to produce a
+ * light box in a dark theme, so the default is now the token system's:
+ *
+ *   - no background of their own: a control is a hole in the surface it sits on,
+ *     and the wrapper (or a `bg-bg-input` utility) paints what you see;
+ *   - the design's own 2px focus ring instead of the UA's outline, which used to
+ *     draw a *second* bright ring inside a focused prompt box;
+ *   - `color-scheme` so the caret, the scrollbars and any autofill UI follow the
+ *     theme rather than the OS.
+ * ------------------------------------------------------------------------ */
+
+:root {
+  color-scheme: dark;
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+}
+
+@layer base {
+  input,
+  textarea,
+  select {
+    font: inherit;
+    color: var(--text-primary);
+    /* regression proof: the reset is off */
+    border: 0;
+    border-radius: 0;
+    outline: none;
+    appearance: none;
+    caret-color: var(--accent);
+  }
+
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--text-muted);
+    opacity: 1;
+  }
+
+  /* Search fields draw their own clear button in WebKit; the design has none. */
+  input[type="search"]::-webkit-search-cancel-button {
+    appearance: none;
+  }
+}
+
+/* ---------------------------------------------------------------------------
  * Component classes (spec section 4.1: Tailwind, configured - not styled-components)
  *
  * Panels are written with utility classes. These three are the exceptions, because
