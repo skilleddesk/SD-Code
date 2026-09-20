@@ -89,7 +89,31 @@ impl Daemon {
             "pty.write" => self.pty_write(envelope),
             "pty.resize" => Ok(json!({})),
             "pty.close" => self.pty_close(envelope),
+            "pty.output" => self.pty_output(envelope),
             "shell.run" => self.shell_run(envelope, &*out),
+
+            /* Signing a CLI in from the app: the daemon drives the CLI's own login and never sees the
+               credential (spec sections 9.10, 15.1). */
+            "cli.login" => self.cli_login_start(envelope, &*out),
+            "cli.login.status" => self.cli_login_status(envelope),
+            "cli.login.code" => self.cli_login_code(envelope, &*out),
+            "cli.login.cancel" => self.cli_login_cancel(envelope),
+            "cli.recipes" => Ok(json!({
+                "recipes": crate::auth::cli_login::RECIPES
+                    .iter()
+                    .map(|recipe| json!({
+                        "providerId": recipe.provider_id,
+                        "label": recipe.label,
+                        "program": recipe.program,
+                        "note": recipe.note,
+                        "installed": crate::host::doctor::has(recipe.program),
+                    }))
+                    .collect::<Vec<_>>()
+            })),
+
+            /* The model catalogue: live, cached or bundled, and never needing a code change. */
+            "models.list" => self.models_list(envelope, &*out),
+            "models.select" => self.models_select(envelope, &*out),
 
             /* Providers ------------------------------------------------------------------------ */
             "provider.list" => Ok(json!({ "providers": providers::list(self.store()) })),
@@ -493,6 +517,131 @@ impl Daemon {
         let pty_id = envelope.require_str("ptyId")?;
 
         Ok(json!({ "closed": self.state.pty.close(&pty_id) }))
+    }
+
+    /// `pty.output`: the tail of a long-running process, and whether it is still alive.
+    fn pty_output(&self, envelope: &Envelope) -> Result<Value, ErrorObject> {
+        self.state.pty.output(&envelope.require_str("ptyId")?)
+    }
+
+    /// `cli.login`: start the CLI's own sign-in and put its URL in front of the user.
+    ///
+    /// The answer arrives immediately with a `loginId`; the URL is what `cli.login.status` reports a
+    /// moment later, because a CLI prints it once its screen is drawn. `program`/`args`/`pump` are the
+    /// escape hatch: they let the flow be pointed at any CLI, which is also how the mechanism is tested
+    /// without Claude installed.
+    fn cli_login_start(&self, envelope: &Envelope, out: &dyn Notifier) -> Result<Value, ErrorObject> {
+        let provider_id = envelope.require_str("providerId")?;
+        let args = envelope
+            .params
+            .get("args")
+            .and_then(Value::as_array)
+            .map(|args| args.iter().filter_map(Value::as_str).map(str::to_string).collect());
+        let pump = envelope
+            .params
+            .get("pump")
+            .and_then(Value::as_array)
+            .map(|lines| lines.iter().filter_map(Value::as_str).map(str::to_string).collect());
+        let started = self.state.logins.start(
+            &provider_id,
+            envelope.opt_str("program").as_deref(),
+            args,
+            pump,
+        )?;
+
+        out.push(
+            event::provider_status(json!({
+                "id": provider_id,
+                "status": "connecting",
+                "detail": "signing in through the CLI",
+            })),
+            None,
+            None,
+        );
+
+        Ok(started)
+    }
+
+    /// `cli.login.status`: the URL, the CLI's own output, and where the sign-in has got to.
+    fn cli_login_status(&self, envelope: &Envelope) -> Result<Value, ErrorObject> {
+        self.state.logins.status(&envelope.require_str("loginId")?)
+    }
+
+    /// `cli.login.code`: hand the pasted code to the CLI. The daemon passes it through and keeps
+    /// nothing - the credential is written by the CLI, in the CLI's own store.
+    fn cli_login_code(&self, envelope: &Envelope, out: &dyn Notifier) -> Result<Value, ErrorObject> {
+        let login_id = envelope.require_str("loginId")?;
+        let submitted = self.state.logins.submit_code(&login_id, &envelope.require_str("code")?)?;
+        let status = self.state.logins.status(&login_id)?;
+
+        /* The provider card follows the login: `connecting` while the page is open, `connected` the
+           moment the CLI says it signed in. The card is folded from this event, so a UI that reloads
+           mid-login still ends up right. */
+        out.push(
+            event::provider_status(json!({
+                "id": status["providerId"],
+                "status": if status["authenticated"] == Value::Bool(true) { "connected" } else { "connecting" },
+                "detail": if status["authenticated"] == Value::Bool(true) {
+                    "signed in through the CLI"
+                } else {
+                    "waiting for the CLI to confirm"
+                },
+            })),
+            None,
+            None,
+        );
+
+        Ok(submitted)
+    }
+
+    fn cli_login_cancel(&self, envelope: &Envelope) -> Result<Value, ErrorObject> {
+        self.state.logins.cancel(&envelope.require_str("loginId")?)
+    }
+
+    /// `models.list`: what the providers have, from the provider when it can be reached, from the cache
+    /// when it cannot, and from the bundle underneath both.
+    fn models_list(&self, envelope: &Envelope, out: &dyn Notifier) -> Result<Value, ErrorObject> {
+        let refresh = envelope.opt_bool("refresh");
+        let listed = crate::providers::models::list(
+            self.store(),
+            envelope.opt_str("providerId").as_deref(),
+            refresh,
+        )?;
+
+        if refresh {
+            let notes = listed["notes"].as_array().cloned().unwrap_or_default();
+
+            out.push(
+                event::registry_loaded(listed["models"].clone()),
+                None,
+                None,
+            );
+
+            if !notes.is_empty() {
+                out.push(
+                    event::toast(
+                        &format!(
+                            "Model list refreshed · {} {} from the bundle",
+                            listed["snapshot"].as_str().unwrap_or("?"),
+                            "rows"
+                        ),
+                        None,
+                        None,
+                    ),
+                    None,
+                    None,
+                );
+            }
+        }
+
+        Ok(listed)
+    }
+
+    /// `models.select`: record the chosen model. A setting, not an event - see `providers::models`.
+    fn models_select(&self, _envelope: &Envelope, _out: &dyn Notifier) -> Result<Value, ErrorObject> {
+        let model_id = _envelope.require_str("modelId")?;
+
+        crate::providers::models::select(self.store(), &model_id, _envelope.opt_str("providerId").as_deref())
     }
 
     /// `shell.run`: one command, run to completion, with its output captured and its failure

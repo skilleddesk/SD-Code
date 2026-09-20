@@ -77,11 +77,18 @@ and the append-only event log.
 2. **Check the environment.** Settings → Environment (**F1** shows every shortcut). The doctor's ten
    rows are live: Node, Claude Code CLI, Codex, Gemini, Ollama, ripgrep, port 3000, disk, git, ssh.
    Anything missing has an **Install** button and a sentence saying what it is for.
-3. **Connect an engine.** Provider Hub → pick one of the nine. A subscription provider uses your own
-   CLI login; an API key is written to the OS keychain (or the documented file fallback) and never to
-   the database. **Test** says what it actually did: `verified` is `true` only when the provider was
-   really contacted, which for an `https://` endpoint is not possible yet — see *What is deliberately
-   absent* in `sdc/README.md`. Ollama is the local engine, and it works end to end today.
+3. **Connect an engine.** Provider Hub → pick one of the nine.
+   *A subscription* (Claude Code, Codex, Gemini) opens **Connect → Sign in**: SDC starts the CLI's own
+   login, shows the link with a copy button, and takes the code you paste back. The credential is
+   written by the CLI, never by SDC, and the CLI's own output is shown underneath so a stale recipe is
+   visible. The daemon reports whether the CLI is installed at all (`cli.recipes`), so a missing
+   `claude` says "install it first" instead of failing mysteriously.
+   *An API provider* opens **Connect → API key and model**: the key goes to the keychain, then
+   **Load models** / **Refresh** lists what the provider offers. Every row says where it came from —
+   `live` (the provider answered just now), `cached` (its last answer) or `bundled` (shipped with this
+   build) — and **Use** records your choice. A model the provider has that this build never heard of
+   still appears, so nothing has to be added to the code when a new version ships.
+   Ollama is the local engine and works end to end today.
 4. **Ask for something.** Type in the prompt area and press **Enter**. The turn streams: thinking,
    tool calls, the answer. A mutating step writes a checkpoint *before* it runs, so
    **Time Machine → Rewind** (or `Ctrl+Z` in that tab) puts the files and the conversation back.

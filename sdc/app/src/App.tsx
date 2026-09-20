@@ -5,6 +5,7 @@ import { MainArea, RightPanel, Sidebar, StatusBar, Topbar } from './layout/Shell
 import { useResponsiveShell } from './layout/useShellLayout';
 import { useKeys } from './hooks/useKeys';
 import { AddHost } from './modals/AddHost';
+import { Connect } from './modals/Connect';
 import { HostSwitcherPopover } from './modals/HostSwitcherPopover';
 import { Permission } from './modals/Permission';
 import { ProviderHub } from './modals/ProviderHub';
@@ -92,6 +93,7 @@ export function App() {
       <Settings />
       <AddHost />
       <Permission />
+      <Connect />
 
       <Toast />
     </>

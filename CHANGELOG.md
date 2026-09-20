@@ -8,6 +8,56 @@ what `host.status` reports as the daemon's version.
 This file describes what changed, not what is planned. Anything still open is named in
 [`sdc/README.md` → What is deliberately absent](sdc/README.md#what-is-deliberately-absent).
 
+## [0.4.3] — signing in from the app, and a model list that stays current
+
+Two features, and both come from the same question: what does a person actually have to *do* before SDC
+can help them? Sign in to a CLI, or paste an API key and pick a model. Both now happen in the app.
+
+### Added — signing a CLI in, from the app
+
+* **`cli.login` / `.status` / `.code` / `.cancel` / `cli.recipes`.** The daemon starts the CLI's own
+  sign-in, reads the URL it prints, and hands back the code the user pastes - so the link is copied
+  from a field in SDC instead of fished out of a terminal. Three properties make it honest rather than
+  clever:
+  * **the recipes are data** (`auth::cli_login::RECIPES`): a CLI that changes its login command is a
+    row, not a code change, and `cli.recipes` reports whether each one is even installed;
+  * **nothing is auto-opened** and **nothing is stored**: the URL is shown and copied, and the code
+    goes to the CLI's stdin. SDC never sees the credential - the CLI writes it to its own store;
+  * **the CLI's own output is passed through** (`pty.output`, the new tail method), so a recipe that
+    has gone stale is visible in the UI instead of silently failing.
+* **`pty.output`** - the output tail of a long-running process. `pty.open` used to be fire-and-forget:
+  a process you cannot read is a process you cannot drive, and a login URL is exactly the thing that
+  would be stuck in an unread pipe.
+* **The Connect modal** (`app/src/modals/Connect.tsx`), opened from a provider card: a copy button, an
+  open-in-browser link, a paste-code box, and the CLI's live output underneath.
+
+### Added — the model catalogue as data
+
+* **`models.list` / `models.select`, and `protocol/models.json`.** A row's `source` says where it came
+  from - `live` (the provider answered just now), `cache` (its last answer, kept in SQLite with a
+  timestamp) or `bundled` (shipped with this build) - because "always up to date" is a claim worth
+  showing rather than asserting. `Refresh` asks the provider again; a refresh that cannot reach it
+  says so in `notes` and **keeps the list**.
+* **A model a provider has that this build has never heard of is still listed**, with its price left
+  empty rather than guessed. No code change is needed when a provider ships a new model: that is the
+  point of the design, and the catalogue itself is a JSON file rather than a table in the source.
+* The Connect modal's API half: the key, `Save`, `Refresh`, the list with its source badges, and
+  `Use` to record the choice (a setting, not an event - which model is *selected* is a UI preference).
+* The browser's in-process daemon answers the same shapes and says plainly, in its `note`, that it is
+  the bundle and that a tab cannot drive a CLI.
+
+### Verified
+
+* 91 daemon tests (86 unit + 5 VCR), clippy clean, typecheck/lint/build/test clean.
+* **43/43 live smoke checks**, including the sign-in mechanism driven end to end through a stand-in
+  CLI (URL found → code pasted → `authenticated`), the catalogue's sources, and a failed refresh that
+  explains itself.
+* The sign-in recipes are **not** exercised against the real `claude`/`codex`/`gemini` on this machine:
+  none of the three is installed here, and the doctor says so. What is proved is the daemon's half -
+  the stand-in CLI in the tests behaves like the real ones (prints a URL, waits for a line, announces
+  success). The recipes are one table to correct if a CLI changes; the output the UI shows is what
+  tells you.
+
 ## [0.4.2] — the execute step, and installers for every platform
 
 ### Added

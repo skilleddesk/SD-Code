@@ -422,6 +422,61 @@ export const strings = {
     offline: 'sdcd did not answer · the daemon is not running',
   },
 
+  /**
+   * The Connect modal - the two flows that get a user working (spec section 9.10).
+   *
+   * `login` is the CLI's own sign-in, driven from here: the daemon starts the CLI, shows the URL it
+   * prints, and hands back the code that gets pasted in. `api` is an API key plus the model to use it
+   * with, and the model list says where each row came from so "up to date" is visible.
+   */
+  connect: {
+    title: 'Connect',
+    loginTitle: 'Sign in with the CLI',
+    loginBody:
+      'This starts the CLI’s own sign-in. Approve the page in your browser, then paste the code it shows back here — the credential is written by the CLI, never by SDC.',
+    signIn: 'Sign in',
+    cancel: 'Cancel',
+    copyLink: 'Copy link',
+    copied: 'Link copied',
+    openLink: 'Open in browser',
+    waiting: 'Waiting for the CLI…',
+    waitingForCode: 'Approve the page, then paste the code below.',
+    codeLabel: 'Code from the page',
+    codePlaceholder: 'Paste the code or the whole redirect URL',
+    submitCode: 'Submit code',
+    authenticated: 'Signed in',
+    authenticatedBody: 'The CLI is signed in. The card now says connected.',
+    finished: 'The CLI finished — read its own output below to see how it went.',
+    failed: 'The sign-in stopped before it finished.',
+    outputTitle: 'The CLI’s own output',
+    outputEmpty: 'Nothing yet.',
+    installFirst: 'That CLI is not installed yet. Settings → Environment has the row with the install step.',
+    loginFailed: 'Could not start the sign-in',
+    codeFailed: 'The CLI did not take that code',
+    apiTitle: 'API key and model',
+    apiBody: 'Paste the key, then load the models the provider lists and pick the one to use.',
+    loadModels: 'Load models',
+    refreshModels: 'Refresh',
+    modelsTitle: 'Models',
+    modelsEmpty: 'No models yet — press Load models.',
+    modelsSnapshot: (date: string) => `Bundled list · snapshot ${date}`,
+    source: {
+      live: 'live',
+      cache: 'cached',
+      bundled: 'bundled',
+    },
+    sourceHelp: {
+      live: 'the provider answered just now',
+      cache: 'the last answer from the provider',
+      bundled: 'shipped with this build',
+    },
+    selected: 'In use',
+    use: 'Use',
+    modelsFailed: 'Could not load the models',
+    modelFailed: 'Could not record that model',
+    context: (ctx: number) => `${Math.round(ctx / 1000)}K context`,
+  },
+
   /** Toast stack - spec section 9.14. */
   toast: {
     dismiss: 'Dismiss',
@@ -849,8 +904,8 @@ export const strings = {
       title: 'About',
       desc: 'Version and diagnostic information.',
       rows: [
-        { label: 'SDC App', value: 'v0.4.2' },
-        { label: 'sdcd daemon', value: 'v0.4.2' },
+        { label: 'SDC App', value: 'v0.4.3' },
+        { label: 'sdcd daemon', value: 'v0.4.3' },
         { label: 'SDCP protocol', value: '0.1' },
       ],
       /** `This host` is filled in from the event log's `HostStatus`, not hardcoded. */
@@ -928,9 +983,11 @@ export const strings = {
     /** `ollama list`, as the Local flow reports it. */
     ollamaModels: ['llama3.2:3b', 'mistral:7b'],
     hostPlatform: 'macOS 15.1 · arm64',
-    sdcdVersion: '0.4.2',
+    sdcdVersion: '0.4.3',
     /** Spec section 9.10's `Test connection` answer: twelve models behind a valid key. */
     testModelCount: 12,
+    /** The day the bundled catalogue was last curated; the daemon reports the same thing. */
+    modelSnapshot: '2026-09-20',
     /** The tip toast the prototype raises 1.4s after load. */
     tip: 'Tip: click the plug icon to connect Claude, OpenAI, Gemini, or Ollama',
     tipAction: 'Got it',

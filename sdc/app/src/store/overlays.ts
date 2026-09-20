@@ -57,6 +57,14 @@ export interface OverlayState {
   permissionOpen: boolean;
   /** The F1 keyboard reference (spec section 9.1). */
   keymapOpen: boolean;
+  /**
+   * The Connect modal (spec section 9.10): `login` drives a CLI's own sign-in, `api` takes a key and
+   * picks the model to use it with. Which provider it is about is part of the state, because the
+   * modal is opened *from* a provider card rather than from the nav.
+   */
+  connectOpen: boolean;
+  connectProviderId: string | null;
+  connectMode: 'login' | 'api';
   /** Non-null while the host switcher is up, carrying the point it hangs from. */
   hostSwitcher: Anchor | null;
   /** Non-null while the New chat popover is up. */
@@ -79,6 +87,9 @@ export interface OverlayActions {
   closePermission: () => void;
   openKeymap: () => void;
   closeKeymap: () => void;
+  /** A provider card's Connect button: `login` for a subscription, `api` for a key and a model. */
+  openConnect: (providerId: string, mode: 'login' | 'api') => void;
+  closeConnect: () => void;
   openHostSwitcher: (anchor: Anchor) => void;
   closeHostSwitcher: () => void;
   openNewChat: (anchor: Anchor) => void;
@@ -97,6 +108,9 @@ const initialOverlayState: OverlayState = {
   addHostOpen: false,
   permissionOpen: false,
   keymapOpen: false,
+  connectOpen: false,
+  connectProviderId: null,
+  connectMode: 'api',
   hostSwitcher: null,
   newChat: null,
 };
@@ -131,6 +145,10 @@ export const useOverlayStore = create<OverlayState & OverlayActions>()((set) => 
   openKeymap: () => set({ keymapOpen: true }),
 
   closeKeymap: () => set({ keymapOpen: false }),
+
+  openConnect: (providerId, mode) => set({ connectOpen: true, connectProviderId: providerId, connectMode: mode }),
+
+  closeConnect: () => set({ connectOpen: false, connectProviderId: null }),
 
   openHostSwitcher: (anchor) => set({ hostSwitcher: anchor, newChat: null }),
 

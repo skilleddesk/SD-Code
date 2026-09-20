@@ -212,7 +212,17 @@ function ProviderCards({ providers, onConnect }: ProviderCardsProps) {
         'prov-card flex flex-col gap-[8px] rounded-lg border bg-bg-raised p-[12px] text-left transition-all duration-fast ease-ease hover:border-border-strong ' +
         (provider.status === 'connected' ? 'border-border-subtle' : 'border-border-default')
       }
-      onClick={() => onConnect(provider.id, provider.kind === 'subscription' ? 'oauth' : provider.kind === 'local' ? 'local' : 'api-key')}
+      onClick={() => {
+        /* A subscription signs in through its CLI, an API provider needs a key and a model: both are
+           the Connect modal's job (spec section 9.10). A local provider is the two doctor rows, which
+           stay in the card's own inline flow. */
+        if (provider.kind === 'local') {
+          onConnect(provider.id, 'local');
+          return;
+        }
+
+        useOverlayStore.getState().openConnect(provider.id, provider.kind === 'subscription' ? 'login' : 'api');
+      }}
     >
       <span className="flex items-center gap-[10px]">
         <span

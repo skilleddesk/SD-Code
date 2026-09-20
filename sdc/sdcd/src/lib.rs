@@ -61,6 +61,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 
+use crate::auth::cli_login::LoginManager;
 use crate::console::bridge::ConsoleBridge;
 use crate::engines::EngineRegistry;
 use crate::pty::PtyManager;
@@ -68,7 +69,6 @@ use crate::sdcp::events::EventLog;
 use crate::sdcp::methods::Daemon;
 use crate::sdcp::notifications::Fanout;
 use crate::store::sqlite::Store;
-
 /// The daemon's version, reported by `host.status` and shown in the app's About tab.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -85,6 +85,9 @@ pub struct DaemonState {
     /// The notification subscribers. One registry, because an event belongs to every client that is
     /// listening, not only to the one that asked for it (see `sdcp::notifications`).
     pub fanout: Arc<Fanout>,
+    /// The CLI logins in flight. It holds the process registry, so a login survives the request that
+    /// started it - which is the whole point of a login that waits for a human to approve a page.
+    pub logins: Arc<LoginManager>,
 }
 
 impl DaemonState {
@@ -102,11 +105,14 @@ impl DaemonState {
         let store = Arc::new(Store::open(&path).with_context(|| format!("opening {}", path.display()))?);
         let events = Arc::new(EventLog::hydrate(store.clone())?);
 
+        let pty = Arc::new(PtyManager::new());
+
         Ok(Arc::new(Self {
             store,
             events,
             engines: Arc::new(EngineRegistry::with_defaults()),
-            pty: Arc::new(PtyManager::new()),
+            logins: Arc::new(LoginManager::new(pty.clone())),
+            pty,
             console: Arc::new(ConsoleBridge::new()),
             fanout: Fanout::new(),
         }))

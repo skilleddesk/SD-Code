@@ -6,16 +6,17 @@
 //! | flow          | methods                             | what it writes          |
 //! | ------------- | ----------------------------------- | ----------------------- |
 //! | `api_key`     | `provider.test`, `provider.save`    | keychain entry + row    |
-//! | `subscription`| `provider.oauth.open`, `…callback`  | a recorded state        |
+//! | `subscription`| `cli.login` (this daemon drives the CLI), `provider.oauth.*` | the CLI's own store |
 //! | `local`       | `provider.local.doctor`             | nothing (a read)        |
 //! | `custom`      | `provider.save` with a url          | row with url + protocol |
-//! | `registry`    | `provider.registry.list`, `…set`    | `models.enabled`        |
+//! | `registry`    | `models.list`, `models.select`, `provider.registry.*` | the model cache + a setting |
 //! | `doctor`      | `host.doctor`                       | nothing (a read)        |
 //!
-//! The subscription flow stops at the token step on purpose: the plan's spec section 15 says provider
-//! OAuth lands in a later step, so `oauth_callback` records the state and says so rather than
-//! inventing a token that would fail somewhere stranger. Everything else is real, including the
-//! keychain write.
+//! The subscription flow is honest about who owns the credential: the **CLI** does. `provider.oauth.*`
+//! reports that a token exchange is not wired, and the real path - `auth::cli_login` - drives the CLI's
+//! own login and hands back only the code the user pasted. Nothing here ever sees a token.
+
+pub mod models;
 
 use std::sync::Arc;
 
