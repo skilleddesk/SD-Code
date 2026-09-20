@@ -6,7 +6,7 @@ import { useDaemonStore } from './daemon';
 import { useModelStore, tierName } from './model';
 import { useOverlayStore } from './overlays';
 import { usePrefsStore } from './prefs';
-import { withWorkspace } from './reducer';
+import { withProviders, withWorkspace } from './reducer';
 import { selectActiveSession, dispatch, useAppStore } from './store';
 
 /**
@@ -65,18 +65,20 @@ export async function connectDaemon(): Promise<boolean> {
     await sdcpCall('host.status', {});
 
     /*
-     * And the provider list, which nothing used to ask for.
+     * And the provider list, which 0.6.0 asked for and 0.6.1 finally keeps.
      *
-     * `provider.list` is what pushes the `ProviderStatus` events the Provider Hub, the topbar's plug
-     * and the status bar are built from (`store/providers.ts`). Without this call the Hub was **empty
-     * on every launch** - so the one screen that signs a CLI in (`Connect` → `cli.login`, the flow
-     * that makes Claude Code usable) could not be reached from the UI at all. The events the daemon
-     * pushes here are the same ones a save or a login produces, so there is no second code path.
+     * `provider.list` pushes nothing - the daemon answers with the cards and appends no event - so
+     * calling it was only half the job: the Hub, the topbar's plug and the status bar all read the
+     * event log's fold, and that fold stayed empty, which is why the connect screen drew
+     * `0 connected · None yet` next to a daemon that knew about eleven providers. The answer is folded
+     * here, the way `session.list`'s is, because a list is a read's result and not a stream of events.
      *
      * A failure is not fatal: the window keeps working with an empty provider list, and the toast has
      * already said the daemon is not answering.
      */
-    await sdcpCall('provider.list', {});
+    const { providers } = await sdcpCall('provider.list', {});
+
+    useAppStore.setState((state) => withProviders(state, providers));
 
     /*
      * And the list the window used to lose on every launch.

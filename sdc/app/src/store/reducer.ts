@@ -1,4 +1,4 @@
-import type { HostRecord, RegistryModel } from '../../../protocol/types';
+import type { HostRecord, ProviderRecord, RegistryModel } from '../../../protocol/types';
 import type {
   AppEvent,
   AppState,
@@ -716,6 +716,45 @@ export function selectPermission(state: AppState): PermissionView | null {
 
 export function selectDoctor(state: AppState, hostId: string | null): DoctorCheckView[] {
   return hostId === null ? [] : (state.doctor[hostId] ?? []);
+}
+
+/**
+ * Records the answer to `provider.list` - the cards the Provider Hub, the topbar's plug and the
+ * status bar's count are built from.
+ *
+ * A state patch rather than a stream of events, for the same reason `withWorkspace` is one: a list is
+ * a *read*'s result, and re-emitting eleven `ProviderStatus` events on every launch would append a
+ * copy of the catalogue to the log each time a window opened.
+ *
+ * This is the missing half of 0.6.0's fix. That release started calling `provider.list` at startup,
+ * which was right, but nothing folded the answer: the daemon replies with the list and appends
+ * nothing, so the Hub drew `0 connected · None yet` while the daemon was answering eleven cards -
+ * "the connect screen is empty", exactly as reported. A read whose result nobody keeps is the same as
+ * no read at all.
+ *
+ * `ProviderStatus` remains the event for a *change* (`provider.save`, a CLI login finishing), so both
+ * paths converge on the same array.
+ */
+export function withProviders(state: AppState, providers: readonly ProviderRecord[]): AppState {
+  return {
+    ...state,
+    providers: providers.map(
+      (provider): ProviderView => ({
+        id: provider.id,
+        name: provider.name,
+        kind: provider.kind,
+        status: provider.status,
+        detail: provider.detail ?? '',
+        account: provider.account ?? null,
+        logo: provider.logo ?? 'custom',
+        initial: provider.initial ?? provider.name.slice(0, 1).toUpperCase(),
+        ...(provider.url === null || provider.url === undefined ? {} : { url: provider.url }),
+        ...(provider.protocol === null || provider.protocol === undefined
+          ? {}
+          : { protocol: provider.protocol }),
+      }),
+    ),
+  };
 }
 
 /**
