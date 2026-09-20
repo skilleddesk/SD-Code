@@ -80,12 +80,54 @@ pub fn registry(disabled: &[String]) -> Vec<Value> {
         .collect()
 }
 
+/// The model-list endpoint that answers "is this key still good", per provider id.
+///
+/// A key's *shape* proves nothing about the key, and 0.6.1 linked a TLS client, so `Test connection`
+/// can mean it now: the key is used for one read-only call and the answer is the provider's own. A
+/// provider that is not listed here is reported as **not contacted** rather than guessed at.
+const KEY_CHECK: &[(&str, &str)] = &[
+    ("anthropic-api", "https://api.anthropic.com/v1/models"),
+    ("openai-api", "https://api.openai.com/v1/models"),
+    ("deepseek", "https://api.deepseek.com/models"),
+    ("groq", "https://api.groq.com/openai/v1/models"),
+    ("openrouter", "https://openrouter.ai/api/v1/models"),
+];
+
+/// The request that checks a key: `(url, headers)`. Pure, so a test can hold the shape.
+///
+/// Anthropic wants its key in `x-api-key` and a version header; every other provider in the table is
+/// OpenAI-compatible, which means a bearer token.
+fn key_check(id: &str, key: &str) -> Option<(String, Vec<(String, String)>)> {
+    let (_, url) = KEY_CHECK.iter().find(|(provider, _)| *provider == id)?;
+
+    let headers = if id == "anthropic-api" {
+        vec![
+            ("x-api-key".to_string(), key.to_string()),
+            ("anthropic-version".to_string(), "2023-06-01".to_string()),
+        ]
+    } else {
+        vec![("authorization".to_string(), format!("Bearer {key}"))]
+    };
+
+    Some((url.to_string(), headers))
+}
+
+/// How many models the provider listed. Both dialects answer `{"data":[ … ]}`.
+fn model_count(body: &str) -> usize {
+    serde_json::from_str::<Value>(body)
+        .ok()
+        .and_then(|value| value.get("data").and_then(Value::as_array).map(Vec::len))
+        .unwrap_or(0)
+}
+
 /// Flow 1's `Test`.
 ///
-/// It is honest about what it did. A key's *shape* is checked locally; the provider is contacted only
-/// where this build can contact it (the local Ollama daemon, and an `http://` endpoint). The answer
-/// says which of the two happened in `verified`, and `detail` spells it out, because a green tick
-/// that means "we never asked the provider" is worse than no tick at all.
+/// It is honest about what it did, and 0.6.1 changed *what it can do*. A key is now used for one
+/// read-only call to the provider's own model list: a key the provider accepts answers with the
+/// models it knows, and a key it rejects answers with its own sentence ("invalid x-api-key (401)"),
+/// which is the only useful thing to show a person who is looking at a field they just filled in.
+/// The answer still says which of the two happened in `verified`, because a green tick that means
+/// "we never asked" is worse than no tick at all.
 pub fn test(id: &str, key: Option<&str>) -> Value {
     let catalog = CATALOG.iter().find(|row| row.0 == id);
     let kind = catalog.map(|row| row.2).unwrap_or("api-key");
@@ -109,25 +151,57 @@ pub fn test(id: &str, key: Option<&str>) -> Value {
 
     let candidate = key.map(str::to_string).or_else(|| keychain::get(&key_ref(id)));
 
-    match candidate {
-        Some(secret) if !secret.trim().is_empty() => json!({
-            "ok": true,
-            "verified": false,
-            "models": MODELS.len(),
-            "detail": format!(
-                "Key accepted (shape checked) · {} models available · the provider was not contacted: no TLS client in this build",
-                MODELS.len()
-            ),
-            "account": keychain::mask(&secret),
-        }),
-        _ => json!({
+    let Some(secret) = candidate.filter(|secret| !secret.trim().is_empty()) else {
+        return json!({
             "ok": false,
             "verified": false,
             "models": 0,
             "detail": "",
             "error": "Enter a key first",
-        }),
+        });
+    };
+
+    if let Some((url, headers)) = key_check(id, &secret) {
+        return match crate::engines::native_api::get_json(&url, &headers) {
+            Ok((status, body)) if (200..300).contains(&status) => {
+                let models = model_count(&body);
+
+                json!({
+                    "ok": true,
+                    "verified": true,
+                    "models": models,
+                    "detail": format!("OK · key valid · {models} models available"),
+                    "account": keychain::mask(&secret),
+                })
+            }
+            Ok((status, body)) => json!({
+                "ok": false,
+                "verified": true,
+                "models": 0,
+                "detail": "",
+                "error": crate::engines::native_api::rejection(status, &body),
+            }),
+            /* Not reachable is a different sentence from rejected: the key was never judged. */
+            Err(reason) => json!({
+                "ok": false,
+                "verified": false,
+                "models": 0,
+                "detail": "",
+                "error": format!("could not reach {url} · {reason}"),
+            }),
+        };
     }
+
+    json!({
+        "ok": true,
+        "verified": false,
+        "models": MODELS.len(),
+        "detail": format!(
+            "Key accepted (shape checked) · {} models in the registry · this provider has no check endpoint, so it was not contacted",
+            MODELS.len()
+        ),
+        "account": keychain::mask(&secret),
+    })
 }
 
 /// The nine provider cards, with whatever the store, the keychain and this machine already know.
@@ -372,6 +446,30 @@ mod tests {
         /* The part that matters: it does not claim the provider was asked. */
         assert_eq!(present["verified"], json!(false));
         assert!(present["detail"].as_str().unwrap().contains("was not contacted"));
+    }
+
+    #[test]
+    fn a_check_request_uses_each_dialects_own_auth_header() {
+        let (url, headers) = key_check("anthropic-api", "sk-ant-1").expect("anthropic-api is checkable");
+
+        assert!(url.starts_with("https://api.anthropic.com/"));
+        assert!(headers.iter().any(|(name, value)| name == "x-api-key" && value == "sk-ant-1"));
+        assert!(headers.iter().any(|(name, _)| name == "anthropic-version"));
+
+        let (url, headers) = key_check("openai-api", "sk-1").expect("openai-api is checkable");
+
+        assert!(url.starts_with("https://api.openai.com/"));
+        assert!(headers.iter().any(|(name, value)| name == "authorization" && value == "Bearer sk-1"));
+
+        /* A provider with no check endpoint is not guessed at. */
+        assert!(key_check("smoke-only-provider", "sk-1").is_none());
+    }
+
+    #[test]
+    fn a_model_list_is_counted_from_either_dialect() {
+        assert_eq!(model_count(r#"{"data":[{},{},{}]}"#), 3);
+        assert_eq!(model_count("not json at all"), 0);
+        assert_eq!(model_count(r#"{"error":{"message":"nope"}}"#), 0);
     }
 
     #[test]

@@ -83,6 +83,17 @@ pub struct SdcpBridge {
     daemon_version: Mutex<Option<String>>,
     /// Set when a daemon of another version was asked to stop and replaced by the app's own.
     restarted: AtomicBool,
+    /// Serializes `connect()`. Two calls can read `connected == false` at the same time - the app's
+    /// first handshake and its first heartbeat do exactly that, since `App.tsx` starts both in the
+    /// same tick - and the loser of that race used to open a **second notification socket**. Every
+    /// event then reached the window twice, so every `SessionOpened` was folded twice and one click
+    /// on `New chat` drew two rows. Holding this for the whole connect is what makes that impossible
+    /// rather than unlikely.
+    connecting: Mutex<()>,
+    /// Whether the notification reader is running. One reader per bridge is the invariant: a second
+    /// one is a second copy of everything the daemon pushes. Cleared by the reader itself when its
+    /// socket ends, so a reconnect subscribes again.
+    subscribed: AtomicBool,
 }
 
 impl SdcpBridge {
@@ -100,6 +111,8 @@ impl SdcpBridge {
             last_seq: AtomicI64::new(0),
             daemon_version: Mutex::new(None),
             restarted: AtomicBool::new(false),
+            connecting: Mutex::new(()),
+            subscribed: AtomicBool::new(false),
         })
     }
 
@@ -120,6 +133,15 @@ impl SdcpBridge {
 /// release's daemon - the one failure mode a user cannot diagnose, because every tool call simply
 /// answers `unknown method`.
 pub async fn connect(app: AppHandle, bridge: Arc<SdcpBridge>) -> Result<Value, String> {
+    if bridge.connected.load(Ordering::SeqCst) {
+        return Ok(status_json(&bridge));
+    }
+
+    /* One connect at a time. The check above is the fast path; this lock is what makes the slow path
+       single: a second caller waits here, then finds the bridge connected and returns without opening
+       anything. Without it, both callers reached the `subscribe()` at the bottom of this function. */
+    let _connecting = bridge.connecting.lock().await;
+
     if bridge.connected.load(Ordering::SeqCst) {
         return Ok(status_json(&bridge));
     }
@@ -309,7 +331,22 @@ pub async fn call(
 
 /// The notification reader. Every envelope with a `seq` is forwarded as `sdcp://event`, in order.
 pub async fn subscribe(app: AppHandle, bridge: Arc<SdcpBridge>) -> Result<(), String> {
-    let stream = TcpStream::connect(bridge.address()).await.map_err(|error| error.to_string())?;
+    /* Idempotent, and that is the point: a second reader is a second copy of every event, so the
+       sidebar would draw two rows for one chat. The flag is cleared by the reader when its socket
+       ends, so the next connect subscribes again. */
+    if bridge.subscribed.swap(true, Ordering::SeqCst) {
+        return Ok(());
+    }
+
+    let stream = match TcpStream::connect(bridge.address()).await {
+        Ok(stream) => stream,
+        Err(error) => {
+            bridge.subscribed.store(false, Ordering::SeqCst);
+
+            return Err(error.to_string());
+        }
+    };
+
     let mut reader = BufReader::new(stream);
     /* The first request on this connection asks for the whole log, so a window that reloads while a
        turn is running catches up instead of starting mid-sentence (spec section 5.4). */
@@ -331,6 +368,7 @@ pub async fn subscribe(app: AppHandle, bridge: Arc<SdcpBridge>) -> Result<(), St
             match reader.read_line(&mut line).await {
                 Ok(0) | Err(_) => {
                     bridge.connected.store(false, Ordering::SeqCst);
+                    bridge.subscribed.store(false, Ordering::SeqCst);
 
                     return;
                 }

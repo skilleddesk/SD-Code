@@ -469,6 +469,7 @@ export const strings = {
     loginBody:
       'This starts the CLI’s own sign-in. Approve the page in your browser, then paste the code it shows back here — the credential is written by the CLI, never by SDC.',
     signIn: 'Sign in',
+    tryAgain: 'Try again',
     cancel: 'Cancel',
     copyLink: 'Copy link',
     copied: 'Link copied',

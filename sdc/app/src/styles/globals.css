@@ -339,10 +339,35 @@
     height: 100%;
   }
 
-  /* Spec sections 8.3 and 8.6: a 2px ring in --border-focus, never `outline: none`. */
+  /*
+   * Spec sections 8.3 and 8.6: a 2px ring in --border-focus, never `outline: none`.
+   *
+   * This is the **keyboard** ring, and it is worth being precise about which controls see it,
+   * because that is what 0.6.1 changed. A button, a row, a link matches `:focus-visible` only when
+   * it was reached by keyboard - a mouse click leaves it alone, so the ring appears exactly when it
+   * is a navigation aid.
+   */
   :focus-visible {
     outline: 2px solid var(--border-focus);
     outline-offset: 1px;
+  }
+
+  /*
+   * A field you type in is the exception, and it is the reason for this second rule.
+   *
+   * Per the CSS spec a text control matches `:focus-visible` on *every* focus, mouse included, so
+   * the ring above was painted around the prompt box, `Filter chats…` and every modal input the
+   * moment the caret landed in one - a bright accent rectangle that follows the cursor around the
+   * window. It is honest as a focus indicator and awful as a keyboard affordance, because the
+   * person looking at it did not press a key. The quiet ring keeps the indicator (the outline still
+   * changes colour on focus, so a keyboard user can see where they are) without the accent box.
+   */
+  input:focus-visible,
+  textarea:focus-visible,
+  select:focus-visible,
+  [contenteditable]:focus-visible {
+    outline: 1px solid var(--border-strong);
+    outline-offset: 0;
   }
 
   /* 10px scrollbar, thumb on --border-default, hover on --border-strong. */

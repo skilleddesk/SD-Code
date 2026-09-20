@@ -96,7 +96,7 @@ export function AddHost() {
               <input
                 type="text"
                 id="sshTarget"
-                className="rounded-md border border-border-default bg-bg-input px-[10px] py-[7px] font-mono text-[12.5px] text-text-primary placeholder:text-text-muted focus:border-border-focus"
+                className="rounded-md border border-border-default bg-bg-input px-[10px] py-[7px] font-mono text-[12.5px] text-text-primary placeholder:text-text-muted focus:border-border-strong"
                 placeholder={strings.addHost.sshTargetPlaceholder}
                 value={target}
                 onChange={(event) => setTarget(event.target.value)}
@@ -110,7 +110,7 @@ export function AddHost() {
               <input
                 type="text"
                 id="sshLabel"
-                className="rounded-md border border-border-default bg-bg-input px-[10px] py-[7px] text-[12.5px] text-text-primary placeholder:text-text-muted focus:border-border-focus"
+                className="rounded-md border border-border-default bg-bg-input px-[10px] py-[7px] text-[12.5px] text-text-primary placeholder:text-text-muted focus:border-border-strong"
                 placeholder={strings.addHost.labelPlaceholder}
                 value={label}
                 onChange={(event) => setLabel(event.target.value)}

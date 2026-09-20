@@ -1263,18 +1263,42 @@ fn probe_ssh(target: &str) -> (String, String) {
         Ok(output) if output.status.success() => {
             ("connected".to_string(), format!("{target} is reachable"))
         }
-        Ok(output) => (
-            "offline".to_string(),
-            format!(
-                "{target} did not answer: {}",
-                first_line(&String::from_utf8_lossy(&output.stderr))
-            ),
-        ),
+        Ok(output) => ("offline".to_string(), ssh_refusal(target, &String::from_utf8_lossy(&output.stderr))),
         Err(reason) => (
             "offline".to_string(),
             format!("{target} could not be contacted: {reason}"),
         ),
     }
+}
+
+/// The sentence for an `ssh` that ran and refused - and the reason this function exists.
+///
+/// The common refusal by far is a host that wants a password or a one-time verification code: the
+/// daemon runs `ssh` in batch mode on purpose (there is no terminal behind this call, so a prompt
+/// would hang it), which means SDC cannot type that code, and reporting "unreachable" for a machine
+/// the user logs into from a terminal every day is both wrong and impossible to act on. The target
+/// answered; it asked for something this call cannot give.
+///
+/// The way out is what it always was for a headless tool: a key. A host that accepts one connects
+/// without a prompt, and the sentence says so where the user is looking.
+fn ssh_refusal(target: &str, stderr: &str) -> String {
+    let line = first_line(stderr);
+    let lowered = line.to_lowercase();
+
+    if lowered.contains("keyboard-interactive") || lowered.contains("permission denied") {
+        return format!(
+            "{target} answered, but it asks for a password or a verification code - and SDC runs `ssh` without a terminal, so it cannot type it. Add your public key to that machine (`~/.ssh/authorized_keys`) and it will connect without a prompt."
+        );
+    }
+
+    if lowered.contains("host key verification failed") {
+        return format!(
+            "{target} answered, but its host key is not in `known_hosts` and the check cannot be answered here. Run `ssh {target}` once in a terminal to accept it."
+        );
+    }
+
+    /* Everything else is reported in `ssh`'s own words: a timeout, a refused port, a bad key. */
+    format!("{target} did not answer: {line}")
 }
 
 /// The first non-empty line of a program's output - a sentence, not a wall of stderr.
@@ -1284,5 +1308,39 @@ fn first_line(text: &str) -> String {
         .find(|line| !line.is_empty())
         .unwrap_or("no output")
         .to_string()
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The VPS in the bug report: `ssh` refused because the host wants a password or a one-time
+    /// verification code - the user logs in from a terminal every day, so "unreachable" is the wrong
+    /// sentence and leaves them nothing to do.
+    #[test]
+    fn a_host_that_wants_a_password_is_not_reported_as_unreachable() {
+        let sentence = ssh_refusal(
+            "root@vps.example",
+            "root@vps.example: Permission denied (keyboard-interactive,publickey).\n",
+        );
+
+        assert!(sentence.contains("answered"), "{sentence}");
+        assert!(sentence.contains("verification code"), "{sentence}");
+        assert!(sentence.contains("authorized_keys"), "{sentence}");
+        assert!(!sentence.contains("did not answer"), "{sentence}");
+    }
+
+    /// Everything else keeps `ssh`'s own first line, because that is what a person can act on.
+    #[test]
+    fn every_other_refusal_keeps_ssh_own_words() {
+        let timed_out = ssh_refusal("h", "\nssh: connect to host h port 22: Connection timed out\nmore\n");
+
+        assert_eq!(timed_out, "h did not answer: ssh: connect to host h port 22: Connection timed out");
+
+        let host_key = ssh_refusal("h", "Host key verification failed.\n");
+
+        assert!(host_key.contains("known_hosts"), "{host_key}");
+    }
 }
 

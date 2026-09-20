@@ -15,6 +15,86 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [0.6.1] — two chats per click, a ring around every field, and an API key that finally reaches the provider
+
+Three things a person using 0.6.0 reported, and the wall behind the third one.
+
+### Fixed — one click on `New chat` opened two chats
+
+The sidebar drew two rows for one chat, and the tab strip, the count pill and the row list all
+disagreed about how many existed. Two independent defects, both of them under the same click:
+
+* **The Tauri bridge could open two notification sockets.** `sdcp_call` connects lazily, and its
+  `connect()` guarded on an `AtomicBool` that is only set *after* the await points - so two calls that
+  arrive together both find `connected == false` and both reach `subscribe()` at the bottom. `App.tsx`
+  starts the boot handshake (`connectDaemon`) and the first heartbeat (`watchDaemon`) in the same tick,
+  which is exactly that case, so from 0.6.0 on this happened on **every launch**: every event the
+  daemon pushed was emitted twice, and the app folded each one twice. `SdcpBridge` now holds a
+  `connect` mutex for the whole connect (the second caller waits and then finds the bridge connected)
+  and `subscribe()` is idempotent behind a `subscribed` flag that the reader clears when its socket
+  ends.
+* **`SessionOpened` was not idempotent.** A replay of the log is legitimate - the bridge asks for
+  `event.list since=0` on every connect, and `session.list` may already have listed the session
+  between the two - but the reducer appended unconditionally, so the second copy of the same session id
+  became a second row *and* a second React key. The reducer now treats a second open of an id known id
+  as what it is: the same session.
+
+### Fixed — a bright accent ring followed the caret around the window
+
+Every field you can type in was outlined in `--border-focus` the moment it was focused: the prompt box
+and `Filter chats…` through `focus-within`, the modal fields through `focus:border-border-focus`, and
+- the part that made it feel like it was everywhere - the global `:focus-visible` ring, because per the
+CSS spec a text control matches `:focus-visible` on *every* focus, mouse included. A keyboard ring
+that appears when you click with a mouse is not an affordance; it is a border under the cursor. Typing
+controls now get a quiet 1px `--border-strong` outline instead, the composed boxes change their border
+colour on focus without the glow, and buttons, rows and links keep the 2px accent ring they always had
+- for those, `:focus-visible` really does mean reached by keyboard.
+
+### Added — a TLS client, so an API key reaches the provider
+
+`sdcd` links `ureq` (rustls with the webpki roots), and `native_api`'s `post_stream` sends `https://`
+instead of refusing it. Before this, an API key could not be used at all: the adapter failed honestly
+with "a TLS client is not linked in this build", which is the one sentence a user cannot act on.
+Measured against the real endpoints with a deliberately invalid key:
+
+```
+anthropic said: API key is invalid. (401)
+openai said: Incorrect API key provided: sk-bogus-key. (401)
+```
+
+- both requests reached the provider and were understood, which is what those two sentences prove.
+With a valid key the same call streams tokens. `Test connection` in the Provider Hub now means it: the
+key is used for one read-only call to the provider's own model list (`api.anthropic.com/v1/models`,
+`/v1/models` on the OpenAI-compatible providers), and a rejection is shown in the provider's words
+(`invalid x-api-key (401)`) rather than as a status code with nothing behind it. `tests/live_api.rs`
+holds both of those checks, `#[ignore]`d because CI has no keys.
+
+### Changed — a subscription card signs in on the click that opens it
+
+Clicking Claude, ChatGPT or Gemini in the Provider Hub already opened the real flow - the daemon drives
+the CLI's own login (`cli.login`), shows the provider's URL, and takes the code back - but it needed a
+second click on `Sign in` to start. It starts itself now, once per open, with a `Try again` button for
+a login that stopped and a status line that says `The sign-in stopped before it finished` instead of
+leaving `Waiting for the CLI…` under a login that is over.
+
+### Fixed — a host that wants a password was reported as unreachable
+
+`ssh -o BatchMode=yes` cannot answer a password prompt or a one-time verification code, and the daemon
+says "did not answer" for the whole family of hosts that ask for one - including a VPS the user logs
+into from a terminal every day. `probe_ssh` now reads `ssh`'s own refusal and reports what happened:
+the target answered and asked for a password or a code that this call cannot type, with the way out
+(a public key) in the same sentence.
+
+### Tests
+
+`sdcd`: 103 unit tests (five new - the two https ones, the key-check shape and its model counting, and
+the two SSH refusals), 5 lifecycle, 5 VCR, 2 live checks behind `--ignored`; clippy clean under
+`-D warnings`. The window: `pnpm typecheck`, `pnpm lint`, **27 vitest tests** (one new: a replayed
+`SessionOpened` stays one row), the bundle smoke run, and a real `SDC.exe` driven over CDP.
+
+---
+
+
 ## [0.6.0] — a server can be removed, and an added one is still there tomorrow
 
 Six defects, all of them found by using the installed build rather than by reading it. They are
