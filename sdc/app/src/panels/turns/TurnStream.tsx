@@ -76,9 +76,14 @@ function TurnBlock({ turn }: { turn: Turn }) {
         <span>
           {turn.meta.tier} · {turn.meta.engine} · {turn.meta.model}
         </span>
-        <span className="forecast before:mr-[10px] before:text-border-strong before:content-['·']">
-          {turn.meta.forecast}
-        </span>
+        {/* The forecast span, and why it is conditional: `TurnStarted` no longer carries a price, so an
+            unconditional span left a `·` with nothing after it on screen - the kind of stray mark that
+            makes a working window look broken. */}
+        {turn.meta.forecast === '' ? null : (
+          <span className="forecast before:mr-[10px] before:text-border-strong before:content-['·']">
+            {turn.meta.forecast}
+          </span>
+        )}
       </div>
 
       {turn.thinking ? <ThinkingBlock thinking={turn.thinking} /> : null}
