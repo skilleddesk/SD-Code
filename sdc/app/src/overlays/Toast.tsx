@@ -18,7 +18,16 @@ import { strings } from '../strings';
 export function Toast() {
   const toasts = useToastStore((state) => state.toasts);
   const dismiss = useToastStore((state) => state.dismiss);
-  const holdFors = useAppStore((state) => state.toasts.map((toast) => `${toast.id}:${toast.holdMs}`));
+  /* One *string*, not an array, and that is load-bearing: a store selector has to return a stable
+     value, because `useSyncExternalStore` calls it again on every commit and compares with
+     `Object.is`. `state.toasts.map(...)` makes a brand-new array each call, so React saw the
+     snapshot "change" every time, re-rendered, saw it change again, hit its 50-update limit and
+     unmounted the tree - a window with nothing in it. A joined string is a primitive, so two equal
+     holds are the same value and the subscription settles. (This is the bug that shipped in
+     0.4.1-0.4.3; `App.render.test.tsx` is the guard that now catches the whole class.) */
+  const holdKey = useAppStore((state) =>
+    state.toasts.map((toast) => `${toast.id}:${toast.holdMs}`).join('|'),
+  );
 
   useEffect(() => {
     const timers = toasts.map((toast) =>
@@ -32,7 +41,7 @@ export function Toast() {
     };
     /* The key is the ids *and* their holds, so a re-render that changes neither restarts nothing. */
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [holdFors.join('|'), dismiss]);
+  }, [holdKey, dismiss]);
 
   if (toasts.length === 0) {
     return null;

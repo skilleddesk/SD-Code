@@ -904,8 +904,8 @@ export const strings = {
       title: 'About',
       desc: 'Version and diagnostic information.',
       rows: [
-        { label: 'SDC App', value: 'v0.4.3' },
-        { label: 'sdcd daemon', value: 'v0.4.3' },
+        { label: 'SDC App', value: 'v0.4.4' },
+        { label: 'sdcd daemon', value: 'v0.4.4' },
         { label: 'SDCP protocol', value: '0.1' },
       ],
       /** `This host` is filled in from the event log's `HostStatus`, not hardcoded. */
@@ -983,7 +983,7 @@ export const strings = {
     /** `ollama list`, as the Local flow reports it. */
     ollamaModels: ['llama3.2:3b', 'mistral:7b'],
     hostPlatform: 'macOS 15.1 · arm64',
-    sdcdVersion: '0.4.3',
+    sdcdVersion: '0.4.4',
     /** Spec section 9.10's `Test connection` answer: twelve models behind a valid key. */
     testModelCount: 12,
     /** The day the bundled catalogue was last curated; the daemon reports the same thing. */

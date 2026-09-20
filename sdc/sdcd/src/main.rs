@@ -31,19 +31,26 @@ use sdcd::{DaemonState, SDCP_VERSION, VERSION};
 async fn main() -> Result<()> {
     let mut port = paths::DEFAULT_PORT;
     let mut database = None;
+    /* 0 means "never leave on my own", which is right for a daemon a human started: a terminal you
+       can watch is a terminal you close yourself. The app passes a number, so the daemon it started
+       leaves when the app does - even if the app was killed rather than closed (spec section 3.1). */
+    let mut idle_exit = 0_u64;
     let mut arguments = std::env::args().skip(1);
 
     while let Some(argument) = arguments.next() {
         match argument.as_str() {
             "--port" => port = arguments.next().and_then(|value| value.parse().ok()).unwrap_or(port),
             "--database" => database = arguments.next().map(std::path::PathBuf::from),
+            "--idle-exit" => {
+                idle_exit = arguments.next().and_then(|value| value.parse().ok()).unwrap_or(idle_exit)
+            }
             "--version" => {
                 println!("sdcd {VERSION} (SDCP {SDCP_VERSION})");
                 return Ok(());
             }
             "--help" => {
                 println!(
-                    "sdcd {VERSION}\n  --port <n>       loopback port (default {})\n  --database <p>   SQLite file (default: the platform data directory)",
+                    "sdcd {VERSION}\n  --port <n>        loopback port (default {})\n  --database <p>    SQLite file (default: the platform data directory)\n  --idle-exit <secs> exit after <secs> with no client (default: never)",
                     paths::DEFAULT_PORT
                 );
                 return Ok(());
@@ -83,8 +90,12 @@ async fn main() -> Result<()> {
                     Ok((stream, _)) => {
                         let daemon_state = unix_state.clone();
 
+                        daemon_state.client_joined();
+
                         tokio::spawn(async move {
-                            let _ = serve_unix(stream, daemon_state).await;
+                            let _ = serve_unix(stream, daemon_state.clone()).await;
+
+                            daemon_state.client_left();
                         });
                     }
                     Err(error) => eprintln!("sdcd: socket accept failed: {error}"),
@@ -96,18 +107,46 @@ async fn main() -> Result<()> {
     #[cfg(windows)]
     println!("  pipe       \\\\.\\pipe\\sdcd (served by the Tauri bridge, see app/src-tauri)");
 
-    loop {
-        let (stream, peer) = tcp.accept().await?;
-        let daemon_state = state.clone();
-
-        tokio::spawn(async move {
-            println!("sdcd: client {peer} connected");
-
-            if let Err(error) = serve(stream, daemon_state).await {
-                eprintln!("sdcd: client {peer} ended: {error}");
-            }
-        });
+    if idle_exit > 0 {
+        println!("  idle exit  {idle_exit}s with no client");
     }
+
+    let tcp_state = state.clone();
+
+    tokio::spawn(async move {
+        loop {
+            let Ok((stream, peer)) = tcp.accept().await else {
+                break;
+            };
+
+            let daemon_state = tcp_state.clone();
+
+            daemon_state.client_joined();
+
+            tokio::spawn(async move {
+                println!("sdcd: client {peer} connected");
+
+                if let Err(error) = serve(stream, daemon_state.clone()).await {
+                    eprintln!("sdcd: client {peer} ended: {error}");
+                }
+
+                daemon_state.client_left();
+            });
+        }
+    });
+
+    /* The run loop ends for exactly two reasons: a client asked (`host.shutdown`, how the app stops a
+       daemon that is not the version it needs), or nobody has talked to us for the time the app asked
+       for. Both end here rather than in the accept loop, so the stopping is orderly: the children the
+       daemon started are killed first (spec section 3.1). */
+    match sdcd::watch(&state, idle_exit).await {
+        sdcd::StopReason::Idle(seconds) => println!("sdcd: no client for {seconds}s, exiting"),
+        sdcd::StopReason::Requested => println!("sdcd: stopping on request"),
+    }
+
+    state.shutdown();
+
+    Ok(())
 }
 /// Serves one connection: read a line, answer it, and forward everything the handler pushes.
 ///
