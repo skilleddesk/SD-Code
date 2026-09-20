@@ -25,19 +25,37 @@ import { BTN, BTN_SM, BTN_PRIMARY, BTN_SECONDARY } from '../ui/button';
  */
 export function DuelTab() {
   const { activeTab } = useSessionsStore();
-  const sessionId = activeTab ?? 's1';
   const duel = useAppStore((state) => state.duels[0] ?? null);
   const engines = strings.rightPanel.duel.panes.map((pane) => pane.engine);
+
+  /*
+   * The prompt a duel races is the last one the user actually sent in this chat - not a scripted
+   * sentence. `'s1'` and a demo prompt used to stand in here, which meant `Run` in an empty window
+   * reported a duel between two engines over a task nobody had asked for. A chat with no turns has
+   * nothing to race, so the button says so instead.
+   */
+  const lastPrompt = useAppStore(
+    (state) =>
+      state.turns.filter((turn) => turn.sessionId === activeTab).at(-1)?.prompt ?? '',
+  );
+  const ready = activeTab !== null && lastPrompt !== '';
 
   if (duel === null || duel.panes.length === 0) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-[10px] p-[24px] text-center">
-        <p className="text-[12.5px] text-text-muted">{strings.rightPanel.duel.empty}</p>
+        <p className="text-[12.5px] text-text-muted">
+          {ready ? strings.rightPanel.duel.empty : strings.rightPanel.duel.needsTurn}
+        </p>
         <button
           type="button"
           className={BTN + ' ' + BTN_SECONDARY}
           data-action="duel-start"
-          onClick={() => void startDuel(sessionId, strings.turns.prompt, engines)}
+          disabled={!ready}
+          onClick={() => {
+            if (activeTab !== null) {
+              void startDuel(activeTab, lastPrompt, engines);
+            }
+          }}
         >
           {strings.rightPanel.duel.run}
         </button>

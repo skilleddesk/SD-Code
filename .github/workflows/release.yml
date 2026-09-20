@@ -144,3 +144,41 @@ jobs:
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.target != '' && format('--target {0}', matrix.target) || '' }}
+
+      # ----------------------------------------------------------------------------------------------
+      # One version, and only one.
+      #
+      # The Releases page used to grow: 0.4.1, 0.4.2, 0.4.3, 0.4.4 sat there beside the newest build,
+      # and a person looking for "the app" had to work out which of them was current - while the
+      # broken ones (0.4.1-0.4.3 did not render at all; see CHANGELOG 0.4.4) stayed downloadable. A
+      # release page that offers a broken download is worse than an empty one.
+      #
+      # So the published tag is the only release that survives. This runs after `Build and publish`,
+      # on the same runner, with the repository's own token (`gh` is preinstalled on Actions runners),
+      # and it is deliberately idempotent: if there is nothing to delete it says so and exits 0.
+      #
+      # `continue-on-error` because pruning is housekeeping: a release that is published but not yet
+      # tidied is a much smaller problem than a release that is tidied but never published. Running it
+      # from the Actions tab (`workflow_dispatch`) is the retry.
+      # ----------------------------------------------------------------------------------------------
+      - name: Keep only this release
+        if: matrix.platform == 'windows-latest'
+        continue-on-error: true
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $current = '${{ github.ref_name }}'
+          Write-Host "keeping $current"
+
+          $tags = gh release list --limit 100 --json tagName --jq '.[].tagName'
+
+          foreach ($tag in $tags) {
+            if ($tag -eq $current) { continue }
+
+            Write-Host "deleting release $tag"
+            gh release delete $tag --yes --cleanup-tag
+          }
+
+          Write-Host 'remaining:'
+          gh release list --limit 100

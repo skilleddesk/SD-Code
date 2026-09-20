@@ -109,7 +109,102 @@ fn request(port: u16, id: &str, method: &str) -> serde_json::Value {
     }
 }
 
-/// Polls the child until it is gone, or the deadline passes.
+/// Like `request`, but keeps every notification that arrived first and the params you send.
+///
+/// `engine.start` answers *and* pushes: the answer is the `turnId`, and the notifications are the
+/// turn. A test that only looked at the answer would never see what the log was told.
+fn request_collect(
+    port: u16,
+    id: &str,
+    method: &str,
+    params: serde_json::Value,
+) -> (serde_json::Value, Vec<serde_json::Value>) {
+    let stream = TcpStream::connect(("127.0.0.1", port)).expect("connecting to sdcd");
+
+    stream.set_read_timeout(Some(Duration::from_secs(10))).expect("a read timeout");
+
+    let mut stream = stream;
+    let mut seen = Vec::new();
+
+    writeln!(
+        stream,
+        "{}",
+        serde_json::json!({ "v": "0.1", "id": id, "method": method, "params": params })
+    )
+    .expect("writing the request");
+    stream.flush().expect("flushing the request");
+
+    let mut reader = BufReader::new(stream);
+
+    loop {
+        let mut line = String::new();
+
+        if reader.read_line(&mut line).expect("reading the answer") == 0 {
+            panic!("sdcd closed the connection before answering {method}");
+        }
+
+        let Ok(message) = serde_json::from_str::<serde_json::Value>(line.trim()) else {
+            continue;
+        };
+
+        if message.get("id").and_then(serde_json::Value::as_str) == Some(id) {
+            return (message, seen);
+        }
+
+        seen.push(message);
+    }
+}
+
+#[test]
+fn a_turn_carries_the_prompt_the_user_sent_and_no_invented_price() {
+    let directory = TempDir::new().expect("a temporary directory");
+    let (mut child, port) = start(&["--idle-exit", "30"], &directory);
+
+    let (answer, seen) = request_collect(
+        port,
+        "turn-1",
+        "engine.start",
+        serde_json::json!({
+            "sessionId": "s-user",
+            "prompt": "add a test for the limiter",
+            "engine": "claude_code",
+            "model": "sonnet",
+            "tier": "Balanced",
+        }),
+    );
+
+    assert!(
+        answer.get("result").is_some(),
+        "engine.start refused the turn: {answer}"
+    );
+
+    let started = seen
+        .iter()
+        .find(|notification| {
+            notification.pointer("/event/type").and_then(serde_json::Value::as_str)
+                == Some("TurnStarted")
+        })
+        .unwrap_or_else(|| panic!("no TurnStarted notification arrived; saw {seen:?}"));
+
+    /* The user's own words travel with the turn: the window draws the question from the log, so a
+       reload does not lose half of the conversation. */
+    assert_eq!(
+        started.pointer("/event/prompt").and_then(serde_json::Value::as_str),
+        Some("add a test for the limiter"),
+        "TurnStarted must carry the prompt it is answering"
+    );
+
+    /* And nothing pretends to know what it will cost. The old payload carried a fixed
+       `~$0.10 - $0.28 forecast`, which is a price for a turn nobody has measured. */
+    assert!(
+        started.pointer("/event/forecast").is_none(),
+        "TurnStarted still carries a forecast"
+    );
+
+    let _ = request(port, "stop", "host.shutdown");
+    let _ = wait_for_exit(&mut child, Duration::from_secs(10));
+}
+
 fn wait_for_exit(child: &mut Child, within: Duration) -> Option<std::process::ExitStatus> {
     let deadline = Instant::now() + within;
 

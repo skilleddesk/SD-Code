@@ -123,8 +123,15 @@ daemon if it is not running.
 
 What is open is named rather than hidden: a TLS client for the *remote* native-API endpoints (a local
 `http://` one streams today), the provider OAuth token exchange, checkpoint screenshots (the app's
-WebView owns the pixels; the daemon owns the path), the macOS and Linux installers, and an axe-core
-pass. `sdc/README.md` tracks exactly what exists, what is deliberately absent, and what comes next.
+WebView owns the pixels; the daemon owns the path), signing and notarisation, and an axe-core pass.
+`sdc/README.md` tracks exactly what exists, what is deliberately absent, and what comes next.
+
+One thing 0.5.0 settled is worth stating here, because it is the question a first launch raises: the
+window **contains no demo content**. It used to - three hosts, six chats, nine providers, twelve models
+and a fabricated turn stream - which meant a fresh install looked connected and busy while the daemon
+behind it answered nothing. What it shows now is the event log: `host.status`, `session.list`,
+`provider.list` and the turn events. If it is empty, it is empty because nothing has happened yet, and
+the empty states say so.
 
 ## Licence
 

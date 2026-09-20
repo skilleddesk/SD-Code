@@ -124,14 +124,14 @@ formatting-only pull request and say so in the title. Until then a review that a
 ### The app and the daemon are one system, and both halves are testable alone
 
 `pnpm dev` (the browser) has no Tauri bridge, so `lib/sdcp.ts` falls back to the
-in-process daemon in `lib/daemon.ts`. That is not a mock: it answers the same SDCP
+stand-in in `lib/standin.ts`. It is not a mock and not a demo: it answers the same SDCP
 envelopes and appends to the same event log the reducer folds, which is why a UI
 flow proved in the browser is a UI flow that works against `sdcd`
 (spec §3.1). Two consequences for a change:
 
 * **A new method lands in three places or it is not done**: the handler in
   `sdcd/src/sdcp/methods.rs`, the contract in `protocol/types.ts`, and the
-  fallback in `app/src/lib/daemon.ts` — in that order, because the daemon is the
+  stand-in in `app/src/lib/standin.ts` — in that order, because the daemon is the
   definition and the other two are views of it.
 * **Events are the only state.** Nothing writes UI state directly; a handler
   pushes an event and `app/src/store/reducer.ts` folds it. If you find yourself

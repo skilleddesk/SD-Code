@@ -309,7 +309,7 @@ impl Daemon {
             .map_err(ErrorObject::internal)?;
 
         out.push(
-            event::turn_started(&turn_id, &session_id, &engine_id, &model, &tier),
+            event::turn_started(&turn_id, &session_id, &engine_id, &model, &tier, &prompt_text),
             Some(session_id.clone()),
             Some(turn_id.clone()),
         );

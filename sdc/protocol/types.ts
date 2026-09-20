@@ -306,7 +306,9 @@ export interface TurnStartedEvent {
   engine: string;
   model: string;
   tier: TierName;
-  forecast?: string;
+  /** What the user asked, verbatim. The log carries it so a reloaded window can draw the question
+   *  beside the answer instead of showing a conversation that starts with the reply. */
+  prompt: string;
 }
 
 export interface TurnDeltaEvent {

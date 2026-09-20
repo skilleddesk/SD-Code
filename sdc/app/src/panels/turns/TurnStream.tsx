@@ -8,8 +8,6 @@ import { ToolCard } from './ToolCard';
 import { TurnFooter } from './TurnFooter';
 import { UserMessage } from './UserMessage';
 import {
-  DEMO_COLLAPSED,
-  DEMO_TURNS,
   type CollapsedSummaryData,
   type Turn,
 } from './types';
@@ -27,12 +25,13 @@ import {
  * `types.ts`, so `<TurnStream />` renders the prototype's worked example.
  */
 export interface TurnStreamProps {
-  turns?: readonly Turn[];
+  /** The session's turns, oldest first - the reducer's projection, reshaped by `live.ts`. */
+  turns: readonly Turn[];
   /** The block above the turns, or null for a session that has not run more than five yet. */
   collapsed?: CollapsedSummaryData | null;
 }
 
-export function TurnStream({ turns = DEMO_TURNS, collapsed = DEMO_COLLAPSED }: TurnStreamProps) {
+export function TurnStream({ turns, collapsed = null }: TurnStreamProps) {
   /*
    * The summary is drawn whenever the caller passes one. The caller is the thing that knows how
    * many turns came before this window - `OPEN_TURN_WINDOW` in types.ts is the threshold it applies

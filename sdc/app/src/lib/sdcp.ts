@@ -10,7 +10,7 @@ import type {
 import { eventLog } from '../store/events';
 import { LoopbackTransport, TauriTransport, WebSocketTransport } from './transport';
 import type { TauriBridge } from './transport';
-import { DemoDaemon } from './daemon';
+import { StandInDaemon } from './standin';
 
 /**
  * The typed SDCP client (master spec sections 5 and 3.1).
@@ -66,7 +66,10 @@ export function getTransport(): SdcpTransport {
   } else if (bridge) {
     transport = new TauriTransport(bridge);
   } else {
-    transport = new LoopbackTransport(new DemoDaemon());
+    /* A tab with no bridge: the stand-in answers the protocol's shape and refuses the capabilities a
+       browser does not have (`lib/standin.ts`). It is not a demo of the product - `pnpm dev` shows an
+       honest empty app, and the desktop build is where the daemon does the work. */
+    transport = new LoopbackTransport(new StandInDaemon());
   }
 
   /*

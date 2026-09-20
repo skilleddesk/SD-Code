@@ -1,6 +1,4 @@
-import { strings } from '../strings';
-import type { RegistryModel, SdcpEvent } from '../../../protocol/types';
-import { stepClock } from './events';
+import type { RegistryModel } from '../../../protocol/types';
 import type {
   AppEvent,
   AppState,
@@ -63,166 +61,19 @@ export const EMPTY_STATE: AppState = {
   doctor: {},
 };
 
-/** A `push` per event, with a deterministic clock so the seed's timestamps are stable per run. */
-function seeder(): { events: AppEvent[]; push: (event: SdcpEvent, sessionId?: string | null) => void } {
-  const clock = stepClock();
-  const events: AppEvent[] = [];
-
-  return {
-    events,
-    push: (event, sessionId = null) => {
-      events.push({ seq: events.length + 1, ts: clock(), event, sessionId, turnId: null });
-    },
-  };
-}
 
 /**
- * The demo log: one event per line of `strings.seed`, in the order a daemon would have emitted
- * them. The relative ages are the prototype's (`now`, `2m`, `2h`, `1d`, `3d`, `5d`) expressed as
- * the minutes a daemon would have reported.
+ * The state the app boots into: **empty** (spec section 3.3).
+ *
+ * There used to be a demo log here - three hosts, six chats, nine providers, twelve models, a handful
+ * of turns - so that the shell had something to draw on first run. It made every screenshot a
+ * screenshot of fiction: a window that looked connected, busy and expensive while the daemon behind it
+ * was answering nothing (and, more than once, while it was not running at all). What the app shows now
+ * is the log: host.status, session.list, provider.list and the turn events. An empty window is
+ * an honest one, and the empty states of spec section 7.13 are what make it readable.
  */
-export function seedEvents(): AppEvent[] {
-  const { events, push } = seeder();
-
-  push({ type: 'HostStatus', hostId: 'local', name: strings.sidebar.hosts.local, hostType: 'local', status: 'connected', sdcd: strings.seed.sdcdVersion, platform: strings.seed.hostPlatform });
-  push({ type: 'HostStatus', hostId: 'vps1', name: strings.sidebar.hosts.prod1, hostType: 'vps', status: 'connected', sdcd: strings.seed.sdcdVersion, platform: 'Debian 12 · x64' });
-  push({ type: 'HostStatus', hostId: 'vps2', name: strings.sidebar.hosts.staging2, hostType: 'vps', status: 'degraded', sdcd: strings.seed.sdcdVersion, platform: 'Ubuntu 24.04 · x64' });
-
-  /* The six sessions of the prototype and the state each one is in (spec section 7.3). */
-  const sessions: {
-    id: string;
-    hostId: string;
-    title: string;
-    prompt: string;
-    state: SessionView['state'];
-    minutesAgo: number;
-    unread: number;
-    attention?: SessionView['attention'];
-  }[] = [
-    { id: 's1', hostId: 'local', title: strings.sidebar.sessions.rateLimiting.title, prompt: strings.sidebar.sessions.rateLimiting.prompt, state: 'waiting', minutesAgo: 0, unread: 0, attention: 'awaiting_approval' },
-    { id: 's2', hostId: 'local', title: strings.sidebar.sessions.loginBug.title, prompt: strings.sidebar.sessions.loginBug.prompt, state: 'running', minutesAgo: 2, unread: 0 },
-    { id: 's3', hostId: 'local', title: strings.sidebar.sessions.refactorAuth.title, prompt: strings.sidebar.sessions.refactorAuth.prompt, state: 'idle', minutesAgo: 120, unread: 0 },
-    { id: 's4', hostId: 'vps1', title: strings.sidebar.sessions.deployScript.title, prompt: strings.sidebar.sessions.deployScript.prompt, state: 'error', minutesAgo: 1440, unread: 1 },
-    { id: 's5', hostId: 'vps1', title: strings.sidebar.sessions.logAggregation.title, prompt: strings.sidebar.sessions.logAggregation.prompt, state: 'idle', minutesAgo: 4320, unread: 0 },
-    { id: 's6', hostId: 'vps2', title: strings.sidebar.sessions.updateReadme.title, prompt: strings.sidebar.sessions.updateReadme.prompt, state: 'success', minutesAgo: 7200, unread: 0 },
-  ];
-
-  for (const session of sessions) {
-    push(
-      {
-        type: 'SessionOpened',
-        sessionId: session.id,
-        hostId: session.hostId,
-        title: session.title,
-        prompt: session.prompt,
-      },
-      session.id,
-    );
-    push(
-      {
-        type: 'SessionUpdated',
-        sessionId: session.id,
-        state: session.state,
-        minutesAgo: session.minutesAgo,
-        unread: session.unread,
-        attention: session.attention ?? null,
-      },
-      session.id,
-    );
-  }
-
-  /* The nine provider cards, then the twelve-model registry (spec section 9.10). */
-  for (const provider of strings.seed.providers) {
-    push({
-      type: 'ProviderStatus',
-      id: provider.id,
-      name: provider.name,
-      status: provider.status,
-      detail: provider.detail,
-      account: provider.account,
-      kind: provider.kind,
-      logo: provider.logo,
-      initial: provider.initial,
-    });
-  }
-
-  push({ type: 'RegistryLoaded', models: [...strings.seed.models] });
-
-  /* Time Machine: three checkpoints (spec section 14). */
-  const checkpoints = [
-    { id: 'cp-14', turn: 14, when: 'now', title: strings.rightPanel.timeMachine.entries[0].title, filesHash: 'a4f19c2' },
-    { id: 'cp-13', turn: 13, when: '2 min ago', title: strings.rightPanel.timeMachine.entries[1].title, filesHash: '77b0e41' },
-    { id: 'cp-12', turn: 12, when: '8 min ago', title: strings.rightPanel.timeMachine.entries[2].title, filesHash: '1de9a30' },
-  ];
-
-  for (const checkpoint of checkpoints) {
-    push(
-      {
-        type: 'CheckpointSaved',
-        sessionId: 's1',
-        checkpoint: {
-          id: checkpoint.id,
-          turn: checkpoint.turn,
-          ts: checkpoint.when,
-          title: checkpoint.title,
-          thumbnail: null,
-          filesHash: checkpoint.filesHash,
-          rewindRef: null,
-        },
-      },
-      's1',
-    );
-  }
-
-  /* The Console's two lines; the first was logged three times, which is its count pill. */
-  for (const entry of strings.rightPanel.console.entries) {
-    for (let repeat = 0; repeat < entry.count; repeat += 1) {
-      push({
-        type: 'ConsoleError',
-        sessionId: 's1',
-        level: entry.level,
-        message: entry.message,
-        source: entry.source,
-        file: entry.file,
-        line: entry.line,
-      });
-    }
-  }
-
-  /* Duel mode's seeded pair and the Session Bridge frame (spec sections 16.5, 16.6). */
-  push({
-    type: 'DuelStarted',
-    duelId: 'duel-1',
-    sessionId: 's1',
-    prompt: strings.turns.prompt,
-    engines: strings.rightPanel.duel.panes.map((pane) => pane.engine),
-    panes: strings.rightPanel.duel.panes.map((pane) => ({
-      engine: pane.engine,
-      model: pane.model,
-      time: pane.time,
-      cost: pane.cost,
-      pass: pane.pass,
-      headline: pane.headline,
-      files: [...pane.files],
-    })),
-  });
-
-  push({
-    type: 'SessionBridged',
-    sessionId: 's2',
-    turnId: 'turn-8',
-    from: 'claude_code',
-    to: 'codex',
-    model: 'default',
-    reason: 'switched mid-turn',
-  });
-
-  return events;
-}
-
-/** The state the app boots into: the fold of the demo log (spec section 3.3). */
 export function createInitialState(): AppState {
-  return applyEvents(EMPTY_STATE, seedEvents());
+  return EMPTY_STATE;
 }
 
 /**
@@ -472,13 +323,16 @@ function reduce(state: AppState, entry: AppEvent): AppState {
         engine: event.engine,
         model: event.model,
         tier: event.tier,
+        prompt: event.prompt,
         text: '',
         thinking: '',
         status: 'running',
         stuckForMs: 0,
         tools: [],
         summary: '',
-        meta: event.forecast ?? '',
+        /* The totals line is filled by `TurnCompleted`, which carries what the run actually cost.
+           Nothing here guesses a price: this build has no way to know one. */
+        meta: '',
         pass: null,
       };
 
