@@ -77,7 +77,18 @@
   select {
     font: inherit;
     color: var(--text-primary);
-    /* regression proof: the reset is off */
+    /*
+     * THE BACKGROUND, and this line is the whole paragraph above made true.
+     *
+     * The comment block above has always said "no background of their own: a control is a hole in
+     * the surface it sits on", and until now the code did **not** say it. 0.5.1 shipped a solid
+     * `rgb(255, 255, 255)` sidebar field because the component had forgotten its `bg-` class and
+     * nothing here was holding the line; 0.5.2 fixed that one component and wrote the paragraph. A
+     * component forgetting a class must not be able to paint a white box in a dark theme, and the
+     * only way to promise that is to declare it here.
+     */
+    background-color: transparent;
+    /* regression proof: the reset is on */
     border: 0;
     border-radius: 0;
     outline: none;

@@ -61,14 +61,15 @@ impl Daemon {
             /* Host ---------------------------------------------------------------------------- */
             "host.status" => Ok(self.host_status(&*out)),
             "host.doctor" => Ok(json!({ "checks": host::checks(self.store()) })),
-            "host.add" => self.host_add(envelope, &*out),
+            "host.add" => self.host_add(envelope, out),
+            "host.remove" => self.host_remove(envelope, &*out),
             "host.shutdown" => Ok(self.host_shutdown()),
 
             /* Sessions ------------------------------------------------------------------------ */
             "session.open" => self.session_open(envelope, &*out),
             "session.update" => self.session_update(envelope, &*out),
             "session.close" => self.session_close(envelope, &*out),
-            "session.list" => Ok(json!({ "hosts": self.store().hosts().map_err(ErrorObject::internal)? })),
+            "session.list" => Ok(json!({ "hosts": self.store().hosts_with_sessions().map_err(ErrorObject::internal)? })),
 
             /* Engines ------------------------------------------------------------------------- */
             "engine.start" => self.engine_start(envelope, out),
@@ -160,6 +161,11 @@ impl Daemon {
     fn host_status(&self, out: &dyn Notifier) -> Value {
         let platform = format!("{} · {}", std::env::consts::OS, std::env::consts::ARCH);
 
+        /* The event is the app's view; this is the row. `session.list` answers from the rows, so a
+           window that asks for the list right after this call has to find this machine in it - and
+           a window that asks *without* this call (a second one, a reload) already will. */
+        let _ = self.store().ensure_host("local", "Local", "local", "connected");
+
         out.push(event::host_status("local", "Local", "local", "connected", Some(&platform)), None, None);
 
         json!({
@@ -197,14 +203,14 @@ impl Daemon {
         })
     }
 
-    fn host_add(&self, envelope: &Envelope, out: &dyn Notifier) -> Result<Value, ErrorObject> {
+    fn host_add(&self, envelope: &Envelope, out: Arc<dyn Notifier>) -> Result<Value, ErrorObject> {
         if envelope.opt_str("type").unwrap_or_else(|| "ssh".into()) == "local" {
             return Ok(json!({ "hostId": "local" }));
         }
 
-        let target = envelope.opt_str("target").unwrap_or_default();
+        let target = envelope.opt_str("target").unwrap_or_default().trim().to_string();
 
-        if target.trim().is_empty() {
+        if target.is_empty() {
             return Err(ErrorObject::bad_request("`target` is required for an SSH host"));
         }
 
@@ -212,6 +218,33 @@ impl Daemon {
             .opt_str("label")
             .filter(|label| !label.trim().is_empty())
             .unwrap_or_else(|| target.clone());
+
+        /*
+         * The same machine added twice is one host.
+         *
+         * A sidebar of `Website, Website, Website` is what the alternative looks like in practice:
+         * a second row for the same `user@host` says nothing the first one did not, and it can never
+         * be told apart from it afterwards. The row's id comes back with `reused: true`, so a caller
+         * can say "already there" instead of pretending it just connected.
+         */
+        if let Some(existing) = self.store().host_id_for_target(&target).map_err(ErrorObject::internal)? {
+            let row = self.store().host(&existing).map_err(ErrorObject::internal)?;
+            let name = row
+                .as_ref()
+                .and_then(|row| row["name"].as_str())
+                .unwrap_or(&label)
+                .to_string();
+            let status = row
+                .as_ref()
+                .and_then(|row| row["status"].as_str())
+                .unwrap_or("connecting")
+                .to_string();
+
+            out.push(event::host_status(&existing, &name, "vps", &status, Some(&target)), None, None);
+
+            return Ok(json!({ "hostId": existing, "reused": true }));
+        }
+
         let host_id = format!("h{}", self.state.events.seq() + 1);
 
         out.push(event::host_status(&host_id, &label, "vps", "connecting", Some("linux · x64")), None, None);
@@ -219,7 +252,67 @@ impl Daemon {
             .upsert_host(&host_id, &label, "ssh", Some(&target), "connecting", None)
             .map_err(ErrorObject::internal)?;
 
-        Ok(json!({ "hostId": host_id }))
+        /*
+         * The probe runs *after* the answer, which is the `engine.start` shape: the dialog closes
+         * with a host on screen, and the sentence about whether that host can be reached arrives
+         * when there is something to attach it to.
+         *
+         * `connecting` is therefore not a placeholder for a status that never comes. Every added
+         * host gets a second `HostStatus` - `connected` when `ssh` answered, `offline` when it did
+         * not - and a `Toast` beside it, because a 7px dot is not a notification.
+         */
+        let state = self.state.clone();
+        let notifier = out.clone();
+        let probe_host_id = host_id.clone();
+        let probe_label = label.clone();
+
+        tokio::spawn(async move {
+            let probe_target = target.clone();
+            let (status, detail) = tokio::task::spawn_blocking(move || probe_ssh(&probe_target))
+                .await
+                .unwrap_or_else(|_| ("offline".to_string(), unreachable_sentence(&target)));
+
+            let _ = state.store.upsert_host(&probe_host_id, &probe_label, "ssh", Some(&target), &status, None);
+
+            notifier.push(
+                event::host_status(&probe_host_id, &probe_label, "vps", &status, Some(&detail)),
+                None,
+                None,
+            );
+            notifier.push(event::toast(&detail, None, None), None, None);
+        });
+
+        Ok(json!({ "hostId": host_id, "reused": false }))
+    }
+
+    /// `host.remove` - the other half of `host.add`, and the one that was missing.
+    ///
+    /// `protocol/types.ts` has declared this method, its `{ hostId }` param and its
+    /// `{ removed: boolean }` result since the schema was written; the daemon answered `unsupported`
+    /// and the UI had no button, so a host added by mistake was permanent. The row, its sessions and
+    /// everything hanging off them go; the **event log does not**, because it is append-only and the
+    /// removal is itself an event (`HostRemoved`) that a reconnecting window replays.
+    fn host_remove(&self, envelope: &Envelope, out: &dyn Notifier) -> Result<Value, ErrorObject> {
+        let host_id = envelope.require_str("hostId")?;
+
+        if host_id == "local" {
+            return Err(ErrorObject::bad_request(
+                "`local` is the machine this daemon is running on, so it cannot be removed",
+            ));
+        }
+
+        let row = self.store().host(&host_id).map_err(ErrorObject::internal)?;
+
+        let Some(row) = row else {
+            return Err(ErrorObject::not_found(format!("`{host_id}` is not a host this daemon knows")));
+        };
+
+        let name = row["name"].as_str().unwrap_or(&host_id).to_string();
+        let sessions = self.store().delete_host(&host_id).map_err(ErrorObject::internal)?;
+
+        out.push(event::host_removed(&host_id, &name, sessions), None, None);
+
+        Ok(json!({ "removed": true, "name": name, "sessions": sessions }))
     }
 
     fn session_open(&self, envelope: &Envelope, out: &dyn Notifier) -> Result<Value, ErrorObject> {
@@ -228,8 +321,10 @@ impl Daemon {
         let prompt = envelope.opt_str("prompt").unwrap_or_default();
         let session_id = format!("n{}", self.state.events.seq() + 1);
 
+        let host_name = if host_id == "local" { "Local" } else { host_id.as_str() };
+
         self.store()
-            .upsert_host(&host_id, "Local", "local", None, "connected", None)
+            .ensure_host(&host_id, host_name, "local", "connected")
             .map_err(ErrorObject::internal)?;
         self.store()
             .insert_session(&session_id, &host_id, &title, &prompt)
@@ -1114,3 +1209,80 @@ async fn run_turn(
         None,
     );
 }
+
+/* ----------------------------------------------------------------------------------------------------
+ * Whether a host can actually be reached
+ *
+ * `host.add` used to answer `connecting` and leave it there, which is why adding a server felt like
+ * nothing happened: the row appeared, the dot stayed blue, and the same host could be added again
+ * and again until the sidebar was four copies of the same name. The two functions below turn that
+ * into a measurement with a sentence attached.
+ * -------------------------------------------------------------------------------------------------- */
+
+/// The sentence for a probe that could not even be started.
+fn unreachable_sentence(target: &str) -> String {
+    format!("{target} was added, but the probe could not be run; check the daemon's log")
+}
+
+/// Can this machine reach an SSH target? Returns the status and the sentence that goes with it.
+///
+/// Three flags carry the whole point:
+///
+/// * `BatchMode=yes` - without it `ssh` asks for a password on a stdin that has nobody attached and
+///   the daemon waits for a human who is not there;
+/// * `ConnectTimeout=8` - bounds the TCP step, so a black-holed address costs seconds rather than a
+///   stuck turn;
+/// * `StrictHostKeyChecking=accept-new` - a first connection to a fresh VPS is the normal case, and
+///   the alternative is an interactive prompt with no terminal behind it.
+///
+/// The command is `true`, i.e. "can I get a shell", which is exactly the question. It runs through
+/// `host::program::command`, so a Windows `ssh.exe` is resolved the same way every other program in
+/// this daemon is.
+fn probe_ssh(target: &str) -> (String, String) {
+    let Some(mut command) = host::program::command("ssh") else {
+        return (
+            "offline".to_string(),
+            format!("{target} was added, but `ssh` is not installed on this machine"),
+        );
+    };
+
+    let output = command
+        .args([
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "ConnectTimeout=8",
+            "-o",
+            "StrictHostKeyChecking=accept-new",
+            target,
+            "true",
+        ])
+        .output();
+
+    match output {
+        Ok(output) if output.status.success() => {
+            ("connected".to_string(), format!("{target} is reachable"))
+        }
+        Ok(output) => (
+            "offline".to_string(),
+            format!(
+                "{target} did not answer: {}",
+                first_line(&String::from_utf8_lossy(&output.stderr))
+            ),
+        ),
+        Err(reason) => (
+            "offline".to_string(),
+            format!("{target} could not be contacted: {reason}"),
+        ),
+    }
+}
+
+/// The first non-empty line of a program's output - a sentence, not a wall of stderr.
+fn first_line(text: &str) -> String {
+    text.lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .unwrap_or("no output")
+        .to_string()
+}
+

@@ -15,6 +15,108 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [0.6.0] — a server can be removed, and an added one is still there tomorrow
+
+Six defects, all of them found by using the installed build rather than by reading it. They are
+listed in the order a person meets them.
+
+### Fixed — a server could not be removed, and added ones piled up
+
+`host.remove` has been declared in `protocol/types.ts`, with its `{ hostId }` param and its
+`{ removed: boolean }` result, since the schema was written. The daemon answered `unknown method` and
+the UI had no button, so a host added by mistake was permanent.
+
+The sidebar is where the other half of the same defect shows: `host.add` upserted a row for whatever
+`user@host` it was given, so adding one machine three times produced four hosts called `Website`, all
+of them identical and none of them removable. `session.open` made it worse - it called `upsert_host`
+with the literals `Local` / `local` / `connected` for **any** host id, so opening a chat on a VPS
+rewrote that VPS's row: its name, its kind and its `target` were replaced.
+
+* **`host.remove` is implemented** (`sdcd/src/sdcp/methods.rs`): the row, its sessions, their turns,
+  their checkpoints and their rewind stack go, child-first because `foreign_keys` is ON. The **event
+  log is not touched** - it is append-only, and the removal is itself an event (`HostRemoved`) that a
+  reconnecting window replays. `local` is refused with a sentence rather than a crash.
+* **`HostRemoved` joins the catalogue** (schema `eventTypes`, the TypeScript union and
+  `SDCP_EVENT_TYPES`), so the reducer takes the host and its rows off the screen - in this window and
+  in the next one.
+* **The same `user@host` is one host.** `host.add` asks `Store::host_id_for_target` first and answers
+  with the existing id and `reused: true`. The schema and `types.ts` carry `reused`, so a caller can
+  say "already in the host list" instead of pretending it connected.
+* **`session.open` uses `ensure_host`**, which creates the row only when it is absent, so a VPS keeps
+  its name, its kind and its `target`.
+* **The sidebar has the button** (`.host-remove`, on hover beside `+`, with a confirmation that names
+  what goes with the host). `local` does not get one: a control whose only outcome is an error is
+  worse than no control.
+
+### Fixed — adding a server looked like nothing happened
+
+`host.add` pushed exactly one `HostStatus` (`connecting`) and stopped. The dot stayed blue forever,
+nothing ever said whether the machine could be reached, and adding the same host again was the only
+thing that seemed to do anything - which is how one VPS became four rows.
+
+* **The daemon measures.** After answering, `host.add` runs `ssh -o BatchMode=yes -o ConnectTimeout=8
+  -o StrictHostKeyChecking=accept-new <target> true` on a blocking task, then pushes a second
+  `HostStatus` (`connected` or `offline`) **and a `Toast`** carrying the sentence that says which:
+  `root@vps.example is reachable`, `… did not answer: <first line of stderr>`, or
+  `… was added, but ssh is not installed on this machine`.
+* **The dialog's own sentence stays honest.** `intents.addHost` says what `host.add` answered
+  (`Added prod-1 · checking it can be reached…`) and leaves the verdict to the daemon, because the
+  daemon is what ran `ssh`.
+
+### Fixed — an added host was gone on the next launch
+
+Nothing asked the daemon for its host list. `host.add` wrote a row and pushed one event; the window
+folded that event and then lost the host the moment it was closed, so the next launch showed only
+`local` and every added host looked as though adding it had failed. The row had been in the database
+the whole time.
+
+* **`session.list` answers with the tree**: every host with its sessions (`hosts: [{ …, sessions }]`,
+  with `target` included). `Store::hosts_with_sessions` builds it. The protocol's `SessionRecord[]`
+  result was wrong about what the daemon sends and is corrected to `HostRecord[]`.
+* **`connectDaemon()` folds it** at startup through `withWorkspace()` - a state patch, for the same
+  documented reason `withDoctorRun` is one: a list is a read's result, and re-emitting an event per
+  host on every launch would append a copy of the whole tree to the log each time a window opened.
+* **`host.status` records the row it describes**, so the machine this window is on is in the list that
+  gets folded.
+
+### Fixed — losing the daemon was silent
+
+`sdcd` is started by the app and killed with it, but it can also die on its own: a crash, a task
+manager, a machine under memory pressure. Nothing said so. The window looked normal, every click
+answered nothing, and the only way to find out was to notice that nothing happened.
+
+* **A heartbeat** (`watchDaemon`, every 5s) asks `event.subscribe` - a pure read, and deliberately
+  *not* `host.status`, which pushes a `HostStatus` event and would therefore append 720 events an hour
+  to a log whose whole purpose is to be readable.
+* **The answer is presentation, not history** (`store/daemon.ts`): the event log cannot carry "the
+  daemon is gone", because the daemon is the log's writer. `misses` counts consecutive failures and
+  the copy stops hedging at three.
+* **It is said once, in each direction**: one toast when the daemon goes, one when it answers again -
+  not one every five seconds, which is how warnings get ignored. The banner above the chat
+  (`#degradedBanner`) carries the same news with a `Retry now` button, and it takes precedence over
+  the per-host message, because when the daemon is gone that message is noise.
+
+### Fixed — the control reset promised something it did not do
+
+`styles/globals.css` has described itself since 0.5.2 as the reason a control can never paint a light
+box in a dark theme - *"no background of their own: a control is a hole in the surface it sits on"* -
+and the rule underneath that paragraph never declared a background. 0.5.1 shipped a solid
+`rgb(255, 255, 255)` sidebar field; 0.5.2 fixed that one component and wrote the paragraph.
+
+* **`background-color: transparent` is now declared** for `input`, `textarea` and `select`, so a
+  component that forgets its `bg-` class cannot reproduce the white box. Measured in a real WebView2
+  window running the old build: `#sidebarSearch` computed `rgb(255, 255, 255)` with no `bg-` class at
+  all; with this declaration the hole is a hole however the component is written.
+
+### Verification
+
+* `sdcd`: 98 unit tests, **5 lifecycle tests** (one new: a host is added once, is listed with its
+  sessions, keeps its `target` through a `session.open`, can be removed, and `local` is refused),
+  5 VCR tests; clippy clean under `-D warnings`.
+* The window: `pnpm typecheck`, `pnpm lint`, **26 vitest tests** (two new: `HostRemoved` takes the host
+  and its chats off the screen; `withWorkspace` folds the list a restart used to lose), the bundle
+  smoke run, and a real `SDC.exe` looked at over CDP.
+
 ## [0.5.3] — the window says which build it is
 
 A user installed a build, saw the white box from 0.5.1, and reported it unfixed. The box *was* fixed -

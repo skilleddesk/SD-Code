@@ -459,6 +459,21 @@ impl Store {
         Ok(())
     }
 
+    /// Creates the host row only if it is not already there.
+    ///
+    /// `session.open` uses this instead of `upsert_host`. It used to upsert unconditionally with the
+    /// literals `Local` / `local` / `connected`, so opening a chat on a VPS **rewrote that VPS's
+    /// row**: its name became `Local`, its kind became `local`, its `target` was erased and its
+    /// status was claimed `connected`. That lost the host's identity, and it also broke the "same
+    /// server added twice is one host" check in `host.add`, whose key is exactly that `target`.
+    pub fn ensure_host(&self, id: &str, name: &str, kind: &str, status: &str) -> Result<()> {
+        if self.host(id)?.is_some() {
+            return Ok(());
+        }
+
+        self.upsert_host(id, name, kind, None, status, None)
+    }
+
     pub fn hosts(&self) -> Result<Vec<Value>> {
         let connection = self.connection.lock().unwrap();
         let mut statement = connection.prepare("SELECT id, name, kind, status, platform FROM hosts ORDER BY created_at ASC")?;
@@ -481,6 +496,137 @@ impl Store {
 
         Ok(hosts)
     }
+    /// One host row, or `None` when the daemon has never heard of it.
+    pub fn host(&self, id: &str) -> Result<Option<Value>> {
+        let connection = self.connection.lock().unwrap();
+        let mut statement = connection
+            .prepare("SELECT id, name, kind, status, platform, target FROM hosts WHERE id = ?1")?;
+        let mut rows = statement.query(params![id])?;
+
+        match rows.next()? {
+            Some(row) => Ok(Some(serde_json::json!({
+                "hostId": row.get::<_, String>(0)?,
+                "name": row.get::<_, String>(1)?,
+                "hostType": row.get::<_, String>(2)?,
+                "status": row.get::<_, String>(3)?,
+                "platform": row.get::<_, Option<String>>(4)?,
+                "target": row.get::<_, Option<String>>(5)?,
+            }))),
+            None => Ok(None),
+        }
+    }
+
+    /// The id of the host already added for this `user@host`, if there is one.
+    ///
+    /// `host.add` asks this before it writes. Without it, adding the same machine twice made two rows
+    /// that the sidebar cannot tell apart - a list of `Website, Website, Website` with no way back.
+    pub fn host_id_for_target(&self, target: &str) -> Result<Option<String>> {
+        let connection = self.connection.lock().unwrap();
+        let mut statement = connection.prepare("SELECT id FROM hosts WHERE target = ?1 LIMIT 1")?;
+        let mut rows = statement.query(params![target])?;
+
+        match rows.next()? {
+            Some(row) => Ok(Some(row.get::<_, String>(0)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// One host's sessions, newest first - the rows the sidebar draws under a host.
+    ///
+    /// `minutesAgo` is computed here rather than in the UI: the reducer is pure, so the age of a
+    /// session has to travel in the data (master spec section 3.3).
+    pub fn sessions_for_host(&self, host_id: &str) -> Result<Vec<Value>> {
+        let connection = self.connection.lock().unwrap();
+        let mut statement = connection.prepare(
+            "SELECT id, host_id, title, prompt, state, unread, attention,
+                    CAST((julianday('now') - julianday(updated_at)) * 1440 AS INTEGER)
+             FROM sessions WHERE host_id = ?1 ORDER BY updated_at DESC",
+        )?;
+
+        let rows = statement.query_map(params![host_id], |row| {
+            Ok(serde_json::json!({
+                "sessionId": row.get::<_, String>(0)?,
+                "hostId": row.get::<_, String>(1)?,
+                "title": row.get::<_, String>(2)?,
+                "prompt": row.get::<_, String>(3)?,
+                "state": row.get::<_, String>(4)?,
+                "unread": row.get::<_, i64>(5)?,
+                "attention": row.get::<_, Option<String>>(6)?,
+                "minutesAgo": row.get::<_, i64>(7)?.max(0),
+            }))
+        })?;
+
+        let sessions = collect_json(rows)?;
+
+        Ok(sessions)
+    }
+
+    /// `session.list`: every host with its sessions - the tree a window folds when it opens.
+    ///
+    /// This is what makes an added host survive a restart. The window used to ask for nothing, so a
+    /// host that had been added on Monday was gone on Tuesday even though its row was still here.
+    pub fn hosts_with_sessions(&self) -> Result<Vec<Value>> {
+        let mut hosts = self.hosts()?;
+
+        for host in &mut hosts {
+            let id = host.get("hostId").and_then(Value::as_str).unwrap_or_default().to_string();
+            let sessions = self.sessions_for_host(&id)?;
+            let target: Option<String> = {
+                let connection = self.connection.lock().unwrap();
+                connection
+                    .query_row("SELECT target FROM hosts WHERE id = ?1", params![id], |row| {
+                        row.get(0)
+                    })
+                    .unwrap_or(None)
+            };
+
+            if let Value::Object(map) = host {
+                map.insert("sessions".to_string(), Value::Array(sessions));
+                map.insert("target".to_string(), target.map_or(Value::Null, Value::String));
+            }
+        }
+
+        Ok(hosts)
+    }
+
+    /// `host.remove`: deletes the host and everything that belongs to it, and answers how many
+    /// sessions went with it.
+    ///
+    /// Children first, because `foreign_keys` is ON: a session references its host, a turn references
+    /// its session, and deleting the parent with children still pointing at it is a foreign-key
+    /// error rather than a cascade. The **event log is not touched**: it is append-only, and the
+    /// removal is itself an event (`HostRemoved`), so the history of the host stays readable.
+    pub fn delete_host(&self, id: &str) -> Result<i64> {
+        let connection = self.connection.lock().unwrap();
+        let sessions: i64 = connection.query_row(
+            "SELECT COUNT(*) FROM sessions WHERE host_id = ?1",
+            params![id],
+            |row| row.get(0),
+        )?;
+
+        connection.execute(
+            "DELETE FROM rewind_stack WHERE session_id IN (SELECT id FROM sessions WHERE host_id = ?1)",
+            params![id],
+        )?;
+        connection.execute(
+            "DELETE FROM checkpoints WHERE session_id IN (SELECT id FROM sessions WHERE host_id = ?1)",
+            params![id],
+        )?;
+        connection.execute(
+            "DELETE FROM turns WHERE session_id IN (SELECT id FROM sessions WHERE host_id = ?1)",
+            params![id],
+        )?;
+        connection.execute(
+            "DELETE FROM permissions WHERE session_id IN (SELECT id FROM sessions WHERE host_id = ?1)",
+            params![id],
+        )?;
+        connection.execute("DELETE FROM sessions WHERE host_id = ?1", params![id])?;
+        connection.execute("DELETE FROM hosts WHERE id = ?1", params![id])?;
+
+        Ok(sessions)
+    }
+
+
 
     pub fn insert_session(&self, id: &str, host_id: &str, title: &str, prompt: &str) -> Result<()> {
         let now = chrono::Utc::now().to_rfc3339();

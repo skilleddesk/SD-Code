@@ -15,7 +15,7 @@ import { NewChatPopover } from './overlays/NewChatPopover';
 import { Palette } from './overlays/Palette';
 import { SearchOverlay } from './overlays/SearchOverlay';
 import { Toast } from './overlays/Toast';
-import { connectDaemon } from './store/intents';
+import { connectDaemon, watchDaemon } from './store/intents';
 import { useLayoutStore, workspaceClassName } from './store/layout';
 import { usePrefixHint } from './store/prefs';
 import { useRightPanelStore } from './store/rightPanel';
@@ -62,6 +62,16 @@ export function App() {
   useEffect(() => {
     void connectDaemon();
   }, []);
+
+  /*
+   * The heartbeat - the question that keeps being asked (spec sections 3.1 and 5.4).
+   *
+   * `connectDaemon()` is one handshake. Without a heartbeat after it, a daemon that dies mid-session
+   * is invisible: `sdcd` is a child process, and a child that has gone does not knock. The return
+   * value is the stop function, so this effect owns the timer for exactly as long as the window is
+   * open (see `store/daemon.ts` for why the answer is presentation and not an event).
+   */
+  useEffect(() => watchDaemon(), []);
 
   const layout = useLayoutStore();
   const rightPanelWidth = useRightPanelStore((state) => state.width);

@@ -218,6 +218,38 @@ export interface SessionRecord {
   updatedAt: string;
 }
 
+/**
+ * One host as `session.list` reports it: the row `host.status` names, plus the sessions it owns.
+ *
+ * `sessions` is the part that matters. The daemon's `hosts` table and its `sessions` table are two
+ * tables, and a window that only received the host rows would show a host that had lost all of its
+ * chats after a restart - which is exactly what a fresh window used to do, because nothing asked for
+ * the list at all.
+ */
+export interface HostRecord {
+  hostId: string;
+  name: string;
+  hostType: 'local' | 'vps';
+  status: HostStatusValue;
+  platform?: string | null;
+  /** The `user@host` the host was added with; null for `local`. Used to refuse a duplicate. */
+  target?: string | null;
+  sessions: SessionListItem[];
+}
+
+/** A session as `session.list` reports it: what the sidebar draws, and nothing more. */
+export interface SessionListItem {
+  sessionId: string;
+  hostId: string;
+  title: string;
+  prompt: string;
+  state: 'idle' | 'running' | 'waiting' | 'success' | 'error';
+  unread: number;
+  /** The daemon computed this; the reducer may never read a wall clock. */
+  minutesAgo: number;
+  attention?: 'awaiting_approval' | 'stuck' | 'budget_stop' | null;
+}
+
 export interface FsHit {
   path: string;
   line: number;
@@ -244,6 +276,21 @@ export interface HostStatusEvent {
   sdcd?: string;
   /** Machine line for the tooltip: `macOS 15.1 · arm64`, `Debian 12 · x64`. */
   platform?: string;
+}
+
+/**
+ * `host.remove`'s event: the host is gone from this daemon's list for good.
+ *
+ * A removed host needs an event rather than a local patch for the same reason `HostStatus` is an
+ * event: the host list is the daemon's, so the only way a second window - or this one, after a
+ * restart - learns that a host was removed is by folding what the daemon appended. `sessions` is the
+ * count that went with it, so the toast can say what was thrown away with it.
+ */
+export interface HostRemovedEvent {
+  type: 'HostRemoved';
+  hostId: string;
+  name: string;
+  sessions: number;
 }
 
 export interface ProviderStatusEvent {
@@ -488,6 +535,7 @@ export interface SessionBridgedEvent {
 
 export type SdcpEvent =
   | HostStatusEvent
+  | HostRemovedEvent
   | ProviderStatusEvent
   | RegistryLoadedEvent
   | SessionOpenedEvent
@@ -516,6 +564,7 @@ export type SdcpEvent =
 /** The `type` literals, in catalogue order — used by tests and by the reducer's exhaustiveness. */
 export const SDCP_EVENT_TYPES = [
   'HostStatus',
+  'HostRemoved',
   'ProviderStatus',
   'RegistryLoaded',
   'SessionOpened',
@@ -561,9 +610,14 @@ export interface SdcpMethodMap {
   'host.doctor': { params: { hostId?: string }; result: { checks: DoctorCheck[] } };
   'host.add': {
     params: { type: 'local' | 'ssh'; target?: string; label?: string };
-    result: { hostId: string };
+    /** `reused` is true when that `user@host` was already in the list - the row is returned as-is. */
+    result: { hostId: string; reused: boolean };
   };
-  'host.remove': { params: { hostId: string }; result: { removed: boolean } };
+  /** The row, its sessions and their turns go. `local` is refused: it is the machine `sdcd` runs on. */
+  'host.remove': {
+    params: { hostId: string };
+    result: { removed: boolean; name: string; sessions: number };
+  };
   /** Ends the daemon after this request. The app uses it to replace a daemon of another version. */
   'host.shutdown': {
     params: Record<string, never>;
@@ -575,7 +629,7 @@ export interface SdcpMethodMap {
     result: { sessionId: string };
   };
   'session.close': { params: { sessionId: string }; result: Record<string, never> };
-  'session.list': { params: Record<string, never>; result: { sessions: SessionRecord[] } };
+  'session.list': { params: Record<string, never>; result: { hosts: HostRecord[] } };
   'session.update': {
     params: { sessionId: string; title?: string; state?: SessionRecord['state'] };
     result: Record<string, never>;

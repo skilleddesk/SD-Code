@@ -107,7 +107,7 @@
       "items": {
         "type": "string",
         "enum": [
-          "HostStatus", "ProviderStatus", "RegistryLoaded", "SessionOpened", "SessionClosed", "SessionUpdated",
+          "HostStatus", "HostRemoved", "ProviderStatus", "RegistryLoaded", "SessionOpened", "SessionClosed", "SessionUpdated",
           "TurnStarted", "TurnDelta", "TurnCompleted", "ToolCallStarted", "ToolCallOutput",
           "ToolCallCompleted", "ThinkingDelta", "ErrorRaised", "PermissionRequested",
           "PermissionResolved", "CheckpointSaved", "RewindApplied", "Toast", "ToastDismissed",
@@ -155,7 +155,8 @@
       "properties": {
         "host.status": { "params": {}, "result": { "hostId": "string", "name": "string", "type": "local|vps", "status": "connected|degraded|offline|connecting", "sdcd": "string" } },
         "host.doctor": { "params": { "hostId": "string?" }, "result": { "checks": [{ "id": "string", "label": "string", "state": "ok|warn|fail", "detail": "string", "fix": "string?" }] } },
-        "host.add": { "params": { "type": "local|ssh", "target": "string?", "label": "string?" }, "result": { "hostId": "string" } },
+        "host.add": { "params": { "type": "local|ssh", "target": "string?", "label": "string?" }, "result": { "hostId": "string", "reused": "boolean" } },
+        "host.remove": { "params": { "hostId": "string" }, "result": { "removed": "boolean", "name": "string", "sessions": "number" } },
         "host.shutdown": { "params": {}, "result": { "stopping": "boolean", "sdcd": "string", "clients": "number" } },
         "session.open": { "params": { "hostId": "string", "title": "string?", "prompt": "string?" }, "result": { "sessionId": "string" } },
         "session.close": { "params": { "sessionId": "string" }, "result": {} },
