@@ -79,7 +79,8 @@ throughout, which is why the fix comes with a gate that is not about compiling.
 * The frontend smoke is the release gate that was missing: the packaged app is now opened *as a page*
   before it is packaged, which is one step short of the installer and the right place to catch a
   frontend that cannot mount. The packaged window itself is verified by hand on Windows (WebView2) as
-  part of the release checklist.
+  part of the release checklist - [`sdc/docs/RELEASE.md`](sdc/docs/RELEASE.md), which also says what to
+  do about a tag whose jobs failed.
 
 ## [0.4.3] — signing in from the app, and a model list that stays current
 
