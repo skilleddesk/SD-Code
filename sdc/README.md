@@ -115,8 +115,9 @@ Run these from the repository root unless noted. `pnpm --filter app …` and
 | `pnpm typecheck` | Strict TypeScript check of `src/` and of the build tooling. |
 | `pnpm lint` | ESLint over the frontend. |
 | `pnpm sdcd:run` | Build and run the host daemon (`cargo run` in `sdcd/`) — serves SDCP on `127.0.0.1:7811`. |
-| `pnpm test` | Vitest over the frontend: the reducer, the command registry, the strings contract. |
-| `pnpm sdcd:test` | `cargo test` in `sdcd/`: 76 tests, including the thirteen VCR fixtures of spec §11.6. |
+| `pnpm test` | Vitest over the frontend: the reducer, the command registry, the store-selector rule (23 tests). |
+| `pnpm --filter @sdc/app smoke` | **Opens the built `dist` in a real browser** and fails unless the app mounted, the shell is in the page, there is text to read and nothing threw. No dependencies, no CDP; `skipped` on a machine with no Chromium-family browser, required in CI. |
+| `pnpm sdcd:test` | `cargo test` in `sdcd/`: 100 tests — 92 unit, 3 daemon-lifecycle (real binary: `host.shutdown`, `--idle-exit`, hand-started stays) and 5 VCR. |
 | `pnpm daemon:package` | Build `sdcd` in release and stage it as the sidecar the installer bundles. |
 | `pnpm rust:fmt` / `pnpm rust:clippy` | Format / lint the daemon crate. |
 
@@ -139,6 +140,21 @@ fallback is a daemon and not a mock: it appends to the same event log the reduce
 starting `sdcd` first if it is not already running (it looks next to the app binary, then in
 `sdcd/target/{release,debug}`). Everything the daemon pushes comes back as the `sdcp://event` Tauri
 event, so a turn's `TurnDelta` stream reaches the store after `engine.start` has already answered.
+
+**Who owns the daemon.** The app does, for the daemon it started: it spawns `sdcd` with
+`CREATE_NO_WINDOW` (a console program would otherwise be given a console window next to the app), it
+kills that child when the window closes, and it passes `--idle-exit 8` so a daemon whose app was killed
+rather than closed still leaves. A daemon started by hand — `pnpm sdcd:run`, or a terminal you are
+watching — has no such flag, is never killed, and never leaves on its own.
+
+Two consequences worth knowing:
+
+* **An older daemon on the port is replaced, not used.** `host.status` reports the daemon's `sdcd`
+  version; when it is not this build's, the bridge sends `host.shutdown` (a real method, additive to
+  SDCP 0.1), waits for the port and starts the `sdcd` this build ships. Installing an update over a
+  running daemon therefore just works; the alternative was every method answering `unknown method`.
+* **`sdcp_status` tells you what is connected**: `appVersion`, `daemonVersion`, `restarted`,
+  `spawned`, `lastSeq`.
 
 **Which engine answers.** `engine.start` looks the engine up in `EngineRegistry`:
 `claude_code` (`claude --include-partial-messages`), `codex`, `gemini`, `native_api` (an `http://`
@@ -273,9 +289,12 @@ it is reached.
   because this build cannot reach an `https://` endpoint. Only the local Ollama daemon (and an
   `http://` endpoint) is really probed, and that answers `verified: true`. The browser's in-process
   daemon asserts the happy path (`verified: true`) on purpose: it *is* the provider's stand-in.
-* **Installers for macOS and Linux, and a signed build.** The Windows `.msi` was verified in STEP 1;
-  `dmg`, `AppImage` and `deb` need their own hosts, and signing needs certificates that this
-  repository does not hold. `pnpm tauri:build` on each platform is the whole procedure.
+* **Installers for macOS and Linux, and a signed build.** CI publishes all of them (`*.dmg` ×2,
+  `*.AppImage`, `*.deb`, `*.msi`, `*_x64-setup.exe`); on Windows the **installed** app was verified end
+  to end in 0.4.4 — silent install, the window renders, the daemon it started is 0.4.4, no console
+  window, and both the app and its daemon are gone after quitting. macOS and Linux artifacts are built
+  and published but have not been opened on their own hosts from here, and signing needs certificates
+  this repository does not hold.
 * **An axe-core pass and a screen-reader sweep.** The accessibility work is in the markup (roles,
   `aria-current`, focus traps, `Escape` handling, the keymap reference), but the automated audit has
   not been run in CI yet.

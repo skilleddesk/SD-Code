@@ -31,7 +31,7 @@ use std::net::{Ipv4Addr, SocketAddrV4};
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex};
 
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter};
@@ -47,38 +47,59 @@ pub const DEFAULT_PORT: u16 = 7811;
 
 /// What `sdcp_status` answers with.
 pub fn status_json(bridge: &SdcpBridge) -> Value {
+    let daemon_version = bridge.daemon_version.try_lock().ok().and_then(|held| held.clone());
+
     json!({
         "transport": "loopback",
         "address": format!("127.0.0.1:{}", bridge.port()),
         "connected": bridge.connected.load(Ordering::SeqCst),
         "spawned": bridge.spawned.load(Ordering::SeqCst),
         "lastSeq": bridge.last_seq.load(Ordering::SeqCst),
+        "appVersion": bridge.version,
+        "daemonVersion": daemon_version,
+        /* True when this bridge stopped a daemon of another version and started its own. The frontend
+           says so once, so a version bump is never a silent surprise. */
+        "restarted": bridge.restarted.swap(false, Ordering::SeqCst),
     })
 }
 
 /// The bridge's shared state.
 pub struct SdcpBridge {
     port: u16,
+    /// The app's own version. The daemon reports its version in `host.status`, and a mismatch is what
+    /// tells the bridge that the process on the port belongs to an older install.
+    version: String,
     /// The request connection. A `tokio::sync::Mutex` because a call awaits inside it: two calls in
     /// flight on one socket would interleave their responses.
     call: Mutex<Option<TcpStream>>,
+    /// The daemon this bridge started, if it started one. Kept so the app can stop what it owns: a
+    /// daemon the user started by hand is never touched (`stop_daemon`).
+    child: StdMutex<Option<std::process::Child>>,
     next_id: AtomicI64,
     connected: AtomicBool,
     spawned: AtomicBool,
     last_seq: AtomicI64,
+    /// The version of the daemon that answered, once one has. `None` until the first handshake.
+    daemon_version: Mutex<Option<String>>,
+    /// Set when a daemon of another version was asked to stop and replaced by the app's own.
+    restarted: AtomicBool,
 }
 
 impl SdcpBridge {
-    pub fn new() -> Arc<Self> {
+    pub fn new(version: impl Into<String>) -> Arc<Self> {
         let port = std::env::var("SDC_SDCP_PORT").ok().and_then(|value| value.parse().ok()).unwrap_or(DEFAULT_PORT);
 
         Arc::new(Self {
             port,
+            version: version.into(),
             call: Mutex::new(None),
+            child: StdMutex::new(None),
             next_id: AtomicI64::new(1),
             connected: AtomicBool::new(false),
             spawned: AtomicBool::new(false),
             last_seq: AtomicI64::new(0),
+            daemon_version: Mutex::new(None),
+            restarted: AtomicBool::new(false),
         })
     }
 
@@ -92,9 +113,26 @@ impl SdcpBridge {
 }
 
 /// Connects, spawning the daemon if nothing answers. Answers with `sdcp_status`'s shape.
+///
+/// A daemon that answers on the port but reports another version than the app is **replaced**: the
+/// bridge asks it to stop (`host.shutdown`), waits for the port to close and starts the `sdcd` that
+/// ships with this build. Without that step, an app update would silently talk to the previous
+/// release's daemon - the one failure mode a user cannot diagnose, because every tool call simply
+/// answers `unknown method`.
 pub async fn connect(app: AppHandle, bridge: Arc<SdcpBridge>) -> Result<Value, String> {
     if bridge.connected.load(Ordering::SeqCst) {
         return Ok(status_json(&bridge));
+    }
+
+    if TcpStream::connect(bridge.address()).await.is_ok() {
+        let running = probe_version(&bridge).await;
+
+        match running.as_deref() {
+            Some(version) if version != bridge.version => {
+                replace_daemon(&bridge, version).await?;
+            }
+            _ => {}
+        }
     }
 
     if TcpStream::connect(bridge.address()).await.is_err() {
@@ -128,6 +166,85 @@ pub async fn connect(app: AppHandle, bridge: Arc<SdcpBridge>) -> Result<Value, S
     subscribe(app, bridge.clone()).await?;
 
     Ok(status_json(&bridge))
+}
+
+/// What version the daemon on the port says it is, asked on a socket of its own.
+///
+/// A daemon that is too old to know `host.status` (none exists, but the shape is honest) answers with
+/// an error and yields `None`, which is treated as "leave it alone": the bridge only replaces a daemon
+/// it can name.
+async fn probe_version(bridge: &SdcpBridge) -> Option<String> {
+    let stream = TcpStream::connect(bridge.address()).await.ok()?;
+    let mut stream = stream;
+    let request = json!({ "v": "0.1", "id": "app-version-probe", "method": "host.status", "params": {} });
+
+    stream.write_all(format!("{request}\n").as_bytes()).await.ok()?;
+    stream.flush().await.ok()?;
+
+    let mut reader = BufReader::new(stream);
+
+    loop {
+        let mut line = String::new();
+
+        if reader.read_line(&mut line).await.ok()? == 0 {
+            return None;
+        }
+
+        let Ok(message) = serde_json::from_str::<Value>(line.trim()) else {
+            continue;
+        };
+
+        if message.get("id").and_then(Value::as_str) != Some("app-version-probe") {
+            continue;
+        }
+
+        let version = message.pointer("/result/sdcd").and_then(Value::as_str).map(str::to_string);
+
+        if let Some(found) = &version {
+            if let Ok(mut held) = bridge.daemon_version.try_lock() {
+                *held = Some(found.clone());
+            }
+        }
+
+        return version;
+    }
+}
+
+/// Stops a daemon of another version and starts this build's own, then waits for the port to answer
+/// again. `host.shutdown` is what makes this possible over the wire: the daemon exits on a request,
+/// which is the only lever a client with a socket has.
+async fn replace_daemon(bridge: &SdcpBridge, version: &str) -> Result<(), String> {
+    let mut stream = TcpStream::connect(bridge.address()).await.map_err(|error| error.to_string())?;
+    let request = json!({ "v": "0.1", "id": "app-replace", "method": "host.shutdown", "params": {} });
+
+    stream
+        .write_all(format!("{request}\n").as_bytes())
+        .await
+        .map_err(|error| error.to_string())?;
+    stream.flush().await.map_err(|error| error.to_string())?;
+
+    /* Read the answer before the daemon goes, so the log line below is about a daemon that said
+       goodbye rather than one that was shot. */
+    let mut reader = BufReader::new(stream);
+    let mut line = String::new();
+
+    let _ = reader.read_line(&mut line).await;
+    eprintln!("sdcp: replaced sdcd {version} with {} (the app's own version)", bridge.version);
+
+    for _ in 0..40 {
+        if TcpStream::connect(bridge.address()).await.is_err() {
+            bridge.restarted.store(true, Ordering::SeqCst);
+
+            return Ok(());
+        }
+
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    }
+
+    Err(format!(
+        "sdcd {version} answered on 127.0.0.1:{} but did not stop, so this build's daemon could not start",
+        bridge.port
+    ))
 }
 
 /// One request, in the shape the frontend writes it: `{ method, params, id }`.
@@ -254,14 +371,38 @@ fn start_daemon(bridge: &SdcpBridge) -> Result<(), String> {
             .to_string()
     })?;
 
-    std::process::Command::new(&program)
+    let mut command = std::process::Command::new(&program);
+
+    command
         .arg("--port")
         .arg(bridge.port.to_string())
+        /* The daemon leaves once the app has been gone for this long. Closing the app kills it
+           outright (`shutdown`, wired to the window's exit), so this is the net under the case where
+           the app was killed instead of closed - Task Manager, a crash, a reviewer's `Stop-Process`.
+           Without it, an old daemon keeps the port and the next install talks to it. */
+        .arg("--idle-exit")
+        .arg("8")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(Stdio::null());
+
+    /* `sdcd` is a console program (it prints to stdout when you run it by hand), and Windows
+       allocates a console for such a program unless it is told not to - which is why an installed
+       build used to open a black window with the daemon's path in its title next to the app window.
+       The pipes above already throw the output away, so the window is pure noise. */
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    let child = command
         .spawn()
         .map_err(|error| format!("starting {}: {error}", program.display()))?;
+
+    *bridge.child.lock().map_err(|_| "the daemon handle was poisoned".to_string())? = Some(child);
     bridge.spawned.store(true, Ordering::SeqCst);
 
     Ok(())
@@ -274,9 +415,35 @@ pub fn stop_daemon(bridge: &SdcpBridge) -> Value {
         return json!({ "stopped": false, "reason": "the daemon was already running before the app" });
     }
 
-    /* The daemon exits when its socket closes, so closing the connection is the stop signal. There is
-       no separate control method to get out of sync with (spec section 5.3). */
-    json!({ "stopped": true })
+    json!({ "stopped": kill_child(bridge) })
+}
+
+/// Kills the daemon this bridge started, and says whether there was one to kill.
+///
+/// Called when the window exits and from `sdcp_stop_daemon`. The child is *ours* - a daemon the user
+/// started by hand never lands in this slot - so killing it cannot take anything from anybody.
+pub fn kill_child(bridge: &SdcpBridge) -> bool {
+    let Ok(mut guard) = bridge.child.lock() else {
+        return false;
+    };
+
+    let Some(mut child) = guard.take() else {
+        return false;
+    };
+
+    let _ = child.kill();
+    let _ = child.wait();
+
+    true
+}
+
+/// The window is going away: stop what this app started. `sdcd` is a child process, and on Windows a
+/// child outlives its parent, so without this an installed app leaves a daemon - and its port - behind
+/// after every quit.
+pub fn shutdown(bridge: &SdcpBridge) {
+    if bridge.spawned.swap(false, Ordering::SeqCst) {
+        kill_child(bridge);
+    }
 }
 
 /// The `sdcd` binary: `SDC_SDCD` if set, then next to the app, then the development builds.

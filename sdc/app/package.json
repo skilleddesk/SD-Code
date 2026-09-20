@@ -1,13 +1,14 @@
 {
   "name": "@sdc/app",
   "private": true,
-  "version": "0.4.3",
+  "version": "0.4.4",
   "type": "module",
   "description": "SDC desktop app - Tauri 2 shell with a React 18 + TypeScript + Tailwind frontend.",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit -p tsconfig.json && vite build",
     "preview": "vite preview",
+    "smoke": "node scripts/smoke-bundle.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
     "test": "vitest run",
     "test:watch": "vitest",

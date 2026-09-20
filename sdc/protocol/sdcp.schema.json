@@ -82,7 +82,7 @@
       "items": {
         "type": "string",
         "enum": [
-          "host.status", "host.doctor", "host.add", "host.remove",
+          "host.status", "host.doctor", "host.add", "host.remove", "host.shutdown",
           "session.open", "session.close", "session.list", "session.update", "session.fork",
           "engine.start", "engine.cancel", "engine.kill", "engine.status", "engine.switch",
           "fs.read", "fs.write", "fs.list", "fs.stat", "fs.search",
@@ -156,6 +156,7 @@
         "host.status": { "params": {}, "result": { "hostId": "string", "name": "string", "type": "local|vps", "status": "connected|degraded|offline|connecting", "sdcd": "string" } },
         "host.doctor": { "params": { "hostId": "string?" }, "result": { "checks": [{ "id": "string", "label": "string", "state": "ok|warn|fail", "detail": "string", "fix": "string?" }] } },
         "host.add": { "params": { "type": "local|ssh", "target": "string?", "label": "string?" }, "result": { "hostId": "string" } },
+        "host.shutdown": { "params": {}, "result": { "stopping": "boolean", "sdcd": "string", "clients": "number" } },
         "session.open": { "params": { "hostId": "string", "title": "string?", "prompt": "string?" }, "result": { "sessionId": "string" } },
         "session.close": { "params": { "sessionId": "string" }, "result": {} },
         "session.update": { "params": { "sessionId": "string", "title": "string?", "state": "string?" }, "result": {} },

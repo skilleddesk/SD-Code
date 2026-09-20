@@ -11,7 +11,7 @@ mod sdcp;
 use std::sync::Arc;
 
 use serde_json::Value;
-use tauri::State;
+use tauri::{Manager, State};
 
 /// Runs the desktop application.
 ///
@@ -19,12 +19,11 @@ use tauri::State;
 /// serve the mobile targets without a rewrite.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         // What the frontend is allowed to call is decided by `capabilities/default.json`,
         // not here: registering a plugin does not grant its permissions.
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
-        .manage(sdcp::SdcpBridge::new())
         .invoke_handler(tauri::generate_handler![
             sdcp_status,
             sdcp_connect,
@@ -32,8 +31,27 @@ pub fn run() {
             sdcp_subscribe,
             sdcp_stop_daemon
         ])
-        .run(tauri::generate_context!())
-        .expect("failed to run the SDC window");
+        .setup(|handle| {
+            /* The bridge is built here rather than with `manage()` in the builder chain because it
+               wants the app's own version: `host.status` reports the daemon's, and a mismatch is how
+               the bridge knows the process on the port belongs to an older install (see `sdcp.rs`). */
+            let version = handle.package_info().version.to_string();
+
+            handle.manage(sdcp::SdcpBridge::new(version));
+
+            Ok(())
+        })
+        .build(tauri::generate_context!())
+        .expect("failed to build the SDC window");
+
+    app.run(|handle, event| {
+        /* The daemon is a child process this app started, and on Windows a child outlives its parent:
+           quitting would otherwise leave `sdcd` holding port 7811, which is what makes the *next*
+           install talk to the previous release's daemon. */
+        if let tauri::RunEvent::Exit = event {
+            sdcp::shutdown(&handle.state::<Arc<sdcp::SdcpBridge>>());
+        }
+    });
 }
 
 /// Whether the daemon is reachable, and on what address.

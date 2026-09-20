@@ -8,6 +8,69 @@ what `host.status` reports as the daemon's version.
 This file describes what changed, not what is planned. Anything still open is named in
 [`sdc/README.md` → What is deliberately absent](sdc/README.md#what-is-deliberately-absent).
 
+## [0.4.4] — the window that was black, and the daemon that would not let go
+
+Two bugs that made an installed build look broken, both found by installing it: the window opened with
+nothing in it, and a black console window appeared next to it. Every gate in this repository was green
+throughout, which is why the fix comes with a gate that is not about compiling.
+
+### Fixed — the window rendered nothing
+
+* **A store selector returned a new array on every call** (`overlays/Toast.tsx`). Zustand 5 gives the
+  selector to `useSyncExternalStore`, which calls it on each commit and compares with `Object.is`; a
+  fresh array therefore looked like a change, so React re-rendered, compared, re-rendered - until it
+  hit its fifty-update limit (`Minified React error #185`, "Maximum update depth exceeded") and
+  unmounted the tree. What is left of an unmounted React tree is an empty `<div id="root">`: a window
+  the colour of the theme, with no sidebar, no chat and no error the user can see. The selector now
+  returns one joined string, which `Object.is` can compare.
+* **This was every build from 0.4.1 to 0.4.3.** The line never changed from the first commit, so the
+  daemon, the protocol, the login flow and the model catalogue were all working behind a window that
+  could not show them.
+
+### Fixed — a console window opened next to the app
+
+* **`sdcd` is a console program, and Windows gives one a console unless it is told not to.** The bridge
+  spawned it with `CREATE_NO_WINDOW` missing, so an installed build opened a black window with the
+  daemon's path in its title beside the app window. The pipes were already thrown away, so the window
+  was pure noise; it is now suppressed at spawn.
+
+### Fixed — the daemon outlived the app, and the next install met it
+
+* **The app stops the daemon it started.** `sdcd` is a child process, and on Windows a child outlives
+  its parent: quitting left a daemon holding port 7811. The bridge keeps the `Child` handle and kills it
+  on the window's exit event.
+* **`sdcd --idle-exit <secs>`** covers the case where the app does not get to quit - Task Manager, a
+  crash, `Stop-Process`. The app passes 8 seconds; a daemon started by hand gets no flag and never
+  leaves on its own, because a terminal a person opened is a terminal a person closes.
+* **`host.shutdown`** (new method, additive to SDCP 0.1) asks a daemon to stop over the wire, and the
+  bridge uses it: a daemon answering on the port whose `sdcd` version is not this build's version is
+  asked to stop, and the `sdcd` that ships with this build starts in its place. Without it, installing
+  an update while an older daemon was still running meant talking to the older daemon - where methods
+  like `models.list` simply answer "unknown method", which is the one failure nobody can diagnose from
+  the UI. `sdcp_status` now also reports `appVersion`, `daemonVersion` and `restarted`.
+
+### Added — the check that would have caught it
+
+* **`pnpm --filter @sdc/app smoke`** (`app/scripts/smoke-bundle.mjs`): serves the built `dist`, opens it
+  in the runner's Chromium-family browser through `--dump-dom --virtual-time-budget`, and fails unless
+  the app mounted, the shell is in the page, there is text to read and nothing threw. No dependencies
+  and no CDP, so it runs on any platform that has a browser; in CI it is a required step before the
+  Tauri build, and locally it prints `skipped` instead of blocking a machine without one.
+* **`tests/selectors.test.ts`**: the cheap half of the same guard, run by `pnpm test` in a second. It
+  reads the sources and fails on a store selector whose result cannot be stable - a `.map(...)` that is
+  not joined, an object or array literal - and it contains the exact 0.4.1 line as a case, so the rule
+  cannot be quietly relaxed.
+* **`sdcd`'s lifecycle tests** (`tests/lifecycle.rs`) start the real binary: a client that sends
+  `host.shutdown` ends the process, a daemon started for the app leaves on its own, and one started by
+  hand stays. 91 daemon tests became 100 (92 unit, 3 lifecycle, 5 VCR); the frontend's 21 became 23.
+
+### Notes
+
+* The frontend smoke is the release gate that was missing: the packaged app is now opened *as a page*
+  before it is packaged, which is one step short of the installer and the right place to catch a
+  frontend that cannot mount. The packaged window itself is verified by hand on Windows (WebView2) as
+  part of the release checklist.
+
 ## [0.4.3] — signing in from the app, and a model list that stays current
 
 Two features, and both come from the same question: what does a person actually have to *do* before SDC

@@ -71,6 +71,7 @@ export type SdcpMethod =
   | 'host.doctor'
   | 'host.add'
   | 'host.remove'
+  | 'host.shutdown'
   | 'session.open'
   | 'session.close'
   | 'session.list'
@@ -561,6 +562,11 @@ export interface SdcpMethodMap {
     result: { hostId: string };
   };
   'host.remove': { params: { hostId: string }; result: { removed: boolean } };
+  /** Ends the daemon after this request. The app uses it to replace a daemon of another version. */
+  'host.shutdown': {
+    params: Record<string, never>;
+    result: { stopping: boolean; sdcd: string; clients: number };
+  };
 
   'session.open': {
     params: { hostId: string; title?: string; prompt?: string };

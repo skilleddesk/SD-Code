@@ -101,6 +101,17 @@ jobs:
           pnpm test
           cargo test --manifest-path sdcd/Cargo.toml
 
+      - name: The built window renders
+        working-directory: sdc
+        # A bundle that compiles is not a bundle that mounts. 0.4.1-0.4.3 passed every check above and
+        # still opened a window with nothing in it (a store selector that returned a new array made
+        # React loop until it unmounted the tree), so the release now opens the built frontend in the
+        # runner's browser before an installer is allowed to carry it. See
+        # `app/scripts/smoke-bundle.mjs` and the 0.4.4 section of CHANGELOG.md.
+        run: |
+          pnpm build
+          pnpm --filter @sdc/app smoke
+
       - name: Build and publish
         uses: tauri-apps/tauri-action@v0
         env:

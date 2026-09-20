@@ -62,6 +62,7 @@ impl Daemon {
             "host.status" => Ok(self.host_status(&*out)),
             "host.doctor" => Ok(json!({ "checks": host::checks(self.store()) })),
             "host.add" => self.host_add(envelope, &*out),
+            "host.shutdown" => Ok(self.host_shutdown()),
 
             /* Sessions ------------------------------------------------------------------------ */
             "session.open" => self.session_open(envelope, &*out),
@@ -177,6 +178,22 @@ impl Daemon {
             "pty": self.state.pty.running(),
             "console": self.state.console.attached_count(),
             "subscribers": self.state.fanout.listeners(),
+        })
+    }
+
+    /// `host.shutdown` - asks this daemon to stop after the current request.
+    ///
+    /// It exists because the app is the daemon's owner and needs the code to say so over the wire:
+    /// when the daemon answering on the port is not the version the app ships, the app stops it and
+    /// starts its own, so installing a new build never means restarting a machine by hand. The run
+    /// loop polls the flag this sets (`main.rs#watch`), so the answer goes out before the exit.
+    fn host_shutdown(&self) -> Value {
+        self.state.request_stop();
+
+        json!({
+            "stopping": true,
+            "sdcd": VERSION,
+            "clients": self.state.clients(),
         })
     }
 
