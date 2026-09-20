@@ -1,17 +1,38 @@
 //! Gemini CLI (master spec section 11.1).
 //!
-//! The third CLI, and the reason `cli.rs` exists: the only thing that differs from Codex is the
-//! program name and the flag that asks for the structured stream.
+//! The third CLI, and the two ways it differs from the other two: its prompt goes in as an argument,
+//! and it asks a trusted-folder question before it will do anything.
 
 use async_trait::async_trait;
 
-use crate::engines::cli::{CliAdapter, CliSpec};
+use crate::engines::cli::{CliAdapter, CliSpec, PromptPlacement};
 use crate::engines::{Engine, EngineEvent, EngineStatus, Prompt};
 
-/// `gemini --output json` streams one object per line.
+/// `gemini -p <prompt> --output-format stream-json --skip-trust` is the headless form.
+///
+/// The old spec asked for `gemini --output json`, and this CLI answers it by not recognising the flag:
+///
+/// ```text
+/// $ gemini --output json
+/// Unknown argument: output        (exit 1, empty stdout)
+/// ```
+///
+/// Its own `--help` says what the right shape is: *"Defaults to interactive mode. Use -p/--prompt for
+/// non-interactive (headless) mode"*, and `-p` takes the prompt as its value - *"Appended to input on
+/// stdin (if any)"* - which is why `PromptPlacement::Argument` exists: piped, the prompt would be read
+/// as the answer to Gemini's own questions (its sign-in prompt, its trusted-folder prompt).
+/// `--skip-trust` answers the trusted-folder one, and `stream-json` is one of the three values its
+/// `-o` accepts.
+///
+/// The stream shape below is Gemini's published `stream-json` contract, **not** a capture: this machine
+/// has no Gemini account signed in, and guessing which of its lines matter would be the same mistake
+/// this file was written to fix. What is certain is the failure path - not signed in, it prints a plain
+/// sentence on stdout (`Opening authentication page in your browser. Do you want to continue?`) and
+/// exits 42, and `explain_failure` puts that sentence in the transcript instead of an empty answer.
 pub const GEMINI_SPEC: CliSpec = CliSpec {
     program: "gemini",
-    args: &["--output", "json"],
+    args: &["-p", "{prompt}", "--output-format", "stream-json", "--skip-trust"],
+    prompt: PromptPlacement::Argument,
     env: &[("NO_COLOR", "1")],
 };
 

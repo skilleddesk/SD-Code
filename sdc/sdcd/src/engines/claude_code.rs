@@ -7,16 +7,39 @@
 
 use async_trait::async_trait;
 
-use crate::engines::cli::{CliAdapter, CliSpec};
+use crate::engines::cli::{CliAdapter, CliSpec, PromptPlacement};
 use crate::engines::{Engine, EngineEvent, EngineStatus, Prompt};
 
 /// The one flag that makes this adapter honest.
 pub const PARTIAL_MESSAGES_FLAG: &str = "--include-partial-messages";
 
-/// The spec `claude` is invoked with. Exported so a test can assert the flag is present.
+/// The spec `claude` is invoked with. Exported so a test can assert the flags are present.
+///
+/// **`-p` and `--output-format stream-json` are not optional next to `--include-partial-messages`**,
+/// and this is the defect that made every chat turn produce nothing (found by asking the CLI, not by
+/// reading this file):
+///
+/// ```text
+/// $ claude --include-partial-messages
+/// Error: --include-partial-messages requires --print and --output-format=stream-json.
+/// ```
+///
+/// The old spec was exactly that one flag. The CLI exited 1 with that sentence on **stderr**, the
+/// adapter sent stderr to `Stdio::null()`, and the turn ended with an empty transcript - so a signed-in
+/// Claude Code looked like a broken chat. Measured working form, which is what the daemon runs now:
+///
+/// ```text
+/// $ claude -p --output-format stream-json --include-partial-messages --verbose
+/// {"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"O"}}}
+/// …
+/// {"type":"result","subtype":"success","result":"OK","total_cost_usd":0.029,…}
+/// ```
+///
+/// `--verbose` is what Claude Code asks for when `-p` and `stream-json` are combined.
 pub const CLAUDE_SPEC: CliSpec = CliSpec {
     program: "claude",
-    args: &[PARTIAL_MESSAGES_FLAG],
+    args: &["-p", "--output-format", "stream-json", PARTIAL_MESSAGES_FLAG, "--verbose"],
+    prompt: PromptPlacement::Stdin,
     env: &[("NO_COLOR", "1"), ("CLAUDE_NO_UPDATE_CHECK", "1")],
 };
 

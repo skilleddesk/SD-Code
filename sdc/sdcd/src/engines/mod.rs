@@ -35,6 +35,15 @@ pub struct Prompt {
     pub session_id: String,
     pub turn_id: String,
     pub text: String,
+    /// The model the session is set to, as the registry spells it (`anthropic/claude-sonnet-4-5`).
+    ///
+    /// It travels *in the prompt* because the engines cannot guess it and two of them tried:
+    /// `native_api` read the model out of the **prompt text** (so an API turn only ever reached the
+    /// right provider when the user typed the provider's name, and otherwise went to the loopback
+    /// endpoint), and `ollama` read it out of the **first history message**. Both are the same
+    /// mistake - a fact about the session inferred from its content - and both are why "connect with
+    /// an API key" did not work even with a valid key.
+    pub model: String,
     /// The conversation so far, oldest first - the Session Bridge's payload (spec section 16.5).
     pub history: Vec<String>,
 }
@@ -155,6 +164,34 @@ pub fn parse_stream_line(line: &str) -> Vec<EngineEvent> {
     };
 
     match value.get("type").and_then(Value::as_str).unwrap_or("text") {
+        /* Claude Code wraps every event; only the inner one is interesting. */
+        "stream_event" => value.get("event").map(parse_claude_event).unwrap_or_default(),
+
+        /* Claude's finished message, which the partial deltas already carried. Dropping it is
+           deliberate: emitting both prints every answer twice. */
+        "assistant" => Vec::new(),
+
+        /* Codex: one item per thing that happened, plus four words about the turn itself. */
+        "item.completed" | "item.started" | "item.updated" => {
+            value.get("item").map(parse_codex_item).unwrap_or_default()
+        }
+        "turn.completed" => vec![EngineEvent::Done {
+            summary: "Done".to_string(),
+            meta: usage_meta(&value),
+            pass: Some(true),
+        }],
+        "turn.failed" => vec![EngineEvent::Failed(error_message(&value))],
+
+        /* Gemini's stream-json: one message per delta. */
+        "message" => text_of(&value).map(EngineEvent::Delta).into_iter().collect(),
+
+        /* Claude's and Gemini's terminal line - and the shape the VCR fixtures spell. */
+        "result" | "done" => result_event(&value),
+
+        "error" => vec![EngineEvent::Failed(error_message(&value))],
+
+        /* The prototype's own vocabulary. Kept because the fixtures of spec section 11.6 are written
+           in it, and harmless because a shape a CLI does not send is never reached. */
         "text" | "assistant_text" | "content_block_delta" => {
             text_of(&value).map(EngineEvent::Delta).into_iter().collect()
         }
@@ -180,12 +217,6 @@ pub fn parse_stream_line(line: &str) -> Vec<EngineEvent> {
             .to_string(),
             meta: string_of(&value, "meta", "done"),
         }],
-        "error" => vec![EngineEvent::Failed(string_of(&value, "message", "engine error"))],
-        "result" | "done" => vec![EngineEvent::Done {
-            summary: string_of(&value, "summary", "Done"),
-            meta: string_of(&value, "meta", ""),
-            pass: value.get("pass").and_then(Value::as_bool),
-        }],
         _ => Vec::new(),
     }
 }
@@ -208,6 +239,188 @@ fn text_of(value: &Value) -> Option<String> {
         .and_then(|delta| delta.get("text"))
         .and_then(Value::as_str)
         .map(str::to_string)
+}
+
+/// One inner event of Claude Code's `stream_event` wrapper.
+fn parse_claude_event(event: &Value) -> Vec<EngineEvent> {
+    match event.get("type").and_then(Value::as_str).unwrap_or("") {
+        "content_block_delta" => {
+            let Some(delta) = event.get("delta") else {
+                return Vec::new();
+            };
+
+            match delta.get("type").and_then(Value::as_str).unwrap_or("") {
+                "text_delta" => delta
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .map(|text| vec![EngineEvent::Delta(text.to_string())])
+                    .unwrap_or_default(),
+                "thinking_delta" => delta
+                    .get("thinking")
+                    .and_then(Value::as_str)
+                    .map(|text| vec![EngineEvent::Thinking(text.to_string())])
+                    .unwrap_or_default(),
+                _ => Vec::new(),
+            }
+        }
+        /* A tool call starts as a `content_block_start` whose block is the tool. */
+        "content_block_start" => {
+            let Some(block) = event.get("content_block") else {
+                return Vec::new();
+            };
+
+            if block.get("type").and_then(Value::as_str) != Some("tool_use") {
+                return Vec::new();
+            }
+
+            let name = block.get("name").and_then(Value::as_str).unwrap_or("tool").to_string();
+            let input = block.get("input").cloned().unwrap_or(Value::Null);
+
+            vec![EngineEvent::ToolStarted {
+                call_id: block.get("id").and_then(Value::as_str).unwrap_or("call").to_string(),
+                tool: tool_kind(&name).to_string(),
+                name,
+                target: target_of(&input),
+            }]
+        }
+        /* `message_start`, `message_delta`, `message_stop`, `content_block_stop`: nothing to say. */
+        _ => Vec::new(),
+    }
+}
+
+/// One Codex `item`.
+fn parse_codex_item(item: &Value) -> Vec<EngineEvent> {
+    let text = item.get("text").and_then(Value::as_str);
+
+    match item.get("type").and_then(Value::as_str).unwrap_or("") {
+        "agent_message" => text.map(|text| vec![EngineEvent::Delta(text.to_string())]).unwrap_or_default(),
+        "reasoning" => text.map(|text| vec![EngineEvent::Thinking(text.to_string())]).unwrap_or_default(),
+        "command_execution" => {
+            let command = item.get("command").and_then(Value::as_str).unwrap_or("").to_string();
+
+            vec![EngineEvent::ToolStarted {
+                call_id: string_of(item, "id", "call"),
+                tool: "run".to_string(),
+                name: command.split_whitespace().next().unwrap_or("command").to_string(),
+                target: command,
+            }]
+        }
+        "file_change" | "patch" | "apply_patch" => {
+            let path = item
+                .get("path")
+                .or_else(|| {
+                    item.get("changes")
+                        .and_then(|changes| changes.get(0))
+                        .and_then(|change| change.get("path"))
+                })
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+
+            vec![EngineEvent::ToolStarted {
+                call_id: string_of(item, "id", "call"),
+                tool: "edit".to_string(),
+                name: "edit".to_string(),
+                target: path,
+            }]
+        }
+        "error" => vec![EngineEvent::Failed(error_message(item))],
+        _ => Vec::new(),
+    }
+}
+
+/// The terminal line, for a CLI that ends its stream with one.
+fn result_event(value: &Value) -> Vec<EngineEvent> {
+    let is_error = value.get("is_error").and_then(Value::as_bool).unwrap_or(false)
+        || value
+            .get("subtype")
+            .and_then(Value::as_str)
+            .map(|subtype| subtype.starts_with("error"))
+            .unwrap_or(false);
+
+    if is_error {
+        return vec![EngineEvent::Failed(error_message(value))];
+    }
+
+    vec![EngineEvent::Done {
+        /* Claude puts the whole answer in `result` and the fixtures put a label in `summary`. The
+           deltas already printed the answer, so a summary that repeats it would print it twice: the
+           label wins, and the provider's numbers go in `meta` where the footer reads them. */
+        summary: value
+            .get("summary")
+            .and_then(Value::as_str)
+            .unwrap_or("Done")
+            .to_string(),
+        meta: usage_meta(value),
+        pass: value.get("pass").and_then(Value::as_bool).or(Some(true)),
+    }]
+}
+
+/// What a provider's own numbers say about the turn, when it sends any.
+///
+/// Claude ends with `duration_ms` and `total_cost_usd`, Codex with a `usage` object. Both are worth
+/// showing next to the answer, and both are the provider's own numbers - nothing is estimated here.
+fn usage_meta(value: &Value) -> String {
+    /* The fixtures of spec section 11.6 spell the line themselves; a real stream has numbers. */
+    if let Some(meta) = value.get("meta").and_then(Value::as_str) {
+        return meta.to_string();
+    }
+
+    let mut parts = Vec::new();
+
+    if let Some(cost) = value.get("total_cost_usd").and_then(Value::as_f64) {
+        parts.push(format!("${cost:.4}"));
+    }
+
+    if let Some(ms) = value.get("duration_ms").and_then(Value::as_u64) {
+        parts.push(format!("{:.1}s", ms as f64 / 1000.0));
+    }
+
+    if let Some(usage) = value.get("usage") {
+        let input = usage.get("input_tokens").and_then(Value::as_u64);
+        let output = usage.get("output_tokens").and_then(Value::as_u64);
+
+        if let (Some(input), Some(output)) = (input, output) {
+            parts.push(format!("{input} in · {output} out"));
+        }
+    }
+
+    parts.join(" · ")
+}
+
+/// The first sentence of an error, from whichever key the CLI used.
+fn error_message(value: &Value) -> String {
+    for key in ["message", "result", "error"] {
+        if let Some(text) = value.get(key).and_then(Value::as_str) {
+            return text.to_string();
+        }
+
+        if let Some(text) = value.get(key).and_then(|nested| nested.get("message")).and_then(Value::as_str) {
+            return text.to_string();
+        }
+    }
+
+    "the engine reported an error".to_string()
+}
+
+/// Which of the app's three tool kinds a CLI's tool name is (the UI colours them differently).
+fn tool_kind(name: &str) -> &'static str {
+    match name.to_lowercase().as_str() {
+        "read" | "glob" | "grep" | "list" | "search" | "webfetch" | "websearch" | "notebookread" => "read",
+        "edit" | "write" | "multiedit" | "notebookedit" | "patch" | "apply_patch" => "edit",
+        _ => "run",
+    }
+}
+
+/// What a tool is acting on, from the JSON its input carries.
+fn target_of(input: &Value) -> String {
+    for key in ["file_path", "path", "command", "pattern", "url", "query"] {
+        if let Some(text) = input.get(key).and_then(Value::as_str) {
+            return text.to_string();
+        }
+    }
+
+    String::new()
 }
 
 /// Turns one adapter's raw stdout lines into events, ending the stream at `result`/`error`.
@@ -286,5 +499,118 @@ mod tests {
         ]);
 
         assert_eq!(events.len(), 2);
+    }
+    /*
+     * The shapes below are the ones the installed CLIs printed, copied out of the raw captures written
+     * by `node _verify/cli-capture.mjs`. They are here because the invented shape this parser was
+     * first written against is exactly why every chat turn produced nothing.
+     */
+
+    #[test]
+    fn a_real_claude_turn_parses_to_text_and_a_finished_turn() {
+        let lines = vec![
+            r#"{"type":"system","subtype":"init","cwd":"H:\\SDC","tools":["Bash","Read"]}"#.to_string(),
+            r#"{"type":"system","subtype":"status","status":"requesting"}"#.to_string(),
+            r#"{"type":"stream_event","event":{"type":"message_start","message":{"model":"claude-sonnet-5"}}}"#.to_string(),
+            r#"{"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}}"#.to_string(),
+            r#"{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"O"}}}"#.to_string(),
+            r#"{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"K"}}}"#.to_string(),
+            /* The whole message, which the deltas already carried: it must not be emitted again. */
+            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"OK"}]}}"#.to_string(),
+            r#"{"type":"stream_event","event":{"type":"content_block_stop","index":0}}"#.to_string(),
+            r#"{"type":"stream_event","event":{"type":"message_stop"}}"#.to_string(),
+            r#"{"type":"rate_limit_event","rate_limit_info":{"status":"allowed_warning"}}"#.to_string(),
+            r#"{"type":"result","subtype":"success","is_error":false,"duration_ms":3293,"total_cost_usd":0.029004,"result":"OK"}"#.to_string(),
+        ];
+
+        let events = collect_stream(lines);
+
+        assert_eq!(
+            events,
+            vec![
+                EngineEvent::Delta("O".into()),
+                EngineEvent::Delta("K".into()),
+                EngineEvent::Done { summary: "Done".into(), meta: "$0.0290 · 3.3s".into(), pass: Some(true) },
+            ]
+        );
+    }
+
+    #[test]
+    fn a_real_codex_turn_parses_to_text_and_a_finished_turn() {
+        let lines = vec![
+            r#"{"type":"thread.started","thread_id":"01a0bee0"}"#.to_string(),
+            r#"{"type":"turn.started"}"#.to_string(),
+            r#"{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"OK"}}"#.to_string(),
+            r#"{"type":"turn.completed","usage":{"input_tokens":12926,"output_tokens":5}}"#.to_string(),
+        ];
+
+        let events = collect_stream(lines);
+
+        assert_eq!(
+            events,
+            vec![
+                EngineEvent::Delta("OK".into()),
+                EngineEvent::Done {
+                    summary: "Done".into(),
+                    meta: "12926 in · 5 out".into(),
+                    pass: Some(true),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn a_codex_command_becomes_a_run_tool() {
+        let events = parse_stream_line(
+            r#"{"type":"item.completed","item":{"id":"item_3","type":"command_execution","command":"npm test","exit_code":0}}"#,
+        );
+
+        assert_eq!(
+            events,
+            vec![EngineEvent::ToolStarted {
+                call_id: "item_3".into(),
+                tool: "run".into(),
+                name: "npm".into(),
+                target: "npm test".into(),
+            }]
+        );
+    }
+
+    #[test]
+    fn a_claude_tool_block_becomes_a_tool_with_its_target() {
+        let events = parse_stream_line(
+            r#"{"type":"stream_event","event":{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_1","name":"Read","input":{"file_path":"H:\\SDC\\README.md"}}}}"#,
+        );
+
+        assert_eq!(
+            events,
+            vec![EngineEvent::ToolStarted {
+                call_id: "toolu_1".into(),
+                tool: "read".into(),
+                name: "Read".into(),
+                target: "H:\\SDC\\README.md".into(),
+            }]
+        );
+    }
+
+    #[test]
+    fn gemini_messages_are_deltas_and_its_result_ends_the_turn() {
+        assert_eq!(
+            parse_stream_line(r#"{"type":"message","role":"assistant","content":"OK","delta":true}"#),
+            vec![EngineEvent::Delta("OK".into())]
+        );
+
+        let ending = parse_stream_line(r#"{"type":"result","stats":{"total_tokens":42}}"#);
+
+        assert!(matches!(ending.as_slice(), [EngineEvent::Done { .. }]));
+    }
+
+    #[test]
+    fn a_failed_result_is_a_failure_not_an_empty_answer() {
+        let events = parse_stream_line(
+            r#"{"type":"result","subtype":"error_during_execution","is_error":true,"result":"Credit balance is too low"}"#,
+        );
+
+        assert_eq!(events, vec![EngineEvent::Failed("Credit balance is too low".into())]);
     }
 }

@@ -470,6 +470,7 @@ export const strings = {
       'This starts the CLI’s own sign-in. Approve the page in your browser, then paste the code it shows back here — the credential is written by the CLI, never by SDC.',
     signIn: 'Sign in',
     tryAgain: 'Try again',
+    signedInToast: (label: string) => `${label} is signed in · the card now says connected`,
     cancel: 'Cancel',
     copyLink: 'Copy link',
     copied: 'Link copied',
@@ -481,6 +482,11 @@ export const strings = {
     submitCode: 'Submit code',
     authenticated: 'Signed in',
     authenticatedBody: 'The CLI is signed in. The card now says connected.',
+    signedInNote:
+      'The card now says connected, and a chat on this provider works from here. The credential is in the CLI’s own store — SDC never sees it.',
+    pageLabel: 'The page the CLI opened',
+    codeHint:
+      'Copy the code that page shows — the code itself, not the link in the box above. Pasting the link is the one mistake that looks right and fails.',
     finished: 'The CLI finished — read its own output below to see how it went.',
     failed: 'The sign-in stopped before it finished.',
     outputTitle: 'The CLI’s own output',

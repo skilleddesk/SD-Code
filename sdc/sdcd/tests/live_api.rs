@@ -22,6 +22,8 @@ fn prompt(text: &str) -> Prompt {
         session_id: "live".to_string(),
         turn_id: "live".to_string(),
         text: text.to_string(),
+        /* The live checks ask a provider directly, so the model is the provider's own id. */
+        model: "claude-sonnet-4-5".to_string(),
         history: Vec::new(),
     }
 }
