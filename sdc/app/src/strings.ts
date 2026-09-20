@@ -183,6 +183,11 @@ export const strings = {
       title: 'Thinking',
       duration: '',
     },
+    /** The engine's answer block (0.7.3). The stream had every part of a turn except this one. */
+    answer: {
+      title: 'Answer',
+      streaming: 'streaming…',
+    },
     tools: {
       read: 'Read',
       edit: 'Edit',

@@ -14,6 +14,64 @@ This file describes what changed, not what is planned. Anything still open is na
 release - the newest - and deletes the others when it publishes (`release.yml`, "Keep only this
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
+## [0.7.3] — the answer had no place to go
+
+*"ami to oke sms korasi… kono response pelam nah, sudu done lakha aslo"* — **the engine answered and the
+window threw the text away.** Not a provider, not a key, not a model: the turn stream could not draw an
+answer at all.
+
+### Fixed — `Turn` had no field for the answer
+
+`panels/turns/types.ts` described a turn as `user`, `meta`, `thinking`, `tools`, `error`, `footer`, and
+`live.ts`'s `toTurns` builds exactly that. So the text the reducer accumulates in `TurnView.text` - one
+`TurnDelta` at a time, from any engine - had nowhere to go: `toTurns` could not pass it and `TurnStream`
+had nothing to render. Every turn on every engine therefore read
+
+```
+You · Reply with exactly: BANANA-42
+Balanced · claude_code · sonnet
+Done · $0.0312 · 4.0s · 2 in · 141 out
+```
+
+with nothing between the third line and the fourth. The daemon's own log had the answer the whole time -
+1804 `TurnDelta` events with real text for one turn, `141 out` in the totals - which is why every earlier
+check "passed": the turn *ran*.
+
+* `AnswerData` (`{ text, streaming }`) is part of `Turn` now, `toTurns` fills it from `TurnView.text`, and
+  `AnswerBlock` draws it between the tool cards and the totals.
+* The block keeps the answer's own line breaks (`whitespace-pre-wrap`): a CLI answer is written text with
+  indented code in it, and this build has no markdown renderer to reflow it safely.
+* A caret (`▍`) and the word `streaming…` appear only while deltas are still arriving.
+
+`_verify/probe-answer.mjs` is the check that would have caught it: it reads the `[data-answer]` block's
+text, so a pass is the engine's own words in the DOM rather than a substring of the prompt (which is what
+the earlier probes were accidentally matching). Against `claude_code`:
+
+```
+open   opened
+send   sent
++6000ms {"blocks":2,"streaming":0,"answer":"ANSWER BANANA-42"}
+```
+
+### Fixed — and one thing about this build's own process
+
+Three `pnpm tauri:build` runs in a row had **failed** (`spawnSync rustc ENOENT`: `cargo` was not on that
+shell's `PATH`) while I was reading the success of the *tests* as the success of the *package*. The window I
+photographed was therefore an older bundle, which is how a fixed frontend looked like an unfixed one.
+`_verify/` now checks the bundle the executable actually embeds:
+
+```
+exe bundle: index-B6Y6ua_X.js · dist bundle: index-B6Y6ua_X.js
+```
+
+### Verified
+
+`sdcd`: 133 unit tests, 5 lifecycle, 5 VCR, clippy clean under `-D warnings`. The window: `pnpm typecheck`,
+`pnpm lint`, **38 vitest tests** (six new: `panels/turns/live.test.ts` pins the answer mapping, including a
+turn that has produced no text yet and one still streaming), the bundle smoke run, and the screenshot at
+`_verify/shots/answer.png` - two turns, each with its `ANSWER` block above its totals.
+
+
 ## [0.7.2] — "chat e kisu likhle kaj hoy nah"
 
 The report was one sentence: **Claude connects, but typing in the chat does nothing.** It was two

@@ -108,12 +108,32 @@ export interface TurnFooterData {
   detail: string;
 }
 
+/**
+ * The engine's answer - the one thing a turn is for (0.7.3).
+ *
+ * **Its absence was the report.** `Turn` had `user`, `meta`, `thinking`, `tools`, `error` and `footer`,
+ * and no answer, so `toTurns` could not pass the text the reducer had been accumulating in
+ * `TurnView.text` and `TurnStream` had nothing to draw. Every turn on every engine therefore read
+ * `You · Reply with exactly: OK` / `Balanced · claude_code · sonnet` / `Done · $0.0295 · 1.6s · 2 in ·
+ * 4 out` with the answer missing - which is exactly what *"sudu done lakha aslo, kono response pelam
+ * nah"* describes. The turn had run and the tokens had been counted; the text was thrown away between
+ * the log and the screen.
+ */
+export interface AnswerData {
+  /** The deltas so far, in arrival order. Empty string until the first one lands. */
+  text: string;
+  /** Still streaming: the block draws a caret and the footer says the totals are pending. */
+  streaming: boolean;
+}
+
 export interface Turn {
   id: string;
   user: UserMessageData;
   meta: TurnMetaData;
   /** Absent when the engine did not think out loud for this turn. */
   thinking?: ThinkingData;
+  /** Absent until the first `TurnDelta` - a turn shows no empty answer block before it answers. */
+  answer?: AnswerData;
   tools: ToolCardData[];
   error?: ErrorCardData;
   footer: TurnFooterData;
