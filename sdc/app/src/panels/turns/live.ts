@@ -44,7 +44,13 @@ export function toTurns(turns: readonly TurnView[], sessionId: string): Turn[] {
         turn.error === undefined
           ? undefined
           : { title: turn.error.title, explanation: turn.error.explanation },
-      footer: { summary: turn.summary, detail: turn.meta },
+      footer:
+        turn.status === 'failed'
+          ? /* An `ErrorRaised` turn never reaches `TurnCompleted`, so its totals can never arrive.
+               Saying `Failed` is what happened; `Running · totals arrive…` would be a promise the
+               log has no way to keep. */
+            { summary: strings.turns.footer.failed, detail: '' }
+          : { summary: turn.summary, detail: turn.meta },
     }));
 }
 

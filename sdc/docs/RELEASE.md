@@ -55,6 +55,13 @@ for `boot-check.mjs`, the window's URL.
 
 ## After the tag
 
+0. **Exactly one release survives.** The `release` workflow's last step on the Windows runner
+   ("Keep only this release") deletes every release other than `github.ref_name`, with
+   `gh release delete <tag> --yes --cleanup-tag` - tag included. So the Releases page always shows one
+   version, and the older broken builds (0.4.1-0.4.3 rendered no window at all) are not downloadable
+   next to a working one. It is `continue-on-error`, so a prune that fails does not hide a published
+   release; run the workflow from the Actions tab (or `gh release delete <tag> --yes --cleanup-tag`) to
+   retry it by hand.
 1. Push the tag and watch the four `release` jobs plus `Secret scan`:
    `node H:/SDC/_verify/ci-status.mjs` (or the Actions tab).
 2. All four jobs must be green **before** the release is announced: a macOS or Linux job that failed

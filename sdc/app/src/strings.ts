@@ -180,6 +180,8 @@ export const strings = {
     footer: {
       /** Before `TurnCompleted` arrives: the run has not reported what it used. */
       pending: 'Running · totals arrive with the last event',
+      /** A turn that ended in `ErrorRaised` never reports totals, so the line says what happened. */
+      failed: 'Failed',
       up: 'Good response',
       down: 'Bad response',
       upToast: 'Thanks',
