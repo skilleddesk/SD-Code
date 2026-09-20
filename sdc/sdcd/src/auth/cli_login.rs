@@ -233,6 +233,9 @@ pub struct LoginSession {
     pub url: Option<String>,
     pub state: String,
     pub code_sent: bool,
+    /// Whether this session's success has already been pushed as a `ProviderStatus`. See
+    /// `status_announcing`.
+    pub announced: bool,
     pub started: Instant,
 }
 
@@ -311,6 +314,7 @@ impl LoginManager {
                     url: None,
                     state: "starting".to_string(),
                     code_sent: false,
+                    announced: false,
                     started: Instant::now(),
                 },
             );
@@ -395,11 +399,50 @@ impl LoginManager {
         }))
     }
 
+    /// `cli_login.status`, plus whether *this* call is the first to see the CLI's success line.
+    ///
+    /// The flag is what makes a finished sign-in visible. Starting a login pushes
+    /// `ProviderStatus{connecting}`, and only `cli.login.code` used to push `connected` - so a CLI that
+    /// finishes on its own, with nobody pasting anything, left the card saying `connecting` for a login
+    /// that had already succeeded. That is the report "even the one that succeeded isn't shown".
+    /// Claude Code is exactly that case: it opens the browser itself and completes when the user
+    /// approves the page.
+    pub fn status_announcing(&self, id: &str) -> Result<(Value, bool), ErrorObject> {
+        let answer = self.status(id)?;
+
+        if answer["authenticated"] != Value::Bool(true) {
+            return Ok((answer, false));
+        }
+
+        let first = self
+            .sessions
+            .lock()
+            .map(|mut sessions| match sessions.get_mut(id) {
+                Some(session) if !session.announced => {
+                    session.announced = true;
+
+                    true
+                }
+                _ => false,
+            })
+            .unwrap_or(false);
+
+        Ok((answer, first))
+    }
+
     /// Hands the pasted code to the CLI, which is the only thing that can use it. SDC does not store
     /// it, log it, or send it anywhere else - the credential stays in the CLI's own store.
     pub fn submit_code(&self, id: &str, code: &str) -> Result<Value, ErrorObject> {
         if code.trim().is_empty() {
             return Err(ErrorObject::bad_request("`code` is empty"));
+        }
+
+        /* The one paste that looks right and is not: the page SDC showed, handed back as the code.
+           Refusing it here with a sentence beats letting the provider answer `400`. */
+        if is_authorize_page(code) {
+            return Err(ErrorObject::bad_request(
+                "that is the page to open in the browser, not the code. Approve it there and paste the code the page shows - or the whole address the browser lands on afterwards",
+            ));
         }
 
         let pty_id = {
@@ -416,7 +459,10 @@ impl LoginManager {
 
         /* A pasted redirect URL is reduced to the code inside it, because pasting the whole address is
            what a user naturally does and the code is what the CLI asked for. */
-        let value = extract_code(code).unwrap_or_else(|| code.trim().to_string());
+        let value = match extract_code(code) {
+            Some(candidate) if is_authorization_code(&candidate) => candidate,
+            _ => code.trim().to_string(),
+        };
 
         self.pty.write(&pty_id, &format!("{value}\n"))?;
 
@@ -454,6 +500,31 @@ pub fn extract_code(input: &str) -> Option<String> {
     } else {
         Some(code.to_string())
     }
+}
+
+/// True when a value behind `code=` could be an authorization code rather than a query flag.
+///
+/// This is the trap that produced `Login failed: Request failed with status code 400`: Claude's
+/// *authorize* page is `https://claude.com/cai/oauth/authorize?code=true&client_id=…`, so a user who
+/// pasted the link SDC showed them handed the CLI the literal word `true`. A real code is a long
+/// opaque string, so anything shorter than sixteen characters - or the words `true`/`false` - is not
+/// treated as one, and the pasted text is passed through whole instead.
+pub fn is_authorization_code(value: &str) -> bool {
+    value.len() >= 16 && !value.eq_ignore_ascii_case("true") && !value.eq_ignore_ascii_case("false")
+}
+
+/// True when what was pasted is the page SDC itself showed, rather than the code the page displayed.
+///
+/// A callback address (`…/oauth/code/callback?code=…`) is a legitimate paste and is not caught here;
+/// the authorize page is, because it is the one thing in this dialog that *looks* like a code and is
+/// not.
+pub fn is_authorize_page(input: &str) -> bool {
+    let lowered = input.to_lowercase();
+
+    (lowered.contains("response_type=code")
+        || lowered.contains("client_id=")
+        || lowered.contains("/authorize"))
+        && !lowered.contains("/callback")
 }
 
 #[cfg(test)]
@@ -614,5 +685,44 @@ mod tests {
         assert_eq!(logins.status("login-404").unwrap_err().code, "not_found");
         assert_eq!(logins.submit_code("login-404", "x").unwrap_err().code, "not_found");
         assert_eq!(logins.cancel("login-404").unwrap_err().code, "not_found");
+    }
+
+    /// The paste that produced `Login failed: Request failed with status code 400`.
+    ///
+    /// Claude's authorize page is `…?code=true&client_id=…`, so a user who pasted the very link SDC
+    /// showed them handed the CLI the literal word `true`. The dialog now refuses that paste with a
+    /// sentence, and the callback address - the one that really carries a code - still works.
+    #[test]
+    fn the_authorize_page_is_not_mistaken_for_a_code() {
+        let shown = "https://claude.com/cai/oauth/authorize?code=true&client_id=9d1c250a&response_type=code&state=rBjx";
+
+        assert!(is_authorize_page(shown));
+        assert!(!is_authorization_code("true"));
+
+        let landed = "https://platform.claude.com/oauth/code/callback?code=abc1234567890abcdef&state=xyz";
+
+        assert!(!is_authorize_page(landed));
+        assert_eq!(extract_code(landed).as_deref(), Some("abc1234567890abcdef"));
+        assert!(is_authorization_code("abc1234567890abcdef"));
+
+        /* A bare code - what the page prints - is passed through whole, `#state` and all. */
+        assert_eq!(extract_code("AbC123#state-4f5e"), None);
+    }
+
+    #[test]
+    fn a_submission_that_is_the_authorize_page_is_refused_before_the_cli_sees_it() {
+        let logins = LoginManager::new(Arc::new(PtyManager::new()));
+
+        /* The id does not exist, so the refusal has to happen before the registry lookup - which is
+           also the order that matters: the user gets the sentence, not `not_found`. */
+        let error = logins
+            .submit_code(
+                "login-404",
+                "https://claude.com/cai/oauth/authorize?code=true&client_id=9d1c250a",
+            )
+            .unwrap_err();
+
+        assert_eq!(error.code, "bad_request");
+        assert!(error.message.contains("the page to open"), "{}", error.message);
     }
 }

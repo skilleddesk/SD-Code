@@ -6,13 +6,32 @@
 
 use async_trait::async_trait;
 
-use crate::engines::cli::{CliAdapter, CliSpec};
+use crate::engines::cli::{CliAdapter, CliSpec, PromptPlacement};
 use crate::engines::{Engine, EngineEvent, EngineStatus, Prompt};
 
-/// `codex --json` asks for the structured stream; `--quiet` drops the interactive banner.
+/// `codex exec --json -` is the non-interactive form, measured against the installed CLI.
+///
+/// The old spec asked for `codex --json --quiet`, which this CLI does not have at all:
+///
+/// ```text
+/// $ codex --json --quiet
+/// error: unexpected argument '--json' found        (exit 2, empty stdout)
+/// ```
+///
+/// `exec` is Codex's "run non-interactively, without the TUI" subcommand and `-` is how it reads the
+/// prompt from stdin. `--skip-git-repo-check` keeps a folder that is not a git repository from ending
+/// the turn before the model is asked anything. What it answers, captured line for line:
+///
+/// ```text
+/// {"type":"thread.started","thread_id":"…"}
+/// {"type":"turn.started"}
+/// {"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"OK"}}
+/// {"type":"turn.completed","usage":{"input_tokens":12926,…}}
+/// ```
 pub const CODEX_SPEC: CliSpec = CliSpec {
     program: "codex",
-    args: &["--json", "--quiet"],
+    args: &["exec", "--json", "--skip-git-repo-check", "-"],
+    prompt: PromptPlacement::Stdin,
     env: &[("NO_COLOR", "1")],
 };
 

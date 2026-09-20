@@ -130,7 +130,15 @@ impl Engine for Ollama {
     }
 
     async fn start(&self, prompt: Prompt) -> Vec<EngineEvent> {
-        let model = prompt.history.first().cloned().unwrap_or_else(|| "llama3.2:3b".to_string());
+        /* The session's model, not the first line of the transcript: this used to read
+           `prompt.history.first()`, so a chat's second turn spoke to a model named after the user's
+           first message. */
+        let fallback = "llama3.2:3b".to_string();
+        let model = if prompt.model.trim().is_empty() {
+            fallback
+        } else {
+            crate::engines::native_api::api_model(&prompt.model).to_string()
+        };
         let body = serde_json::json!({
             "model": model,
             "stream": true,

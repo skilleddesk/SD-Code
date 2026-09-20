@@ -97,7 +97,7 @@ impl Daemon {
             /* Signing a CLI in from the app: the daemon drives the CLI's own login and never sees the
                credential (spec sections 9.10, 15.1). */
             "cli.login" => self.cli_login_start(envelope, &*out),
-            "cli.login.status" => self.cli_login_status(envelope),
+            "cli.login.status" => self.cli_login_status(envelope, &*out),
             "cli.login.code" => self.cli_login_code(envelope, &*out),
             "cli.login.cancel" => self.cli_login_cancel(envelope),
             "cli.recipes" => Ok(json!({
@@ -413,7 +413,7 @@ impl Daemon {
         let state = self.state.clone();
         let notifier = out.clone();
         let answer_turn_id = turn_id.clone();
-        let plan = RunPlan { session_id, turn_id, engine_id, prompt_text, history };
+        let plan = RunPlan { session_id, turn_id, engine_id, prompt_text, model, history };
 
         tokio::spawn(async move {
             run_turn(state, engine, plan, notifier).await;
@@ -704,8 +704,32 @@ impl Daemon {
     }
 
     /// `cli.login.status`: the URL, the CLI's own output, and where the sign-in has got to.
-    fn cli_login_status(&self, envelope: &Envelope) -> Result<Value, ErrorObject> {
-        self.state.logins.status(&envelope.require_str("loginId")?)
+    ///
+    /// It also announces a success the moment it sees one - see `status_announcing` for why that is
+    /// the difference between a card that flips to `connected` and a card that stays `connecting`
+    /// under a login that worked.
+    fn cli_login_status(&self, envelope: &Envelope, out: &dyn Notifier) -> Result<Value, ErrorObject> {
+        let (answer, announce) = self
+            .state
+            .logins
+            .status_announcing(&envelope.require_str("loginId")?)?;
+
+        if announce {
+            out.push(
+                event::provider_status(json!({
+                    "id": answer["providerId"],
+                    "status": "connected",
+                    "detail": format!(
+                        "signed in through `{}`'s own CLI",
+                        answer["providerLabel"].as_str().unwrap_or("the")
+                    ),
+                })),
+                None,
+                None,
+            );
+        }
+
+        Ok(answer)
     }
 
     /// `cli.login.code`: hand the pasted code to the CLI. The daemon passes it through and keeps
@@ -1091,6 +1115,10 @@ struct RunPlan {
     turn_id: String,
     engine_id: String,
     prompt_text: String,
+    /// The model the turn runs on, resolved by `engine_start` from the request, the session or the
+    /// registry. It travels to the engine inside the `Prompt`, because the engine cannot guess it -
+    /// see the note on `Prompt::model`.
+    model: String,
     history: Vec<String>,
 }
 
@@ -1108,6 +1136,7 @@ async fn run_turn(
         session_id: plan.session_id.clone(),
         turn_id: plan.turn_id.clone(),
         text: plan.prompt_text.clone(),
+        model: plan.model.clone(),
         history: plan.history.clone(),
     };
     let events = engine.start(prompt).await;

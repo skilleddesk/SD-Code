@@ -15,6 +15,95 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [0.6.3] — the chat answers, and a sign-in finishes
+
+Four defects, every one of them found by driving the installed CLIs *from* the built app rather than by
+reading the adapters. 0.6.2 was replaced by this one the same day; the pipeline keeps exactly one
+release.
+
+### Fixed — every chat turn came back empty
+
+Two of the three were the same mistake: a fact about the session, guessed from the wrong place.
+
+* **The CLI invocations did not exist.** `claude` was run with `--include-partial-messages` alone, and
+  Claude Code answers that with
+  `Error: --include-partial-messages requires --print and --output-format=stream-json.` on **stderr** -
+  which the adapter sent to `Stdio::null()`. Exit 1, empty stdout, and the turn ended with "the
+  engine's stream ended without a result". Codex was further off: `--json --quiet` is not a flag of
+  that CLI at all (`error: unexpected argument '--json' found`), and Gemini's `--output json` is not
+  either (`Unknown argument: output`). The measured, working forms are now what the daemon runs:
+
+  ```text
+  claude   -p --output-format stream-json --include-partial-messages --verbose
+  codex    exec --json --skip-git-repo-check -
+  gemini   -p <prompt> --output-format stream-json --skip-trust
+  ```
+
+  Gemini's prompt is an *argument* (its headless mode reads stdin as the answer to its own questions),
+  which is why the spec carries a `PromptPlacement` rather than assuming a pipe.
+* **The JSON parser knew an invented shape.** `parse_stream_line` was written against
+  `{"type":"assistant_text","text":"hello"}` and `{"type":"result","summary":"Done"}` - shapes no CLI
+  has ever sent - so even a correct invocation parsed to zero events. It now reads Claude's
+  `stream_event`/`content_block_delta`, Codex's `item.completed`/`agent_message` and `turn.completed`,
+  and Gemini's `message`/`result`, all copied from captures taken with `_verify/cli-capture.mjs`.
+  Claude's `assistant` line is deliberately dropped: with partial messages the deltas already carried
+  the text, and emitting both would print every answer twice.
+* **Silence is no longer possible.** `stderr` is captured, and a turn that did not reach `Done` ends
+  with the CLI's own first line:
+
+  ```text
+  `claude` said: Error: --include-partial-messages requires --print and --output-format=stream-json.
+  ```
+* **The model was guessed.** `native_api` read the model out of the **prompt text** and `ollama` out of
+  the **first history message**, so an API key could not work: a chat on an Anthropic model went to the
+  loopback endpoint (`127.0.0.1:8080`) unless the user happened to type the provider's name first. The
+  model now travels in the `Prompt`, resolved once by `engine_start`, and the registry's
+  `anthropic/claude-sonnet-4-5` becomes `claude-sonnet-4-5` on the wire - which is what
+  `api.anthropic.com` knows.
+
+Measured after the fix, through the daemon (`_verify/probe-turn.mjs`):
+
+```text
+claude_code  TurnDelta "O" · TurnDelta "K" · TurnCompleted        text: "OK"
+codex        TurnDelta "OK" · TurnCompleted                       text: "OK"
+native_api   engine.start{ native_api, model: anthropic/claude-sonnet-4-5 }
+             → "No API key for anthropic …"    (before: "No API key for custom")
+```
+
+### Fixed — the sign-in could not finish, and a success stayed invisible
+
+* **The authorize page was mistaken for a code.** Claude's page is
+  `…/cai/oauth/authorize?code=true&client_id=…`, so a user who pasted the link SDC itself showed them
+  handed the CLI the literal word `true` - and the provider answered
+  `Login failed: Request failed with status code 400`, which is the screenshot that reported this. A
+  pasted value that is the authorize page is now refused with the sentence that says what to paste
+  instead; a real callback address still yields its code, and a value shorter than sixteen characters
+  behind `code=` is no longer treated as one.
+* **A finished sign-in is announced.** Only `cli.login.code` ever pushed `connected`, so a CLI that
+  completes on its own - Claude Code opens the browser itself and finishes when the page is approved -
+  left the card saying `connecting` under a login that had worked; reported as "even the one that
+  succeeded isn't shown". `cli.login.status` now pushes `ProviderStatus{connected}` on the poll that
+  first sees the CLI's success line, and the dialog says so with a toast.
+
+### Changed — the sign-in dialog, re-drawn
+
+The screenshot showed a code box and a `Submit code` sitting under a CLI that had already printed
+`Login failed`. Now the state line is coloured by what happened (green signed in, amber waiting, red
+stopped), the paste boxes are drawn **only** while the CLI is still waiting for a code, `Submit code`
+is disabled until there is something to submit, the page and the code have their own labelled boxes
+with the sentence that says which is which, and a stopped login offers `Try again` rather than a field
+that cannot answer.
+
+### Verified
+
+`sdcd`: **118 unit + 5 lifecycle + 5 VCR** tests, 2 live checks behind `--ignored`, clippy clean under
+`-D warnings`. A real `claude` turn and a real `codex` turn through the daemon (above), and a real
+`native_api` turn proving the model now selects the endpoint. The window: `pnpm typecheck`, `pnpm
+lint`, 28 vitest tests, the bundle smoke run.
+
+---
+
+
 ## [0.6.2] — the connect screen is not empty any more
 
 0.6.1 was tagged, built and replaced by this one on the same day, so no user ever downloaded it; the

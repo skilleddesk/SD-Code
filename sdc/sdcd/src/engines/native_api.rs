@@ -63,6 +63,15 @@ pub fn endpoint_for(model: &str) -> Endpoint {
         .unwrap_or(ENDPOINTS[2])
 }
 
+/// The model id a provider's own API expects: the registry's id without its `<provider>/` prefix.
+///
+/// The registry spells a model `anthropic/claude-sonnet-4-5` because one list holds every provider;
+/// `api.anthropic.com` knows it as `claude-sonnet-4-5`, and a request that sends the prefixed form is
+/// rejected as an unknown model.
+pub fn api_model(model: &str) -> &str {
+    model.split_once('/').map(|(_provider, name)| name).unwrap_or(model)
+}
+
 /// The URL, headers and body of one turn. The key is a *parameter*, not a field: this function never
 /// touches the keychain, which is what keeps it pure and testable.
 pub fn build_request(
@@ -80,9 +89,9 @@ pub fn build_request(
     messages.push(json!({ "role": "user", "content": prompt.text }));
 
     let body = if endpoint.dialect == "anthropic" {
-        json!({ "model": model, "max_tokens": 4096, "stream": true, "messages": messages })
+        json!({ "model": api_model(model), "max_tokens": 4096, "stream": true, "messages": messages })
     } else {
-        json!({ "model": model, "stream": true, "messages": messages })
+        json!({ "model": api_model(model), "stream": true, "messages": messages })
     };
 
     let (auth_name, auth_value) = if endpoint.dialect == "anthropic" {
@@ -314,7 +323,10 @@ impl Engine for NativeApi {
     }
 
     async fn start(&self, prompt: Prompt) -> Vec<EngineEvent> {
-        let endpoint = endpoint_for(&prompt.text);
+        /* The session's own model, not a guess from the prompt's text: `endpoint_for` used to be
+           handed `&prompt.text`, so an API turn went to whichever endpoint the first word of the
+           prompt happened to match - and to the loopback one otherwise. */
+        let endpoint = endpoint_for(&prompt.model);
         let key = crate::auth::keychain::get(endpoint.key_ref).unwrap_or_default();
 
         if key.is_empty() {
@@ -324,7 +336,7 @@ impl Engine for NativeApi {
             ))];
         }
 
-        let (url, headers, body) = build_request(endpoint, &key, endpoint.provider, &prompt);
+        let (url, headers, body) = build_request(endpoint, &key, &prompt.model, &prompt);
 
         match post_stream(&url, &headers, &body) {
             Ok(lines) => parse_sse(&lines),
@@ -348,7 +360,37 @@ mod tests {
     use super::*;
 
     fn prompt(text: &str, history: Vec<String>) -> Prompt {
-        Prompt { session_id: "s1".into(), turn_id: "t1".into(), text: text.into(), history }
+        Prompt {
+            session_id: "s1".into(),
+            turn_id: "t1".into(),
+            text: text.into(),
+            /* The registry's spelling of the model the session is set to. */
+            model: "anthropic/claude-sonnet-4-5".into(),
+            history,
+        }
+    }
+
+    /// The model that reaches the provider is its own id, not the registry's prefixed one.
+    #[test]
+    fn the_registry_prefix_does_not_travel_to_the_provider() {
+        assert_eq!(api_model("anthropic/claude-sonnet-4-5"), "claude-sonnet-4-5");
+        assert_eq!(api_model("openai/gpt-5"), "gpt-5");
+        assert_eq!(api_model("sonnet"), "sonnet");
+
+        let (_url, _headers, body) =
+            build_request(endpoint_for("anthropic/claude-sonnet-4-5"), "sk-ant-1", "anthropic/claude-sonnet-4-5", &prompt("hi", vec![]));
+
+        assert!(body.contains(r#""model":"claude-sonnet-4-5""#), "{body}");
+    }
+
+    /// The endpoint follows the *session's* model. It used to follow the prompt's text, so this
+    /// assertion is the regression: a chat on an API model reached the loopback endpoint unless the
+    /// user happened to type the provider's name first.
+    #[test]
+    fn the_endpoint_follows_the_model_not_the_prompt() {
+        assert_eq!(endpoint_for("anthropic/claude-sonnet-4-5").provider, "anthropic");
+        assert_eq!(endpoint_for("openai/gpt-5").provider, "openai");
+        assert_eq!(endpoint_for("llama3.2:3b").provider, "custom");
     }
 
     #[test]

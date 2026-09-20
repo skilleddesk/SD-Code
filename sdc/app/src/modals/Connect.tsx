@@ -66,6 +66,24 @@ export function Connect() {
    * `Try again` button is the retry inside one open.
    */
   const startedFor = useRef<string | null>(null);
+  const announced = useRef<string | null>(null);
+
+  /*
+   * A finished sign-in says so out loud, once.
+   *
+   * The card flips because the daemon pushes a `ProviderStatus` the moment its `cli.login.status`
+   * sees the CLI's success line - and this is the sentence next to it, because "it worked" is the one
+   * thing a person cannot check for themselves: the credential is in the CLI's own store. Guarded by
+   * a ref keyed on the login id, since the modal polls once a second and would otherwise repeat it.
+   */
+  useEffect(() => {
+    if (login === null || !login.authenticated || announced.current === login.loginId) {
+      return;
+    }
+
+    announced.current = login.loginId;
+    toast(strings.connect.signedInToast(login.providerLabel));
+  }, [login]);
 
   useEffect(() => {
     if (!open) {
@@ -114,6 +132,20 @@ export function Connect() {
   }, [open, mode, providerId]);
 
   const name = provider?.name ?? providerId ?? '';
+
+  /*
+   * Whether the CLI is still waiting for a code.
+   *
+   * The paste boxes are only drawn while that is true. A sign-in that has stopped - accepted, failed,
+   * cancelled - keeps no field: the screenshot that started this had a code box and a `Submit code`
+   * under a CLI that had already said `Login failed ... 400`, which invites a person to paste into
+   * something that cannot answer.
+   */
+  const waitingForCode =
+    login !== null &&
+    !login.authenticated &&
+    login.url !== null &&
+    (login.state === 'waiting_for_code' || login.state === 'waiting_for_url');
 
   const copy = (url: string): void => {
     void navigator.clipboard?.writeText(url).then(() => toast(strings.connect.copied));
@@ -196,68 +228,95 @@ export function Connect() {
             {login !== null ? (
               <>
                 <div className="rounded-md border border-border-subtle bg-bg-raised p-[10px]">
-                  <div className="flex items-center gap-[6px] text-[11.5px] text-text-secondary">
+                  <div className="flex items-start gap-[6px] text-[11.5px] text-text-secondary">
                     {login.authenticated ? (
                       <>
-                        <Check size={13} /> {strings.connect.authenticated}
+                        <Check size={13} className="mt-[1px] shrink-0 text-state-success" />
+                        <span>
+                          <span className="font-medium text-state-success">{strings.connect.authenticated}</span>
+                          {' · '}
+                          {strings.connect.signedInNote}
+                        </span>
                       </>
                     ) : login.state === 'failed' || login.state === 'cancelled' ? (
                       /* The CLI stopped without a credential: say that, rather than leaving the
                          `Waiting for the CLI…` line of a login that is over. */
                       <>
-                        <TriangleAlert size={13} /> {strings.connect.failed}
+                        <TriangleAlert size={13} className="mt-[1px] shrink-0 text-state-error" />
+                        <span>{strings.connect.failed}</span>
                       </>
                     ) : login.state === 'exited' ? (
                       <>
-                        <TriangleAlert size={13} /> {strings.connect.finished}
+                        <TriangleAlert size={13} className="mt-[1px] shrink-0 text-state-waiting" />
+                        <span>{strings.connect.finished}</span>
                       </>
                     ) : (
                       <>
-                        <TriangleAlert size={13} />{' '}
-                        {login.state === 'waiting_for_code' ? strings.connect.waitingForCode : strings.connect.waiting}
+                        <RefreshCw size={13} className="mt-[1px] shrink-0 animate-spin text-state-waiting" />
+                        <span>
+                          {login.state === 'waiting_for_code' ? strings.connect.waitingForCode : strings.connect.waiting}
+                        </span>
                       </>
                     )}
                   </div>
 
-                  {login.url !== null ? (
-                    <div className="mt-[8px] flex items-center gap-[6px]">
-                      <input
-                        readOnly
-                        id="connectUrl"
-                        aria-label={strings.connect.copyLink}
-                        value={login.url}
-                        className="min-w-0 flex-1 rounded-md border border-border-default bg-bg-input px-[8px] py-[6px] font-mono text-[11.5px] text-text-primary"
-                      />
-                      <button type="button" className={BTN_SECONDARY} onClick={() => copy(login.url ?? '')} id="connectCopy">
-                        <ClipboardCopy size={13} />
-                      </button>
-                      <a className={BTN_SECONDARY} href={login.url} target="_blank" rel="noreferrer noopener">
-                        <ExternalLink size={13} />
-                      </a>
-                    </div>
+                  {waitingForCode ? (
+                    <>
+                      <div className="mt-[10px] text-[10px] font-bold uppercase tracking-[0.1em] text-text-muted">
+                        {strings.connect.pageLabel}
+                      </div>
+                      <div className="mt-[4px] flex items-center gap-[6px]">
+                        <input
+                          readOnly
+                          id="connectUrl"
+                          aria-label={strings.connect.copyLink}
+                          value={login.url ?? ''}
+                          className="min-w-0 flex-1 rounded-md border border-border-default bg-bg-input px-[8px] py-[6px] font-mono text-[11.5px] text-text-primary"
+                        />
+                        <button type="button" className={BTN_SECONDARY} onClick={() => copy(login.url ?? '')} id="connectCopy">
+                          <ClipboardCopy size={13} />
+                        </button>
+                        <a className={BTN_SECONDARY} href={login.url ?? '#'} target="_blank" rel="noreferrer noopener">
+                          <ExternalLink size={13} />
+                        </a>
+                      </div>
+
+                      <div className="mt-[10px] text-[10px] font-bold uppercase tracking-[0.1em] text-text-muted">
+                        {strings.connect.codeLabel}
+                      </div>
+                      <div className="mt-[4px] flex items-center gap-[6px]">
+                        <input
+                          id="connectCode"
+                          aria-label={strings.connect.codeLabel}
+                          placeholder={strings.connect.codePlaceholder}
+                          value={code}
+                          onChange={(event) => setCode(event.target.value)}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter' && code.trim() !== '') {
+                              submit();
+                            }
+                          }}
+                          className="min-w-0 flex-1 rounded-md border border-border-default bg-bg-input px-[8px] py-[6px] font-mono text-[11.5px] text-text-primary placeholder:text-text-muted"
+                        />
+                        {/* Disabled until there is something to submit: a primary button over an empty
+                            field is the design mistake that was reported, and it is also the one that
+                            sends an empty line to a CLI that is waiting for a code. */}
+                        <button
+                          type="button"
+                          className={BTN_PRIMARY}
+                          onClick={submit}
+                          disabled={busy || code.trim() === ''}
+                          id="connectSubmit"
+                        >
+                          {strings.connect.submitCode}
+                        </button>
+                      </div>
+                      <p className="mt-[6px] text-[11px] text-text-muted">{strings.connect.codeHint}</p>
+                    </>
                   ) : null}
 
-                  {login.note !== null ? <p className="mt-[8px] text-[11.5px] text-text-muted">{login.note}</p> : null}
-
-                  {login.url !== null && !login.authenticated ? (
-                    <div className="mt-[8px] flex items-center gap-[6px]">
-                      <input
-                        id="connectCode"
-                        aria-label={strings.connect.codeLabel}
-                        placeholder={strings.connect.codePlaceholder}
-                        value={code}
-                        onChange={(event) => setCode(event.target.value)}
-                        onKeyDown={(event) => {
-                          if (event.key === 'Enter') {
-                            submit();
-                          }
-                        }}
-                        className="min-w-0 flex-1 rounded-md border border-border-default bg-bg-input px-[8px] py-[6px] font-mono text-[11.5px] text-text-primary placeholder:text-text-muted"
-                      />
-                      <button type="button" className={BTN_PRIMARY} onClick={submit} disabled={busy} id="connectSubmit">
-                        {strings.connect.submitCode}
-                      </button>
-                    </div>
+                  {login.note !== null ? (
+                    <p className="mt-[8px] text-[11.5px] text-text-muted">{login.note}</p>
                   ) : null}
 
                   {/* The retry, for a sign-in that stopped: this is the one state that needs a
