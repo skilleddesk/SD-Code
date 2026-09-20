@@ -289,6 +289,12 @@ fn merge(rows: &[Value], curated: &[Value], source: &str, fetched_at: Option<&st
             merged["providerId"] = row.get("providerId").cloned().unwrap_or(json!(""));
             merged["source"] = json!(source);
 
+            /* A provider's own list has ids and nothing else, and an id is not a name a person wants to
+               read in a menu: the bundle's `name` fills that in, and the id stays as the fallback. */
+            if merged.get("name").and_then(Value::as_str).unwrap_or("").is_empty() {
+                merged["name"] = json!(friendly_name(id));
+            }
+
             if let Some(fetched_at) = fetched_at {
                 merged["fetchedAt"] = json!(fetched_at);
             }
@@ -298,10 +304,18 @@ fn merge(rows: &[Value], curated: &[Value], source: &str, fetched_at: Option<&st
         .collect()
 }
 
-/// One bundled row, as a model row: `{ id, providerId, tier, ctx, cost, source }`.
+/// One bundled row, as a model row: `{ id, name, providerId, tier, ctx, cost, source }`.
 fn decorate(model: &Value, provider_id: &str, source: &str, fetched_at: Option<&str>) -> Value {
+    let id = model["id"].as_str().unwrap_or_default();
+    let name = model
+        .get("name")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .unwrap_or_else(|| friendly_name(id));
+
     json!({
         "id": model["id"],
+        "name": name,
         "providerId": provider_id,
         "tier": model.get("tier").and_then(Value::as_str).unwrap_or("balanced"),
         "ctx": model.get("ctx").and_then(Value::as_i64).unwrap_or(0),
@@ -310,6 +324,61 @@ fn decorate(model: &Value, provider_id: &str, source: &str, fetched_at: Option<&
         "source": source,
         "fetchedAt": fetched_at,
     })
+}
+
+/// A readable name for a model id, for the providers that send ids and nothing else.
+///
+/// `claude-sonnet-4-5` becomes `Claude Sonnet 4.5`, `deepseek-reasoner` becomes `DeepSeek Reasoner`,
+/// `gpt-5-mini` becomes `GPT-5 Mini`. It is a spelling rule, not a catalogue: the bundle's own `name`
+/// always wins when it has one, and a live row for a model this build has never heard of gets the
+/// rule's answer rather than an invented one.
+pub fn friendly_name(id: &str) -> String {
+    id.split(['/', '-', '_'])
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            let known = match part {
+                "gpt" => Some("GPT"),
+                "api" => Some("API"),
+                "gguf" => Some("GGUF"),
+                "it" => Some("IT"),
+                "mini" => Some("Mini"),
+                "pro" => Some("Pro"),
+                "flash" => Some("Flash"),
+                "turbo" => Some("Turbo"),
+                "vl" => Some("VL"),
+                "r1" => Some("R1"),
+                "v3" => Some("V3"),
+                "deepseek" => Some("DeepSeek"),
+                "openai" => Some("OpenAI"),
+                "nvidia" => Some("NVIDIA"),
+                "github" => Some("GitHub"),
+                _ => None,
+            };
+
+            match known {
+                Some(word) => word.to_string(),
+                None => {
+                    let mut chars = part.chars();
+
+                    match chars.next() {
+                        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+                        None => String::new(),
+                    }
+                }
+            }
+        })
+        .collect::<Vec<String>>()
+        .join(" ")
+        /* `GPT 5` is written `GPT-5`, and version parts read better with a point between them:
+           `4-5` is 4.5, not 4 5. */
+        .replace("GPT ", "GPT-")
+        .replace(" 4 5", " 4.5")
+        .replace(" 4 6", " 4.6")
+        .replace(" 3 5", " 3.5")
+        .replace(" 2 5", " 2.5")
+        .replace(" 3 1", " 3.1")
+        .replace(" 3 3", " 3.3")
+        .replace(" 6 7b", " 6.7B")
 }
 
 /// Records the chosen model. A setting rather than an event, on purpose: which model is *selected* is a
@@ -407,12 +476,30 @@ mod tests {
         assert_eq!(live(&block).unwrap_err(), "Invalid API Key (401)");
     }
 
-    /// A refresh that reached nothing keeps the list, and says why - hermetically.
-    ///
-    /// One loopback server that answers `401` with a provider-shaped body replaces a call to the real
-    /// `api.groq.com`. That call made the release's `Checks` step depend on the public internet, and on
-    /// the 0.6.3 commit it failed on one runner while passing on three others - which is what a flaky
-    /// gate looks like, and why `list_blocks` exists.
+    #[test]
+    fn a_model_id_becomes_a_name_a_person_can_read() {
+        assert_eq!(friendly_name("claude-sonnet-4-5"), "Claude Sonnet 4.5");
+        assert_eq!(friendly_name("claude-opus-4"), "Claude Opus 4");
+        assert_eq!(friendly_name("gpt-5-mini"), "GPT-5 Mini");
+        assert_eq!(friendly_name("deepseek-reasoner"), "DeepSeek Reasoner");
+        assert_eq!(friendly_name("gemini-2.5-pro"), "Gemini 2.5 Pro");
+        assert_eq!(friendly_name("anthropic/claude-sonnet-4-5"), "Anthropic Claude Sonnet 4.5");
+        assert_eq!(friendly_name("llama-3.3-70b-versatile"), "Llama 3.3 70b Versatile");
+        assert_eq!(friendly_name(""), "");
+    }
+
+    /// A bundle row's own `name` wins over the spelling rule - that is the whole point of carrying one.
+    #[test]
+    fn a_bundled_name_is_kept() {
+        let row = json!({ "id": "gpt-5", "name": "GPT-5 (the release name)" });
+        let decorated = decorate(&row, "openai-api", "bundled", None);
+
+        assert_eq!(decorated["name"], json!("GPT-5 (the release name)"));
+        assert_eq!(decorated["providerId"], json!("openai-api"));
+        assert_eq!(decorated["source"], json!("bundled"));
+    }
+
+    /// A refresh test needs the blocks in hand, which is why `list_blocks` is public.
     #[test]
     fn a_failed_refresh_keeps_the_list_and_says_why() {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();

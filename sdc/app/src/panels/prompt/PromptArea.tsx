@@ -1,16 +1,13 @@
 import {
-  AtSign,
   CornerDownLeft,
   Database,
   Hash,
   Image as ImageIcon,
   Paperclip,
-  Slash,
 } from 'lucide-react';
 import { useRef, useState, type KeyboardEvent } from 'react';
 
 import { strings } from '../../strings';
-import { tierLabel, useModelStore } from '../../store/model';
 import { sendPrompt } from '../../store/intents';
 import { toast } from '../../store/toast';
 import { IconButton } from '../ui/IconButton';
@@ -20,14 +17,21 @@ import { QueuedChips } from './QueuedChips';
 /**
  * `.prompt-area` - the input, and everything around it (spec section 7.6).
  *
- * Four rows, top to bottom:
+ * Three rows, top to bottom:
  *
- *   .prompt-toolbar  the model selector, then two chips - `1 file` and `12.4k ctx` - which say what
- *                    this turn will carry besides the text
+ *   .prompt-toolbar  the model selector, then the two chips - `1 file` and `12.4k ctx` - which say
+ *                    what this turn will carry besides the text, and which are absent when there is
+ *                    nothing to carry
  *   .queued-chips    up to three steering prompts (section 9.7)
- *   .prompt-box      the textarea and its action row: four tool buttons on the left, a tier/model
- *                    hint and the Send button on the right
- *   .tip-line        `@` reference file · `/` commands · `⌘K` palette, which folds away at 900px
+ *   .prompt-box      the textarea and its action row: four tool buttons on the left, the Send button
+ *                    on the right
+ *
+ * **Two rows were removed in 0.7.0, and the reason is a report**: a faint `Balanced · claude_code ·
+ * sonnet` line sat inside the box under the Send button, and a row of tag-shaped `@` / `/` / `⌘K`
+ * chips sat under the box. Both said things twice - the model line is exactly what the selector one
+ * row above already says, in the same words, and the chips advertised an `@` picker and a `/` command
+ * list that do not exist. Two faint rows of decoration in the place a person types is noise, and the
+ * instruction was to take it out of every box. What is left is what works.
  *
  * The textarea grows with its content up to 200px and then scrolls. That is done by hand
  * (`height: auto`, then `scrollHeight`) rather than with a dependency: `field-sizing: content` would
@@ -43,11 +47,7 @@ import { QueuedChips } from './QueuedChips';
 const CHIP =
   'chip inline-flex h-[28px] items-center gap-[5px] rounded-md border border-border-subtle bg-bg-raised px-[8px] py-[3px] font-mono text-[11px] text-text-secondary';
 
-const KBD =
-  'rounded-[3px] border border-border-subtle bg-bg-raised px-[5px] py-[1px] font-mono text-[10px] text-text-secondary';
-
 export function PromptArea() {
-  const { tier, engine, model } = useModelStore();
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   /*
@@ -174,41 +174,17 @@ export function PromptArea() {
                 iconSize={14}
                 onClick={() => toast(strings.prompt.toolbar.image)}
               />
-              <IconButton
-                icon={AtSign}
-                label={strings.prompt.toolbar.file}
-                iconSize={14}
-                onClick={() => toast(strings.prompt.toolbar.file)}
-              />
-              <IconButton
-                icon={Slash}
-                label={strings.prompt.toolbar.command}
-                iconSize={14}
-                onClick={() => toast(strings.prompt.toolbar.command)}
-              />
-            </div>
-
-            <div className="context-hint ml-auto flex items-center gap-[8px] font-mono text-[10.5px] text-text-muted max-700:hidden">
-              <span>
-                {tierLabel(tier)} · {engine} · {model}
-              </span>
             </div>
 
             <button
               type="button"
-              className="send-btn flex items-center gap-[6px] rounded-md bg-accent px-[13px] py-[6px] text-[12px] font-semibold text-text-on-accent transition-all duration-fast ease-ease hover:bg-accent-hover hover:shadow-[0_3px_12px_var(--accent-glow)] active:scale-[.97]"
+              className="send-btn ml-auto flex items-center gap-[6px] rounded-md bg-accent px-[13px] py-[6px] text-[12px] font-semibold text-text-on-accent transition-all duration-fast ease-ease hover:bg-accent-hover hover:shadow-[0_3px_12px_var(--accent-glow)] active:scale-[.97]"
               onClick={send}
             >
               {strings.prompt.send}
               <CornerDownLeft size={12} aria-hidden="true" />
             </button>
           </div>
-        </div>
-
-        <div className="tip-line mt-[6px] text-center text-[10.5px] text-text-muted max-900:hidden">
-          <kbd className={KBD}>{strings.prompt.tip.file}</kbd> {strings.prompt.tip.fileLabel} ·{' '}
-          <kbd className={KBD}>{strings.prompt.tip.command}</kbd> {strings.prompt.tip.commandLabel} ·{' '}
-          <kbd className={KBD}>{strings.prompt.tip.palette}</kbd> {strings.prompt.tip.paletteLabel}
         </div>
       </div>
     </div>

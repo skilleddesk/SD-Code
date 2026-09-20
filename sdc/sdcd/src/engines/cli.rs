@@ -47,6 +47,14 @@ pub struct CliSpec {
     pub args: &'static [&'static str],
     /// Where the prompt goes.
     pub prompt: PromptPlacement,
+    /// The flag that carries the chosen model, when the CLI has one (`--model`, `-m`).
+    ///
+    /// Until 0.7.0 the model the user picked in the prompt toolbar was **decoration** for the three
+    /// CLI engines: it was named in the trigger, the turn meta and the status bar, and never sent. The
+    /// dropdown offered `Opus` and the CLI ran whatever its own default was. Passing it is one flag
+    /// per CLI - and `default` is skipped, because that is the id this build uses for "whatever the
+    /// CLI decides", not a model name any of them knows.
+    pub model_flag: Option<&'static str>,
     /// Extra environment the CLI needs to be quiet: `NO_COLOR` and friends.
     pub env: &'static [(&'static str, &'static str)],
 }
@@ -106,6 +114,7 @@ impl CliAdapter {
                     (*arg).to_string()
                 }
             })
+            .chain(model_args(self.spec.model_flag, &prompt.model))
             .collect();
 
         /* `host::program` resolves the name the way the shell does - which is what makes an
@@ -212,6 +221,22 @@ impl CliAdapter {
     }
 }
 
+/// The `--model` pair for a turn, or nothing when the CLI has no flag or the id is not a model name.
+///
+/// `default` is this build's word for "whatever the CLI decides" (it is the id the registry gives
+/// Codex's subscription row), and no CLI accepts it as a value. An empty id is the app saying it has
+/// no opinion. Both cases send nothing, which is exactly the old behaviour.
+pub fn model_args(flag: Option<&'static str>, model: &str) -> Vec<String> {
+    let model = model.trim();
+
+    match flag {
+        Some(flag) if !model.is_empty() && model != "default" => {
+            vec![flag.to_string(), model.to_string()]
+        }
+        _ => Vec::new(),
+    }
+}
+
 /// The last line of stdout that is not JSON - what a CLI prints when it is talking to a person rather
 /// than to a program. Gemini's `Opening authentication page in your browser. Do you want to continue?`
 /// is exactly this: it arrives on stdout, before any JSON, and it is the whole explanation.
@@ -309,6 +334,24 @@ mod tests {
         assert!(GEMINI_SPEC.args.contains(&"{prompt}"));
         assert!(GEMINI_SPEC.args.contains(&"--skip-trust"));
         assert!(!GEMINI_SPEC.args.contains(&"json"));
+    }
+
+    #[test]
+    fn the_chosen_model_reaches_the_cli() {
+        /* The bug this covers: the dropdown offered Opus and the CLI ran its own default, because the
+           model was only ever printed. */
+        assert_eq!(model_args(Some("--model"), "opus"), vec!["--model", "opus"]);
+        assert_eq!(model_args(Some("-m"), "gpt-5"), vec!["-m", "gpt-5"]);
+
+        /* `default` is this build's word for "the CLI decides", and no CLI knows it. */
+        assert!(model_args(Some("-m"), "default").is_empty());
+        assert!(model_args(Some("-m"), "  ").is_empty());
+        assert!(model_args(None, "opus").is_empty());
+
+        /* And each of the three CLIs has a flag, so none of them loses the choice. */
+        assert_eq!(crate::engines::claude_code::CLAUDE_SPEC.model_flag, Some("--model"));
+        assert_eq!(crate::engines::codex::CODEX_SPEC.model_flag, Some("-m"));
+        assert_eq!(crate::engines::gemini::GEMINI_SPEC.model_flag, Some("-m"));
     }
 
     #[test]

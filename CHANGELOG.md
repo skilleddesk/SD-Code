@@ -15,6 +15,92 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [0.7.0] — the boxes people actually type in, and a VPS you can actually reach
+
+Five reports, and four of them are the same kind of defect: a surface that looked finished and was not
+wired to anything real. Everything in 0.6.4 is in this build.
+
+### Fixed — the code box could not be pasted into
+
+* **`Modal` stole focus once a second.** Its focus effect depended on `onClose`, and every caller passes
+  an inline arrow, so the effect re-ran on *every render* - and the Connect dialog renders once a second
+  while it polls a sign-in. Each render yanked focus to the dialog's first control, the URL field above
+  the code field, which is exactly what "the box does something by itself and nothing can be pasted"
+  describes. Focus now happens once, when the dialog opens, with the latest `onClose` held in a ref.
+* **The dialog shifted under the pointer.** The CLI's output block grew a line at a time and moved the
+  fields above it; it has a fixed height now and scrolls inside itself.
+* **The code field takes focus once**, the moment the CLI is waiting for a code, keyed by login id.
+
+### Fixed — the model menu above the chat box was dummy
+
+`ENGINE_MODELS` was a hardcoded list of four invented names per engine (`sonnet`, `gpt-5`, `flash`,
+`llama3.2`), and it was the *whole* model menu: it did not know what the user had connected, and
+picking `Opus` did not reach the CLI. Now:
+
+* the rows are the daemon's own catalogue (`models.list` - live from the provider, cached from its last
+  answer, or from the shipped bundle), **grouped by provider and ordered with the connected ones first**;
+* every row carries a readable `name` (`Claude Sonnet 4.5`, `Claude Opus · plan`, `DeepSeek Reasoner
+  (R1)`, `GPT-5 Mini`), from the bundle where it has one and from a spelling rule where the provider
+  sent only an id;
+* a provider that is **not** connected is still listed, with a `Sign in to …` / `Add a key for …` row
+  above its models, because the thing the user has to do should not be hidden;
+* the engine group is gone: which engine runs a model is a property of the provider, so a row sets the
+  engine and the model together;
+* **and the model reaches the CLI**: `claude --model opus`, `codex exec -m …`, `gemini -p … -m …`.
+  Measured: `claude -p --model haiku …` answers `"model":"claude-haiku-4-5-…"` in its own init line,
+  and an unknown id fails in the provider's words (`[claude-code:unrecognized_model]`).
+
+### Fixed — VPS connect, which did not exist
+
+The report pasted `ssh -p 8443 mehedi105117@109.199.108.216` - precisely what a person types into their
+own terminal - and the daemon used the whole string as a hostname: `ssh` was asked for a machine called
+`ssh`, and the port was never used. Then the honest-but-useless sentence appeared: *"…asks for a password
+or a verification code, and SDC runs ssh without a terminal, so it cannot type it. Add your public key…"*.
+Now:
+
+* **the target is parsed** (`auth::remote::parse_target`): the `ssh` prefix, the `-p 8443`, `-p8443` and a
+  trailing `-p 8443` all come out, and the port travels with every `ssh` call for that host. A bare
+  hostname is refused with the sentence that says why, rather than guessing `root`;
+* **the daemon has a terminal after all** - the PTY it already used for CLI sign-ins. Add the host with
+  its password filled in and SDC runs `ssh <target> "<append my key>"`, answers the `password:` prompt,
+  and drops the password: it is stored nowhere and appears in no sentence;
+* **SDC owns a key**: `~/.ssh/sdc_ed25519`, made with the same `ssh-keygen -t ed25519 -N ""` a person
+  would run, so it can be seen, used and revoked like any other key (delete one line from
+  `authorized_keys`);
+* a host that wants a **verification code** is the one case that cannot be automated, and it says so with
+  the two ways forward instead of pretending - a one-time code is a second factor;
+* the old refusal sentence now tells the user the thing that works: *add this host again with its
+  password*.
+
+Measured against the real VPS in the report: the probe reached the address **on port 8443** in 1.8s and
+answered *"mehedi105117@109.199.108.216 answered, but it asks for a password or a verification code. Add
+this host again with its password filled in…"*, with the public-key generator verified separately.
+
+### Fixed — the faint rows in every box
+
+Two rows of decoration were removed from the prompt area, and the reason is the report: a faint
+`Balanced · claude_code · sonnet` line sat inside the box under the Send button, and a row of tag-shaped
+`@` / `/` / `⌘K` chips sat under the box. Both said things twice - the model line is what the selector
+one row above already says, in the same words - and the chips advertised an `@` picker and a `/` command
+list that do not exist.
+
+### Fixed — a dialog with no close button
+
+`ModalProps.bare` has documented "`true` renders the frame without a close button" since the frame was
+written, and the button was never rendered: every dialog could only be closed with Escape or by clicking
+the dimmed backdrop. There is an X in the frame's corner now. And a sign-in that **finishes closes
+itself** after 2.6 seconds, with the toast and the flipped card left behind as the record.
+
+### Verified
+
+`sdcd`: **129 unit + 5 lifecycle + 5 VCR** tests (one `--ignored` test makes SDC's key, on purpose),
+clippy clean under `-D warnings`. app: 28 vitest, typecheck/lint clean, bundle smoke 6/6. Live: a real
+Claude turn and a real Codex turn through the daemon, a real `host.add` against the VPS from the report,
+and `claude --model haiku` proving the chosen model reaches the CLI.
+
+---
+
+
 ## [0.6.4] — the release gate stops depending on the internet
 
 0.6.3's `Checks` step failed on one runner and passed on three others **for the same commit**, which

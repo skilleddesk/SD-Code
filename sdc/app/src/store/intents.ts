@@ -3,7 +3,7 @@ import { sdcpCall } from '../lib/sdcp';
 import { isSdcpError } from '../lib/transport';
 import { strings } from '../strings';
 import { useDaemonStore } from './daemon';
-import { useModelStore, tierName } from './model';
+import { useModelStore, tierName, tierFromName } from './model';
 import { useOverlayStore } from './overlays';
 import { usePrefsStore } from './prefs';
 import { withProviders, withWorkspace } from './reducer';
@@ -89,6 +89,15 @@ export async function connectDaemon(): Promise<boolean> {
      */
     await loadWorkspace();
 
+    /*
+     * And the model catalogue, which is what the prompt toolbar's dropdown is built from.
+     *
+     * 0.7.0 made that list the daemon's own: before this call the dropdown had a hardcoded list of
+     * invented names, which is what "the model thing above the chat box is dummy" was about. A failure
+     * is not fatal - the dropdown says it has nothing verified yet and offers to connect one.
+     */
+    await refreshCatalog();
+
     return true;
   } catch (error) {
     toast(isSdcpError(error) ? error.message : strings.daemon.offline);
@@ -122,9 +131,10 @@ export interface CliLoginView {
 export interface ModelsView {
   models: {
     id: string;
+    name: string;
     providerId: string;
     providerLabel: string;
-    tier: string;
+    tier: TierName;
     ctx: number;
     cost: string;
     source: 'live' | 'cache' | 'bundled';
@@ -134,6 +144,24 @@ export interface ModelsView {
   refreshed: boolean;
   notes: string[];
   selected: { modelId: string | null; providerId: string | null };
+}
+
+/**
+ * `models.list` without a refresh: what the daemon's catalogue holds right now.
+ *
+ * It is the same call the Provider Hub makes, folded into the model store instead of a local
+ * component state, because the dropdown above the prompt box is where the answer has to be *visible*:
+ * a signed-in plan's models, and nothing that cannot run. No provider is contacted by this call - a
+ * `refresh` is what asks, and only the Hub has a button for that.
+ */
+export async function refreshCatalog(): Promise<void> {
+  try {
+    const { models } = (await sdcpCall('models.list', {})) as ModelsView;
+
+    useModelStore.getState().setCatalog(models.map((row) => ({ ...row, tier: tierFromName(row.tier) })));
+  } catch {
+    /* A window with no daemon keeps its fallback list; the boot toast has already explained why. */
+  }
 }
 
 /** Starts the CLI's own sign-in. The URL arrives on the first poll, a moment later. */
@@ -251,6 +279,15 @@ export async function addHost(input: {
   type: 'local' | 'ssh';
   target?: string;
   label?: string;
+  /**
+   * The password for a VPS, when the user chooses to give one.
+   *
+   * It goes to the daemon with this one call, is typed into the user's own `ssh` through a PTY, and is
+   * kept nowhere - the daemon has no field to store it in. What it buys is the *key*: once SDC's public
+   * key is in `authorized_keys`, every later connection is passwordless and this argument is not
+   * needed again.
+   */
+  password?: string;
 }): Promise<string | null> {
   if (input.type === 'local') {
     toast(strings.addHost.localAlready);

@@ -259,10 +259,54 @@ fn status_without_a_row(id: &str, kind: &str) -> String {
         "api-key" => "available".to_string(),
         "local" if crate::engines::ollama::daemon_running() => "connected".to_string(),
         "local" => "needs-auth".to_string(),
-        /* A subscription: the CLI is the credential, so its presence is the only thing this build can
-           see. Signed in is a separate fact, and one only `cli.login.status` can report. */
+        _ if signed_in(id) => "connected".to_string(),
         _ => "needs-auth".to_string(),
     }
+}
+
+/// Whether a subscription CLI is signed in **now**.
+///
+/// The comment this replaces said a subscription's sign-in "is a separate fact, and one only
+/// `cli.login.status` can report". That was true when the daemon had no way to ask - and it meant every
+/// subscription card said `needs-auth` in a window where the user had just signed in, so the model menu
+/// read `Claude Code · not connected` next to three Claude models it was offering. The report was "even
+/// the one that succeeded isn't shown". All three CLIs answer the question when they are asked, and
+/// asking is cheap (a few hundred milliseconds, once per `provider.list`):
+///
+/// ```text
+/// $ claude auth status      {"loggedIn": true, "authMethod": "claude.ai", …}
+/// $ codex login status      Logged in using ChatGPT
+/// $ gemini                  (Google sign-in is a file: ~/.gemini/oauth_creds.json)
+/// ```
+pub fn signed_in(provider_id: &str) -> bool {
+    match provider_id {
+        "claude" => prints("claude", &["auth", "status"])
+            .map(|output| output.contains("\"loggedIn\": true") || output.contains("\"loggedIn\":true"))
+            .unwrap_or(false),
+        "openai" => prints("codex", &["login", "status"])
+            .map(|output| output.to_lowercase().contains("logged in"))
+            .unwrap_or(false),
+        "gemini" => gemini_credentials().map(|path| path.exists()).unwrap_or(false),
+        _ => false,
+    }
+}
+
+/// What a program prints, stdout and stderr together, or `None` when it cannot be started.
+fn prints(program: &str, args: &[&str]) -> Option<String> {
+    let mut command = crate::host::program::command(program)?;
+    let output = command.args(args).output().ok()?;
+    let mut text = String::from_utf8_lossy(&output.stdout).to_string();
+
+    text.push_str(&String::from_utf8_lossy(&output.stderr));
+
+    Some(text)
+}
+
+/// Where the Gemini CLI keeps the credential its Google sign-in wrote.
+fn gemini_credentials() -> Option<std::path::PathBuf> {
+    let home = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME"))?;
+
+    Some(std::path::PathBuf::from(home).join(".gemini").join("oauth_creds.json"))
 }
 
 /// The detail line for a provider, saying something this machine actually checked.
@@ -396,27 +440,32 @@ mod tests {
 
     /// The second half of the 0.5.0 fix, one layer down: a status has to be evidence.
     ///
-    /// `list` used to answer `connected` for every subscription, on any machine - three green cards
-    /// for three CLIs nobody had signed in, and the app can only draw what the daemon tells it. A
-    /// `needs-auth` that is true is worth more than a `connected` that was never checked, and this
-    /// test holds for a machine that *has* the CLIs installed too: present is not signed in.
+    /// `list` used to answer `connected` for every subscription, on any machine - three green cards for
+    /// three CLIs nobody had signed in, and the app can only draw what the daemon tells it. 0.7.0 moved
+    /// the other way for the *signed in* case: the card now asks the CLI (`signed_in`), so a status that
+    /// says `connected` means one of them answered `loggedIn: true`, and this test holds on any machine -
+    /// it compares the card with the CLI's own answer instead of assuming either one.
     #[test]
-    fn a_subscription_is_never_connected_without_evidence() {
+    fn a_subscription_reports_what_its_cli_says() {
         let store = Arc::new(Store::in_memory().unwrap());
         let rows = list(&store);
         let card = |id: &str| rows.iter().find(|row| row["id"] == json!(id)).cloned().unwrap();
 
         for id in ["claude", "openai", "gemini"] {
             let status = card(id)["status"].as_str().unwrap_or_default().to_string();
+            let expected = if signed_in(id) { "connected" } else { "needs-auth" };
 
-            assert_ne!(status, "connected", "{id} claims a sign-in nobody did: {status}");
-            assert_eq!(status, "needs-auth");
+            assert_eq!(status, expected, "{id} does not agree with its own CLI");
             /* And the line under it names the program, which is what the user has to act on. */
             assert!(
                 card(id)["detail"].as_str().unwrap_or_default().contains('`'),
                 "{id} has no CLI in its detail line"
             );
         }
+
+        /* A provider id that is not a CLI has no sign-in to ask about. */
+        assert!(!signed_in("deepseek"));
+        assert!(!signed_in(""));
 
         /* No invented money anywhere in the catalogue: this build cannot see a provider's billing. */
         for row in &rows {

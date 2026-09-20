@@ -18,6 +18,11 @@ export const strings = {
     tagline: 'Tauri 2 · React 18 · TypeScript · Tailwind',
   },
 
+  /** The frame every dialog shares (`src/modals/Modal.tsx`). */
+  modal: {
+    close: 'Close',
+  },
+
   /** Topbar - spec section 7.1, in the order the buttons appear (left to right). */
   topbar: {
     brandInitial: 'S',
@@ -237,6 +242,14 @@ export const strings = {
         engine: 'Engine',
         model: 'Model',
       },
+      /** The count beside the MODEL title: how many providers can actually run right now. */
+      verifiedCount: (connected: number, total: number): string =>
+        connected === 0 ? 'nothing connected yet' : `${connected} of ${total} connected`,
+      verified: 'connected',
+      notConnected: 'not connected',
+      catalogEmpty: 'the daemon has not listed any yet',
+      connect: (mode: 'login' | 'api', label: string): string =>
+        mode === 'login' ? `Sign in to ${label}` : `Add a key for ${label}`,
       tiers: {
         fast: { label: 'Fast', description: 'quick edits' },
         balanced: { label: 'Balanced', description: 'everyday' },
@@ -630,6 +643,12 @@ export const strings = {
       ssh: { label: 'SSH / VPS', desc: 'user@host' },
     },
     sshTarget: 'SSH target',
+    sshTargetHelp:
+      'Paste what you would type in your own terminal — `ssh -p 8443 user@host` works, and so does `user@host`.',
+    password: 'Password (optional)',
+    passwordPlaceholder: 'Only used once, to copy SDC’s key',
+    passwordHelp:
+      'SDC copies its own key (`~/.ssh/sdc_ed25519`) to that machine with this password, then drops the password. Every connection after that is passwordless — and you can revoke the key by deleting one line from `authorized_keys`. A host that only accepts a verification code cannot be set up this way, and SDC will say so.',
     sshTargetPlaceholder: 'user@vps.example.com',
     labelField: 'Label (optional)',
     labelPlaceholder: 'prod-1',

@@ -208,11 +208,26 @@ impl Daemon {
             return Ok(json!({ "hostId": "local" }));
         }
 
-        let target = envelope.opt_str("target").unwrap_or_default().trim().to_string();
+        let raw_target = envelope.opt_str("target").unwrap_or_default().trim().to_string();
 
-        if target.is_empty() {
+        if raw_target.is_empty() {
             return Err(ErrorObject::bad_request("`target` is required for an SSH host"));
         }
+
+        /*
+         * What the user typed is parsed, not trusted - and that is a fix, not tidiness.
+         *
+         * The report pasted `ssh -p 8443 mehedi105117@109.199.108.216`, which is exactly what a person
+         * types into their own shell. The daemon used that whole string as a hostname: `ssh` was asked
+         * for a machine called `ssh`, and the port was never used, so a VPS that answers on 8443 could
+         * not be reached however correct the key was. `parse_target` pulls the address and the port out,
+         * and the port travels with every `ssh` call this daemon makes for that host.
+         */
+        let parsed = crate::auth::remote::parse_target(&raw_target).map_err(ErrorObject::bad_request)?;
+        let target = parsed.user_host.clone();
+        /* Used for this one install and dropped. It is never stored, never logged, and never part of a
+           sentence the UI shows. */
+        let password = envelope.opt_str("password").unwrap_or_default().trim().to_string();
 
         let label = envelope
             .opt_str("label")
@@ -265,9 +280,59 @@ impl Daemon {
         let notifier = out.clone();
         let probe_host_id = host_id.clone();
         let probe_label = label.clone();
+        let probe_target = parsed.clone();
 
         tokio::spawn(async move {
-            let probe_target = target.clone();
+            /*
+             * The password, when one was given, is spent here - before the probe - because the probe is
+             * `ssh` with `BatchMode=yes`, which by design cannot answer a prompt. One install is enough
+             * for every connection after it: the key is in `authorized_keys` and the password is gone.
+             */
+            if !password.is_empty() {
+                notifier.push(
+                    event::host_status(
+                        &probe_host_id,
+                        &probe_label,
+                        "vps",
+                        "connecting",
+                        Some("copying SDC's key with that password…"),
+                    ),
+                    None,
+                    None,
+                );
+
+                let pty = state.pty.clone();
+                let install_target = probe_target.clone();
+
+                let installed = tokio::task::spawn_blocking(move || {
+                    crate::auth::remote::install_key(&pty, &install_target, &password)
+                })
+                .await
+                .unwrap_or_else(|_| Err(ErrorObject::internal("the key install could not be run")));
+
+                match installed {
+                    Ok(sentence) => {
+                        notifier.push(event::toast(&sentence, None, None), None, None);
+                    }
+                    Err(error) => {
+                        /* The install is the whole reason the password was asked for, so its failure is
+                           the host's status - and the sentence is the actionable one. */
+                        let _ = state
+                            .store
+                            .upsert_host(&probe_host_id, &probe_label, "ssh", Some(&probe_target.user_host), "offline", None);
+
+                        notifier.push(
+                            event::host_status(&probe_host_id, &probe_label, "vps", "offline", Some(&error.message)),
+                            None,
+                            None,
+                        );
+                        notifier.push(event::toast(&error.message, None, None), None, None);
+
+                        return;
+                    }
+                }
+            }
+
             let (status, detail) = tokio::task::spawn_blocking(move || probe_ssh(&probe_target))
                 .await
                 .unwrap_or_else(|_| ("offline".to_string(), unreachable_sentence(&target)));
@@ -1267,35 +1332,40 @@ fn unreachable_sentence(target: &str) -> String {
 /// The command is `true`, i.e. "can I get a shell", which is exactly the question. It runs through
 /// `host::program::command`, so a Windows `ssh.exe` is resolved the same way every other program in
 /// this daemon is.
-fn probe_ssh(target: &str) -> (String, String) {
+fn probe_ssh(target: &crate::auth::remote::SshTarget) -> (String, String) {
     let Some(mut command) = host::program::command("ssh") else {
         return (
             "offline".to_string(),
-            format!("{target} was added, but `ssh` is not installed on this machine"),
+            format!("{} was added, but `ssh` is not installed on this machine", target.user_host),
         );
     };
 
-    let output = command
-        .args([
-            "-o",
-            "BatchMode=yes",
-            "-o",
-            "ConnectTimeout=8",
-            "-o",
-            "StrictHostKeyChecking=accept-new",
-            target,
-            "true",
-        ])
-        .output();
+    let mut args = target.port_args();
+
+    args.extend([
+        "-o".to_string(),
+        "BatchMode=yes".to_string(),
+        "-o".to_string(),
+        "ConnectTimeout=8".to_string(),
+        "-o".to_string(),
+        "StrictHostKeyChecking=accept-new".to_string(),
+        target.user_host.clone(),
+        "true".to_string(),
+    ]);
+
+    let output = command.args(&args).output();
 
     match output {
         Ok(output) if output.status.success() => {
-            ("connected".to_string(), format!("{target} is reachable"))
+            ("connected".to_string(), format!("{} is reachable", target.user_host))
         }
-        Ok(output) => ("offline".to_string(), ssh_refusal(target, &String::from_utf8_lossy(&output.stderr))),
+        Ok(output) => (
+            "offline".to_string(),
+            ssh_refusal(&target.user_host, &String::from_utf8_lossy(&output.stderr)),
+        ),
         Err(reason) => (
             "offline".to_string(),
-            format!("{target} could not be contacted: {reason}"),
+            format!("{} could not be contacted: {reason}", target.user_host),
         ),
     }
 }
@@ -1316,7 +1386,7 @@ fn ssh_refusal(target: &str, stderr: &str) -> String {
 
     if lowered.contains("keyboard-interactive") || lowered.contains("permission denied") {
         return format!(
-            "{target} answered, but it asks for a password or a verification code - and SDC runs `ssh` without a terminal, so it cannot type it. Add your public key to that machine (`~/.ssh/authorized_keys`) and it will connect without a prompt."
+            "{target} answered, but it asks for a password or a verification code. Add this host again with its password filled in (Add a host → SSH / VPS) and SDC copies its key over once, after which every connection is passwordless - or add a key to `~/.ssh/authorized_keys` yourself."
         );
     }
 

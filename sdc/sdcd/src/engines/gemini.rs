@@ -33,6 +33,7 @@ pub const GEMINI_SPEC: CliSpec = CliSpec {
     program: "gemini",
     args: &["-p", "{prompt}", "--output-format", "stream-json", "--skip-trust"],
     prompt: PromptPlacement::Argument,
+    model_flag: Some("-m"),
     env: &[("NO_COLOR", "1")],
 };
 

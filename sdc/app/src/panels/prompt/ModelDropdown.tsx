@@ -1,13 +1,22 @@
 import {
-  Box,
   Check,
+  Plug,
   Plus,
   ShieldCheck,
 } from 'lucide-react';
+import { useEffect, useMemo } from 'react';
 
 import { strings } from '../../strings';
+import { refreshCatalog } from '../../store/intents';
+import {
+  connectModeFor,
+  groupCatalog,
+  tierLabel,
+  TIERS,
+  useModelStore,
+} from '../../store/model';
 import { useOverlayStore } from '../../store/overlays';
-import { ENGINES, ENGINE_MODELS, TIERS, useModelStore } from '../../store/model';
+import { useProviderStore } from '../../store/providers';
 import { engineIcon, tierIcon } from './modelIcons';
 
 /**
@@ -63,8 +72,24 @@ function Row({ name, description }: { name: string; description: string }) {
 }
 
 export function ModelDropdown() {
-  const { tier, engine, model, setTier, setEngine, setModel } = useModelStore();
+  const { tier, providerId, model, catalog, setTier, choose } = useModelStore();
+  const providers = useProviderStore((state) => state.providers);
+  const openConnect = useOverlayStore((state) => state.openConnect);
   const openHub = useOverlayStore((state) => state.openHub);
+
+  /*
+   * Opening the dropdown re-reads the catalogue.
+   *
+   * It is a local read of a list the daemon already holds (no provider is contacted unless the Hub's
+   * `Refresh` asks for it), so it costs nothing and it means the menu can never be a launch behind: sign
+   * a CLI in, open this, and its models are here.
+   */
+  useEffect(() => {
+    void refreshCatalog();
+  }, []);
+
+  const groups = useMemo(() => groupCatalog(catalog, providers), [catalog, providers]);
+  const connected = groups.filter((group) => group.connected).length;
 
   const connectMore = (): void => {
     useModelStore.getState().closeDropdown();
@@ -109,66 +134,82 @@ export function ModelDropdown() {
 
       <div className="mdd-divider mx-[4px] my-[6px] h-px bg-border-subtle" />
 
-      <div className="mdd-group mb-[4px]">
-        <div className={GROUP_TITLE}>{strings.prompt.model.groupTitles.engine}</div>
-        {ENGINES.map((candidate) => {
-          const Icon = engineIcon(candidate.id);
-          const selected = candidate.id === engine;
-
-          return (
-            <div
-              key={candidate.id}
-              className={selected ? ROW_ON : ROW_IDLE}
-              role="button"
-              tabIndex={0}
-              aria-selected={selected}
-              onClick={() => setEngine(candidate.id)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') {
-                  setEngine(candidate.id);
-                }
-              }}
-            >
-              <div className={selected ? CHIP_ON : CHIP_IDLE}>
-                <Icon size={12} aria-hidden="true" />
-              </div>
-              <Row name={candidate.name} description={candidate.description} />
-              {selected ? <Check size={14} className="shrink-0 text-accent" aria-hidden="true" /> : null}
-            </div>
-          );
-        })}
+      <div className={GROUP_TITLE}>
+        {strings.prompt.model.groupTitles.model}
+        <span className="mdd-verified font-mono text-[9.5px] normal-case tracking-normal">
+          {groups.length === 0
+            ? strings.prompt.model.catalogEmpty
+            : strings.prompt.model.verifiedCount(connected, groups.length)}
+        </span>
       </div>
 
-      <div className="mdd-divider mx-[4px] my-[6px] h-px bg-border-subtle" />
+      {groups.map((group) => {
+        const EngineIcon = engineIcon(group.engine);
+        const mode = connectModeFor(group.providerId);
 
-      <div className="mdd-group mb-[4px]">
-        <div className={GROUP_TITLE}>{strings.prompt.model.groupTitles.model}</div>
-        {ENGINE_MODELS[engine].map((candidate) => {
-          const selected = candidate.id === model;
-
-          return (
-            <div
-              key={candidate.id}
-              className={selected ? ROW_ON : ROW_IDLE}
-              role="button"
-              tabIndex={0}
-              aria-selected={selected}
-              onClick={() => setModel(candidate.id)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') {
-                  setModel(candidate.id);
-                }
-              }}
-            >
-              <div className={selected ? CHIP_ON : CHIP_IDLE}>
-                <Box size={12} aria-hidden="true" />
-              </div>
-              <Row name={candidate.name} description={candidate.description} />
-              {selected ? <Check size={14} className="shrink-0 text-accent" aria-hidden="true" /> : null}
+        return (
+          <div key={group.providerId} className="mdd-group mb-[6px]">
+            <div className={GROUP_TITLE}>
+              <span className={group.connected ? 'text-state-success' : 'text-state-waiting'}>
+                {group.providerLabel}
+              </span>
+              <span className="font-mono text-[9.5px] normal-case tracking-normal">
+                {group.connected ? strings.prompt.model.verified : strings.prompt.model.notConnected}
+              </span>
             </div>
-          );
-        })}
-      </div>
+
+            {group.connected ? null : (
+              <div
+                className="mdd-connect flex cursor-pointer items-center gap-[8px] rounded-md px-[10px] py-[7px] text-[12px] text-accent hover:bg-accent-subtle"
+                role="button"
+                tabIndex={0}
+                data-connect-provider={group.providerId}
+                onClick={() => openConnect(group.providerId, mode)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    openConnect(group.providerId, mode);
+                  }
+                }}
+              >
+                <Plug size={12} aria-hidden="true" />
+                {strings.prompt.model.connect(mode, group.providerLabel)}
+              </div>
+            )}
+
+            {group.models.map((row) => {
+              const selected = row.id === model && row.providerId === providerId;
+
+              return (
+                <div
+                  key={`${group.providerId}:${row.id}`}
+                  className={selected ? ROW_ON : ROW_IDLE}
+                  role="button"
+                  tabIndex={0}
+                  aria-selected={selected}
+                  data-model-row={row.id}
+                  onClick={() =>
+                    choose({ engine: group.engine, providerId: group.providerId, model: row.id, tier: row.tier })
+                  }
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      choose({ engine: group.engine, providerId: group.providerId, model: row.id, tier: row.tier });
+                    }
+                  }}
+                >
+                  <div className={selected ? CHIP_ON : CHIP_IDLE}>
+                    <EngineIcon size={12} aria-hidden="true" />
+                  </div>
+                  <Row
+                    name={row.name === '' ? row.id : row.name}
+                    description={`${row.id} · ${tierLabel(row.tier)}${row.cost === '' ? ` · ${row.source}` : ` · ${row.cost}`}`}
+                  />
+                  {selected ? <Check size={14} className="shrink-0 text-accent" aria-hidden="true" /> : null}
+                </div>
+              );
+            })}
+          </div>
+        );
+      })}
 
       <div
         className="mdd-action mt-[4px] flex cursor-pointer items-center gap-[6px] rounded-md border-t border-border-subtle px-[10px] py-[8px] text-[11px] text-accent hover:bg-accent-subtle"

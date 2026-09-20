@@ -195,6 +195,7 @@
   /* `.dialog` - a centred surface: Add host (9.12), Permission (9.13) and the frames the hub and
      Settings replace with their own. */
   .dialog {
+    position: relative; /* the frame's own close button sits in its top-right corner */
     width: min(520px, 92vw);
     max-height: 90vh;
     overflow: hidden auto;

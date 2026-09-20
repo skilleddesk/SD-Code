@@ -1,5 +1,7 @@
 import { useEffect, useRef, type ReactNode } from 'react';
+import { X } from 'lucide-react';
 
+import { strings } from '../strings';
 import { useOverlayStore } from '../store/overlays';
 
 /**
@@ -44,9 +46,23 @@ export function Modal({ open, label, onClose, center, className, bare, children 
   const frameRef = useRef<HTMLDivElement | null>(null);
   const closeAll = useOverlayStore((state) => state.closeAll);
 
+  /*
+   * The newest `onClose`, in a ref.
+   *
+   * This is not a style preference, it is the fix for a reported bug: the effect below used to depend
+   * on `onClose`, and every caller passes an inline arrow (`onClose={() => close()}`), so the effect
+   * re-ran on *every render*. The Connect dialog renders once a second while it polls a sign-in, and
+   * each of those renders yanked focus to the dialog's first control - the URL field above the code
+   * field. Pasting a code looked like it "did not work": the paste went nowhere, and the caret jumped
+   * up a row. A modal focuses once, when it opens.
+   */
+  const closeRef = useRef(onClose);
+
+  closeRef.current = onClose;
+
   useEffect(() => {
     if (!open) {
-      return;
+      return undefined;
     }
 
     const frame = frameRef.current;
@@ -67,7 +83,7 @@ export function Modal({ open, label, onClose, center, className, bare, children 
         if (frame?.dataset.stacked === 'true') {
           closeAll();
         } else {
-          onClose();
+          closeRef.current();
         }
 
         return;
@@ -103,7 +119,7 @@ export function Modal({ open, label, onClose, center, className, bare, children 
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [open, onClose, closeAll]);
+  }, [open, closeAll]);
 
   if (!open) {
     return null;
@@ -127,6 +143,26 @@ export function Modal({ open, label, onClose, center, className, bare, children 
         tabIndex={-1}
         className={(bare === true ? '' : 'dialog ') + (className ?? '')}
       >
+        {/*
+          The frame's own close button.
+
+          `ModalProps.bare` has documented "`true` renders the frame without a close button" since this
+          file was written, and the button itself was never rendered - so every modal this frame carries
+          could only be closed by Escape or by clicking the dimmed backdrop, which is not something a
+          person should have to know. Reported as "or cross thakbe close korar".
+        */}
+        {bare === true ? null : (
+          <button
+            type="button"
+            className="dialog-close absolute right-[8px] top-[8px] z-[1] grid h-[24px] w-[24px] place-items-center rounded-md text-text-muted transition-colors duration-fast ease-ease hover:bg-bg-hover hover:text-text-primary"
+            aria-label={strings.modal.close}
+            title={strings.modal.close}
+            onClick={() => closeRef.current()}
+          >
+            <X size={14} aria-hidden="true" />
+          </button>
+        )}
+
         {children}
       </div>
     </div>

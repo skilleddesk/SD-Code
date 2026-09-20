@@ -611,7 +611,22 @@ export interface SdcpMethodMap {
   'host.status': { params: Record<string, never>; result: HostStatusEvent };
   'host.doctor': { params: { hostId?: string }; result: { checks: DoctorCheck[] } };
   'host.add': {
-    params: { type: 'local' | 'ssh'; target?: string; label?: string };
+    params: {
+      type: 'local' | 'ssh';
+      /**
+       * What the user typed: `user@host`, or the whole `ssh -p 8443 user@host` command they run in a
+       * terminal. The daemon parses the address and the port out of it (`auth::remote::parse_target`).
+       */
+      target?: string;
+      label?: string;
+      /**
+       * The password for a host that asks for one, when the user chooses to give it.
+       *
+       * It is used for a single `ssh` call - the one that copies SDC's public key into
+       * `~/.ssh/authorized_keys` - and is stored nowhere. See `auth::remote::install_key`.
+       */
+      password?: string;
+    };
     /** `reused` is true when that `user@host` was already in the list - the row is returned as-is. */
     result: { hostId: string; reused: boolean };
   };
@@ -742,6 +757,11 @@ export interface SdcpMethodMap {
     result: {
       models: {
         id: string;
+        /**
+         * The name to show a person: the bundle's own where it has one (`Claude Sonnet 4.5`), the
+         * daemon's spelling of the id where the provider sent only an id.
+         */
+        name: string;
         providerId: string;
         providerLabel: string;
         tier: TierName;

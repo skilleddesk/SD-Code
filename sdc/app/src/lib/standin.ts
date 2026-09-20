@@ -240,9 +240,15 @@ export class StandInDaemon implements LoopbackDaemon {
  * daemon - which is the honest split.
  */
 function bundledModels(): Record<string, unknown>[] {
-  return catalogue.providers.flatMap((provider) =>
+  /* Both groups, because `models.list` serves both: the seven API blocks and the three subscription
+     blocks (`sonnet`, `opus`, `haiku` on the Claude plan). A menu that showed only the API half would
+     hide the models the user's plan actually has. */
+  const groups = [...catalogue.providers, ...(catalogue.subscriptions ?? [])];
+
+  return groups.flatMap((provider) =>
     provider.models.map((model) => ({
       id: model.id,
+      name: 'name' in model && typeof model.name === 'string' ? model.name : model.id,
       providerId: provider.id,
       providerLabel: provider.label,
       tier: model.tier,
