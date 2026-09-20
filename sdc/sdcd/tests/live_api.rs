@@ -24,6 +24,7 @@ fn prompt(text: &str) -> Prompt {
         text: text.to_string(),
         /* The live checks ask a provider directly, so the model is the provider's own id. */
         model: "claude-sonnet-4-5".to_string(),
+        provider: None,
         history: Vec::new(),
     }
 }
@@ -32,8 +33,8 @@ fn prompt(text: &str) -> Prompt {
 #[test]
 #[ignore = "needs the public internet"]
 fn anthropic_answers_a_bogus_key_with_its_own_sentence() {
-    let endpoint = endpoint_for("anthropic/claude-sonnet-4");
-    let (url, headers, body) = build_request(endpoint, "sk-ant-bogus-key", "claude-sonnet-4", &prompt("hi"));
+    let endpoint = endpoint_for("anthropic/claude-sonnet-4", None);
+    let (url, headers, body) = build_request(&endpoint, "sk-ant-bogus-key", "claude-sonnet-4", &prompt("hi"));
 
     let reason = post_stream(&url, &headers, &body).expect_err("a bogus key must not be accepted");
 
@@ -46,8 +47,8 @@ fn anthropic_answers_a_bogus_key_with_its_own_sentence() {
 #[test]
 #[ignore = "needs the public internet"]
 fn openai_answers_a_bogus_key_with_its_own_sentence() {
-    let endpoint = endpoint_for("openai/gpt-5");
-    let (url, headers, body) = build_request(endpoint, "sk-bogus-key", "gpt-5", &prompt("hi"));
+    let endpoint = endpoint_for("openai/gpt-5", None);
+    let (url, headers, body) = build_request(&endpoint, "sk-bogus-key", "gpt-5", &prompt("hi"));
 
     let reason = post_stream(&url, &headers, &body).expect_err("a bogus key must not be accepted");
 

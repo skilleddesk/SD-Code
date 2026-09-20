@@ -14,6 +14,61 @@ This file describes what changed, not what is planned. Anything still open is na
 release - the newest - and deletes the others when it publishes (`release.yml`, "Keep only this
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
+## [0.7.2] — "chat e kisu likhle kaj hoy nah"
+
+The report was one sentence: **Claude connects, but typing in the chat does nothing.** It was two
+separate faults, and neither of them was Claude.
+
+### Fixed — choosing a model in the Connect dialog did not choose anything
+
+`chooseModel` wrote to the daemon (`models.select`) and **never touched the window's own model store**, and
+`sendPrompt` reads the store. So `Use` on a row in the Connect dialog changed the daemon's setting, the row
+said `In use`, and the chat kept running the model it already had - the person had picked a model and typed
+into a chat that was still on another engine. It now writes both: the same four facts the model dropdown
+sets (`engine`, `providerId`, `model`, `tier`), with the tier taken from the row when the catalogue listed
+it. Proven by a live daemon turn and by `src/store/intents.test.ts`, which fails on the old behaviour.
+
+### Fixed — a model from a provider's own list could not resolve to that provider
+
+`native_api`'s endpoint table had three rows - `anthropic`, `openai`, `custom` - matched by the model id's
+prefix, so every other provider the catalogue ships (DeepSeek, Groq, OpenRouter) matched nothing and fell
+through to the `custom` loopback endpoint. The turn then failed with
+
+```
+native_api failed · No API key for custom. Connect it in the Provider Hub …
+```
+
+on a machine where DeepSeek was *connected*, with its key sitting under its own entry. Two changes:
+
+* **the provider travels with the turn.** `engine.start` takes an optional `provider`, `Prompt` carries it,
+  and `endpoint_for(model, provider)` uses it first - which is the only way to route a model id from a
+  provider's **live** list, because this build's catalogue has never seen those ids (`deepseek-v4-pro`).
+* **the catalogue resolves the rest.** For a caller that sends only a model id, the block that listed it
+  decides: provider id, key entry (`sdc.provider.deepseek`, the one the Provider Hub wrote), protocol
+  (`anthropic` → `messages` + `x-api-key`, anything else → `chat/completions` + Bearer) and the chat URL
+  its `live` URL implies (`https://api.deepseek.com/v1/models` → `…/v1/chat/completions`).
+  `api_model` now strips only a prefix that *is* a provider, so OpenRouter still receives
+  `anthropic/claude-sonnet-4-5` and not a name it has never heard of.
+
+Verified live, over SDCP, against the real provider:
+
+```
+engine.start { engine: native_api, model: deepseek-v4-pro, provider: deepseek }
+  6ms     TurnStarted
+  1010ms  TurnDelta "OK"
+  1012ms  TurnCompleted  Done
+```
+
+`custom` is still the last resort, for a model id nothing claims.
+
+### Verified
+
+`sdcd`: 133 unit tests (four new on endpoint resolution), 5 lifecycle, 5 VCR, clippy clean under
+`-D warnings`. The window: `pnpm typecheck`, `pnpm lint`, **32 vitest tests** (four new), the bundle smoke
+run. `_verify/probe-native-turn.mjs` walks the UI for this exact case; `_verify/probe-turn.mjs` now takes a
+model and a provider.
+
+
 ## [0.7.1] — the connection dialogs, re-drawn
 
 Same daemon, same behaviour, one surface rebuilt. The report was a screenshot of the API-key dialog with
