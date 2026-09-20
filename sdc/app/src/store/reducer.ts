@@ -161,6 +161,27 @@ function reduce(state: AppState, entry: AppEvent): AppState {
         return state;
       }
 
+      /*
+       * Idempotent, and this is not decoration.
+       *
+       * The same `SessionOpened` legitimately reaches this reducer more than once: the bridge asks for
+       * the log on every connect (`event.list since=0` on a fresh process) and forwards the replay one
+       * event at a time, while `session.list` may already have listed the session in between. It also
+       * arrived twice when the app opened two notification sockets. Appending unconditionally drew one
+       * row per copy - the "clicking New chat opens two chats" report - and the duplicate React keys
+       * that came with it left ghost rows behind on the next render.
+       *
+       * The session id is the identity, so a second open of an id that is already on screen is the
+       * same session and changes nothing.
+       */
+      const known = state.hosts.some((candidate) =>
+        candidate.sessions.some((session) => session.id === event.sessionId),
+      );
+
+      if (known) {
+        return state;
+      }
+
       const session: SessionView = {
         id: event.sessionId,
         title: event.title,

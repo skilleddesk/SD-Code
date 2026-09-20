@@ -48,7 +48,7 @@ export function Sidebar() {
       </div>
 
       <div className="sidebar-search px-[10px] pb-[8px] pt-[4px]">
-        <div className="search-wrap flex items-center gap-[8px] rounded-md border border-border-subtle bg-bg-input px-[10px] py-[6px] transition-all duration-fast ease-ease focus-within:border-border-focus focus-within:shadow-[0_0_0_3px_var(--accent-subtle)]">
+        <div className="search-wrap flex items-center gap-[8px] rounded-md border border-border-subtle bg-bg-input px-[10px] py-[6px] transition-all duration-fast ease-ease focus-within:border-border-strong">
           <Search size={13} aria-hidden="true" className="text-text-muted" />
           <input
             type="text"

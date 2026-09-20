@@ -77,12 +77,42 @@ pub fn sources() -> Value {
     json!([])
 }
 
-/// A plain-HTTP `GET` that answers JSON. `https://` is refused with the same honest sentence the
-/// native engine uses, and the caller falls back to cache or bundle - which is why this returns a
-/// `Result` instead of pretending.
-pub fn get_json(url: &str) -> Result<Value, String> {
+/// A `GET` that answers JSON, over `http` or `https`.
+///
+/// It used to refuse `https://` - "a TLS client is not linked in this build" - which meant a live
+/// model list was only ever possible for a local endpoint: the rows a user picked from were the ones
+/// this build curated on the day it shipped, however many models the provider had added since. 0.6.1
+/// routes it through the same TLS client the native engine uses, so `Refresh` answers with what the
+/// provider lists *today*.
+///
+/// The provider's own key travels with the request when one is stored, because the endpoints that
+/// need it (Anthropic, DeepSeek, Groq) answer `401` without it; OpenRouter's list is public, and a
+/// provider that does not look at the header is unaffected by it.
+pub fn get_json(url: &str, provider_id: &str, key: Option<&str>) -> Result<Value, String> {
+    if url.starts_with("https://") {
+        let key = key.filter(|key| !key.trim().is_empty());
+        let mut headers = vec![("accept".to_string(), "application/json".to_string())];
+
+        if let Some(key) = key {
+            if provider_id == "anthropic-api" {
+                headers.push(("x-api-key".to_string(), key.to_string()));
+                headers.push(("anthropic-version".to_string(), "2023-06-01".to_string()));
+            } else {
+                headers.push(("authorization".to_string(), format!("Bearer {key}")));
+            }
+        }
+
+        let (status, body) = crate::engines::native_api::get_json(url, &headers)?;
+
+        if !(200..300).contains(&status) {
+            return Err(crate::engines::native_api::rejection(status, &body));
+        }
+
+        return serde_json::from_str(&body).map_err(|_| "the endpoint did not answer JSON".to_string());
+    }
+
     let rest = url.strip_prefix("http://").ok_or_else(|| {
-        "a TLS client is not linked in this build; only http:// endpoints can be listed live".to_string()
+        format!("{url}: only http:// and https:// endpoints can be listed live")
     })?;
     let (authority, path) = match rest.split_once('/') {
         Some((authority, path)) => (authority, format!("/{path}")),
@@ -116,7 +146,8 @@ pub fn live(provider: &ProviderBlock) -> Result<Vec<Value>, String> {
         return Err("this provider does not list its models".to_string());
     }
 
-    let body = get_json(&provider.live)?;
+    let key = crate::auth::keychain::get(&crate::providers::key_ref(&provider.id));
+    let body = get_json(&provider.live, &provider.id, key.as_deref())?;
 
     /* Two shapes cover every provider we ship: OpenAI's `{data:[{id}]}` and Ollama's `{models:[{name}]}`. */
     let rows = body
@@ -316,8 +347,13 @@ mod tests {
         }
     }
 
-    /// Refresh with an endpoint this build cannot reach: the honest case, and the one that must not
-    /// lose the list. `groq` is `https://`, so the note says why and the bundle's rows stay.
+    /// Refresh with an endpoint that answers no: the honest case, and the one that must not lose the
+    /// list.
+    ///
+    /// `groq` is `https://` and there is no key for it here, so the provider answers `401` - or the
+    /// machine has no network and the call never leaves at all. Both are the same code path and both
+    /// have to end the same way: the note says what happened, and the bundle's rows stay, because a
+    /// model list that disappears when the network hiccups is worse than a stale one that admits it.
     #[test]
     fn a_failed_refresh_keeps_the_list_and_says_why() {
         let store = Arc::new(Store::in_memory().unwrap());
@@ -328,7 +364,14 @@ mod tests {
 
         assert!(!notes.is_empty(), "a refresh that reached nothing has to explain itself");
         assert!(note.contains("groq"), "the note names the provider: {note}");
-        assert!(note.contains("tls"), "and why it could not be asked: {note}");
+        assert!(
+            !note.contains("tls client is not linked"),
+            "0.6.1 links a TLS client, so that excuse is gone: {note}"
+        );
+        assert!(
+            note.contains("401") || note.contains("reach"),
+            "and it says what the provider answered, or that it could not be reached: {note}"
+        );
         assert!(models.len() >= 2, "the curated rows stay");
         assert!(models.iter().all(|model| model["source"] == json!("bundled")));
     }
@@ -411,10 +454,17 @@ mod tests {
         assert_eq!(selected(&store)["providerId"], json!("anthropic-api"));
     }
 
+    /// The refusal that is left, and why it is a different one.
+    ///
+    /// `https://` is no longer refused by a missing TLS client (0.6.1 linked one); what is refused is a
+    /// scheme this function cannot speak, and the sentence names the scheme rather than the build.
+    /// The https *path* itself is covered by `engines::native_api`'s own test, which needs no network:
+    /// 127.0.0.1:1 refuses the connection immediately.
     #[test]
-    fn https_says_why_it_cannot_be_listed_live() {
-        let error = get_json("https://api.anthropic.com/v1/models").unwrap_err();
+    fn an_unknown_scheme_is_refused_by_name() {
+        let error = get_json("ftp://example.invalid/models", "groq", None).unwrap_err();
 
-        assert!(error.contains("TLS"), "{error}");
+        assert!(error.contains("ftp://example.invalid/models"), "{error}");
+        assert!(!error.contains("TLS"), "{error}");
     }
 }

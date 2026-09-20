@@ -149,7 +149,7 @@ export function PromptArea() {
 
         <QueuedChips />
 
-        <div className="prompt-box flex flex-col gap-[8px] rounded-lg border border-border-default bg-bg-input px-[13px] py-[11px] transition-all duration-base ease-ease focus-within:border-border-focus focus-within:shadow-[0_0_0_3px_var(--accent-subtle),0_6px_20px_var(--accent-subtle)]">
+        <div className="prompt-box flex flex-col gap-[8px] rounded-lg border border-border-default bg-bg-input px-[13px] py-[11px] transition-all duration-base ease-ease focus-within:border-border-strong">
           <textarea
             ref={textareaRef}
             rows={1}

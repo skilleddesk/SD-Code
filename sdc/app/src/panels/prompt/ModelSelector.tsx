@@ -67,7 +67,7 @@ export function ModelSelector() {
         className={
           'model-trigger flex h-[28px] cursor-pointer items-center gap-[8px] rounded-md border bg-bg-raised px-[10px] py-[5px] pl-[8px] font-mono text-[11.5px] transition-all duration-fast ease-ease ' +
           (dropdownOpen
-            ? 'open border-border-focus bg-bg-overlay text-text-primary shadow-[0_0_0_3px_var(--accent-subtle)]'
+            ? 'open border-border-strong bg-bg-overlay text-text-primary'
             : 'border-border-subtle text-text-secondary hover:border-border-default hover:bg-bg-hover hover:text-text-primary')
         }
         role="button"

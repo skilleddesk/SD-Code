@@ -186,6 +186,26 @@ const harness = `<!doctype html>
 
           control.focus();
 
+          /*
+           * The ring is painted *through a transition*, so it has to be finished before it is read.
+           *
+           * Reading a computed style forces the recalculation that starts the transition, and the
+           * first reading of a transitioned property is the value the element had **before** the
+           * change - which made this check report "focused, and nothing painted differently" for a
+           * focus ring that is measurably there 150ms later (0.6.1 measured exactly that: the wrapper's
+           * border goes from rgb(27,31,41) to rgb(58,66,82) once the transition is done). Finishing the
+           * animations is the synchronous way to ask what the focused state looks like.
+           */
+          void styles(wrapper).borderColor;
+
+          for (const animation of wrapper.getAnimations()) {
+            try {
+              animation.finish();
+            } catch {
+              /* A transition that cannot be finished is simply skipped; the comparison below decides. */
+            }
+          }
+
           const after = styles(wrapper);
 
           report.focusVisible =

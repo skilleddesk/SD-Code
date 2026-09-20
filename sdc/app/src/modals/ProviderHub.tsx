@@ -395,7 +395,7 @@ function Flow({ flow, onDone }: { flow: FlowState; onDone: () => void }) {
               type="password"
               id="apiKeyInput"
               aria-label={strings.hub.keyLabel}
-              className="w-full rounded-md border border-border-default bg-bg-input px-[10px] py-[7px] font-mono text-[12.5px] text-text-primary placeholder:text-text-muted focus:border-border-focus"
+              className="w-full rounded-md border border-border-default bg-bg-input px-[10px] py-[7px] font-mono text-[12.5px] text-text-primary placeholder:text-text-muted focus:border-border-strong"
               placeholder={strings.hub.keyPlaceholder}
               value={key}
               onChange={(event) => setKey(event.target.value)}
@@ -409,7 +409,7 @@ function Flow({ flow, onDone }: { flow: FlowState; onDone: () => void }) {
             <input
               type="text"
               id="apiKeyLabel"
-              className="w-full rounded-md border border-border-default bg-bg-input px-[10px] py-[7px] text-[12.5px] text-text-primary placeholder:text-text-muted focus:border-border-focus"
+              className="w-full rounded-md border border-border-default bg-bg-input px-[10px] py-[7px] text-[12.5px] text-text-primary placeholder:text-text-muted focus:border-border-strong"
               placeholder={strings.hub.labelPlaceholder}
               value={label}
               onChange={(event) => setLabel(event.target.value)}
@@ -518,7 +518,7 @@ function CustomEndpoint({ onSaved }: { onSaved: () => void }) {
         <input
           type="text"
           id="custUrl"
-          className="w-full rounded-md border border-border-default bg-bg-input px-[10px] py-[7px] font-mono text-[12.5px] text-text-primary placeholder:text-text-muted focus:border-border-focus"
+          className="w-full rounded-md border border-border-default bg-bg-input px-[10px] py-[7px] font-mono text-[12.5px] text-text-primary placeholder:text-text-muted focus:border-border-strong"
           placeholder="https://api.example.com/v1"
           value={url}
           onChange={(event) => setUrl(event.target.value)}
@@ -529,7 +529,7 @@ function CustomEndpoint({ onSaved }: { onSaved: () => void }) {
         <input
           type="password"
           id="custKey"
-          className="w-full rounded-md border border-border-default bg-bg-input px-[10px] py-[7px] font-mono text-[12.5px] text-text-primary placeholder:text-text-muted focus:border-border-focus"
+          className="w-full rounded-md border border-border-default bg-bg-input px-[10px] py-[7px] font-mono text-[12.5px] text-text-primary placeholder:text-text-muted focus:border-border-strong"
           placeholder={strings.hub.keyPlaceholder}
           value={key}
           onChange={(event) => setKey(event.target.value)}

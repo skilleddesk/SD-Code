@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Check, ClipboardCopy, ExternalLink, RefreshCw, Terminal, TriangleAlert } from 'lucide-react';
 
 import { strings } from '../strings';
@@ -51,6 +51,40 @@ export function Connect() {
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
   const [models, setModels] = useState<ModelsView | null>(null);
+
+  /*
+   * The sign-in starts itself, and that is the 0.6.1 change to this modal.
+   *
+   * Clicking a subscription card means "use my Claude / ChatGPT / Gemini plan", and a person who has
+   * just clicked it should not then have to find a second button called `Sign in` to say the same
+   * thing again. Opening this modal in `login` mode starts the CLI's own login immediately; the CLI is
+   * the only party that can authenticate, so what the user gets is the provider's real page and a code
+   * to paste back - no credential ever passes through SDC.
+   *
+   * Once per open, tracked by provider id: a login that failed, or a user who cancelled, must not be
+   * restarted by a re-render. Closing the modal clears the note and the next open tries again; the
+   * `Try again` button is the retry inside one open.
+   */
+  const startedFor = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!open) {
+      startedFor.current = null;
+      return;
+    }
+
+    if (mode !== 'login' || providerId === null || providerId === undefined || startedFor.current === providerId) {
+      return;
+    }
+
+    startedFor.current = providerId;
+    setBusy(true);
+
+    void startCliLogin(providerId).then((view) => {
+      setBusy(false);
+      setLogin(view);
+    });
+  }, [open, mode, providerId]);
 
   /* One poll per second while a sign-in is in flight: the URL, the CLI's tail, and the moment it says
      it is done. The poll stops the instant the CLI has spoken, so a finished login costs nothing. */
@@ -167,6 +201,16 @@ export function Connect() {
                       <>
                         <Check size={13} /> {strings.connect.authenticated}
                       </>
+                    ) : login.state === 'failed' || login.state === 'cancelled' ? (
+                      /* The CLI stopped without a credential: say that, rather than leaving the
+                         `Waiting for the CLI…` line of a login that is over. */
+                      <>
+                        <TriangleAlert size={13} /> {strings.connect.failed}
+                      </>
+                    ) : login.state === 'exited' ? (
+                      <>
+                        <TriangleAlert size={13} /> {strings.connect.finished}
+                      </>
                     ) : (
                       <>
                         <TriangleAlert size={13} />{' '}
@@ -214,6 +258,22 @@ export function Connect() {
                         {strings.connect.submitCode}
                       </button>
                     </div>
+                  ) : null}
+
+                  {/* The retry, for a sign-in that stopped: this is the one state that needs a
+                      control of its own, because the first attempt was started by the click that
+                      opened this modal. */}
+                  {!login.authenticated &&
+                  (login.state === 'failed' || login.state === 'cancelled' || login.state === 'exited') ? (
+                    <button
+                      type="button"
+                      className={BTN_SECONDARY + ' mt-[8px]'}
+                      onClick={signIn}
+                      disabled={busy}
+                      id="connectRetry"
+                    >
+                      <RefreshCw size={13} /> {strings.connect.tryAgain}
+                    </button>
                   ) : null}
                 </div>
 

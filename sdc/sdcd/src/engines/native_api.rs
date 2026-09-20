@@ -6,10 +6,12 @@
 //!    keychain, never from disk) and JSON body. Pure, so a test can assert it.
 //! 2. **`parse_sse`** turns a Server-Sent-Events stream into `EngineEvent`s. Pure, so the VCR
 //!    fixtures of spec section 11.6 can hold both dialects to one contract.
-//! 3. **`post_stream`** moves the bytes. It speaks plain HTTP, which is enough for a local
-//!    OpenAI-compatible endpoint (LM Studio, vLLM, llama.cpp), and it is the transport boundary for
-//!    everything else: a remote `https://` endpoint reports that a TLS client is not linked yet
-//!    rather than pretending the turn started. Principle P4 applied to a dependency.
+//! 3. **`post_stream`** moves the bytes: `https://` through `ureq` (rustls + webpki roots), `http://`
+//!    through a socket this file opens itself, which is enough for a local OpenAI-compatible endpoint
+//!    (LM Studio, vLLM, llama.cpp). TLS used to be absent, and the adapter said so - "a TLS client is
+//!    not linked in this build" - which was honest and also the whole problem: an API key could not
+//!    reach `api.anthropic.com` at all. A provider that rejects a key now reports the provider's own
+//!    sentence (`invalid x-api-key (401)`) instead of a code with nothing behind it.
 
 use std::io::{Read, Write};
 use std::net::TcpStream;
@@ -146,10 +148,28 @@ pub fn parse_sse(lines: &[String]) -> Vec<EngineEvent> {
     events
 }
 
-/// Posts the request and returns the response's body lines. `http://` only - see the module doc.
+/// Posts the request and returns the response's body lines.
+///
+/// Two transports, one function, and the split is deliberate:
+///
+///   `https://`   the real thing, over `ureq` (rustls with the webpki roots). This is what makes an
+///                API key usable at all: `api.anthropic.com` and `api.openai.com` answer `401` with a
+///                key they do not recognise and stream tokens with one they do. Until 0.6.1 this
+///                function refused every `https://` URL with "a TLS client is not linked in this
+///                build" - an honest sentence, and a wall between the user and the feature the
+///                sentence was about.
+///   `http://`    the loopback path, kept because it is what LM Studio, vLLM and llama.cpp speak, and
+///                because it is the one transport a test can exercise without a network.
+///
+/// Blocking, like the rest of this adapter: the daemon's engine calls run on a multi-threaded
+/// runtime, and a turn is one long-lived call either way.
 pub fn post_stream(url: &str, headers: &[(String, String)], body: &str) -> Result<Vec<String>, String> {
+    if url.starts_with("https://") {
+        return post_https(url, headers, body);
+    }
+
     let rest = url.strip_prefix("http://").ok_or_else(|| {
-        "a TLS client is not linked in this build; only http:// endpoints stream today".to_string()
+        format!("{url}: only http:// and https:// endpoints are supported")
     })?;
     let (authority, path) = match rest.split_once('/') {
         Some((authority, path)) => (authority, format!("/{path}")),
@@ -176,9 +196,101 @@ pub fn post_stream(url: &str, headers: &[(String, String)], body: &str) -> Resul
 
     socket.read_to_string(&mut response).map_err(|error| error.to_string())?;
 
-    /* `Connection: close` keeps this simple on purpose: chunked decoding belongs to the TLS-capable
-       client that replaces this function. */
+    /* `Connection: close` keeps this simple on purpose: the loopback path is for a local server that
+       always answers in one body. The https path gets chunked decoding from the client. */
     Ok(response.split("\r\n\r\n").nth(1).unwrap_or("").lines().map(str::to_string).collect())
+}
+
+/// The HTTP agent every request goes through, and the two numbers that matter.
+///
+/// `timeout_connect` is the same eight seconds `ssh` gets in `probe_ssh`: a black-holed address costs
+/// seconds rather than a stuck turn. `timeout_read` is per read, not for the whole body, so a turn
+/// that streams tokens for two minutes is fine while a socket that has gone quiet is not.
+fn agent() -> ureq::Agent {
+    ureq::AgentBuilder::new()
+        .timeout_connect(std::time::Duration::from_secs(8))
+        .timeout_read(std::time::Duration::from_secs(120))
+        .build()
+}
+
+/// The `https://` path: `ureq` does the TLS, the chunked decoding and the redirects.
+fn post_https(url: &str, headers: &[(String, String)], body: &str) -> Result<Vec<String>, String> {
+    let mut request = agent().post(url);
+
+    for (name, value) in headers {
+        request = request.set(name, value);
+    }
+
+    match request.send_string(body) {
+        Ok(response) => read_lines(response.into_reader()),
+
+        /*
+         * A key the provider rejected is the common failure by far, and the reason for it is in the
+         * *body*: `{"error":{"message":"invalid x-api-key"}}`. `ureq` hands the response over rather
+         * than throwing the sentence away, so the user reads the provider's own words - "invalid
+         * x-api-key (401)" - in the transcript instead of a status code with nothing behind it.
+         */
+        Err(ureq::Error::Status(status, response)) => Err(rejection(status, &read_all(response.into_reader()))),
+
+        Err(ureq::Error::Transport(transport)) => Err(format!("{url}: {transport}")),
+    }
+}
+
+/// A `GET` for the provider checks: the status code and the body of a URL that answers JSON.
+///
+/// Both dialects' "is this key still good" endpoint is a model list, and a rejected key answers with
+/// the provider's own sentence, so the status and the body both matter here.
+pub fn get_json(url: &str, headers: &[(String, String)]) -> Result<(u16, String), String> {
+    let mut request = agent().get(url);
+
+    for (name, value) in headers {
+        request = request.set(name, value);
+    }
+
+    match request.call() {
+        Ok(response) => {
+            let status = response.status();
+
+            Ok((status, read_all(response.into_reader())))
+        }
+        /* A 4xx is not a transport failure: it *is* the answer, and the body explains it. */
+        Err(ureq::Error::Status(status, response)) => Ok((status, read_all(response.into_reader()))),
+        Err(ureq::Error::Transport(transport)) => Err(transport.to_string()),
+    }
+}
+
+/// The sentence a provider rejected a request with, from its own error body when it has one.
+pub fn rejection(status: u16, body: &str) -> String {
+    let message = serde_json::from_str::<Value>(body)
+        .ok()
+        .and_then(|value| value.pointer("/error/message").and_then(Value::as_str).map(str::to_string));
+
+    match message {
+        Some(message) => format!("{message} ({status})"),
+        None => format!("HTTP {status}: {}", body.trim()),
+    }
+}
+
+/// Every line the reader has, for a body that is read once (an error, not a stream).
+fn read_all(mut reader: impl Read) -> String {
+    let mut text = String::new();
+
+    let _ = reader.read_to_string(&mut text);
+
+    text
+}
+
+/// The response body, line by line - the shape `parse_sse` takes.
+fn read_lines(reader: impl Read) -> Result<Vec<String>, String> {
+    use std::io::BufRead;
+
+    let mut lines = Vec::new();
+
+    for line in std::io::BufReader::new(reader).lines() {
+        lines.push(line.map_err(|error| error.to_string())?);
+    }
+
+    Ok(lines)
 }
 
 pub struct NativeApi;
@@ -275,10 +387,35 @@ mod tests {
     }
 
     #[test]
-    fn refuses_https_with_a_plain_reason() {
-        assert!(post_stream("https://api.anthropic.com/v1/messages", &[], "{}")
-            .unwrap_err()
-            .contains("TLS"));
+    fn https_reaches_a_socket_instead_of_refusing() {
+        /*
+         * 127.0.0.1:1 is the reserved `tcpmux` port - nothing listens there, so the connection is
+         * refused at once and without DNS. That is all this test needs: the failure has to be a
+         * *socket* error, which proves the TLS client is linked and a real https request was
+         * attempted, and not the old "a TLS client is not linked in this build".
+         */
+        let error = post_stream("https://127.0.0.1:1/v1/messages", &[], "{}").unwrap_err();
+
+        assert!(!error.contains("not linked"), "{error}");
+        assert!(error.contains("127.0.0.1:1"), "{error}");
+    }
+
+    #[test]
+    fn a_rejected_key_reports_the_providers_own_sentence() {
+        /* Anthropic and OpenAI both put the reason at `error.message`; both shapes are checked here
+           because the two dialects are the two ways a key gets rejected in practice. */
+        assert_eq!(
+            rejection(401, r#"{"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}"#),
+            "invalid x-api-key (401)"
+        );
+
+        assert_eq!(
+            rejection(401, r#"{"error":{"message":"Incorrect API key provided","type":"invalid_request_error"}}"#),
+            "Incorrect API key provided (401)"
+        );
+
+        /* A body that is not the shape we expect is still reported rather than replaced with nothing. */
+        assert_eq!(rejection(502, "  <html>bad gateway</html> "), "HTTP 502: <html>bad gateway</html>");
     }
 
     #[test]

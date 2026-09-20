@@ -404,6 +404,56 @@ describe('the two host facts that were missing', () => {
     expect(state.hosts.map((host) => host.id)).toEqual(['local', 'h1']);
     expect(state.hosts[1]?.sessions[0]).toMatchObject({ id: 'n7', title: 'Fix it', minutesAgo: 14, unread: 2 });
   });
+
+  it('does not open the same chat twice when the daemon replays it', () => {
+    /*
+     * The duplicate-row report: one click on `New chat` drew two rows, and the count pill, the tab
+     * strip and the sidebar all disagreed about how many chats existed.
+     *
+     * Two ways the same `SessionOpened` reaches the fold, both legitimate: the bridge replays the log
+     * on every connect (`event.list since=0`), and `session.list` may already have listed the session
+     * in between - the replay and that read are two sockets, so the order is not guaranteed. The
+     * reducer has to make the second copy a no-op rather than a second row.
+     */
+    let state = applyEvents(
+      EMPTY_STATE,
+      listed.map((event, index) => ({ seq: index + 1, ts: `2026-09-20T14:0${index}:00.000Z`, event })),
+    );
+
+    const opened = { seq: 4, ts: '2026-09-20T14:04:00.000Z', event: listed[2] };
+
+    state = fold(state, opened.event);
+    state = fold(state, opened.event);
+
+    expect(state.hosts[1]?.sessions.map((session) => session.id)).toEqual(['s1']);
+
+    /* And the boot race, in the other order: the list arrives first, then the replay of the open. */
+    const listedAgain = withWorkspace(state, [
+      {
+        hostId: 'h1',
+        name: 'Website',
+        hostType: 'vps',
+        status: 'connecting',
+        platform: null,
+        target: null,
+        sessions: [
+          {
+            sessionId: 's1',
+            hostId: 'h1',
+            title: 'Fix it',
+            prompt: 'Fix it',
+            state: 'idle',
+            unread: 0,
+            minutesAgo: 3,
+          },
+        ],
+      },
+    ]);
+
+    const afterReplay = fold(listedAgain, listed[2]);
+
+    expect(afterReplay.hosts[0]?.sessions.map((session) => session.id)).toEqual(['s1']);
+  });
 });
 
 });
