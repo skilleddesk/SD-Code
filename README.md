@@ -27,6 +27,7 @@ project's own metadata — licence, security policy, contribution terms and CI.
 | [`sdc/`](sdc/README.md) | The monorepo: `app/` (Tauri 2 + React 18 + TypeScript + Tailwind), `sdcd/` (host daemon, Rust), `protocol/`, `design/`, `docs/` |
 | [`sdc/README.md`](sdc/README.md) | Layout, commands and the decisions behind them — start here |
 | [`sdc/SETUP.md`](sdc/SETUP.md) | Fresh-machine toolchain guide (Node 20 LTS, pnpm 10, Rust, Tauri CLI, platform dependencies) |
+| [`sdc/docs/RELEASE.md`](sdc/docs/RELEASE.md) | The release checklist: the gates, the packaged-app check, and what to do when a job fails |
 | [`CHANGELOG.md`](CHANGELOG.md) | What changed, release by release — `v0.4.1` is the daemon step |
 | [`sdc/docs/MASTER_SPEC.md`](sdc/docs/MASTER_SPEC.md) | The master build specification v3.0 |
 | [`sdc/design/ui-prototype.html`](sdc/design/ui-prototype.html) | The working UI prototype — the UI source of truth (spec §7) |
