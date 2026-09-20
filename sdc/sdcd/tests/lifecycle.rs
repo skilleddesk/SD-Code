@@ -28,7 +28,11 @@ fn free_port() -> u16 {
     listener.local_addr().expect("the probe port").port()
 }
 
-/// Starts the daemon with a database of its own and waits until it answers.
+/// Starts the daemon with a database and a runtime directory of its own, and waits until it answers.
+///
+/// The environment is as important as the arguments: the socket path is derived from
+/// `XDG_RUNTIME_DIR` (or the temp directory), so a test that inherited the runner's would share a
+/// socket *and* a data directory with anything else on the machine. Each test gets its own.
 ///
 /// The returned `Child` is the caller's to wait for: `#[allow(clippy::zombie_processes)]` is here
 /// because that hand-over is exactly what the lint cannot see through, and the failure path below
@@ -37,6 +41,9 @@ fn free_port() -> u16 {
 fn start(arguments: &[&str], directory: &TempDir) -> (Child, u16) {
     let port = free_port();
     let database: PathBuf = directory.path().join("sdc.db");
+    let runtime: PathBuf = directory.path().join("run");
+
+    std::fs::create_dir_all(&runtime).expect("a runtime directory for the daemon");
 
     let child = Command::new(env!("CARGO_BIN_EXE_sdcd"))
         .arg("--port")
@@ -44,6 +51,10 @@ fn start(arguments: &[&str], directory: &TempDir) -> (Child, u16) {
         .arg("--database")
         .arg(&database)
         .args(arguments)
+        .env("XDG_RUNTIME_DIR", &runtime)
+        .env("TMPDIR", &runtime)
+        .env("TEMP", &runtime)
+        .env("TMP", &runtime)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()

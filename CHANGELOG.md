@@ -49,6 +49,15 @@ throughout, which is why the fix comes with a gate that is not about compiling.
   like `models.list` simply answer "unknown method", which is the one failure nobody can diagnose from
   the UI. `sdcp_status` now also reports `appVersion`, `daemonVersion` and `restarted`.
 
+### Fixed — a unix socket that two daemons could fight over
+
+* **The socket's name carries its port** (`$XDG_RUNTIME_DIR/sdc/sdcd-<port>.sock`). It was one fixed
+  path, so a second daemon on another port unlinked the first one's socket and bound its own - or lost
+  the race between the unlink and the bind and refused to start at all, which is how the macOS CI jobs
+  caught it: the new lifecycle tests start three daemons at once. A daemon that cannot bind a *unix
+  socket* is now a warning as well (`sdcd` keeps serving loopback TCP, which is the transport the app
+  uses), instead of a process that exits.
+
 ### Added — the check that would have caught it
 
 * **`pnpm --filter @sdc/app smoke`** (`app/scripts/smoke-bundle.mjs`): serves the built `dist`, opens it
@@ -62,7 +71,8 @@ throughout, which is why the fix comes with a gate that is not about compiling.
   cannot be quietly relaxed.
 * **`sdcd`'s lifecycle tests** (`tests/lifecycle.rs`) start the real binary: a client that sends
   `host.shutdown` ends the process, a daemon started for the app leaves on its own, and one started by
-  hand stays. 91 daemon tests became 100 (92 unit, 3 lifecycle, 5 VCR); the frontend's 21 became 23.
+  hand stays. Each test also gets a runtime directory of its own, because the socket's path is derived
+  from it. 91 daemon tests became 101 (93 unit, 3 lifecycle, 5 VCR); the frontend's 21 became 23.
 
 ### Notes
 

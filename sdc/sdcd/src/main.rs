@@ -4,8 +4,8 @@
 //! directory (`%APPDATA%\sdc\sdc.db` on Windows, `~/.local/share/sdc/sdc.db` on Linux,
 //! `~/Library/Application Support/sdc/sdc.db` on macOS) and then serves SDCP on:
 //!
-//! * the unix socket (`$XDG_RUNTIME_DIR/sdc/sdcd.sock`), which is the local transport the app
-//!   prefers on Linux and macOS;
+//! * the unix socket (`$XDG_RUNTIME_DIR/sdc/sdcd-<port>.sock`, so two daemons on two ports do not
+//!   collide), which is the local transport the app prefers on Linux and macOS;
 //! * `127.0.0.1:7811` (or `--port`), on every platform, because a WebView in a sandbox or a test
 //!   harness can always reach loopback when it cannot open the socket.
 //!
@@ -73,35 +73,41 @@ async fn main() -> Result<()> {
 
     #[cfg(unix)]
     {
-        let socket = paths::socket_path()?;
+        let socket = paths::socket_path(port)?;
 
         let _ = std::fs::remove_file(&socket);
 
-        let listener = tokio::net::UnixListener::bind(&socket)
-            .with_context(|| format!("binding {}", socket.display()))?;
+        /* A unix socket that cannot be bound is a warning, not a reason to refuse to start: the
+           loopback transport below is always on, and it is the one the app uses. A daemon that died
+           because another daemon owned a socket *path* would be a daemon that took the whole app with
+           it for no reason. */
+        match tokio::net::UnixListener::bind(&socket) {
+            Ok(listener) => {
+                println!("  socket     {}", socket.display());
 
-        println!("  socket     {}", socket.display());
+                let unix_state = state.clone();
 
-        let unix_state = state.clone();
+                tokio::spawn(async move {
+                    loop {
+                        match listener.accept().await {
+                            Ok((stream, _)) => {
+                                let daemon_state = unix_state.clone();
 
-        tokio::spawn(async move {
-            loop {
-                match listener.accept().await {
-                    Ok((stream, _)) => {
-                        let daemon_state = unix_state.clone();
+                                daemon_state.client_joined();
 
-                        daemon_state.client_joined();
+                                tokio::spawn(async move {
+                                    let _ = serve_unix(stream, daemon_state.clone()).await;
 
-                        tokio::spawn(async move {
-                            let _ = serve_unix(stream, daemon_state.clone()).await;
-
-                            daemon_state.client_left();
-                        });
+                                    daemon_state.client_left();
+                                });
+                            }
+                            Err(error) => eprintln!("sdcd: socket accept failed: {error}"),
+                        }
                     }
-                    Err(error) => eprintln!("sdcd: socket accept failed: {error}"),
-                }
+                });
             }
-        });
+            Err(error) => eprintln!("sdcd: no unix socket at {}: {error}", socket.display()),
+        }
     }
 
     #[cfg(windows)]

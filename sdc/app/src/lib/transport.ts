@@ -13,7 +13,7 @@ import type {
  * The three transports, and the one rule that makes them interchangeable: **the envelope does not
  * change** (master spec section 3.1).
  *
- *   unix       `sdcd`'s socket on Linux/macOS (`$XDG_RUNTIME_DIR/sdc/sdcd.sock`)
+ *   unix       `sdcd`'s socket on Linux/macOS (`$XDG_RUNTIME_DIR/sdc/sdcd-<port>.sock`)
  *   pipe       the same daemon's named pipe on Windows (`\\.\pipe\sdcd`)
  *   ws         a daemon on the far side of an SSH tunnel, for a VPS host
  *
