@@ -35,34 +35,72 @@ project's own metadata — licence, security policy, contribution terms and CI.
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | Contribution terms, conventions and the secret rules |
 | [`.env.example`](.env.example) | Environment template: variable names and comments, never values |
 
-## Install on Windows (v0.4.1)
+## Install (Windows / macOS / Linux)
 
-Two ways, from the `release/` folder of a checkout that has been built (`pnpm tauri:build`):
+**The easy way:** open [Releases](https://github.com/skilleddesk/SD-Code/releases) and download the file
+for your machine. Every release is built on its own runner — Windows, macOS (Intel and Apple Silicon)
+and Linux — by [`.github/workflows/release.yml`](.github/workflows/release.yml).
 
-| File | What you do |
-| --- | --- |
-| `SDC_0.4.1_x64-setup.exe` | **Double-click → Next → Install.** Adds SDC to the Start Menu; uninstall from *Apps & features*. |
-| `SDC-0.4.1-portable.zip` | Unzip anywhere and double-click `sdc.exe`. Keep `sdcd.exe` in the same folder — `sdc.exe` starts it. |
+| Your machine | Download | What you do |
+| --- | --- | --- |
+| Windows | `SDC_<version>_x64-setup.exe` | Double-click → Next → Install. Start Menu → **SDC**. Uninstall from *Apps & features*. |
+| Windows (managed) | `SDC_<version>_x64_en-US.msi` | The same, for a fleet or a silent install. |
+| macOS, Apple Silicon | `SDC_<version>_aarch64.dmg` | Open the `.dmg`, drag **SDC** to Applications, then **right-click → Open** the first time. |
+| macOS, Intel | `SDC_<version>_x64.dmg` | Same. |
+| Linux | `SDC_<version>_amd64.AppImage` | `chmod +x SDC_*.AppImage` then run it — no install, no root. |
+| Linux (Debian/Ubuntu) | `SDC_<version>_amd64.deb` | `sudo apt install ./SDC_*.deb`. |
 
-Either way the window opens and **starts the daemon itself**: the first thing the app does is call
-`host.status`, and the Tauri bridge answers a refused connection by spawning `sdcd` (next to the app
-binary) and waiting for `127.0.0.1:7811`. Your data lives in `%APPDATA%\sdc\` — `sdc.db` holds the
-session rows and the append-only event log, and `keys\` holds provider secrets until the `keychain`
-feature is on.
+Two things to expect, and neither is a bug: the builds are **unsigned**, so Windows SmartScreen says
+*"Windows protected your PC"* (**More info → Run anyway**) and macOS Gatekeeper asks once
+(right-click → Open). Only the files that launched the first time carry the mark; that is what signing
+would remove, and it is on the next-step list.
 
-The installers are ~4 MB and unsigned, so Windows SmartScreen will show *"Windows protected your
-PC"* the first time: choose **More info → Run anyway**. Code signing is on the next-step list in
-`sdc/README.md`.
-
-To build them yourself on a Windows machine with the toolchain from `sdc/SETUP.md`:
+**The manual way**, on a machine with the toolchain from `sdc/SETUP.md`:
 
 ```bash
 cd sdc
 pnpm install
-pnpm tauri:build        # builds sdcd, bundles it as a sidecar, produces .msi + .exe
+pnpm tauri:build        # builds sdcd, bundles it as a sidecar, produces .msi + .exe (or .dmg / .AppImage / .deb)
 ```
 
-Output lands in `sdc/app/src-tauri/target/release/bundle/{msi,nsis}/`.
+Output lands in `sdc/app/src-tauri/target/release/bundle/`. To build the installers for a tag from
+GitHub instead, either push a `v*` tag or run the **release** workflow from the Actions tab.
+
+The daemon is bundled into every installer: the app starts `sdcd` itself on first launch, and your data
+lives in `%APPDATA%\sdc` (Windows) or `~/.local/share/sdc` (Linux/macOS) — `sdc.db` for the sessions
+and the append-only event log.
+
+## How to work with it
+
+1. **Open it.** The window appears and the status bar's right-hand dot turns green: that is `sdcd`
+   answering `host.status` with *this* machine's real state.
+2. **Check the environment.** Settings → Environment (**F1** shows every shortcut). The doctor's ten
+   rows are live: Node, Claude Code CLI, Codex, Gemini, Ollama, ripgrep, port 3000, disk, git, ssh.
+   Anything missing has an **Install** button and a sentence saying what it is for.
+3. **Connect an engine.** Provider Hub → pick one of the nine. A subscription provider uses your own
+   CLI login; an API key is written to the OS keychain (or the documented file fallback) and never to
+   the database. **Test** says what it actually did: `verified` is `true` only when the provider was
+   really contacted, which for an `https://` endpoint is not possible yet — see *What is deliberately
+   absent* in `sdc/README.md`. Ollama is the local engine, and it works end to end today.
+4. **Ask for something.** Type in the prompt area and press **Enter**. The turn streams: thinking,
+   tool calls, the answer. A mutating step writes a checkpoint *before* it runs, so
+   **Time Machine → Rewind** (or `Ctrl+Z` in that tab) puts the files and the conversation back.
+5. **Approve or refuse.** A dangerous action raises the **Permission** dialog with the file, the risk
+   and three buttons: *Deny*, *Allow once*, *Always allow*. Nothing mutating happens without that step.
+6. **Run a command yourself.** `shell.run` is the daemon's execute step — one command, its output
+   captured, its exit code reported, and a non-zero exit translated into a sentence. In the desktop
+   app an engine uses it; from the protocol it is one call:
+   `{ "method": "shell.run", "params": { "command": "pnpm", "args": ["test"] } }`.
+7. **Duel.** Right panel → **Duel** runs one prompt on two engines and lets you keep a winner; the
+   loser is archived, never deleted.
+8. **Switch mid-turn.** **Session Bridge** hands the conversation to another engine without losing it —
+   the history is replayed into the new engine, not the tokens.
+9. **Where things are.** `%APPDATA%\sdc\sdc.db` (sessions, turns, the event log), `%APPDATA%\sdc\keys\`
+   (provider secrets until the OS keychain feature is on), `<data>/git/` (the shadow repositories a
+   rewind restores from).
+
+Working on the code itself: `sdc/README.md` has the layout, the commands and the reasoning;
+`CONTRIBUTING.md` has the gate to run before a commit.
 
 ## Status
 

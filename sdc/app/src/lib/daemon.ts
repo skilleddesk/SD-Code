@@ -421,6 +421,14 @@ export class DemoDaemon implements LoopbackDaemon {
         ok(reply, envelope, { fromSeq: 0 });
         return;
 
+      case 'shell.run':
+        /*
+         * The browser has no daemon and no IPC, so it cannot run a command - and pretending it did
+         * would be the one lie this file must never tell. The desktop app routes this to `sdcd`.
+         */
+        fail(reply, envelope, 'unsupported', 'Running commands needs the desktop app: the browser has no daemon.');
+        return;
+
       case 'event.list':
         ok(reply, envelope, { events: [] });
         return;

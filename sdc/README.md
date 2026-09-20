@@ -116,7 +116,8 @@ Run these from the repository root unless noted. `pnpm --filter app …` and
 | `pnpm lint` | ESLint over the frontend. |
 | `pnpm sdcd:run` | Build and run the host daemon (`cargo run` in `sdcd/`) — serves SDCP on `127.0.0.1:7811`. |
 | `pnpm test` | Vitest over the frontend: the reducer, the command registry, the strings contract. |
-| `pnpm sdcd:test` | `cargo test` in `sdcd/`: 65 tests, including the thirteen VCR fixtures of spec §11.6. |
+| `pnpm sdcd:test` | `cargo test` in `sdcd/`: 76 tests, including the thirteen VCR fixtures of spec §11.6. |
+| `pnpm daemon:package` | Build `sdcd` in release and stage it as the sidecar the installer bundles. |
 | `pnpm rust:fmt` / `pnpm rust:clippy` | Format / lint the daemon crate. |
 
 Inside `app/`: `pnpm tauri dev`, `pnpm tauri build`, `pnpm tauri icon <png>` also work directly.
@@ -220,6 +221,22 @@ binary is on `PATH`; both read the same `tauri.conf.json`.
 
 Nothing here is a stub that pretends: each gap below is a boundary the code states at the point where
 it is reached.
+
+* **SDC drives an agent; it is not (yet) one itself.** This is the honest answer to "does it do what
+  Cline does — give it a prompt and the project is finished?".
+
+  What exists today: the daemon runs the *real* coding agents (`claude`, `codex`, `gemini`) and
+  streams their structured output, gates a mutating action behind the Permission dialog, writes a
+  checkpoint before it runs, restores files and conversation on a rewind, and can now **execute a
+  command itself** (`shell.run`: captured output, exit code, translated failure, deny list, timeout).
+  So an agent loop's four verbs — read, write, run, observe — are all in the daemon.
+
+  What is missing is the **loop itself**: planning, choosing a tool, feeding the result back to a
+  model and continuing until the task is done, without an external CLI in the middle. Today that loop
+  lives inside Claude Code's CLI; SDC is the workbench around it. Building it in `sdcd` means a tool
+  registry, a turn planner, the permission gate wired to execution rather than to a modal, and a
+  budget/token accountant — the pieces are named in `NOTES.md` and each one is a step of its own.
+  Until then, "prompt → finished project" works exactly as far as the CLI you connect can take it.
 
 * **A TLS client for the native API.** `native_api` builds an Anthropic `messages` request or an
   OpenAI `chat/completions` request and parses both SSE dialects, and it streams today against an

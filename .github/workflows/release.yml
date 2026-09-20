@@ -1,0 +1,131 @@
+name: release
+
+# Every platform's installer, built on its own runner and attached to one GitHub Release.
+#
+# The reason this lives in CI rather than in a script someone runs by hand: **no host can build
+# another platform's bundle.** A Windows `.msi` needs WiX, a `.dmg` needs macOS and `codesign`, an
+# `AppImage` needs the Linux GTK/WebKit libraries - so "click to install on all three" is a property
+# of this workflow, not of a machine.
+#
+# Tag `v0.4.2` (or run it from the Actions tab) and the release is published with:
+#   SDC_<version>_x64-setup.exe      Windows installer (NSIS)
+#   SDC_<version>_x64_en-US.msi      Windows installer (WiX)
+#   SDC_<version>_x64.dmg            macOS, Intel
+#   SDC_<version>_aarch64.dmg        macOS, Apple Silicon
+#   SDC_<version>_amd64.AppImage     Linux, portable
+#   SDC_<version>_amd64.deb          Linux, Debian/Ubuntu
+#
+# The daemon is bundled into every one of them: `beforeBuildCommand` runs `pnpm daemon:package`
+# first, which builds `sdcd` and copies it under the target triple Tauri's `externalBin` expects.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+# The release has to be created and its assets uploaded, which needs write access to contents.
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: ubuntu-22.04
+            target: ''
+            label: linux-x64
+          - platform: windows-latest
+            target: ''
+            label: windows-x64
+          - platform: macos-13
+            target: x86_64-apple-darwin
+            label: macos-x64
+          - platform: macos-latest
+            target: aarch64-apple-darwin
+            label: macos-arm64
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: sdc/pnpm-lock.yaml
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          # A macOS job needs its own architecture's standard library, and the Intel job is the only
+          # one that asks for a target at all.
+          targets: ${{ matrix.target }}
+
+      - name: Cache Rust
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            sdc/sdcd
+            sdc/app/src-tauri
+
+      # WebKitGTK and the rest of what a Tauri window links against on Linux. On the other two
+      # platforms the equivalents ship with the OS image.
+      - name: Linux dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: Install the workspace
+        working-directory: sdc
+        run: pnpm install --frozen-lockfile
+
+      - name: Checks
+        working-directory: sdc
+        # The same gate a developer runs, so a release cannot be published from a tree that would not
+        # pass review. Kept short on purpose: the installers are the point of this workflow.
+        run: |
+          pnpm typecheck
+          pnpm lint
+          pnpm test
+          cargo test --manifest-path sdcd/Cargo.toml
+
+      - name: Build and publish
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: sdc/app
+          tagName: ${{ github.ref_name }}
+          releaseName: 'SDC ${{ github.ref_name }}'
+          releaseBody: |
+            SDC ${{ github.ref_name }} - a local-first coding-agent workbench: a Tauri 2 desktop app,
+            the `sdcd` host daemon and an append-only event log.
+
+            | Platform | File | Notes |
+            | --- | --- | --- |
+            | Windows | `*_x64-setup.exe` | Double-click, Next, Install. |
+            | Windows | `*_x64_en-US.msi` | The same, for managed installs. |
+            | macOS | `*_x64.dmg` / `*_aarch64.dmg` | Intel and Apple Silicon. |
+            | Linux | `*.AppImage` | `chmod +x` it, then run it. |
+            | Linux | `*.deb` | `sudo apt install ./SDC_*.deb`. |
+
+            The installers are unsigned, so Windows SmartScreen and macOS Gatekeeper will both ask
+            once: Windows needs **More info → Run anyway**, macOS needs a right-click → Open (or
+            System Settings → Privacy & Security → Open Anyway).
+
+            The daemon is bundled: the app starts `sdcd` itself on first launch.
+          releaseDraft: false
+          prerelease: false
+          args: ${{ matrix.target != '' && format('--target {0}', matrix.target) || '' }}

@@ -97,6 +97,12 @@ impl ErrorObject {
         Self::new("blocked_path", format!("{path} is on the blocked list and is never read or written"))
     }
 
+    /// An action the user or the daemon's own deny list refused. Distinct from `blocked_path` because
+    /// a refused *command* is a permission answer, not a file-guard one.
+    pub fn permission_denied(message: impl Into<String>) -> Self {
+        Self::new("permission_denied", message)
+    }
+
     pub fn internal(error: impl std::fmt::Display) -> Self {
         Self::new("internal", error.to_string())
     }
