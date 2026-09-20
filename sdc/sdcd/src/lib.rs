@@ -6,7 +6,7 @@
 //!
 //! | mode   | transport                                    | platform       |
 //! | ------ | -------------------------------------------- | -------------- |
-//! | local  | unix socket `$XDG_RUNTIME_DIR/sdc/sdcd.sock`  | Linux, macOS   |
+//! | local  | unix socket `$XDG_RUNTIME_DIR/sdc/sdcd-<port>.sock` | Linux, macOS |
 //! | local  | named pipe `\\.\pipe\sdcd`                    | Windows        |
 //! | local  | TCP `127.0.0.1:7811`, always on as well      | every platform |
 //! | remote | the same bytes over an SSH tunnel            | -              |

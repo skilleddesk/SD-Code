@@ -53,8 +53,19 @@ pub fn shadow_git_dir() -> Result<PathBuf> {
     Ok(dir)
 }
 
+/// The file name of the socket for one port. Separated from the path so the naming rule is testable
+/// without a runtime directory.
+pub fn socket_file_name(port: u16) -> String {
+    format!("sdcd-{port}.sock")
+}
+
 /// The unix socket, or the Windows pipe name.
-pub fn socket_path() -> Result<PathBuf> {
+///
+/// The name carries the port, and that is not cosmetic: one machine can run more than one daemon - the
+/// app's, and one a person started in a terminal on another port - and a single fixed path made the
+/// second one unlink the first one's socket and bind its own (or lose the race and fail to start at
+/// all). A socket that names its port is a socket that belongs to one daemon.
+pub fn socket_path(port: u16) -> Result<PathBuf> {
     #[cfg(unix)]
     {
         let runtime = std::env::var_os("XDG_RUNTIME_DIR")
@@ -65,18 +76,16 @@ pub fn socket_path() -> Result<PathBuf> {
 
         std::fs::create_dir_all(&dir)?;
 
-        return Ok(dir.join("sdcd.sock"));
+        return Ok(dir.join(socket_file_name(port)));
     }
 
     #[cfg(windows)]
     {
+        let _ = port;
+
         Ok(PathBuf::from(r"\\.\pipe\sdcd"))
     }
 }
-
-/// The loopback TCP port. It is on by default in addition to the socket or pipe: a WebView in a
-/// sandbox, or a test harness, can always reach `127.0.0.1` when it cannot open either.
-pub const DEFAULT_PORT: u16 = 7811;
 
 /// True when `path` is inside the daemon's own data directory - the check the file guard uses to
 /// keep an engine from rewriting the daemon's database (spec section 5.4, blocked patterns).
@@ -84,5 +93,20 @@ pub fn is_internal(path: &Path) -> bool {
     match data_dir() {
         Ok(root) => path.starts_with(root),
         Err(_) => false,
+    }
+}
+
+/// The loopback TCP port. It is on by default in addition to the socket or pipe: a WebView in a
+/// sandbox, or a test harness, can always reach `127.0.0.1` when it cannot open either.
+pub const DEFAULT_PORT: u16 = 7811;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_sockets_name_carries_its_port() {
+        assert_eq!(socket_file_name(7811), "sdcd-7811.sock");
+        assert_ne!(socket_file_name(7811), socket_file_name(7899));
     }
 }
