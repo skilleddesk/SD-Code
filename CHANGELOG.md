@@ -15,6 +15,40 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [0.5.1] — the daemon claimed three providers nobody had signed in to
+
+0.5.0 removed the demo from the window. Then the window was asked for the provider list, and the answer
+showed where the same disease lived one layer down: **in the daemon.**
+
+`provider.list` reported `status: "connected"` for Claude, OpenAI and Gemini on a machine where
+`claude`, `codex` and `gemini` were not installed - because the fallback for anything that was not an
+API key was `else { "connected" }`. It also shipped an invented spend figure in its own catalogue
+(`OpenAI API · Direct API key · $12.40 / $50.00 this month`). A green card for a sign-in that never
+happened is the worst kind of wrong in a tool that is supposed to be trusted with a shell.
+
+### Fixed — a status is evidence, or it is `needs-auth`
+
+* The fallback is gone. A provider is `connected` only when there is something to show for it: a stored
+  row, a secret in the keychain (`api-key`), the Ollama daemon answering on this machine (`local`), or
+  - for a subscription - nothing, because a CLI on `PATH` is not a signed-in CLI. Subscriptions answer
+  `needs-auth`, and their detail line names the program: `` `claude` is not installed or not on PATH ·
+  install it, then run the environment doctor ``.
+* The invented spend is removed from the catalogue, and a test now refuses any `$` in a provider detail.
+* New test: `a_subscription_is_never_connected_without_evidence`.
+
+### Fixed — the Provider Hub was empty, so the CLI sign-in was unreachable
+
+* **`provider.list` is now called at startup.** Nothing asked for it, so no `ProviderStatus` event was
+  ever pushed on a fresh launch and the Hub - the one screen that runs `cli.login`, i.e. "add Claude
+  Code by subscription" - drew nothing to click. `connectDaemon()` calls it beside `host.status`, so
+  the cards, the topbar's plug and the status bar are built from the daemon's answer.
+
+### Fixed — two stray marks the first install showed
+
+* The turn meta line drew its `·` separator even when there was no forecast to put after it.
+* A turn that ended in `ErrorRaised` promised `Running · totals arrive with the last event`, which is a
+  promise a failed turn cannot keep. It says `Failed`.
+
 ## [0.5.0] — the demo is gone, and Send does something
 
 This release is the answer to one review sentence: *"it is only a UI, and none of it is connected."*

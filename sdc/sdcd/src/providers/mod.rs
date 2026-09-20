@@ -32,7 +32,10 @@ pub const CATALOG: &[(&str, &str, &str, &str, &str, &str)] = &[
     ("openai", "OpenAI", "subscription", "openai", "O", "ChatGPT Plus · Codex CLI subscription"),
     ("gemini", "Gemini", "subscription", "gemini", "G", "Google AI · Gemini CLI"),
     ("anthropic-api", "Anthropic API", "api-key", "claude", "A", "Direct API key · pay per token"),
-    ("openai-api", "OpenAI API", "api-key", "openai", "O", "Direct API key · $12.40 / $50.00 this month"),
+    /* No spend figure here. This row used to read `$12.40 / $50.00 this month`, which was invented
+       twice over: this build has no way to see a provider's billing, and it had never contacted the
+       provider at all. A number like that is the kind of thing a person makes a decision on. */
+    ("openai-api", "OpenAI API", "api-key", "openai", "O", "Direct API key · pay per token"),
     ("deepseek", "DeepSeek", "api-key", "deepseek", "D", "Direct API · cheap, fast"),
     ("groq", "Groq", "api-key", "groq", "G", "Ultra-fast inference"),
     ("openrouter", "OpenRouter", "api-key", "openrouter", "O", "One key · 200+ models"),
@@ -127,7 +130,23 @@ pub fn test(id: &str, key: Option<&str>) -> Value {
     }
 }
 
-/// The nine provider cards, with whatever the store and the keychain already know.
+/// The nine provider cards, with whatever the store, the keychain and this machine already know.
+///
+/// **A status is evidence, or it is `needs-auth`.** The old version of this function ended in
+/// `else { "connected" }` for anything that was not an API key - so a fresh install reported Claude,
+/// OpenAI and Gemini *connected* on a machine where none of the three CLIs existed, and the Hub drew
+/// three green cards for sign-ins nobody had done. That is the same defect the app's seeded demo had,
+/// one layer down, and it is worse here: the app can only show a lie the daemon hands it.
+///
+/// What counts as evidence now:
+///
+///   * a stored row - the user saved a key, or a login wrote a status (it wins, and it is what an
+///     explicit `provider.save` records);
+///   * for `api-key`, a secret in the keychain;
+///   * for `local`, the Ollama daemon actually answering on this machine;
+///   * for `subscription`, the CLI's own program being present on `PATH`. Present is still not
+///     *signed in*, so the status stays `needs-auth` and the detail says what would change it - which
+///     is also the sentence `cli.recipes` prints and `Connect` acts on.
 pub fn list(store: &Arc<Store>) -> Vec<Value> {
     CATALOG
         .iter()
@@ -136,22 +155,19 @@ pub fn list(store: &Arc<Store>) -> Vec<Value> {
             let status = stored
                 .as_ref()
                 .and_then(|row| row["status"].as_str().map(str::to_string))
-                .unwrap_or_else(|| {
-                    if *kind == "api-key" && keychain::get(&key_ref(id)).is_none() {
-                        "available".to_string()
-                    } else if *kind == "local" {
-                        "needs-auth".to_string()
-                    } else {
-                        "connected".to_string()
-                    }
-                });
+                .unwrap_or_else(|| status_without_a_row(id, kind));
+            let detail_text = stored
+                .as_ref()
+                .and_then(|row| row["detail"].as_str())
+                .map(str::to_string)
+                .unwrap_or_else(|| honest_detail(id, kind, detail));
 
             json!({
                 "id": id,
                 "name": name,
                 "kind": kind,
                 "status": status,
-                "detail": stored.as_ref().and_then(|row| row["detail"].as_str()).unwrap_or(detail),
+                "detail": detail_text,
                 "account": stored.as_ref().and_then(|row| row["account"].as_str()),
                 "logo": logo,
                 "initial": initial,
@@ -160,6 +176,44 @@ pub fn list(store: &Arc<Store>) -> Vec<Value> {
             })
         })
         .collect()
+}
+
+/// The status of a provider nobody has done anything about yet - see `list`'s doc comment.
+fn status_without_a_row(id: &str, kind: &str) -> String {
+    match kind {
+        "api-key" if keychain::get(&key_ref(id)).is_some() => "connected".to_string(),
+        "api-key" => "available".to_string(),
+        "local" if crate::engines::ollama::daemon_running() => "connected".to_string(),
+        "local" => "needs-auth".to_string(),
+        /* A subscription: the CLI is the credential, so its presence is the only thing this build can
+           see. Signed in is a separate fact, and one only `cli.login.status` can report. */
+        _ => "needs-auth".to_string(),
+    }
+}
+
+/// The detail line for a provider, saying something this machine actually checked.
+///
+/// A subscription's sentence names the CLI and whether it is here, which is what the user has to act
+/// on; the catalogue's own line ("uses your own login") says what the product is, not whether *this*
+/// install can use it.
+fn honest_detail(id: &str, kind: &str, fallback: &str) -> String {
+    if kind != "subscription" {
+        return fallback.to_string();
+    }
+
+    let recipe = crate::auth::cli_login::RECIPES.iter().find(|recipe| recipe.provider_id == id);
+
+    match recipe {
+        Some(recipe) if crate::host::doctor::has(recipe.program) => format!(
+            "`{}` is installed · Connect starts its own sign-in",
+            recipe.program
+        ),
+        Some(recipe) => format!(
+            "`{}` is not installed or not on PATH · install it, then run the environment doctor",
+            recipe.program
+        ),
+        None => fallback.to_string(),
+    }
 }
 
 /// Flow 1's `Save` and flow 4's endpoint: the secret goes to the keychain, the *rest* to SQLite.
@@ -264,6 +318,38 @@ mod tests {
         assert_eq!(MODELS.len(), 12);
         assert_eq!(registry(&[]).len(), 12);
         assert_eq!(registry(&["deepseek/deepseek-chat".to_string()])[7]["enabled"], json!(false));
+    }
+
+    /// The second half of the 0.5.0 fix, one layer down: a status has to be evidence.
+    ///
+    /// `list` used to answer `connected` for every subscription, on any machine - three green cards
+    /// for three CLIs nobody had signed in, and the app can only draw what the daemon tells it. A
+    /// `needs-auth` that is true is worth more than a `connected` that was never checked, and this
+    /// test holds for a machine that *has* the CLIs installed too: present is not signed in.
+    #[test]
+    fn a_subscription_is_never_connected_without_evidence() {
+        let store = Arc::new(Store::in_memory().unwrap());
+        let rows = list(&store);
+        let card = |id: &str| rows.iter().find(|row| row["id"] == json!(id)).cloned().unwrap();
+
+        for id in ["claude", "openai", "gemini"] {
+            let status = card(id)["status"].as_str().unwrap_or_default().to_string();
+
+            assert_ne!(status, "connected", "{id} claims a sign-in nobody did: {status}");
+            assert_eq!(status, "needs-auth");
+            /* And the line under it names the program, which is what the user has to act on. */
+            assert!(
+                card(id)["detail"].as_str().unwrap_or_default().contains('`'),
+                "{id} has no CLI in its detail line"
+            );
+        }
+
+        /* No invented money anywhere in the catalogue: this build cannot see a provider's billing. */
+        for row in &rows {
+            let detail = row["detail"].as_str().unwrap_or_default();
+
+            assert!(!detail.contains('$'), "a price this build invented: {detail}");
+        }
     }
 
     /// A dedicated id for the tests: a unit test must not depend on - or disturb - whatever key the

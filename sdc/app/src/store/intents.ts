@@ -62,6 +62,20 @@ export async function connectDaemon(): Promise<boolean> {
   try {
     await sdcpCall('host.status', {});
 
+    /*
+     * And the provider list, which nothing used to ask for.
+     *
+     * `provider.list` is what pushes the `ProviderStatus` events the Provider Hub, the topbar's plug
+     * and the status bar are built from (`store/providers.ts`). Without this call the Hub was **empty
+     * on every launch** - so the one screen that signs a CLI in (`Connect` → `cli.login`, the flow
+     * that makes Claude Code usable) could not be reached from the UI at all. The events the daemon
+     * pushes here are the same ones a save or a login produces, so there is no second code path.
+     *
+     * A failure is not fatal: the window keeps working with an empty provider list, and the toast has
+     * already said the daemon is not answering.
+     */
+    await sdcpCall('provider.list', {});
+
     return true;
   } catch (error) {
     toast(isSdcpError(error) ? error.message : strings.daemon.offline);
