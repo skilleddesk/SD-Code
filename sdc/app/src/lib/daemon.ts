@@ -119,6 +119,12 @@ export class DemoDaemon implements LoopbackDaemon {
   ];
 
   private nextSession = 200;
+
+  /** The model the user picked in the Connect modal, kept in this daemon's own memory. */
+  private selectedModel: { modelId: string | null; providerId: string | null } = { modelId: null, providerId: null };
+
+  /** The simulated sign-in, if one is open. */
+  private login: { loginId: string; providerId: string; credential: boolean } | null = null;
   private nextTurn = 20;
   private nextPermission = 1;
 
@@ -421,6 +427,42 @@ export class DemoDaemon implements LoopbackDaemon {
         ok(reply, envelope, { fromSeq: 0 });
         return;
 
+      case 'models.list':
+        return this.listModels(envelope, params, reply);
+
+      case 'models.select':
+        this.selectedModel = { modelId: text(params, 'modelId'), providerId: text(params, 'providerId') };
+        ok(reply, envelope, { ...this.selectedModel });
+        return;
+
+      case 'cli.login':
+        return this.startCliLogin(envelope, params, reply);
+
+      case 'cli.login.status':
+        return this.cliLoginStatus(envelope, params, reply);
+
+      case 'cli.login.code':
+        return this.cliLoginCode(envelope, params, reply);
+
+      case 'cli.login.cancel':
+        this.login = null;
+        ok(reply, envelope, { cancelled: true, loginId: text(params, 'loginId') });
+        return;
+
+      case 'cli.recipes':
+        ok(reply, envelope, {
+          recipes: [
+            { providerId: 'claude', label: 'Claude Code', program: 'claude', note: 'simulated in the browser', installed: false },
+            { providerId: 'openai', label: 'Codex', program: 'codex', note: 'simulated in the browser', installed: false },
+            { providerId: 'gemini', label: 'Gemini', program: 'gemini', note: 'simulated in the browser', installed: false },
+          ],
+        });
+        return;
+
+      case 'pty.output':
+        fail(reply, envelope, 'unsupported', 'Process output needs the desktop app: the browser has no daemon.');
+        return;
+
       case 'shell.run':
         /*
          * The browser has no daemon and no IPC, so it cannot run a command - and pretending it did
@@ -522,7 +564,96 @@ export class DemoDaemon implements LoopbackDaemon {
     });
   }
 
-  /** Saving a key writes it to the keychain, so the UI only ever learns the masked label. */
+  /**
+   * The model list, as the browser can honestly offer it: the bundled catalogue from `strings.seed`,
+   * with a note saying where it came from. The desktop daemon answers the same shape and its rows can
+   * be `live` - which is the difference between the two modes, and the reason `source` exists.
+   */
+  private listModels(envelope: Envelope, params: Params, reply: Reply): void {
+    const providerId = text(params, 'providerId');
+    const refresh = params['refresh'] === true;
+    const rows = strings.seed.models
+      .filter((model) => providerId === '' || model.provider === providerId)
+      .map((model) => ({
+        id: model.id,
+        providerId: model.provider,
+        providerLabel: strings.seed.providers.find((provider) => provider.id === model.provider)?.name ?? model.provider,
+        tier: model.tier,
+        ctx: model.ctx,
+        cost: model.cost,
+        source: 'bundled' as const,
+        fetchedAt: null,
+      }));
+
+    ok(reply, envelope, {
+      models: rows,
+      snapshot: strings.seed.modelSnapshot,
+      refreshed: refresh,
+      /* Honest in the same way the daemon is: a refresh that cannot reach anything says so. The
+         browser has no daemon, so it always says so. */
+      notes: refresh ? ['The browser has no daemon: this is the bundled list.'] : [],
+      selected: this.selectedModel,
+    });
+  }
+
+  /**
+   * The sign-in flow, simulated. The shape - a URL, a code to paste back, a success - is the daemon's;
+   * the `note` says plainly that nothing is really being signed in, because a browser tab cannot drive
+   * a CLI. The desktop app does the real thing through `cli.login`.
+   */
+  private startCliLogin(envelope: Envelope, params: Params, reply: Reply): void {
+    const providerId = text(params, 'providerId');
+
+    this.login = {
+      loginId: `demo-login-${this.nextSession++}`,
+      providerId,
+      credential: false,
+    };
+
+    ok(reply, envelope, {
+      loginId: this.login.loginId,
+      ptyId: 'simulated',
+      program: providerId,
+      providerId,
+    });
+  }
+
+  private cliLoginStatus(envelope: Envelope, params: Params, reply: Reply): void {
+    const login = this.login;
+
+    if (login === null || login.loginId !== text(params, 'loginId')) {
+      fail(reply, envelope, 'not_found', 'That sign-in is not running');
+      return;
+    }
+
+    ok(reply, envelope, {
+      loginId: login.loginId,
+      providerId: login.providerId,
+      providerLabel: strings.seed.providers.find((provider) => provider.id === login.providerId)?.name ?? login.providerId,
+      program: login.providerId,
+      url: `https://example.invalid/${login.providerId}/authorize?code=demo-code`,
+      state: login.credential ? 'authenticated' : 'waiting_for_code',
+      note: 'Simulated: the browser cannot start a CLI. The desktop app runs the real sign-in.',
+      lines: login.credential
+        ? ['Open https://example.invalid/…', 'Successfully logged in (simulated)']
+        : ['Open https://example.invalid/…', 'Waiting for the code…'],
+      lineCount: 2,
+      ms: 100,
+      authenticated: login.credential,
+    });
+  }
+
+  private cliLoginCode(envelope: Envelope, _params: Params, reply: Reply): void {
+    if (this.login === null) {
+      fail(reply, envelope, 'not_found', 'That sign-in is not running');
+      return;
+    }
+
+    this.login.credential = true;
+    ok(reply, envelope, { submitted: true, loginId: this.login.loginId });
+  }
+
+  /** The provider list, as the hub's cards read it. */
   private saveProvider(envelope: Envelope, params: Params, push: Push, reply: Reply): void {
     const id = text(params, 'id');
     const key = text(params, 'key');

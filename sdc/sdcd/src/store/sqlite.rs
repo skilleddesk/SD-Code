@@ -66,6 +66,15 @@ CREATE INDEX IF NOT EXISTS events_session ON events(session_id, seq);
 CREATE TABLE IF NOT EXISTS migrations (id TEXT PRIMARY KEY, applied_at TEXT NOT NULL);
 "#,
     ),
+    (
+        "0002-model-cache",
+        r#"
+ALTER TABLE models ADD COLUMN source TEXT NOT NULL DEFAULT 'bundled';
+ALTER TABLE models ADD COLUMN fetched_at TEXT;
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL);
+"#,
+    ),
 ];
 
 /// The daemon's database handle.
@@ -342,6 +351,91 @@ impl Store {
         let connection = self.connection.lock().unwrap();
 
         Ok(connection.query_row("SELECT COUNT(*) FROM events", [], |row| row.get(0))?)
+    }
+
+    /* -----------------------------------------------------------------------------------------
+     * The model cache and the settings - what "the model list is always up to date" needs
+     * (spec section 9.10). The cache keeps the last *live* answer so a failed refresh does not
+     * throw it away, and the settings table holds a UI preference (the selected model), which is
+     * not an event on purpose (spec section 3.3).
+     * -------------------------------------------------------------------------------------- */
+
+    /// Replaces a provider's cached model rows with what its endpoint just said.
+    pub fn replace_models(&self, provider_id: &str, rows: &[Value], fetched_at: &str) -> Result<()> {
+        let connection = self.connection.lock().unwrap();
+
+        /* The provider row is what the foreign key points at, and a provider that has never been saved
+           still has a catalogue row - `models.list` runs before any provider is connected. */
+        connection.execute(
+            "INSERT OR IGNORE INTO providers (id, name, kind, status, detail, updated_at)
+             VALUES (?1, ?1, 'api-key', 'available', '', ?2)",
+            params![provider_id, fetched_at],
+        )?;
+        connection.execute("DELETE FROM models WHERE provider_id = ?1", params![provider_id])?;
+
+        for row in rows {
+            let id = row["id"].as_str().unwrap_or_default();
+
+            if id.is_empty() {
+                continue;
+            }
+
+            connection.execute(
+                "INSERT OR REPLACE INTO models (id, provider_id, tier, ctx, cost, enabled, size, source, fetched_at)
+                 VALUES (?1, ?2, 'balanced', 0, '', 1, NULL, 'live', ?3)",
+                params![format!("{provider_id}/{id}"), provider_id, fetched_at],
+            )?;
+        }
+
+        Ok(())
+    }
+
+    /// The cached rows of a provider, in the shape `models.list` merges: `{ id, providerId, fetchedAt }`.
+    pub fn cached_models(&self, provider_id: &str) -> Result<Vec<Value>> {
+        let connection = self.connection.lock().unwrap();
+        let mut statement = connection.prepare(
+            "SELECT id, provider_id, fetched_at FROM models WHERE provider_id = ?1 ORDER BY id ASC",
+        )?;
+        let rows = statement.query_map(params![provider_id], |row| {
+            let stored = row.get::<_, String>(0)?;
+            /* Stored keys are `provider/id` so the primary key stays unique across providers; the id the
+               caller asked about is the part after the first slash. */
+            let id = stored.split_once('/').map(|(_, id)| id.to_string()).unwrap_or(stored);
+
+            Ok(serde_json::json!({
+                "id": id,
+                "providerId": row.get::<_, String>(1)?,
+                "fetchedAt": row.get::<_, Option<String>>(2)?,
+            }))
+        })?;
+
+        collect_json(rows)
+    }
+
+    /// A setting, or `None` when it has never been set.
+    pub fn setting(&self, key: &str) -> Result<Option<String>> {
+        let connection = self.connection.lock().unwrap();
+        let mut statement = connection.prepare("SELECT value FROM settings WHERE key = ?1")?;
+        let mut rows = statement.query_map(params![key], |row| row.get::<_, String>(0))?;
+
+        match rows.next() {
+            Some(row) => Ok(Some(row?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Writes a setting, replacing any previous value.
+    pub fn set_setting(&self, key: &str, value: &str) -> Result<()> {
+        let now = chrono::Utc::now().to_rfc3339();
+        let connection = self.connection.lock().unwrap();
+
+        connection.execute(
+            "INSERT INTO settings (key, value, updated_at) VALUES (?1, ?2, ?3)
+             ON CONFLICT(key) DO UPDATE SET value = ?2, updated_at = ?3",
+            params![key, value, now],
+        )?;
+
+        Ok(())
     }
 
 

@@ -238,6 +238,18 @@ it is reached.
   budget/token accountant — the pieces are named in `NOTES.md` and each one is a step of its own.
   Until then, "prompt → finished project" works exactly as far as the CLI you connect can take it.
 
+* **The sign-in recipes are one table, and they are not exercised against the real CLIs here.** SDC
+  drives `claude` / `codex` / `gemini`'s own login (`auth::cli_login::RECIPES`) and proves the
+  mechanism against a stand-in CLI that behaves the same way (prints a URL, waits for a line,
+  announces success). None of the three is installed on the machine this was built on, so a CLI that
+  changes its command or its success line needs that table corrected - which is why the UI shows the
+  CLI's raw output instead of only "failed". SDC never sees the credential either way: the CLI writes
+  it to its own store.
+* **A model list can be `bundled` rather than `live`.** `models.list` asks each provider's own
+  endpoint, caches the answer, and falls back to `protocol/models.json`; the row says which of the
+  three it is. A remote provider is `https://`, which this build cannot reach without a TLS client, so
+  until that lands a remote list is `bundled` (or `cached`) and says so. Ollama, being local `http://`,
+  is listed live.
 * **A TLS client for the native API.** `native_api` builds an Anthropic `messages` request or an
   OpenAI `chat/completions` request and parses both SSE dialects, and it streams today against an
   `http://` endpoint (LM Studio, vLLM, llama.cpp). A remote `https://` endpoint answers

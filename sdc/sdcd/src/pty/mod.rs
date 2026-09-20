@@ -22,9 +22,9 @@
 //! sense of safety.
 
 use std::collections::HashMap;
-use std::io::{Read, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::process::{Child, Command, Stdio};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
@@ -109,10 +109,54 @@ fn shell_payload(args: &[String]) -> Option<&str> {
 /// event log; the rest is still drained (so the child never blocks) and then reported as truncated.
 const CAPTURE_LIMIT: usize = 256 * 1024;
 
+/// How many output lines are kept per long-running process. A login flow prints its URL in the first
+/// handful; a dev server's log is its tail. 400 covers both and stays small.
+pub const OUTPUT_LINES: usize = 400;
+
+/// What the daemon knows about one long-running process: its output tail and whether it is alive.
+///
+/// It exists because `pty.open` used to be fire-and-forget, and a process you cannot read is a process
+/// you cannot drive - which is exactly what a login flow needs: a CLI prints a URL, waits for a code on
+/// its stdin, and says when it is done.
+#[derive(Debug, Clone)]
+pub struct Session {
+    pub program: String,
+    pub lines: Vec<String>,
+    pub state: String,
+    pub started: Instant,
+}
+
+impl Session {
+    fn new(program: &str) -> Self {
+        Self {
+            program: program.to_string(),
+            lines: Vec::new(),
+            state: "running".to_string(),
+            started: Instant::now(),
+        }
+    }
+
+    /// Appends one line, dropping the oldest when the ring is full.
+    fn push_line(&mut self, line: String) {
+        if self.lines.len() >= OUTPUT_LINES {
+            self.lines.remove(0);
+        }
+
+        self.lines.push(line);
+    }
+
+    /// Everything printed so far, which is what a URL search and a log view both read.
+    pub fn text(&self) -> String {
+        self.lines.join("\n")
+    }
+}
+
 /// The registry of processes the daemon started: the long-running ones by id, plus one-shot runs.
 #[derive(Default)]
 pub struct PtyManager {
     children: Mutex<HashMap<String, Child>>,
+    /// The output tail of each long-running process, filled by its reader threads.
+    sessions: Arc<Mutex<HashMap<String, Session>>>,
     next_id: Mutex<u64>,
 }
 
@@ -212,8 +256,12 @@ impl PtyManager {
         }))
     }
 
-    /// Spawns a command and keeps it. The answer is what `pty.open` returns: an id, the program, and
-    /// `tty: false` for the reason in the module doc.
+    /// Spawns a command and keeps it - and, unlike a bare spawn, **keeps reading it**.
+    ///
+    /// The answer is what `pty.open` returns: an id, the program, and `tty: false` for the reason in
+    /// the module doc. Its output arrives through `pty.output`, which keeps the last `OUTPUT_LINES`
+    /// lines; a process that is never read is a process that blocks on a full pipe once it has said
+    /// enough, and a login URL is exactly the thing that would be stuck in it.
     pub fn open(&self, command: &str, args: &[String], cwd: Option<&str>) -> Result<Value, ErrorObject> {
         let mut process = Command::new(command);
 
@@ -223,7 +271,7 @@ impl PtyManager {
             process.current_dir(cwd);
         }
 
-        let child = process.spawn().map_err(|error| {
+        let mut child = process.spawn().map_err(|error| {
             ErrorObject::internal(format!("`{command}` could not be started: {error}"))
         })?;
         let id = {
@@ -234,12 +282,92 @@ impl PtyManager {
             format!("pty-{}", *next)
         };
 
+        if let Ok(mut sessions) = self.sessions.lock() {
+            sessions.insert(id.clone(), Session::new(command));
+        }
+
+        let mut readers: Vec<Box<dyn BufRead + Send>> = Vec::new();
+
+        if let Some(stdout) = child.stdout.take() {
+            readers.push(Box::new(BufReader::new(stdout)));
+        }
+
+        if let Some(stderr) = child.stderr.take() {
+            readers.push(Box::new(BufReader::new(stderr)));
+        }
+
+        /* One reader per stream, both appending into the session's ring. They end when the process
+           closes its streams, which is also when the state flips to `exited`. */
+        for mut reader in readers {
+            let sessions = self.sessions.clone();
+            let session_id = id.clone();
+
+            std::thread::spawn(move || {
+                let mut line = String::new();
+
+                loop {
+                    line.clear();
+
+                    match reader.read_line(&mut line) {
+                        Ok(0) | Err(_) => break,
+                        Ok(_) => {
+                            let text = line.trim_end_matches(['\r', '\n']).to_string();
+
+                            if let Ok(mut sessions) = sessions.lock() {
+                                if let Some(session) = sessions.get_mut(&session_id) {
+                                    session.push_line(text);
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
         self.children
             .lock()
             .map_err(|_| ErrorObject::internal("pty registry poisoned"))?
             .insert(id.clone(), child);
 
         Ok(json!({ "ptyId": id, "command": command, "tty": false }))
+    }
+
+    /// The output tail of a long-running process, and whether it is still alive.
+    ///
+    /// This is what a login flow polls: the URL to show, the log to read, and the moment the CLI says
+    /// it is done. `pty.output` on an id that never existed is a `not_found`, because a UI asking about
+    /// a process the daemon does not have is a UI that has lost track of itself.
+    pub fn output(&self, id: &str) -> Result<Value, ErrorObject> {
+        let state = self.state_of(id);
+        let sessions = self.sessions.lock().map_err(|_| ErrorObject::internal("pty registry poisoned"))?;
+        let session = sessions
+            .get(id)
+            .ok_or_else(|| ErrorObject::not_found(format!("{id} is not a process this daemon started")))?;
+
+        Ok(json!({
+            "ptyId": id,
+            "command": session.program,
+            "state": state,
+            "lines": session.lines,
+            "lineCount": session.lines.len(),
+            "ms": session.started.elapsed().as_millis() as u64,
+        }))
+    }
+
+    /// `running`, `exited` or `gone`. Read from the child rather than remembered, so it cannot drift.
+    pub fn state_of(&self, id: &str) -> String {
+        let Ok(mut children) = self.children.lock() else {
+            return "gone".to_string();
+        };
+
+        match children.get_mut(id) {
+            None => "gone".to_string(),
+            Some(child) => match child.try_wait() {
+                Ok(Some(_)) => "exited".to_string(),
+                Ok(None) => "running".to_string(),
+                Err(_) => "gone".to_string(),
+            },
+        }
     }
 
     /// Writes to a process's stdin. Bytes, not text: a REPL's prompt is not UTF-8-shaped.

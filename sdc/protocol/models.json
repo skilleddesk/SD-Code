@@ -1,0 +1,89 @@
+{
+  "$comment": "The model catalogue, as data (master spec section 9.10: 'the model list is always up to date'). This file is what the daemon ships with, so a fresh install can offer sensible models with no network at all. It is NOT the source of truth: `models.list { refresh: true }` asks each provider's own endpoint and caches what it answers, and a model the provider has that this file has never heard of is still shown. Editing this file is how a curated row (tier, context, price) is added or corrected - no code change, no rebuild of the daemon's logic.",
+  "snapshot": "2026-09-20",
+  "providers": [
+    {
+      "id": "ollama",
+      "label": "Ollama",
+      "live": "http://127.0.0.1:11434/api/tags",
+      "protocol": "ollama",
+      "models": [
+        { "id": "llama3.2:3b", "tier": "fast", "ctx": 128000, "cost": "free" },
+        { "id": "deepseek-coder:6.7b", "tier": "balanced", "ctx": 16000, "cost": "free" },
+        { "id": "qwen2.5-coder:7b", "tier": "balanced", "ctx": 32768, "cost": "free" }
+      ]
+    },
+    {
+      "id": "anthropic-api",
+      "label": "Anthropic API",
+      "live": "https://api.anthropic.com/v1/models",
+      "protocol": "anthropic",
+      "models": [
+        { "id": "claude-sonnet-4-5", "tier": "balanced", "ctx": 200000, "cost": "$3 / $15" },
+        { "id": "claude-opus-4", "tier": "deep", "ctx": 200000, "cost": "$15 / $75" },
+        { "id": "claude-haiku-4", "tier": "fast", "ctx": 200000, "cost": "$0.80 / $4" }
+      ]
+    },
+    {
+      "id": "openai-api",
+      "label": "OpenAI API",
+      "live": "https://api.openai.com/v1/models",
+      "protocol": "openai",
+      "models": [
+        { "id": "gpt-5", "tier": "deep", "ctx": 400000, "cost": "$10 / $30" },
+        { "id": "gpt-5-mini", "tier": "fast", "ctx": 400000, "cost": "$0.25 / $2" }
+      ]
+    },
+    {
+      "id": "deepseek",
+      "label": "DeepSeek",
+      "live": "https://api.deepseek.com/v1/models",
+      "protocol": "openai",
+      "models": [
+        { "id": "deepseek-chat", "tier": "balanced", "ctx": 64000, "cost": "$0.14 / $0.28" },
+        { "id": "deepseek-reasoner", "tier": "deep", "ctx": 64000, "cost": "$0.55 / $2.19" }
+      ]
+    },
+    {
+      "id": "groq",
+      "label": "Groq",
+      "live": "https://api.groq.com/openai/v1/models",
+      "protocol": "openai",
+      "models": [
+        { "id": "llama-3.3-70b-versatile", "tier": "balanced", "ctx": 128000, "cost": "$0.59 / $0.79" },
+        { "id": "llama-3.1-8b-instant", "tier": "fast", "ctx": 128000, "cost": "$0.05 / $0.08" }
+      ]
+    },
+    {
+      "id": "openrouter",
+      "label": "OpenRouter",
+      "live": "https://openrouter.ai/api/v1/models",
+      "protocol": "openai",
+      "models": [
+        { "id": "anthropic/claude-sonnet-4-5", "tier": "balanced", "ctx": 200000, "cost": "$3 / $15" },
+        { "id": "google/gemini-2.5-pro", "tier": "deep", "ctx": 1000000, "cost": "$1.25 / $5" }
+      ]
+    },
+    {
+      "id": "custom",
+      "label": "Custom endpoint",
+      "live": "http://127.0.0.1:8080/v1/models",
+      "protocol": "openai",
+      "models": []
+    }
+  ],
+  "subscriptions": [
+    { "id": "claude", "label": "Claude Code", "models": [
+      { "id": "sonnet", "tier": "balanced", "ctx": 200000, "cost": "subscription" },
+      { "id": "opus", "tier": "deep", "ctx": 200000, "cost": "subscription" },
+      { "id": "haiku", "tier": "fast", "ctx": 200000, "cost": "subscription" }
+    ] },
+    { "id": "openai", "label": "Codex", "models": [
+      { "id": "default", "tier": "balanced", "ctx": 400000, "cost": "subscription" }
+    ] },
+    { "id": "gemini", "label": "Gemini CLI", "models": [
+      { "id": "gemini-2.5-pro", "tier": "deep", "ctx": 1000000, "cost": "subscription" },
+      { "id": "gemini-2.5-flash", "tier": "fast", "ctx": 1000000, "cost": "subscription" }
+    ] }
+  ]
+}

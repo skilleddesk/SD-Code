@@ -94,6 +94,24 @@ export type SdcpMethod =
   | 'pty.write'
   | 'pty.resize'
   | 'pty.close'
+  /** The output tail of a long-running process: what a login flow and a log view both read. */
+  | 'pty.output'
+  /**
+   * Signing a CLI in from the app (spec section 9.10). The daemon drives the CLI's own login, shows
+   * the URL it prints, and hands back the code the user pastes - it never sees the credential.
+   */
+  | 'cli.login'
+  | 'cli.login.status'
+  | 'cli.login.code'
+  | 'cli.login.cancel'
+  | 'cli.recipes'
+  /**
+   * The model catalogue. `refresh` asks each provider's own endpoint and caches the answer; a row's
+   * `source` says whether it is `live`, `cache` or `bundled`, so "always up to date" is visible
+   * rather than asserted.
+   */
+  | 'models.list'
+  | 'models.select'
   /**
    * One command, run to completion by the daemon: the **execute** step an agent loop needs, and the
    * one a user can drive directly. `ok` is the exit code's story; `error` is the plain-English
@@ -595,6 +613,92 @@ export interface SdcpMethodMap {
     result: Record<string, never>;
   };
   'pty.close': { params: { ptyId: string }; result: Record<string, never> };
+  'pty.output': {
+    params: { ptyId: string };
+    result: {
+      ptyId: string;
+      command: string;
+      state: 'running' | 'exited' | 'gone';
+      lines: string[];
+      lineCount: number;
+      ms: number;
+    };
+  };
+
+  /**
+   * `cli.login` starts the CLI's own sign-in. The URL is not in this answer - it arrives in
+   * `cli.login.status` a moment later, because a CLI prints it once its screen is drawn.
+   * `program`/`args`/`pump` override the recipe, which is how the flow is tested without a CLI.
+   */
+  'cli.login': {
+    params: {
+      providerId: string;
+      program?: string;
+      args?: string[];
+      pump?: string[];
+    };
+    result: { loginId: string; ptyId: string; program: string; providerId: string };
+  };
+  'cli.login.status': {
+    params: { loginId: string };
+    result: {
+      loginId: string;
+      providerId: string;
+      providerLabel: string;
+      program: string;
+      /** The page to approve, once the CLI has printed it. */
+      url: string | null;
+      state: 'starting' | 'waiting_for_url' | 'waiting_for_code' | 'authenticated' | 'exited' | 'failed' | 'cancelled';
+      /** What this recipe expects the user to know, from the daemon's own table. */
+      note: string | null;
+      /** The CLI's output tail, so a recipe that goes stale is visible instead of silent. */
+      lines: string[];
+      lineCount: number;
+      ms: number;
+      authenticated: boolean;
+    };
+  };
+  'cli.login.code': {
+    params: { loginId: string; code: string };
+    result: { submitted: boolean; loginId: string };
+  };
+  'cli.login.cancel': {
+    params: { loginId: string };
+    result: { cancelled: boolean; loginId: string };
+  };
+  'cli.recipes': {
+    params: Record<string, never>;
+    result: {
+      recipes: { providerId: string; label: string; program: string; note: string; installed: boolean }[];
+    };
+  };
+
+  'models.list': {
+    params: { providerId?: string; refresh?: boolean };
+    result: {
+      models: {
+        id: string;
+        providerId: string;
+        providerLabel: string;
+        tier: TierName;
+        ctx: number;
+        cost: string;
+        /** Where the row came from: the provider just now, the last live answer, or the bundle. */
+        source: 'live' | 'cache' | 'bundled';
+        fetchedAt?: string | null;
+      }[];
+      /** The day the bundled catalogue was last curated. */
+      snapshot: string;
+      refreshed: boolean;
+      /** Why a refresh could not reach a provider, in words. Empty when every one was reached. */
+      notes: string[];
+      selected: { modelId: string | null; providerId: string | null };
+    };
+  };
+  'models.select': {
+    params: { modelId: string; providerId?: string };
+    result: { modelId: string; providerId?: string | null };
+  };
 
   /**
    * One command, run to completion. The daemon writes a checkpoint before it starts (the command may

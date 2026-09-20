@@ -70,6 +70,116 @@ export async function connectDaemon(): Promise<boolean> {
 }
 
 /* ------------------------------------------------------------------------------------------------
+ * Signing a CLI in, and choosing a model (spec section 9.10)
+ *
+ * These two are the flows a user actually needs to get *working*: a link they approve in a browser and
+ * a code they paste back, or an API key plus the model to use it with. Neither writes state here: the
+ * daemon's `ProviderStatus` event moves the card, and the model choice is a setting the daemon keeps.
+ * ---------------------------------------------------------------------------------------------- */
+
+/** What `cli.login.status` reports, as the UI needs it. */
+export interface CliLoginView {
+  loginId: string;
+  providerId: string;
+  providerLabel: string;
+  url: string | null;
+  state: 'starting' | 'waiting_for_url' | 'waiting_for_code' | 'authenticated' | 'exited' | 'failed' | 'cancelled';
+  note: string | null;
+  lines: string[];
+  authenticated: boolean;
+  ms: number;
+}
+
+/** The model catalogue, as `models.list` answers it. */
+export interface ModelsView {
+  models: {
+    id: string;
+    providerId: string;
+    providerLabel: string;
+    tier: string;
+    ctx: number;
+    cost: string;
+    source: 'live' | 'cache' | 'bundled';
+    fetchedAt?: string | null;
+  }[];
+  snapshot: string;
+  refreshed: boolean;
+  notes: string[];
+  selected: { modelId: string | null; providerId: string | null };
+}
+
+/** Starts the CLI's own sign-in. The URL arrives on the first poll, a moment later. */
+export async function startCliLogin(providerId: string): Promise<CliLoginView | null> {
+  try {
+    const { loginId } = await sdcpCall('cli.login', { providerId });
+
+    return await pollCliLogin(loginId);
+  } catch (error) {
+    reportFailure(error, strings.connect.loginFailed);
+    return null;
+  }
+}
+
+/** One poll of an in-flight login: the URL, the CLI's own tail, and where it has got to. */
+export async function pollCliLogin(loginId: string): Promise<CliLoginView | null> {
+  try {
+    return (await sdcpCall('cli.login.status', { loginId })) as CliLoginView;
+  } catch (error) {
+    reportFailure(error, strings.connect.loginFailed);
+    return null;
+  }
+}
+
+/** Hands the pasted code to the CLI, which is the only thing that can use it. */
+export async function submitCliLoginCode(loginId: string, code: string): Promise<CliLoginView | null> {
+  try {
+    await sdcpCall('cli.login.code', { loginId, code });
+
+    return await pollCliLogin(loginId);
+  } catch (error) {
+    reportFailure(error, strings.connect.codeFailed);
+    return null;
+  }
+}
+
+export async function cancelCliLogin(loginId: string): Promise<void> {
+  try {
+    await sdcpCall('cli.login.cancel', { loginId });
+  } catch (error) {
+    reportFailure(error, strings.connect.loginFailed);
+  }
+}
+
+/**
+ * The model list. `refresh` asks each provider's own endpoint; a row's `source` says whether it is
+ * live, cached or the bundle's, and a failed refresh explains itself in `notes` instead of throwing
+ * the list away.
+ */
+export async function loadModels(providerId: string | null, refresh: boolean): Promise<ModelsView | null> {
+  try {
+    return (await sdcpCall('models.list', {
+      ...(providerId === null ? {} : { providerId }),
+      refresh,
+    })) as ModelsView;
+  } catch (error) {
+    reportFailure(error, strings.connect.modelsFailed);
+    return null;
+  }
+}
+
+/** Records the chosen model so the prompt area and the status bar use it. */
+export async function chooseModel(modelId: string, providerId: string): Promise<boolean> {
+  try {
+    await sdcpCall('models.select', { modelId, providerId });
+
+    return true;
+  } catch (error) {
+    reportFailure(error, strings.connect.modelFailed);
+    return false;
+  }
+}
+
+/* ------------------------------------------------------------------------------------------------
  * Sessions and hosts
  * ---------------------------------------------------------------------------------------------- */
 
