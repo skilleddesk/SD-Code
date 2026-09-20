@@ -263,7 +263,18 @@ impl PtyManager {
     /// lines; a process that is never read is a process that blocks on a full pipe once it has said
     /// enough, and a login URL is exactly the thing that would be stuck in it.
     pub fn open(&self, command: &str, args: &[String], cwd: Option<&str>) -> Result<Value, ErrorObject> {
-        let mut process = Command::new(command);
+        /* The same resolution the engine uses: a CLI installed by npm on Windows is a `.cmd` shim, and
+           `pty.open` is how the daemon drives that CLI's own login (`cli.login`). */
+        let mut process = match crate::host::program::launch(command) {
+            Some((executable, prefix)) => {
+                let mut process = Command::new(executable);
+
+                process.args(prefix);
+
+                process
+            }
+            None => Command::new(command),
+        };
 
         process.args(args).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
 

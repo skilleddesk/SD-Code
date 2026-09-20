@@ -53,7 +53,11 @@ export function Sidebar() {
           <input
             type="text"
             id="sidebarSearch"
-            className="min-w-0 flex-1 text-[12px] text-text-primary placeholder:text-text-muted"
+            /* `bg-transparent` is explicit even though `globals.css` now defaults a control to no
+               background of its own: this input is a hole in `.search-wrap`'s `bg-bg-input`, and the
+               class says so where a reader is looking. Before the base reset this element had no
+               background at all and the browser painted it white. */
+            className="min-w-0 flex-1 bg-transparent text-[12px] text-text-primary placeholder:text-text-muted"
             placeholder={strings.sidebar.filterPlaceholder}
             value={filter}
             onChange={(event) => filterSessions(event.target.value)}

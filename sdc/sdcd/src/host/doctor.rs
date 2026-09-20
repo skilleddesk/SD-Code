@@ -77,8 +77,16 @@ pub fn checks(store: &Store) -> Vec<Value> {
 }
 
 /// Probes one program's version. A missing program is not an error here: it is a `fail` row.
+///
+/// The lookup goes through `host::program`, which follows the platform's own rules - and that matters
+/// most on Windows, where an npm-installed CLI is a `.cmd` shim that `Command::new("claude")` cannot
+/// find. Before that fix this function reported `claude`, `codex` and `gemini` as missing on a machine
+/// where all three ran.
 pub fn version_of(program: &str) -> Option<String> {
-    let output = Command::new(program).arg("--version").output().ok()?;
+    let (executable, prefix) = crate::host::program::launch(program)?;
+    let mut command = Command::new(executable);
+
+    let output = command.args(prefix).arg("--version").output().ok()?;
 
     if !output.status.success() {
         return None;

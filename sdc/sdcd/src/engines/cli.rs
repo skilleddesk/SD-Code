@@ -55,7 +55,20 @@ impl CliAdapter {
     /// Spawns the CLI, writes the prompt (plus the replay history of a bridged session), and reads
     /// the structured stream until it ends.
     pub async fn run(&self, prompt: &Prompt) -> Vec<EngineEvent> {
-        let mut command = Command::new(self.spec.program);
+        /* `host::program` resolves the name the way the shell does - which is what makes an
+           npm-installed CLI (`claude.cmd`, `codex.cmd`, `gemini.cmd` on Windows) startable at all. The
+           fallback keeps the old behaviour for a name that cannot be found, so the failure still
+           arrives as the missing-program sentence rather than as `None`. */
+        let mut command = match crate::host::program::launch(self.spec.program) {
+            Some((executable, prefix)) => {
+                let mut command = Command::new(executable);
+
+                command.args(prefix);
+
+                command
+            }
+            None => Command::new(self.spec.program),
+        };
 
         command
             .args(self.spec.args)

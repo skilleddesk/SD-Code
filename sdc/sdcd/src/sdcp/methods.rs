@@ -566,6 +566,22 @@ impl Daemon {
             pump,
         )?;
 
+        /* The step before the login, when the CLI needs one: Gemini CLI will not start a sign-in until
+           its settings name an auth method (`Prepare::GeminiOauth`). It happens *before* `start`, and a
+           failure is reported as the error it is - writing the user's settings file is not something to
+           do quietly and then fail at. */
+        let prepared = match crate::auth::cli_login::recipe(&provider_id) {
+            Some(recipe) => match crate::auth::cli_login::prepare(recipe) {
+                Ok(path) => path,
+                Err(reason) => {
+                    return Err(ErrorObject::internal(format!(
+                        "the CLI's sign-in needs a setting first, and it could not be written: {reason}"
+                    )))
+                }
+            },
+            None => None,
+        };
+
         out.push(
             event::provider_status(json!({
                 "id": provider_id,
@@ -576,7 +592,20 @@ impl Daemon {
             None,
         );
 
-        Ok(started)
+        /* `prepared` names the file the prepare step touched, so the modal can say what was written
+           rather than changing a user's configuration silently. */
+        Ok(match prepared {
+            Some(path) => {
+                let mut answer = started;
+
+                if let Some(object) = answer.as_object_mut() {
+                    object.insert("prepared".to_string(), json!(path));
+                }
+
+                answer
+            }
+            None => started,
+        })
     }
 
     /// `cli.login.status`: the URL, the CLI's own output, and where the sign-in has got to.

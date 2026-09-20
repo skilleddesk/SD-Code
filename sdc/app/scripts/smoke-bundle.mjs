@@ -73,7 +73,113 @@ const harness = `<!doctype html>
         appElement: Boolean(page && page.querySelector('#app')),
         textLength: page && page.body ? page.body.innerText.length : 0,
         headline: ((page && page.body && page.body.innerText) || '').slice(0, 60),
+        lightSurfaces: [],
+        lightSurfaceCount: -1,
       };
+
+      /*
+       * The dark theme's own check: what is painted, not what was typed.
+       *
+       * 0.5.1 shipped a sidebar input with no background class, so the engine painted it with the
+       * platform's field white - a solid rgb(255,255,255) rectangle in a dark window - and every gate
+       * here passed, because "the app rendered" was the whole question. This walks the frame and fails
+       * on any opaque, near-white background, which is what a light box in a dark theme is.
+       *
+       * Translucent white is deliberately not a hit: the kbd-lite chip on the accent-filled New chat
+       * button is rgba(255,255,255,.16) and is supposed to be there.
+       */
+      const path = (element) => {
+        const parts = [];
+        let node = element;
+
+        while (node && node.nodeType === 1 && parts.length < 4) {
+          const id = node.id ? '#' + node.id : '';
+          const cls =
+            node.className && typeof node.className === 'string' && node.className.trim() !== ''
+              ? '.' + node.className.trim().split(/\s+/).slice(0, 2).join('.')
+              : '';
+
+          parts.unshift(node.tagName.toLowerCase() + id + cls);
+          node = node.parentElement;
+        }
+
+        return parts.join(' > ');
+      };
+
+      const styles = frame.contentWindow.getComputedStyle.bind(frame.contentWindow);
+
+      for (const element of page.querySelectorAll('*')) {
+        const rect = element.getBoundingClientRect();
+
+        if (rect.width < 4 || rect.height < 4) continue;
+
+        const match = styles(element).backgroundColor.match(/rgba?\(([^)]+)\)/);
+
+        if (match === null) continue;
+
+        const channels = match[1].split(',').map((part) => parseFloat(part));
+        const alpha = channels.length > 3 ? channels[3] : 1;
+
+        if (alpha < 0.9) continue;
+
+        const luminance =
+          (0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2]) / 255;
+
+        if (luminance > 0.75) {
+          /* String concatenation rather than a template: this whole harness is itself inside one, and
+             a nested template literal ends it early. */
+          report.lightSurfaces.push(
+            path(element) +
+              ' [' + Math.round(rect.width) + 'x' + Math.round(rect.height) + '] = ' +
+              styles(element).backgroundColor,
+          );
+        }
+      }
+
+      report.lightSurfaceCount = report.lightSurfaces.length;
+      report.lightSurfaces = report.lightSurfaces.slice(0, 8);
+
+      /* What each form control actually painted - the diagnostic that makes this check debuggable
+         when it *does* fire (and the proof it is looking at the controls at all). */
+      report.controls = [...page.querySelectorAll('input, textarea, select')].map((element) => {
+        const style = styles(element);
+
+        return (
+          element.tagName.toLowerCase() +
+          (element.id ? '#' + element.id : '') +
+          ' [' + Math.round(element.getBoundingClientRect().width) + 'x' +
+          Math.round(element.getBoundingClientRect().height) + '] bg=' + style.backgroundColor +
+          ' appearance=' + style.appearance
+        );
+      });
+
+      /*
+       * And the other half of a control's look: focus has to be *visible*.
+       *
+       * The reset stops a control painting itself, and stops the engine drawing its own outline -
+       * which is only acceptable because this app draws a token ring instead: the search wrapper and
+       * the prompt box ring on focus-within, and the modal fields on focus:border-border-focus. This
+       * measures that promise: focus the first control and require the paint to change.
+       */
+      const control = page.querySelector('input, textarea, select');
+
+      if (control === null) {
+        report.focusVisible = 'no control on this screen';
+      } else {
+        const surface = control.closest('.search-wrap, .prompt-box') ?? control;
+        const before = styles(surface);
+        const wasBorder = before.borderColor;
+        const wasShadow = before.boxShadow;
+
+        control.focus();
+
+        const after = styles(surface);
+
+        report.focusVisible =
+          after.borderColor !== wasBorder || after.boxShadow !== wasShadow
+            ? true
+            : 'focused, and nothing painted differently (' + after.borderColor + ', ' + after.boxShadow + ')';
+      }
     } catch (error) {
       report = { errors: errors.concat(['reading the frame: ' + error.message]) };
     }
@@ -219,6 +325,24 @@ const checks = [
   ['the shell is in the page', report.appElement === true, `#app present: ${report.appElement}`],
   ['there is something to read', (report.textLength ?? 0) > 200, `text: ${report.textLength} chars, starts "${report.headline}"`],
   ['nothing threw', (report.errors ?? []).length === 0, (report.errors ?? []).join(' | ') || 'no errors'],
+  [
+    'every form control is painted by a token',
+    (report.controls ?? []).length === 0 ||
+      (report.controls ?? []).every((line) => line.includes('bg=rgba(0, 0, 0, 0)')),
+    (report.controls ?? []).join(' | ') || 'no form controls on this screen',
+  ],
+  [
+    'keyboard focus is visible',
+    report.focusVisible === true,
+    report.focusVisible === true ? 'the ring is a token and it changed on focus' : String(report.focusVisible),
+  ],
+  [
+    'no light box in a dark theme',
+    report.lightSurfaceCount === 0,
+    report.lightSurfaceCount === 0
+      ? 'nothing opaque and near-white is painted'
+      : `${report.lightSurfaceCount}: ${(report.lightSurfaces ?? []).join(' | ')}`,
+  ],
 ];
 
 let failed = 0;
