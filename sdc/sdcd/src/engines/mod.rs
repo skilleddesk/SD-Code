@@ -324,7 +324,11 @@ fn parse_codex_item(item: &Value) -> Vec<EngineEvent> {
                 target: path,
             }]
         }
-        "error" => vec![EngineEvent::Failed(error_message(item))],
+        "error" => vec![EngineEvent::ToolOutput {
+            call_id: string_of(item, "id", "note"),
+            level: "warn".to_string(),
+            text: error_message(item),
+        }],
         _ => Vec::new(),
     }
 }
@@ -603,6 +607,39 @@ mod tests {
         let ending = parse_stream_line(r#"{"type":"result","stats":{"total_tokens":42}}"#);
 
         assert!(matches!(ending.as_slice(), [EngineEvent::Done { .. }]));
+    }
+
+    /// A codex `error` **item** is a note, not the end of the turn.
+    ///
+    /// Measured: `codex exec -m gpt-5-codex` answers
+    /// `{"type":"item.completed","item":{"type":"error","message":"Model metadata for `gpt-5-codex` not
+    /// found. Defaulting to fallback metadata…"}}` and then runs the turn anyway. Treating it as a
+    /// failure ended the stream at the note and threw the answer away. `turn.failed` is still fatal.
+    #[test]
+    fn a_codex_note_does_not_end_the_turn() {
+        let events = collect_stream(vec![
+            r#"{"type":"thread.started","thread_id":"t"}"#.to_string(),
+            r#"{"type":"item.completed","item":{"id":"item_0","type":"error","message":"Model metadata for `gpt-5-codex` not found."}}"#.to_string(),
+            r#"{"type":"turn.started"}"#.to_string(),
+            r#"{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"OK"}}"#.to_string(),
+            r#"{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":2}}"#.to_string(),
+        ]);
+
+        assert!(
+            matches!(events.as_slice(), [EngineEvent::ToolOutput { .. }, EngineEvent::Delta(text), EngineEvent::Done { .. }] if text == "OK"),
+            "{events:?}"
+        );
+    }
+
+    /// And the fatal one is fatal, in the CLI's own words.
+    #[test]
+    fn a_codex_turn_failure_keeps_the_providers_message() {
+        let events = collect_stream(vec![
+            r#"{"type":"error","message":"{\"type\":\"error\",\"status\":400}"}"#.to_string(),
+            r#"{"type":"turn.failed","error":{"message":"The 'x' model is not supported when using Codex with a ChatGPT account."}}"#.to_string(),
+        ]);
+
+        assert!(matches!(events.first(), Some(EngineEvent::Failed(_))), "{events:?}");
     }
 
     #[test]

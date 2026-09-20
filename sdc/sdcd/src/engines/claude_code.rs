@@ -40,6 +40,7 @@ pub const CLAUDE_SPEC: CliSpec = CliSpec {
     program: "claude",
     args: &["-p", "--output-format", "stream-json", PARTIAL_MESSAGES_FLAG, "--verbose"],
     prompt: PromptPlacement::Stdin,
+    model_flag: Some("--model"),
     env: &[("NO_COLOR", "1"), ("CLAUDE_NO_UPDATE_CHECK", "1")],
 };
 

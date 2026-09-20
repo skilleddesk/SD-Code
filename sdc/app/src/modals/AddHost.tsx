@@ -25,6 +25,7 @@ export function AddHost() {
   const [type, setType] = useState<'local' | 'ssh'>('local');
   const [target, setTarget] = useState('');
   const [label, setLabel] = useState('');
+  const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
 
   const submit = (): void => {
@@ -34,11 +35,13 @@ export function AddHost() {
       type,
       target: target.trim(),
       label: label.trim(),
+      ...(password === '' ? {} : { password }),
     }).then(() => {
       setBusy(false);
       close();
       setTarget('');
       setLabel('');
+      setPassword('');
       setType('local');
     });
   };
@@ -101,6 +104,21 @@ export function AddHost() {
                 value={target}
                 onChange={(event) => setTarget(event.target.value)}
               />
+              <span className="text-[11px] text-text-muted">{strings.addHost.sshTargetHelp}</span>
+            </label>
+
+            <label className="flex flex-col gap-[5px]">
+              <span className="text-[11.5px] font-medium text-text-secondary">{strings.addHost.password}</span>
+              <input
+                type="password"
+                id="sshPassword"
+                autoComplete="off"
+                className="rounded-md border border-border-default bg-bg-input px-[10px] py-[7px] font-mono text-[12.5px] text-text-primary placeholder:text-text-muted focus:border-border-strong"
+                placeholder={strings.addHost.passwordPlaceholder}
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+              />
+              <span className="text-[11px] text-text-muted">{strings.addHost.passwordHelp}</span>
             </label>
 
             <label className="flex flex-col gap-[5px]">

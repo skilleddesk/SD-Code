@@ -32,6 +32,7 @@ pub const CODEX_SPEC: CliSpec = CliSpec {
     program: "codex",
     args: &["exec", "--json", "--skip-git-repo-check", "-"],
     prompt: PromptPlacement::Stdin,
+    model_flag: Some("-m"),
     env: &[("NO_COLOR", "1")],
 };
 

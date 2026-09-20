@@ -147,6 +147,59 @@ export function Connect() {
     login.url !== null &&
     (login.state === 'waiting_for_code' || login.state === 'waiting_for_url');
 
+  const codeRef = useRef<HTMLInputElement | null>(null);
+  const outputRef = useRef<HTMLPreElement | null>(null);
+  const focusedFor = useRef<string | null>(null);
+
+  /*
+   * The code field takes focus once, the moment the CLI is waiting for a code.
+   *
+   * Once, keyed by the login id: the poll re-renders this dialog every second, and a field that is
+   * re-focused on every render cannot be typed into - a paste needs a target that stays put. (The
+   * other half of that bug was in `Modal`, which stole focus to the *first* control, i.e. the URL field
+   * above this one, once a second.)
+   */
+  useEffect(() => {
+    if (login === null || !waitingForCode || focusedFor.current === login.loginId) {
+      return;
+    }
+
+    focusedFor.current = login.loginId;
+    codeRef.current?.focus();
+  }, [login, waitingForCode]);
+
+  /*
+   * The CLI's own output scrolls inside its own box.
+   *
+   * The box has a fixed height, so one line more or less cannot resize the dialog and push the fields
+   * out from under the pointer - which is what "it goes up and nothing can be pasted" was.
+   */
+  useEffect(() => {
+    const output = outputRef.current;
+
+    if (output !== null) {
+      output.scrollTop = output.scrollHeight;
+    }
+  }, [login]);
+
+  /*
+   * A sign-in that finished closes itself, after long enough to read the line that says so.
+   *
+   * Reported as "auto connect hoye gale complete dekhiye cole jabe": the card has flipped, the toast has
+   * announced it, and a dialog that stays open over a finished job is a dialog the user has to close by
+   * hand for no reason. The X in the frame and Escape are still there for anyone who wants to leave
+   * early.
+   */
+  useEffect(() => {
+    if (login === null || !login.authenticated) {
+      return undefined;
+    }
+
+    const timer = window.setTimeout(close, 2600);
+
+    return () => window.clearTimeout(timer);
+  }, [login, close]);
+
   const copy = (url: string): void => {
     void navigator.clipboard?.writeText(url).then(() => toast(strings.connect.copied));
   };
@@ -286,6 +339,7 @@ export function Connect() {
                       </div>
                       <div className="mt-[4px] flex items-center gap-[6px]">
                         <input
+                          ref={codeRef}
                           id="connectCode"
                           aria-label={strings.connect.codeLabel}
                           placeholder={strings.connect.codePlaceholder}
@@ -341,8 +395,9 @@ export function Connect() {
                     {strings.connect.outputTitle}
                   </div>
                   <pre
+                    ref={outputRef}
                     id="connectOutput"
-                    className="max-h-[140px] overflow-auto rounded-md border border-border-subtle bg-bg-input p-[8px] font-mono text-[11px] leading-[1.5] text-text-secondary"
+                    className="h-[150px] overflow-auto rounded-md border border-border-subtle bg-bg-input p-[8px] font-mono text-[11px] leading-[1.5] text-text-secondary"
                   >
                     {login.lines.length === 0 ? strings.connect.outputEmpty : login.lines.slice(-12).join('\n')}
                   </pre>
