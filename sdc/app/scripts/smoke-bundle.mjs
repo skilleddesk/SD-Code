@@ -9,6 +9,11 @@
 // No dependencies, and no CDP: the page writes its verdict into `<pre id="smoke-report">`, and
 // `--dump-dom --virtual-time-budget` makes the browser run the timers, print the finished DOM and exit
 // on its own. A plain `--headless <url>` would exit *before* the harness looked at the app.
+//
+// ONE RULE FOR THE HARNESS BELOW, learned twice the hard way: it is a **template literal**, so it may
+// contain no backtick and no `${` of its own - a comment that quotes a CSS class in backticks ends the
+// string early, and the failure is a syntax error at run time, which is to say a red release job after
+// the commit is already pushed. Write class names bare: `search-wrap`, not the backticked form.
 import { spawn } from 'node:child_process';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { createServer } from 'node:http';
@@ -166,8 +171,8 @@ const harness = `<!doctype html>
       if (control === null) {
         report.focusVisible = 'no control on this screen';
       } else {
-        /* The design draws the ring on the control's *wrapper* (`.search-wrap`, `.prompt-box`), so that
-           is what is measured. If the first control has no such wrapper the check says so instead of
+        /* The design draws the ring on the control's *wrapper* (search-wrap, prompt-box), so that is
+           what is measured. If the first control has no such wrapper the check says so instead of
            failing: it would then be asserting a design this app does not use, which is how a gate
            starts failing for a reason nobody can act on. */
         const wrapper = control.closest('.search-wrap, .prompt-box');
