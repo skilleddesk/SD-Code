@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { SdcpEvent } from '../../../protocol/types';
-import { applyEvent, applyEvents, createInitialState, EMPTY_STATE, withWorkspace } from './reducer';
+import { applyEvent, applyEvents, createInitialState, EMPTY_STATE, withProviders, withWorkspace } from './reducer';
 import type { AppEvent, AppState } from './types';
 
 /**
@@ -453,6 +453,39 @@ describe('the two host facts that were missing', () => {
     const afterReplay = fold(listedAgain, listed[2]);
 
     expect(afterReplay.hosts[0]?.sessions.map((session) => session.id)).toEqual(['s1']);
+  });
+
+  it('folds the provider list a read used to be thrown away', () => {
+    /*
+     * `provider.list` answers with the cards and appends nothing, so the Hub - which reads the event
+     * log - drew `0 connected · None yet` on every launch while the daemon knew about eleven
+     * providers. The answer has to be folded, and this is the fold.
+     */
+    const state = withProviders(EMPTY_STATE, [
+      {
+        id: 'claude',
+        name: 'Claude',
+        kind: 'subscription',
+        status: 'needs-auth',
+        detail: '`claude` is installed · Connect starts its own sign-in',
+        logo: 'claude',
+        initial: 'C',
+      },
+      { id: 'groq', name: 'Groq', kind: 'api-key', status: 'available' },
+    ]);
+
+    expect(state.providers).toHaveLength(2);
+    expect(state.providers[0]).toMatchObject({
+      id: 'claude',
+      kind: 'subscription',
+      status: 'needs-auth',
+      logo: 'claude',
+      initial: 'C',
+      account: null,
+    });
+
+    /* A card the daemon sends without a logo or an initial still has both: the Hub draws them. */
+    expect(state.providers[1]).toMatchObject({ logo: 'custom', initial: 'G', detail: '' });
   });
 });
 

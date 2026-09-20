@@ -15,6 +15,40 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [0.6.2] — the connect screen is not empty any more
+
+0.6.1 was tagged, built and replaced by this one on the same day, so no user ever downloaded it; the
+release pipeline keeps exactly one release, the newest. Everything in the 0.6.1 entry below is in this
+build, and this is the defect that entry left behind - found by clicking through the build that was
+just made, which is the only way it could have been found.
+
+### Fixed — the Provider Hub drew nothing
+
+`provider.list` answers with the eleven provider cards and appends **no** event. 0.6.0 started calling
+it at startup, which was right - the 0.6.0 entry says so - but nothing folded the answer: the Hub, the
+topbar's plug and the status bar all read the event log's fold, that fold stayed empty, and the screen
+showed `0 CONNECTED · None yet` next to a daemon that knew about Claude, ChatGPT, Gemini, five API
+providers and Ollama. The one screen that signs a CLI in was therefore empty, which is exactly what was
+reported: *"there is nothing at all in the connect module"*. A read whose result nobody keeps is the
+same as no read at all.
+
+`withProviders()` folds the answer the way `withWorkspace()` folds `session.list`'s - a list is a
+read's result, not a stream of events - and `connectDaemon()` calls it between `host.status` and
+`session.list`. `ProviderStatus` is still the event for a *change* (`provider.save`, a CLI login
+finishing), so both paths converge on the same array.
+
+`ProviderRecord` also gained the `initial` field the daemon has always sent - the letter in the card's
+logo circle - and that the protocol had never declared.
+
+### Verified
+
+`pnpm typecheck`, `pnpm lint`, **28 vitest tests** (one new: the provider list is folded), the bundle
+smoke run, and a real window: the Hub lists every card, and clicking Claude starts `cli.login` without
+a second click.
+
+---
+
+
 ## [0.6.1] — two chats per click, a ring around every field, and an API key that finally reaches the provider
 
 Three things a person using 0.6.0 reported, and the wall behind the third one.

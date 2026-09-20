@@ -177,6 +177,8 @@ export interface ProviderRecord {
   logo?: string;
   url?: string | null;
   protocol?: string | null;
+  /** The one letter drawn inside the card's logo circle. The daemon sends it; derived if absent. */
+  initial?: string;
 }
 
 export interface CheckpointRecord {
