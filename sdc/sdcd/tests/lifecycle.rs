@@ -109,10 +109,15 @@ fn request(port: u16, id: &str, method: &str) -> serde_json::Value {
     }
 }
 
-/// Like `request`, but keeps every notification that arrived first and the params you send.
+/// Like `request`, but with params, and it keeps every notification as well.
 ///
-/// `engine.start` answers *and* pushes: the answer is the `turnId`, and the notifications are the
-/// turn. A test that only looked at the answer would never see what the log was told.
+/// `engine.start` answers *and* pushes: the answer is the `turnId`, and the notifications are the turn.
+/// A test that only looked at the answer would never see what the log was told.
+///
+/// **It does not assume an order.** The first version of this helper returned as soon as it saw the
+/// response, which meant it only ever collected notifications that happened to arrive first - true on
+/// one machine, false on three CI runners, and a test that fails on a race teaches nothing. So it reads
+/// until it has both the response and a `TurnStarted`, or until nothing more arrives.
 fn request_collect(
     port: u16,
     id: &str,
@@ -121,10 +126,11 @@ fn request_collect(
 ) -> (serde_json::Value, Vec<serde_json::Value>) {
     let stream = TcpStream::connect(("127.0.0.1", port)).expect("connecting to sdcd");
 
-    stream.set_read_timeout(Some(Duration::from_secs(10))).expect("a read timeout");
+    stream.set_read_timeout(Some(Duration::from_secs(3))).expect("a read timeout");
 
     let mut stream = stream;
     let mut seen = Vec::new();
+    let mut answer: Option<serde_json::Value> = None;
 
     writeln!(
         stream,
@@ -135,24 +141,39 @@ fn request_collect(
     stream.flush().expect("flushing the request");
 
     let mut reader = BufReader::new(stream);
+    let deadline = Instant::now() + Duration::from_secs(20);
 
-    loop {
+    while Instant::now() < deadline {
         let mut line = String::new();
 
-        if reader.read_line(&mut line).expect("reading the answer") == 0 {
-            panic!("sdcd closed the connection before answering {method}");
+        match reader.read_line(&mut line) {
+            Ok(0) => break,
+            Ok(_) => {}
+            /* A read timeout: nothing more is coming, which is the end of the interesting part. */
+            Err(_) => break,
         }
 
         let Ok(message) = serde_json::from_str::<serde_json::Value>(line.trim()) else {
             continue;
         };
 
+        let is_turn_started = message
+            .pointer("/event/type")
+            .and_then(serde_json::Value::as_str)
+            == Some("TurnStarted");
+
         if message.get("id").and_then(serde_json::Value::as_str) == Some(id) {
-            return (message, seen);
+            answer = Some(message);
+        } else {
+            seen.push(message);
         }
 
-        seen.push(message);
+        if answer.is_some() && is_turn_started {
+            break;
+        }
     }
+
+    (answer.expect("sdcd never answered; see the notifications collected"), seen)
 }
 
 #[test]
