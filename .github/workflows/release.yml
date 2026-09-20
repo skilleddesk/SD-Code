@@ -40,7 +40,7 @@ jobs:
           - platform: windows-latest
             target: ''
             label: windows-x64
-          - platform: macos-13
+          - platform: macos-latest
             target: x86_64-apple-darwin
             label: macos-x64
           - platform: macos-latest
@@ -69,7 +69,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           # A macOS job needs its own architecture's standard library, and the Intel job is the only
-          # one that asks for a target at all.
+          # one that asks for a target at all - it cross-compiles from an Apple Silicon runner.
           targets: ${{ matrix.target }}
 
       - name: Cache Rust
@@ -105,6 +105,10 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # `pnpm daemon:package` reads this, so both macOS slices build the daemon for the
+          # architecture they are producing - including the Intel `.dmg`, which is cross-built on an
+          # Apple Silicon runner because an Intel runner can queue for a very long time.
+          SDC_TARGET_TRIPLE: ${{ matrix.target }}
         with:
           projectPath: sdc/app
           tagName: ${{ github.ref_name }}
