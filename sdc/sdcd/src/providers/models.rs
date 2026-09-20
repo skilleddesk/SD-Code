@@ -135,7 +135,20 @@ pub fn get_json(url: &str, provider_id: &str, key: Option<&str>) -> Result<Value
 
     socket.read_to_string(&mut response).map_err(|error| error.to_string())?;
 
-    let body = response.split("\r\n\r\n").nth(1).unwrap_or("");
+    let (head, body) = response.split_once("\r\n\r\n").unwrap_or(("", response.as_str()));
+
+    /* The status line matters here too, and it used to be ignored: a local endpoint that answers `401`
+       (anything OpenAI-compatible behind a password) reported "the endpoint answered without a model
+       list" - the body's own sentence is what a person needs. */
+    let status = head
+        .split_whitespace()
+        .nth(1)
+        .and_then(|code| code.parse::<u16>().ok())
+        .unwrap_or(0);
+
+    if !(200..300).contains(&status) {
+        return Err(crate::engines::native_api::rejection(status, body));
+    }
 
     serde_json::from_str(body).map_err(|_| "the endpoint did not answer JSON".to_string())
 }
@@ -182,6 +195,21 @@ pub fn list(store: &Arc<Store>, provider_id: Option<&str>, refresh: bool) -> Res
         .into_iter()
         .filter(|block| provider_id.map(|wanted| wanted == block.id).unwrap_or(true))
         .collect();
+
+    list_blocks(store, wanted, refresh)
+}
+
+/// The body of `list`, over a set of provider blocks.
+///
+/// Separate from `list` so that a **test can supply the blocks**. That is not tidiness: the test that
+/// proves "a refresh that failed keeps the list" used to reach the real `api.groq.com`, which put the
+/// public internet inside the release's `Checks` step - it failed on one runner and passed on three
+/// others for the same commit. One loopback server is the same code path with none of that.
+pub fn list_blocks(
+    store: &Arc<Store>,
+    wanted: Vec<ProviderBlock>,
+    refresh: bool,
+) -> Result<Value, ErrorObject> {
     let mut rows: Vec<Value> = Vec::new();
     let mut notes: Vec<String> = Vec::new();
 
@@ -347,32 +375,80 @@ mod tests {
         }
     }
 
-    /// Refresh with an endpoint that answers no: the honest case, and the one that must not lose the
-    /// list.
+    /// A rejected key is reported in the provider's own words - hermetically.
     ///
-    /// `groq` is `https://` and there is no key for it here, so the provider answers `401` - or the
-    /// machine has no network and the call never leaves at all. Both are the same code path and both
-    /// have to end the same way: the note says what happened, and the bundle's rows stay, because a
-    /// model list that disappears when the network hiccups is worse than a stale one that admits it.
+    /// This is the sentence the user meets when a key is wrong, and it is the reason `rejection()` exists.
+    /// A loopback server answering the way Groq does keeps the test off the public internet.
+    #[test]
+    fn a_rejected_key_is_reported_in_the_providers_own_words() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        std::thread::spawn(move || {
+            if let Ok((mut socket, _)) = listener.accept() {
+                let mut buffer = [0u8; 1024];
+
+                let _ = socket.read(&mut buffer);
+
+                let body = r#"{"error":{"message":"Invalid API Key","type":"invalid_request_error"}}"#;
+                let response = format!(
+                    "HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+
+                let _ = socket.write_all(response.as_bytes());
+            }
+        });
+
+        let mut block = blocked().into_iter().find(|block| block.id == "groq").unwrap();
+
+        block.live = format!("http://127.0.0.1:{port}/openai/v1/models");
+
+        assert_eq!(live(&block).unwrap_err(), "Invalid API Key (401)");
+    }
+
+    /// A refresh that reached nothing keeps the list, and says why - hermetically.
+    ///
+    /// One loopback server that answers `401` with a provider-shaped body replaces a call to the real
+    /// `api.groq.com`. That call made the release's `Checks` step depend on the public internet, and on
+    /// the 0.6.3 commit it failed on one runner while passing on three others - which is what a flaky
+    /// gate looks like, and why `list_blocks` exists.
     #[test]
     fn a_failed_refresh_keeps_the_list_and_says_why() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        std::thread::spawn(move || {
+            if let Ok((mut socket, _)) = listener.accept() {
+                let mut buffer = [0u8; 1024];
+
+                let _ = socket.read(&mut buffer);
+
+                let body = r#"{"error":{"message":"Invalid API Key","type":"invalid_request_error"}}"#;
+                let response = format!(
+                    "HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+
+                let _ = socket.write_all(response.as_bytes());
+            }
+        });
+
+        let mut block = blocked().into_iter().find(|block| block.id == "groq").unwrap();
+
+        block.live = format!("http://127.0.0.1:{port}/openai/v1/models");
+
+        let curated = block.models.len();
         let store = Arc::new(Store::in_memory().unwrap());
-        let listed = list(&store, Some("groq"), true).unwrap();
+        let listed = list_blocks(&store, vec![block], true).unwrap();
         let notes = listed["notes"].as_array().unwrap();
         let note = notes[0].as_str().unwrap_or_default().to_lowercase();
         let models = listed["models"].as_array().unwrap();
 
-        assert!(!notes.is_empty(), "a refresh that reached nothing has to explain itself");
+        assert_eq!(notes.len(), 1, "a refresh that reached nothing explains itself once");
         assert!(note.contains("groq"), "the note names the provider: {note}");
-        assert!(
-            !note.contains("tls client is not linked"),
-            "0.6.1 links a TLS client, so that excuse is gone: {note}"
-        );
-        assert!(
-            note.contains("401") || note.contains("reach"),
-            "and it says what the provider answered, or that it could not be reached: {note}"
-        );
-        assert!(models.len() >= 2, "the curated rows stay");
+        assert!(note.contains("invalid api key"), "in the provider's own words: {note}");
+        assert!(models.len() >= curated.min(2), "the curated rows stay");
         assert!(models.iter().all(|model| model["source"] == json!("bundled")));
     }
 

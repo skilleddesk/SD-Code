@@ -15,6 +15,32 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [0.6.4] — the release gate stops depending on the internet
+
+0.6.3's `Checks` step failed on one runner and passed on three others **for the same commit**, which
+means the gate itself was the defect: a test of mine reached the real `api.groq.com` to prove that "a
+refresh that failed keeps the list", so a runner with a different network path decided whether a release
+could be published. Everything in the 0.6.3 entry below is in this build.
+
+### Fixed — a flaky gate, and the defect it was standing on
+
+* The refresh test now drives a **loopback server** that answers `401` with a provider-shaped body
+  (`models::list_blocks` exists so a test can supply the provider blocks), so the check is deterministic
+  and needs no network at all.
+* Writing it found a real defect next door: the `http://` path in `providers::models` **ignored the
+  status code**. A local OpenAI-compatible endpoint that answers `401` - anything behind a password -
+  was reported as *"the endpoint answered without a model list"* instead of the body's own sentence.
+  Both transports now report a rejection through the same `rejection()`, so the provider's words reach
+  the user whichever one carried them.
+
+### Verified
+
+`sdcd`: **119 unit + 5 lifecycle + 5 VCR** tests, clippy clean under `-D warnings`; the failing test of
+0.6.3 is deleted, not skipped - its coverage moved to two hermetic ones.
+
+---
+
+
 ## [0.6.3] — the chat answers, and a sign-in finishes
 
 Four defects, every one of them found by driving the installed CLIs *from* the built app rather than by
