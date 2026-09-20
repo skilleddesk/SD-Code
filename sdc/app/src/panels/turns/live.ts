@@ -39,6 +39,12 @@ export function toTurns(turns: readonly TurnView[], sessionId: string): Turn[] {
         turn.thinking === ''
           ? undefined
           : { duration: strings.turns.thinking.duration, text: turn.thinking },
+      /* The answer, which `TurnView.text` has held all along. Left out while it is empty, so a turn
+         that has not produced a word yet shows no empty block. */
+      answer:
+        turn.text === ''
+          ? undefined
+          : { text: turn.text, streaming: turn.status === 'running' },
       tools: turn.tools.map(toToolCard),
       error:
         turn.error === undefined

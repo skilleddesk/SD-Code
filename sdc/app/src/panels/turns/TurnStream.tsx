@@ -3,6 +3,7 @@ import { ChevronRight } from 'lucide-react';
 import { strings } from '../../strings';
 import { toast } from '../../store/toast';
 import { ErrorCard } from './ErrorCard';
+import { AnswerBlock } from './AnswerBlock';
 import { ThinkingBlock } from './ThinkingBlock';
 import { ToolCard } from './ToolCard';
 import { TurnFooter } from './TurnFooter';
@@ -91,6 +92,11 @@ function TurnBlock({ turn }: { turn: Turn }) {
       {turn.tools.map((tool, index) => (
         <ToolCard key={`${tool.kind}-${index}`} tool={tool} />
       ))}
+
+      {/* The answer sits between the work and the totals: thinking, the tool cards the answer came
+          out of, then what the engine actually said - and the error card above it, because a failed
+          turn has an explanation where its answer would be. */}
+      {turn.answer ? <AnswerBlock answer={turn.answer} /> : null}
 
       {turn.error ? <ErrorCard error={turn.error} /> : null}
 
