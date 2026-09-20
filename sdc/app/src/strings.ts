@@ -403,6 +403,13 @@ export const strings = {
     providers: 'providers',
     chats: 'chats',
     hosts: 'hosts',
+    /** The build this window is running, and the daemon behind it. */
+    version: (app: string, daemon: string): string =>
+      daemon === '' ? `v${app}` : `v${app} · sdcd ${daemon}`,
+    versionTitle: (app: string, daemon: string): string =>
+      daemon === '' ? `SDC ${app} · the daemon has not reported its version` : `SDC ${app} · sdcd ${daemon}`,
+    versionCopied: (app: string, daemon: string): string =>
+      `Copied: SDC ${app}${daemon === '' ? '' : ` · sdcd ${daemon}`}`,
     connection: {
       ready: 'ready',
       degraded: 'degraded',

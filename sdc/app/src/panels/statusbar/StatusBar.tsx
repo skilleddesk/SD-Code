@@ -1,3 +1,4 @@
+import { version as APP_VERSION } from '../../../package.json';
 import { strings } from '../../strings';
 import { useLayoutStore } from '../../store/layout';
 import { anchorBelow, useOverlayStore } from '../../store/overlays';
@@ -62,13 +63,37 @@ export function StatusBar() {
   return (
     <footer className="statusbar">
       <StatusItem
+        id="statusHost"
         dotClass={HOST_STATUS_DOT_CLASS[activeHost?.status ?? 'connected']}
         title={strings.topbar.activeHostTitle}
-        id="statusHost"
         hideTiny
         onClick={(event) => openHostSwitcher(anchorBelow(event.currentTarget))}
       >
         {activeHost?.name ?? ''}
+      </StatusItem>
+
+      {/*
+        The build this window is running.
+        It is here because "is my install actually updated?" was a question nobody could answer from
+        inside the app: the only place the version existed was the About tab, and a user looking at a
+        white box in the sidebar has no reason to open an About tab. Both halves are shown, because
+        they can differ - the app and the daemon ship together, and a stale daemon left listening on
+        the port is exactly the case where the window is new and the thing doing the work is not.
+        Clicking it copies the pair, which is what a bug report needs.
+      */}
+      <StatusItem
+        id="statusVersion"
+        tone="text-text-muted"
+        title={strings.statusBar.versionTitle(APP_VERSION, activeHost?.sdcd ?? '')}
+        hideSmall
+        onClick={() => {
+          const pair = strings.statusBar.version(APP_VERSION, activeHost?.sdcd ?? '');
+
+          void navigator.clipboard?.writeText(pair);
+          toast(strings.statusBar.versionCopied(APP_VERSION, activeHost?.sdcd ?? ''));
+        }}
+      >
+        {strings.statusBar.version(APP_VERSION, activeHost?.sdcd ?? '')}
       </StatusItem>
 
       <span className="sep text-border-strong max-520:hidden" aria-hidden="true">
