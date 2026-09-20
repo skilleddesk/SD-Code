@@ -106,6 +106,8 @@ export interface TurnView {
   engine: string;
   model: string;
   tier: TierName;
+  /** What the user asked. From `TurnStarted`, so it survives a reload. */
+  prompt: string;
   /** The engine's answer as it streams in; `aria-live="polite"` reads it. */
   text: string;
   thinking: string;

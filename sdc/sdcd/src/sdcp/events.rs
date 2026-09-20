@@ -1,4 +1,4 @@
-﻿//! The append-only event log (master spec sections 3.3 and 5.4).
+//! The append-only event log (master spec sections 3.3 and 5.4).
 //!
 //! Append-only is a property of the *API*, not a promise in a comment: there is `append`, there is
 //! `since`, and there is nothing else. No update, no delete, no addressing an event by position. A
@@ -175,6 +175,7 @@ pub mod event {
         engine: &str,
         model: &str,
         tier: &str,
+        prompt: &str,
     ) -> Value {
         base(
             "TurnStarted",
@@ -184,7 +185,7 @@ pub mod event {
                 "engine": engine,
                 "model": model,
                 "tier": tier,
-                "forecast": "~$0.10 â€“ $0.28 forecast",
+                "prompt": prompt,
             }),
         )
     }

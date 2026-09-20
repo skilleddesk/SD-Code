@@ -36,6 +36,16 @@ const DEVICES: readonly Device[] = ['mobile', 'tablet', 'desktop'];
 export function PreviewTab() {
   const [device, setDevice] = useState<Device>('tablet');
 
+  /*
+   * The URL the daemon would have attached for this session.
+   *
+   * SDCP 0.1 has no event for it yet - `console.attach` hands the daemon a URL and the daemon answers
+   * with the checks it ran - so this build has nothing to show in the frame, and the panel says that.
+   * What it used to show was worse: a hardcoded `localhost:5173/login` page, which read as a working
+   * preview of a dev server this window had never started.
+   */
+  const previewUrl: string | null = null;
+
   const width = DEVICE_WIDTH[device];
 
   return (
@@ -60,8 +70,8 @@ export function PreviewTab() {
           onClick={() => toast(strings.rightPanel.preview.reload)}
         />
 
-        <div className="preview-url mx-[6px] min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap rounded-md border border-border-subtle bg-bg-input px-[10px] py-[5px] font-mono text-[10.5px] text-text-secondary">
-          {strings.rightPanel.preview.url}
+        <div className="preview-url mx-[6px] min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap rounded-md border border-border-subtle bg-bg-input px-[10px] py-[5px] font-mono text-[10.5px] text-text-muted">
+          {previewUrl ?? strings.rightPanel.preview.noUrl}
         </div>
 
         <IconButton
@@ -93,16 +103,23 @@ export function PreviewTab() {
         ))}
       </div>
 
+      {/*
+        The frame, and what it is allowed to draw.
+        It used to be a `Login / src/routes/login.tsx` mock - a gradient with two glows and a page
+        name - which read as a working preview of a project the window had never opened. Until a URL
+        is actually attached (`console.attach`, spec section 15.4), an empty panel is the truth.
+      */}
       <div
-        className="preview-frame relative mx-auto my-[12px] grid aspect-[16/10] w-[calc(100%-24px)] place-items-center overflow-hidden rounded-md border border-border-subtle [background-image:var(--grad-preview)] before:absolute before:inset-0 before:content-[''] before:[background-image:var(--grad-preview-glow)]"
+        className="preview-frame relative mx-auto my-[12px] grid aspect-[16/10] w-[calc(100%-24px)] place-items-center overflow-hidden rounded-md border border-border-subtle bg-bg-base"
         style={width === null ? undefined : { maxWidth: width }}
+        id="previewEmpty"
       >
-        <div className="placeholder relative p-[20px] text-center">
-          <div className="big mb-[6px] text-[22px] font-bold text-text-secondary">
-            {strings.rightPanel.preview.page.name}
+        <div className="p-[20px] text-center">
+          <div className="mb-[6px] text-[13px] font-medium text-text-secondary">
+            {strings.rightPanel.preview.emptyTitle}
           </div>
-          <div className="sub font-mono text-[11px] text-text-muted">
-            {strings.rightPanel.preview.page.path}
+          <div className="mx-auto max-w-[280px] text-[11.5px] text-text-muted">
+            {strings.rightPanel.preview.emptyBody}
           </div>
         </div>
       </div>

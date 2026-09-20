@@ -1,21 +1,24 @@
 import { describe, expect, it } from 'vitest';
 
 import type { SdcpEvent } from '../../../protocol/types';
-import { applyEvent, applyEvents, createInitialState, EMPTY_STATE, seedEvents } from './reducer';
+import { applyEvent, applyEvents, createInitialState, EMPTY_STATE } from './reducer';
 import type { AppEvent, AppState } from './types';
 
 /**
  * The reducer's acceptance test (master spec section 3.3).
  *
- * Three properties, in the order the spec asks for them:
+ * Four properties, in the order the spec asks for them:
  *
- *   1. PURITY        folding the same log twice gives a deep-equal state, and nothing in the fold
- *                    reads a wall clock, a random source or the network. The clock arrives inside
- *                    the event, which is what makes this assertion meaningful rather than lucky.
- *   2. TIME TRAVEL   replaying a prefix of the log gives the state the app was in at that point -
- *                    the "dispatch old events, view state matches expected" check.
- *   3. SEED          the demo the prototype ships is the fold of a log, so what a reader sees on
- *                    first run and what the last event says are the same thing.
+ *   1. EMPTY BOOT      a fresh window folds an *empty* log: no hosts, no chats, no providers, no
+ *                      turns. It used to fold a demo - three hosts, six chats, nine providers, twelve
+ *                      models - which made every screenshot a screenshot of fiction (0.5.0).
+ *   2. PURITY          folding the same log twice gives a deep-equal state, and nothing in the fold
+ *                      reads a wall clock, a random source or the network. The clock arrives inside
+ *                      the event, which is what makes this assertion meaningful rather than lucky.
+ *   3. TIME TRAVEL     replaying a prefix of the log gives the state the app was in at that point -
+ *                      the "dispatch old events, view state matches expected" check.
+ *   4. LIVE TURNS      the turn projections the stream draws come from `TurnStarted`/`TurnDelta`/
+ *                      `ToolCall*`, and `TurnStarted` carries the user's own prompt back.
  */
 
 /** Folds one event onto a state, with the envelope fields a daemon would supply. */
@@ -29,37 +32,79 @@ function fold(state: AppState, event: SdcpEvent, seq = state.seq + 1): AppState 
   return applyEvent(state, entry);
 }
 
+/**
+ * A log to fold, built here rather than shipped.
+ *
+ * The app used to export `seedEvents()` for exactly this: the demo lived in `src/`, so a test could
+ * fold it. That made the demo part of the product. This fixture is a *test's* log - two hosts, two
+ * chats, three turns - and nothing outside this file can reach it.
+ */
+function fixtureLog(): AppEvent[] {
+  const events: SdcpEvent[] = [
+    { type: 'HostStatus', hostId: 'local', name: 'Local', hostType: 'local', status: 'connected', sdcd: '0.5.0' },
+    { type: 'HostStatus', hostId: 'vps1', name: 'prod-1', hostType: 'vps', status: 'connecting' },
+    { type: 'SessionOpened', sessionId: 's1', hostId: 'local', title: 'Rate limiting', prompt: 'Add rate limiting' },
+    { type: 'SessionOpened', sessionId: 's2', hostId: 'vps1', title: 'Logs', prompt: 'Find the 500s' },
+    {
+      type: 'TurnStarted',
+      turnId: 't1',
+      sessionId: 's1',
+      engine: 'claude_code',
+      model: 'sonnet',
+      tier: 'Balanced',
+      prompt: 'Add rate limiting',
+    },
+    { type: 'TurnDelta', turnId: 't1', delta: 'Added the limiter.' },
+    { type: 'TurnCompleted', turnId: 't1', summary: 'Done', meta: '2s', pass: true },
+    { type: 'TurnStarted', turnId: 't2', sessionId: 's2', engine: 'codex', model: 'default', tier: 'Fast', prompt: 'Find the 500s' },
+  ];
+
+  return events.map((event, index) => ({
+    seq: index + 1,
+    ts: `2026-09-20T14:0${index}:00.000Z`,
+    event,
+  }));
+}
+
 describe('reducer', () => {
+  it('boots empty: a fresh window claims nothing it has not been told', () => {
+    const state = createInitialState();
+
+    expect(state).toBe(EMPTY_STATE);
+    expect(state.hosts).toEqual([]);
+    expect(state.providers).toEqual([]);
+    expect(state.registry).toEqual([]);
+    expect(state.turns).toEqual([]);
+    expect(state.checkpoints).toEqual([]);
+    expect(state.seq).toBe(0);
+  });
+
   it('is pure: the same log folds to a deep-equal state', () => {
-    const first = applyEvents(EMPTY_STATE, seedEvents());
-    const second = applyEvents(EMPTY_STATE, seedEvents());
+    const first = applyEvents(EMPTY_STATE, fixtureLog());
+    const second = applyEvents(EMPTY_STATE, fixtureLog());
 
     expect(second).toEqual(first);
     expect(second).not.toBe(first);
   });
 
-  it('seeds the prototype demo: three hosts, six chats, nine providers, twelve models', () => {
-    const state = createInitialState();
+  it('travels: a prefix of the log is the state at that moment', () => {
+    const log = fixtureLog();
+    const partial = applyEvents(EMPTY_STATE, log.slice(0, 4));
 
-    expect(state.hosts.map((host) => host.name)).toEqual(['Local', 'prod-1', 'staging-2']);
-    expect(state.hosts.map((host) => host.sessions.length)).toEqual([3, 2, 1]);
-    expect(state.providers).toHaveLength(9);
-    expect(state.registry).toHaveLength(12);
-    expect(state.checkpoints.map((checkpoint) => checkpoint.turn)).toEqual([14, 13, 12]);
-    /* Newest first, so the warn line the daemon pushed last is `console[0]`. */
-    expect(state.console.find((line) => line.level === 'error')?.count).toBe(3);
-    expect(state.duels[0]?.panes).toHaveLength(2);
+    /* Four events in: the two hosts and the two chats are there; nothing has run yet. */
+    expect(partial.hosts).toHaveLength(2);
+    expect(partial.hosts[0]?.sessions).toHaveLength(1);
+    expect(partial.turns).toHaveLength(0);
+    expect(partial.seq).toBe(4);
   });
 
-  it('travels: a prefix of the log is the state at that moment', () => {
-    const log = seedEvents();
-    const partial = applyEvents(EMPTY_STATE, log.slice(0, 14));
+  it('draws the stream from the log, prompt included', () => {
+    const state = applyEvents(EMPTY_STATE, fixtureLog());
 
-    /* Fourteen events in: the hosts and the six sessions are there; nothing else is. */
-    expect(partial.hosts).toHaveLength(3);
-    expect(partial.providers).toHaveLength(0);
-    expect(partial.checkpoints).toHaveLength(0);
-    expect(partial.seq).toBe(14);
+    expect(state.turns.map((turn) => turn.prompt)).toEqual(['Add rate limiting', 'Find the 500s']);
+    expect(state.turns[0]?.text).toBe('Added the limiter.');
+    expect(state.turns[0]?.status).toBe('done');
+    expect(state.activeTurnId).toBe('t2');
   });
 
   it('never mutates the state it is handed', () => {
@@ -114,6 +159,7 @@ describe('reducer', () => {
       engine: 'claude_code',
       model: 'sonnet',
       tier: 'Balanced',
+      prompt: 'Add rate limiting',
     });
 
     state = fold(state, { type: 'TurnDelta', turnId: 't1', delta: 'hel' });
@@ -153,6 +199,7 @@ describe('reducer', () => {
       engine: 'native_api',
       model: 'gpt-5',
       tier: 'Deep',
+      prompt: 'why did it stop',
     });
 
     state = fold(state, { type: 'StuckDetected', turnId: 't1', sessionId: 's1', sinceMs: 20000 });
@@ -163,31 +210,51 @@ describe('reducer', () => {
   });
 
   it('rewinds and redoes a turn', () => {
-    let state = createInitialState();
-    const before = state.checkpoints.length;
+    /*
+     * A rewind drops the checkpoints *newer* than the turn it goes back to, so this fixture has to
+     * have one of those: a checkpoint at turn 2, then a rewind to turn 1. (The old version of this
+     * test rewound into the seeded three, which is why it passed while proving nothing about an empty
+     * window.)
+     */
+    let state = fold(EMPTY_STATE, {
+      type: 'CheckpointSaved',
+      sessionId: 's1',
+      checkpoint: {
+        id: 'cp-1',
+        turn: 2,
+        ts: 'now',
+        title: 'Added validation',
+        thumbnail: null,
+        filesHash: 'abc',
+        rewindRef: null,
+      },
+    });
+
+    expect(state.checkpoints).toHaveLength(1);
 
     state = fold(state, {
       type: 'RewindApplied',
       sessionId: 's1',
       direction: 'back',
-      turn: 13,
+      turn: 1,
       turns: 1,
       files: 1,
     });
 
-    expect(state.checkpoints).toHaveLength(before - 1);
+    expect(state.checkpoints).toHaveLength(0);
     expect(state.rewindStack).toHaveLength(1);
 
     state = fold(state, {
       type: 'RewindApplied',
       sessionId: 's1',
       direction: 'forward',
-      turn: 14,
+      turn: 2,
       turns: 1,
       files: 1,
     });
 
-    expect(state.checkpoints).toHaveLength(before);
+    expect(state.checkpoints).toHaveLength(1);
+    expect(state.rewindStack).toHaveLength(0);
   });
 
   it('records an approval by risk and remembers an `always allow`', () => {

@@ -2,9 +2,10 @@ import type { PermissionDecision, PermissionRisk, TierName } from '../../../prot
 import { sdcpCall } from '../lib/sdcp';
 import { isSdcpError } from '../lib/transport';
 import { strings } from '../strings';
+import { useModelStore, tierName } from './model';
 import { useOverlayStore } from './overlays';
 import { usePrefsStore } from './prefs';
-import { dispatch, useAppStore } from './store';
+import { selectActiveSession, dispatch, useAppStore } from './store';
 
 /**
  * The intents - the UI's verbs (master spec section 3.3: "the UI never mutates state directly; it
@@ -462,6 +463,45 @@ export interface TurnSeed {
   engine: string;
   model: string;
   tier: TierName;
+}
+
+/**
+ * Sends one prompt: the prompt area's Send button, and the one path that makes the app *do* something.
+ *
+ * Until 0.5.0 the prompt area's Send was a toast - `Sent to claude_code · sonnet` - and no call left
+ * the window. This is it done properly, in three steps that each say what they are doing:
+ *
+ *   1. **a session.** `engine.start` needs one. If the window has none open, `session.open` is called
+ *      first (through `newChatOnHost`, so the tab the user sees is the session the daemon made);
+ *   2. **the turn.** `engine.start` with the tier/engine/model the prompt area is showing. The daemon
+ *      answers with a `turnId` and streams the rest as events - `TurnStarted` carries the prompt back,
+ *      so the log holds both halves of the conversation;
+ *   3. **the outcome.** `Sent to …`, or the daemon's own message. A refused call returns `null` and the
+ *      caller puts the words back in the box.
+ *
+ * An engine that is not installed is not an error here: the daemon raises `ErrorRaised` with the
+ * translator's plain sentence for it, which lands in the turn stream like any other event.
+ */
+export async function sendPrompt(prompt: string): Promise<string | null> {
+  const { tier, engine, model } = useModelStore.getState();
+
+  let sessionId = selectActiveSession()?.session.id ?? null;
+
+  if (sessionId === null) {
+    sessionId = await newChatOnHost(usePrefsStore.getState().activeHostId);
+  }
+
+  if (sessionId === null) {
+    return null;
+  }
+
+  const turnId = await startTurn({ sessionId, prompt, engine, model, tier: tierName(tier) });
+
+  if (turnId !== null) {
+    toast(strings.prompt.sent(engine, model));
+  }
+
+  return turnId;
 }
 
 /** `Enter` in the prompt area: the daemon appends `TurnStarted` and starts streaming. */

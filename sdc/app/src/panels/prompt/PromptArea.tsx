@@ -7,10 +7,11 @@ import {
   Paperclip,
   Slash,
 } from 'lucide-react';
-import { useRef, type KeyboardEvent } from 'react';
+import { useRef, useState, type KeyboardEvent } from 'react';
 
 import { strings } from '../../strings';
 import { tierLabel, useModelStore } from '../../store/model';
+import { sendPrompt } from '../../store/intents';
 import { toast } from '../../store/toast';
 import { IconButton } from '../ui/IconButton';
 import { ModelSelector } from './ModelSelector';
@@ -49,6 +50,16 @@ export function PromptArea() {
   const { tier, engine, model } = useModelStore();
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
+  /*
+   * What this prompt will carry besides the text - and it starts at nothing, because that is the
+   * truth for a window that has attached nothing. `attached` is filled by a picker that does not
+   * exist yet (the `@` button and the paperclip toast instead of pretending), and `tokens` is the
+   * context the daemon reports for the last turn of this chat, which a fresh install has not run.
+   * Both chips are therefore absent on first run: no decoration, no invented `12.4k`.
+   */
+  const [attached] = useState<readonly string[]>([]);
+  const context = { files: attached.length, tokens: null as number | null };
+
   /** Grow the box to fit its content, up to the 200px ceiling the spec sets. */
   const grow = (): void => {
     const textarea = textareaRef.current;
@@ -70,9 +81,28 @@ export function PromptArea() {
       return;
     }
 
+    /*
+     * The send path, which until now was a toast.
+     *
+     * `sendPrompt` opens a session if the window has none, then calls the daemon's `engine.start` -
+     * the same call the palette and `Fix this` make. It clears the box only once the daemon has
+     * accepted the turn, so a send that fails leaves the words where they were; and it says what
+     * happened (`Sent to …`, or the daemon's own error) because a button that looks like it worked is
+     * worse than one that admits it did not.
+     */
+    const prompt = text;
+
     textarea.value = '';
     textarea.style.height = 'auto';
-    toast(strings.prompt.sent(engine, model));
+
+    void sendPrompt(prompt).then((turnId) => {
+      if (turnId === null) {
+        /* Nothing was accepted, so the words go back: a send that quietly ate the prompt would be the
+           same lie as a Send button that only toasts. */
+        textarea.value = prompt;
+        grow();
+      }
+    });
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>): void => {
@@ -94,15 +124,27 @@ export function PromptArea() {
         <div className="prompt-toolbar mb-[8px] flex flex-wrap items-center gap-[6px]">
           <ModelSelector />
 
-          <span className={CHIP}>
-            <Hash size={10} aria-hidden="true" />
-            <span>{strings.prompt.filesChip}</span>
-          </span>
+          {/*
+            The two context chips, and the reason they are conditional.
+            They used to be fixed strings - `1 file` and `12.4k ctx` - printed under every prompt in
+            every window, including an empty one, because they were the prototype's decoration. A
+            window that says it will carry a file it has not got is lying about the next turn, so
+            each chip now waits for a real count: the daemon reports the context it loaded, and an
+            attachment shows up when `@` actually attaches one.
+          */}
+          {context.files > 0 ? (
+            <span className={CHIP}>
+              <Hash size={10} aria-hidden="true" />
+              <span>{strings.prompt.filesChip(context.files)}</span>
+            </span>
+          ) : null}
 
-          <span className={CHIP}>
-            <Database size={10} aria-hidden="true" />
-            <span>{strings.prompt.contextChip}</span>
-          </span>
+          {context.tokens === null ? null : (
+            <span className={CHIP}>
+              <Database size={10} aria-hidden="true" />
+              <span>{strings.prompt.contextChip(context.tokens)}</span>
+            </span>
+          )}
         </div>
 
         <QueuedChips />
@@ -148,7 +190,7 @@ export function PromptArea() {
 
             <div className="context-hint ml-auto flex items-center gap-[8px] font-mono text-[10.5px] text-text-muted max-700:hidden">
               <span>
-                {tierLabel(tier)} · {model}
+                {tierLabel(tier)} · {engine} · {model}
               </span>
             </div>
 

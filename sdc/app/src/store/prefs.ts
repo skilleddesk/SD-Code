@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { create } from 'zustand';
 
 import { strings } from '../strings';
+import { useAppStore } from './store';
 import { toast } from './toast';
 
 /**
@@ -216,9 +217,14 @@ export function ensureSplitSecondary(): void {
  * double-mount in development would otherwise show it twice).
  */
 export function usePrefixHint(): void {
+  /* The one startup toast (spec section 9.14). It used to announce a seeded tip about a project the
+     window had not opened; a fresh install gets the sentence that helps instead: what the window is
+     waiting for. It disappears on the first real connection, because then it is no longer true. */
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      toast(strings.seed.tip, strings.seed.tipAction);
+      if (useAppStore.getState().hosts.length === 0) {
+        toast(strings.daemon.waiting);
+      }
     }, 1400);
 
     return () => {

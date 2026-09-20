@@ -154,7 +154,7 @@ export const COMMANDS: readonly Command[] = [
   { id: 'timeline.toggle', label: 'Expand / collapse turn', hint: 'O', group: 'timeline', keys: ['o'], palette: false, run: () => toast(strings.turns.error.explainMoreToast) },
   { id: 'timeline.start', label: 'First turn', hint: 'G', group: 'timeline', keys: ['g'], palette: false, run: () => moveTimeline('start') },
   { id: 'timeline.end', label: 'Last turn', hint: 'Shift G', group: 'timeline', keys: ['shift+g'], palette: false, run: () => moveTimeline('end') },
-  { id: 'timeline.copy', label: 'Copy summary', hint: 'Y', group: 'timeline', keys: ['y'], palette: false, run: () => { const turn = useAppStore.getState().turns.at(-1); const summary = turn?.summary || strings.turns.footer.detail; void navigator.clipboard?.writeText(summary); toast(summary); } },
+  { id: 'timeline.copy', label: 'Copy summary', hint: 'Y', group: 'timeline', keys: ['y'], palette: false, run: () => { const turn = useAppStore.getState().turns.at(-1); const summary = turn?.summary ?? ''; if (summary === '') { toast(strings.timeline.nothingToCopy); return; } void navigator.clipboard?.writeText(summary); toast(summary); } },
 
   /* ---------------------------------------------------------------- Actions (palette only) */
   { id: 'host.add', label: strings.sidebar.addHost, icon: 'serverPlus', group: 'actions', run: () => useOverlayStore.getState().openAddHost() },

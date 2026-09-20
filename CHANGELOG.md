@@ -8,6 +8,83 @@ what `host.status` reports as the daemon's version.
 This file describes what changed, not what is planned. Anything still open is named in
 [`sdc/README.md` → What is deliberately absent](sdc/README.md#what-is-deliberately-absent).
 
+---
+
+**Earlier versions (0.4.1 to 0.4.4) are no longer published.** The release pipeline keeps exactly one
+release - the newest - and deletes the others when it publishes (`release.yml`, "Keep only this
+release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
+working build is a trap rather than a history. The entries below are kept for the record.
+
+## [0.5.0] — the demo is gone, and Send does something
+
+This release is the answer to one review sentence: *"it is only a UI, and none of it is connected."*
+That was accurate. The window drew a **demo** - three hosts, six chats, nine providers, twelve models,
+a fabricated turn stream with token counts and prices - and every number in it was invented, including
+one inside the daemon. Nothing the user could click reached `sdcd`, because Send was a toast. 0.5.0
+deletes the fiction and wires the two paths that matter: a prompt, and a provider sign-in.
+
+### Removed — every piece of demo content
+
+* **`createInitialState()` is now `EMPTY_STATE`.** The reducer's boot fold used to seed a full fake
+  world (`seedEvents()`: 3 hosts, 6 chats, 9 providers, 12 models, checkpoints, console lines, a duel).
+  A fresh install therefore *looked* connected, busy and expensive while the daemon behind it was
+  answering nothing - and the first thing anyone saw was fiction. `seedEvents` and `strings.seed` are
+  deleted; the test that used to fold the demo builds a small log of its own instead.
+* **The chat was hardcoded.** `Pane.tsx` rendered `DEMO_TURNS` - the prototype's worked example with
+  "Turns 1-6 collapsed · 8,420 tokens · $0.31" - so a real run happened behind a window showing the
+  same fiction every time, and the live projections the reducer had all along were never drawn. The
+  stream now renders `live.ts`'s mapping of the log's `TurnView`s, and an empty chat says it is empty.
+* **`lib/daemon.ts` (802 lines) is deleted**, replaced by `lib/standin.ts` (a browser tab's honest
+  answer). The old file was an in-process daemon that *simulated* the whole product: streamed a fake
+  answer word by word, invented providers, ran a fake OAuth, raised fake console errors. The stand-in
+  answers the protocol's shape and refuses what a tab cannot do, in one sentence that says why.
+* **The daemon invented a price.** `TurnStarted` carried a fixed `"~$0.10 – $0.28 forecast"` - a hard
+  cost for a turn nobody had measured - and that string was also **byte-corrupted in the source**
+  (`â€“`). The field is gone.
+* **The preview was a mock.** The Preview tab drew a gradient `Login / src/routes/login.tsx` page under
+  a hardcoded `http://localhost:5173/login`, which read as a working preview of a dev server the window
+  had never started. It now shows nothing, and says so.
+* **The context chips were fixed strings.** `1 file` and `12.4k ctx` were printed under every prompt,
+  including an empty one. They are conditional now: a count or nothing.
+* **The Doctor and Local tabs printed optimism**: `daemon running` and `Ollama installed · 3 models`
+  were hardcoded rows. They show the `host.doctor` rows the daemon actually returned, or the sentence
+  that says no probe has run.
+* **`strings.seed.tip`** (the startup toast about a seeded project) is replaced by one that is true of
+  a fresh window: it is waiting for the daemon.
+
+### Added — Send really sends
+
+* **`sendPrompt`** (`store/intents.ts`): opens a session if the window has none (`session.open`), then
+  calls `engine.start` with the tier/engine/model the prompt area is showing. The prompt area's
+  `send()` used to clear the box and toast `Sent to claude_code · sonnet` without calling anything.
+  A refused call now puts the words back in the box.
+* **`TurnStarted` carries `prompt`** (protocol, daemon and reducer). The log holds both halves of the
+  conversation, so a window that is reloaded draws the question beside the answer instead of starting
+  with a reply. New daemon test: `a_turn_carries_the_prompt_the_user_sent_and_no_invented_price`.
+* **The turn stream is the log.** `panels/turns/live.ts` maps `TurnView` → the stream's `Turn`, so
+  `TurnStarted`/`ThinkingDelta`/`ToolCall*`/`TurnCompleted`/`ErrorRaised` are what you read. A provider
+  that is not installed now shows the daemon's own sentence in the stream
+  (`\`claude\` is not installed or not on PATH…`) with its `Fix this` action - which is what the
+  installed build does on a machine without `claude`, and is how this release was verified.
+* **A real empty state inside a pane** (`Nothing here yet`), the `Turns 1-6 collapsed` line built from
+  the real count, and a turn footer that no longer prints a bare `·` while the totals are unknown.
+
+### Verified
+
+Installed from `SDC_0.5.0_x64-setup.exe`, then driven over the WebView's CDP: the window opens with
+**no demo content**, one real host, and the turns this machine's daemon has (including the daemon's
+honest error for a CLI that is not installed); typing a prompt and pressing Send produces a `YOU …`
+message drawn from the log, the turn's own meta line, and the daemon's answer or error. `_verify/live-drive.mjs`
+is that check, and it is the closest thing here to "does the button do anything".
+
+### Still absent (unchanged, and named)
+
+The provider sign-in flow exists (`cli.login`, `Connect.tsx`) but the Provider Hub's own subscription
+tab still drives the OAuth stand-in rather than the recipe table, so "add Claude Code by subscription"
+from inside the app is a `cli.recipes` screen away rather than one click; `models.list` cannot verify a
+remote provider without a TLS client; and the agent loop is not written. See
+[`sdc/README.md` → What is deliberately absent](sdc/README.md#what-is-deliberately-absent).
+
 ## [0.4.4] — the window that was black, and the daemon that would not let go
 
 Two bugs that made an installed build look broken, both found by installing it: the window opened with

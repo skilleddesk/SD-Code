@@ -1,13 +1,11 @@
+import { MessageSquare } from 'lucide-react';
+
 import { strings } from '../../strings';
 import type { Host, Session } from '../../store/sessions';
+import { useAppStore } from '../../store/store';
 import { PromptArea } from '../prompt';
-import {
-  DEMO_COLLAPSED,
-  DEMO_TURNS,
-  DEMO_TURNS_BEFORE,
-  OPEN_TURN_WINDOW,
-  TurnStream,
-} from '../turns';
+import { collapsedSummary, toTurns } from '../turns/live';
+import { TurnStream } from '../turns';
 import { HostIcon } from '../ui/HostIcon';
 
 /**
@@ -29,6 +27,18 @@ export interface PaneProps {
 }
 
 export function Pane({ session, host, showHeader }: PaneProps) {
+  /*
+   * The session's turns, straight out of the log.
+   *
+   * Until this change the stream was handed `DEMO_TURNS` - a hardcoded prototype turn - so a real run
+   * happened behind a window that showed the same fiction every time. `turns` here is the reducer's
+   * projection of `TurnStarted`/`TurnDelta`/`ToolCall*`/`TurnCompleted`/`ErrorRaised`, which is what
+   * the daemon actually pushed, and `live.ts` only reshapes it.
+   */
+  const turns = useAppStore((state) => state.turns);
+  const streamTurns = toTurns(turns, session.id);
+  const collapsed = collapsedSummary(turns, session.id);
+
   return (
     <div
       className={
@@ -53,18 +63,25 @@ export function Pane({ session, host, showHeader }: PaneProps) {
 
       <div className="pane-scroll flex-1 overflow-y-auto px-[28px] pb-[16px] pt-[20px] max-600:px-[16px] max-600:pt-[14px]">
         <div className="pane-inner mx-auto max-w-[780px]">
-          {/*
-            The collapsing rule of spec section 7.5 belongs to whoever produces the stream, because
-            only it knows how many turns came before this window: more than `OPEN_TURN_WINDOW` and
-            the older ones fold into one line. The seed stands in for a session that has run six
-            turns before this one, which is why the summary is drawn.
-          */}
-          <TurnStream
-            turns={DEMO_TURNS}
-            collapsed={
-              DEMO_TURNS_BEFORE + DEMO_TURNS.length > OPEN_TURN_WINDOW ? DEMO_COLLAPSED : null
-            }
-          />
+          {streamTurns.length === 0 ? (
+            /* A fresh session, and the app says so instead of drawing someone else's conversation. */
+            <div
+              className="pane-empty grid place-items-center py-[56px] text-center"
+              id="paneEmpty"
+            >
+              <div>
+                <span className="mx-auto mb-[12px] grid h-[38px] w-[38px] place-items-center rounded-lg border border-border-subtle bg-bg-raised text-text-muted">
+                  <MessageSquare size={17} aria-hidden="true" />
+                </span>
+                <p className="text-[13.5px] font-medium text-text-primary">{strings.main.emptyPane.title}</p>
+                <p className="mx-auto mt-[6px] max-w-[360px] text-[12.5px] text-text-secondary">
+                  {strings.main.emptyPane.body}
+                </p>
+              </div>
+            </div>
+          ) : (
+            <TurnStream turns={streamTurns} collapsed={collapsed} />
+          )}
         </div>
       </div>
 

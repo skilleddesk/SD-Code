@@ -306,6 +306,13 @@ function ProviderCards({ providers, onConnect }: ProviderCardsProps) {
  * The inline flows a card's Connect button opens (spec section 9.10, flows 1-3)
  * ---------------------------------------------------------------------------------------------- */
 
+/**
+ * A stable empty list, so `state.doctor['local'] ?? EMPTY_CHECKS` hands zustand the same reference on
+ * every render. A fresh `[]` would be a new array each time and re-render forever - the same mistake
+ * that took the window down in 0.4.4 (`overlays/Toast.tsx`), which is why it is a named constant.
+ */
+const EMPTY_CHECKS: readonly DoctorCheckView[] = [];
+
 function Flow({ flow, onDone }: { flow: FlowState; onDone: () => void }) {
   const providers = useProviderStore((state) => state.providers);
   const provider = providers.find((candidate) => candidate.id === flow.providerId);
@@ -313,6 +320,10 @@ function Flow({ flow, onDone }: { flow: FlowState; onDone: () => void }) {
   const [label, setLabel] = useState('');
   const [state, setState] = useState<'idle' | 'busy' | 'ok' | 'fail'>('idle');
   const [detail, setDetail] = useState('');
+
+  /* The `host.doctor` rows the daemon returned for this machine. Empty until a run: the card then
+     says so rather than printing an optimistic one of its own. */
+  const localChecks = useAppStore((state) => state.doctor['local'] ?? EMPTY_CHECKS);
 
   const name = provider?.name ?? flow.providerId;
 
@@ -450,18 +461,27 @@ function Flow({ flow, onDone }: { flow: FlowState; onDone: () => void }) {
 
       {flow.kind === 'local' ? (
         <>
-          <DoctorRow
-            state="ok"
-            label={strings.hub.daemonRow}
-            detail={strings.hub.daemonDetail}
-            fix={null}
-          />
-          <DoctorRow
-            state="ok"
-            label={strings.hub.installedRow}
-            detail={strings.hub.installedDetail(strings.seed.ollamaModels)}
-            fix={null}
-          />
+          {/*
+            The two rows that used to be printed here were fixed: `daemon running` and
+            `Ollama installed · 3 models`, whether or not anything was installed. Now the tab shows
+            the `host.doctor` rows the daemon actually returned for this machine, and - with no run
+            yet - the sentence that says so and the button that runs it.
+          */}
+          {localChecks.length === 0 ? (
+            <p className="mb-[12px] text-[12.5px] text-text-secondary" id="hubLocalEmpty">
+              {strings.hub.localEmpty}
+            </p>
+          ) : (
+            localChecks.map((check) => (
+              <DoctorRow
+                key={check.id}
+                state={check.state}
+                label={check.label}
+                detail={check.detail}
+                fix={check.fix}
+              />
+            ))
+          )}
 
           <div className="mt-[16px] flex gap-[8px]">
             <button type="button" className={BTN + ' ' + BTN_SECONDARY} onClick={onDone}>
@@ -619,17 +639,7 @@ function DoctorList({
   onRun: () => void;
   ready: boolean;
 }) {
-  /* Before the first run the list is the seed, so the tab is never empty (spec section 9.10). */
-  const rows: readonly DoctorCheckView[] =
-    checks.length > 0
-      ? checks
-      : strings.seed.doctor.map((check) => ({
-          id: check.id,
-          label: check.label,
-          state: check.state,
-          detail: check.detail,
-          fix: check.fix,
-        }));
+  const rows: readonly DoctorCheckView[] = checks;
 
   return (
     <div className="flex flex-col gap-[12px]">

@@ -131,79 +131,69 @@ export const strings = {
         addVps: 'Add a VPS',
       },
     },
+    /** A session with no turns yet: what the pane says instead of drawing someone else's chat. */
+    emptyPane: {
+      title: 'Nothing here yet',
+      body:
+        'Type below and SDC sends it to the engine. What comes back - and anything that goes wrong - is written to this chat’s log.',
+    },
     /** Separator between the host name and the title in `.pane-header` (spec section 9.15). */
     paneHeaderSeparator: '·',
   },
 
-  /** Turn stream - spec section 7.5. The seed is the prototype's worked example, verbatim. */
+  timeline: {
+    /** `Y` in the Time Machine: there is nothing to copy until a turn has finished. */
+    nothingToCopy: 'No finished turn to summarise yet',
+  },
+
+  /** Turn stream - spec section 7.5. */
   turns: {
-    who: 'You · 14:02',
-    prompt: 'Add rate limiting to the login route',
-    attachments: {
-      /** The gradient preview chip carries no label; the other two are labelled. */
-      image: 'screenshot.png',
-      file: '@src/auth.ts',
-    },
+    /** The label above a user's message. The prototype's `You · 14:02` fixed the clock this app does
+     *  not have on the turn: the log carries the prompt, not the minute it was typed. */
+    who: 'You',
     collapsed: {
-      label: 'Turns 1–6 collapsed',
-      meta: '8,420 tokens · $0.31',
-      toast: 'Expanded 6 earlier turns',
+      /** `Turns 1-6 collapsed` - the count is the turns the window hides, not a demo number. */
+      labelFor: (hidden: number): string => `Turns 1-${hidden} collapsed`,
+      /** The line's right-hand side, which names the rule rather than a made-up cost. */
+      windowMeta: (window: number): string => `last ${window} shown`,
+      toast: 'Expanded the earlier turns',
     },
     thinking: {
       title: 'Thinking',
-      duration: '(4s)',
-      body:
-        'I will add express-rate-limit to the login route. First I need to read the current ' +
-        'auth.ts, then install the dependency and wire up the middleware.',
+      duration: '',
     },
     tools: {
       read: 'Read',
       edit: 'Edit',
       run: 'Run',
-      /** Status pills: `done · 42 ln`, `done · +18 −2`, `running`. */
-      readStatus: 'done · 42 ln',
-      editStatus: 'done · +18 −2',
-      runStatus: 'running',
       /** The two words a run's output lines are prefixed with (spec section 7.5). */
       runPass: 'PASS',
       runFail: 'FAIL',
     },
     error: {
-      title: 'Test failed: rate.test.ts line 42',
-      explanation:
-        'The limiter allows a 6th request. The window may be resetting too early, or the ' +
-        'middleware is not applied to the correct route.',
       fix: 'Fix this',
       showCode: 'Show code',
       explainMore: 'Explain more',
-      showCodeToast: 'Opened rate.test.ts:42',
+      showCodeToast: 'Opened the file',
       explainMoreToast: 'Expanded',
     },
     footer: {
-      summary: 'Done',
-      detail: '1m 12s · 12,400 tokens · $0.16',
+      /** Before `TurnCompleted` arrives: the run has not reported what it used. */
+      pending: 'Running · totals arrive with the last event',
       up: 'Good response',
       down: 'Bad response',
       upToast: 'Thanks',
       downToast: 'Noted',
     },
-    /** The live turn's meta line - the forecast the prompt area shows before sending. */
-    metaForecast: '~$0.10 – $0.28 forecast',
-    /**
-     * What a live turn streams as its answer, word by word, so `TurnDelta` has something real to
-     * concatenate. The seeded demo turn of `panels/turns/types.ts` is still what the stream draws
-     * for the prototype's example; this is what the daemon's timings push into the event log.
-     */
-    answer:
-      'Added express-rate-limit to the login route and wired the limiter as middleware. Five ' +
-      'attempts per fifteen minutes per IP, with the store shared across workers.',
   },
 
   /** Prompt area and model dropdown - spec sections 7.6 and 9.3. */
   prompt: {
     placeholder: 'Ask or describe what you want to build…',
-    filesChip: '1 file',
-    contextChip: '12.4k ctx',
+    /** `1 file` / `3 files` - drawn only when this prompt really has that many attachments. */
+    filesChip: (count: number): string => `${count} ${count === 1 ? 'file' : 'files'}`,
+    /** `12.4k ctx` - drawn only from a context count the daemon reported. */
+    contextChip: (tokens: number): string => `${tokens >= 1000 ? `${(tokens / 1000).toFixed(1)}k` : String(tokens)} ctx`,
     queued: {
       remove: 'Remove queued prompt',
       /** Seeded so the queue is visible; the spec caps it at three (section 9.7). */
@@ -294,6 +284,11 @@ export const strings = {
       deviceToast: (width: number | null): string =>
         width === null ? 'Preview: full width' : `Preview: ${width}px`,
       page: { name: 'Login', path: 'src/routes/login.tsx' },
+      /** The empty frame: no URL is attached, so the panel says so rather than drawing a mock page. */
+      noUrl: 'no URL attached',
+      emptyTitle: 'Nothing is being previewed',
+      emptyBody:
+        'Attach a running dev server’s URL and this frame shows it. Until then there is no page to draw.',
       attach: 'Attach screenshot',
       attached: 'Screenshot attached',
     },
@@ -341,6 +336,8 @@ export const strings = {
       keep: 'Keep',
       kept: (engine: string): string => `${engine} kept`,
       empty: 'No duel yet. Run the same prompt on two engines and compare.',
+      /** Shown instead of `empty` while the chat has no turn to race: a duel needs a prompt. */
+      needsTurn: 'A duel races a prompt you have already sent. Send one in this chat first.',
       run: 'Run a duel',
       runAgain: 'Run again',
       keepNeither: 'Keep neither',
@@ -420,6 +417,16 @@ export const strings = {
    */
   daemon: {
     offline: 'sdcd did not answer · the daemon is not running',
+    /** The in-process stand-in a browser tab gets, and what it can honestly do (see `lib/standin.ts`). */
+    browserHostName: 'Browser tab',
+    browserSessionTitle: 'New chat',
+    browserNote:
+      'This is a browser tab: it has no daemon behind it, so it cannot run an engine, read the filesystem or hold a credential. Start the desktop app (which starts `sdcd` itself) and this becomes the real thing.',
+    /** Beside a `bundled` model row: where the row came from, and what would make it live. */
+    bundledNote: 'the catalogue bundled with this build · a provider’s own list needs sdcd',
+    bundledSnapshot: 'bundled',
+    /** The startup toast on a window that has not reached a daemon yet. */
+    waiting: 'Waiting for the daemon · this window has no engine until sdcd answers',
   },
 
   /**
@@ -558,6 +565,9 @@ export const strings = {
     installedRow: 'Installed models',
     daemonDetail: 'running · http://localhost:11434',
     daemonDown: 'not running · start it with `ollama serve`',
+    /** Shown in the Local flow before any `host.doctor` run: the tab has nothing real to print yet. */
+    localEmpty:
+      'Nothing has been probed on this machine yet. Run the doctor (Settings → Environment) and the checks it returns appear here.',
     installedDetail: (models: readonly string[]): string =>
       `${models.length} present · ${models.join(', ')}`,
     noModels: 'none installed · pull one from the registry',
@@ -935,68 +945,7 @@ export const strings = {
     },
     close: 'Close',
   },
-  /**
-   * The seed data of the event log (spec section 3.3: "Seed the reducer with the same demo data
-   * used in the HTML prototype"). These are literals rather than events because they are what the
-   * log's first fold produces, not something that happened at runtime.
-   */
-  seed: {
-    providers: [
-      { id: 'claude', name: 'Claude', kind: 'subscription', logo: 'claude', initial: 'C', detail: 'Claude Pro / Max subscription · uses your own login', status: 'connected', account: 'Max — user@mehedi.dev' },
-      { id: 'openai', name: 'OpenAI', kind: 'subscription', logo: 'openai', initial: 'O', detail: 'ChatGPT Plus · Codex CLI subscription', status: 'connected', account: 'Plus' },
-      { id: 'gemini', name: 'Gemini', kind: 'subscription', logo: 'gemini', initial: 'G', detail: 'Google AI · Gemini CLI', status: 'needs-auth', account: null },
-      { id: 'anthropic-api', name: 'Anthropic API', kind: 'api-key', logo: 'claude', initial: 'A', detail: 'Direct API key · pay per token', status: 'connected', account: 'sk-ant-…4f8a' },
-      { id: 'openai-api', name: 'OpenAI API', kind: 'api-key', logo: 'openai', initial: 'O', detail: 'Direct API key · $12.40 / $50.00 this month', status: 'connected', account: 'sk-…8b2c' },
-      { id: 'deepseek', name: 'DeepSeek', kind: 'api-key', logo: 'deepseek', initial: 'D', detail: 'Direct API · cheap, fast', status: 'available', account: null },
-      { id: 'groq', name: 'Groq', kind: 'api-key', logo: 'groq', initial: 'G', detail: 'Ultra-fast inference', status: 'available', account: null },
-      { id: 'openrouter', name: 'OpenRouter', kind: 'api-key', logo: 'openrouter', initial: 'O', detail: 'One key · 200+ models', status: 'available', account: null },
-      { id: 'ollama', name: 'Ollama', kind: 'local', logo: 'ollama', initial: 'O', detail: 'Local models · auto-detected on this machine', status: 'needs-auth', account: null },
-    ],
-    /** The registry of spec section 9.10: the prototype's twelve models, verbatim. */
-    models: [
-      { id: 'anthropic/claude-sonnet-4-5', provider: 'anthropic-api', tier: 'balanced', ctx: 200000, cost: '$3 / $15', enabled: true },
-      { id: 'anthropic/claude-opus-4', provider: 'anthropic-api', tier: 'deep', ctx: 200000, cost: '$15 / $75', enabled: true },
-      { id: 'anthropic/claude-haiku-4', provider: 'anthropic-api', tier: 'fast', ctx: 200000, cost: '$0.80 / $4', enabled: true },
-      { id: 'openai/gpt-5', provider: 'openai-api', tier: 'deep', ctx: 400000, cost: '$10 / $30', enabled: true },
-      { id: 'openai/gpt-5-mini', provider: 'openai-api', tier: 'fast', ctx: 400000, cost: '$0.25 / $2', enabled: true },
-      { id: 'google/gemini-2.5-pro', provider: 'gemini', tier: 'deep', ctx: 2000000, cost: '$1.25 / $5', enabled: true },
-      { id: 'google/gemini-2.5-flash', provider: 'gemini', tier: 'fast', ctx: 1000000, cost: '$0.075 / $0.30', enabled: true },
-      { id: 'deepseek/deepseek-chat', provider: 'deepseek', tier: 'balanced', ctx: 64000, cost: '$0.14 / $0.28', enabled: false },
-      { id: 'groq/llama-3.3-70b', provider: 'groq', tier: 'balanced', ctx: 128000, cost: '$0.59 / $0.79', enabled: false },
-      { id: 'openrouter/anthropic/claude-sonnet-4-5', provider: 'openrouter', tier: 'balanced', ctx: 200000, cost: '$3 / $15', enabled: true },
-      { id: 'ollama/deepseek-coder:6.7b', provider: 'ollama', tier: 'balanced', ctx: 16000, cost: 'free', enabled: false, size: '3.8 GB' },
-      { id: 'ollama/llama3.2:3b', provider: 'ollama', tier: 'fast', ctx: 128000, cost: 'free', enabled: false, size: '2.0 GB' },
-    ],
-    /** The ten environment checks of spec section 9.10, in the prototype's order. */
-    doctor: [
-      { id: 'node', label: 'Node.js', state: 'ok', detail: 'v20.11.0 · at /usr/local/bin/node', fix: null },
-      { id: 'claude', label: 'Claude Code CLI', state: 'ok', detail: 'v2.1.3 · logged in as user@mehedi.dev', fix: null },
-      { id: 'codex', label: 'Codex CLI', state: 'ok', detail: 'v1.4.0 · logged in', fix: null },
-      { id: 'gemini', label: 'Gemini CLI', state: 'fail', detail: 'not installed', fix: 'Install' },
-      { id: 'ollama', label: 'Ollama', state: 'ok', detail: 'running · 2 models', fix: null },
-      { id: 'ripgrep', label: 'ripgrep', state: 'ok', detail: 'v14.1.0 · bundled', fix: null },
-      { id: 'port3000', label: 'Port 3000', state: 'fail', detail: 'already in use by pid 8412', fix: 'Kill process' },
-      { id: 'disk', label: 'Disk space', state: 'ok', detail: '28.4 GB free', fix: null },
-      { id: 'git', label: 'Git', state: 'ok', detail: 'v2.43.0', fix: null },
-      { id: 'ssh', label: 'SSH to prod-1', state: 'warn', detail: 'host key changed — needs re-pin', fix: 'Re-pin' },
-    ],
-    /** `ollama list`, as the Local flow reports it. */
-    ollamaModels: ['llama3.2:3b', 'mistral:7b'],
-    hostPlatform: 'macOS 15.1 · arm64',
-    sdcdVersion: '0.4.4',
-    /** Spec section 9.10's `Test connection` answer: twelve models behind a valid key. */
-    testModelCount: 12,
-    /** The day the bundled catalogue was last curated; the daemon reports the same thing. */
-    modelSnapshot: '2026-09-20',
-    /** The tip toast the prototype raises 1.4s after load. */
-    tip: 'Tip: click the plug icon to connect Claude, OpenAI, Gemini, or Ollama',
-    tipAction: 'Got it',
-  },
 
-  /**
-   * Surfaces reachable from the chrome. Kept as a namespace so a future surface has a home; the
-   * placeholder wording of the earlier steps is gone now that every one of the six is built.
-   */
   overlays: {
     none: '',
   },

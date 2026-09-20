@@ -1,5 +1,3 @@
-import { strings } from '../../strings';
-
 /**
  * The turn stream's data model - spec section 7.5.
  *
@@ -128,94 +126,8 @@ export interface CollapsedSummaryData {
 }
 
 /**
- * The demo turn: exactly the prototype's first turn (design/ui-prototype.html, `paneHTML`), so the
- * visual regression of this step is a comparison against the reference rather than against a memory.
- *
- * The three tool cards are one of each variant on purpose - a Read with no body, an Edit with a
- * collapsed diff, a Run that is still going with two lines of output - and the error card that
- * follows them is the reason the Run has not finished.
- */
-export const DEMO_TURNS: readonly Turn[] = [
-  {
-    id: 'turn-7',
-    user: {
-      who: strings.turns.who,
-      body: strings.turns.prompt,
-      attachments: [
-        { kind: 'thumb' },
-        { kind: 'image', label: strings.turns.attachments.image },
-        { kind: 'file', label: strings.turns.attachments.file },
-      ],
-    },
-    meta: {
-      tier: 'Balanced',
-      engine: 'claude_code',
-      model: 'sonnet',
-      forecast: '~$0.10 – $0.28 forecast',
-    },
-    thinking: {
-      duration: strings.turns.thinking.duration,
-      text: strings.turns.thinking.body,
-    },
-    tools: [
-      {
-        kind: 'read',
-        name: strings.turns.tools.read,
-        target: 'src/auth.ts',
-        status: 'done',
-        meta: strings.turns.tools.readStatus,
-      },
-      {
-        kind: 'edit',
-        name: strings.turns.tools.edit,
-        target: 'src/auth.ts',
-        status: 'done',
-        meta: strings.turns.tools.editStatus,
-        diff: [
-          { lineNumber: '14', change: 'add', text: "+ import rateLimit from 'express-rate-limit';" },
-          { lineNumber: '15', change: 'add', text: '+ const loginLimiter = rateLimit({' },
-          { lineNumber: '16', change: 'add', text: '+   windowMs: 15 * 60 * 1000,' },
-          { lineNumber: '17', change: 'add', text: '+   max: 5,' },
-          { lineNumber: '18', change: 'rem', text: "− app.post('/login', handler);" },
-          { lineNumber: '18', change: 'add', text: "+ app.post('/login', loginLimiter, handler);" },
-        ],
-      },
-      {
-        kind: 'run',
-        name: strings.turns.tools.run,
-        target: 'npm test',
-        status: 'running',
-        meta: strings.turns.tools.runStatus,
-        output: [
-          { level: 'ok', text: 'auth.test.ts' },
-          { level: 'fail', text: 'rate.test.ts > limits after 5 tries' },
-        ],
-      },
-    ],
-    error: {
-      title: strings.turns.error.title,
-      explanation: strings.turns.error.explanation,
-    },
-    footer: {
-      summary: strings.turns.footer.summary,
-      detail: strings.turns.footer.detail,
-    },
-  },
-];
-
-/** "Turns 1–6 collapsed · 8,420 tokens · $0.31" - the six turns above the demo turn. */
-export const DEMO_COLLAPSED: CollapsedSummaryData = {
-  label: strings.turns.collapsed.label,
-  meta: strings.turns.collapsed.meta,
-};
-
-/** How many turns came before the window `DEMO_TURNS` is: the "Turns 1–6" of that label. */
-export const DEMO_TURNS_BEFORE = 6;
-
-/**
- * The spec's collapsing rule (section 7.5): the last five turns stay open, anything older folds
- * into one line - and at thirty or more they fold into a single summary block. Only the first
- * threshold can be reached with the seed, so it is the one this step implements; the constant is
- * here so the rule has a name and a home rather than a magic 5 in a component.
+ * The spec's collapsing rule (section 7.5): the last five turns stay open, anything older folds into
+ * one line. The constant lives here so the rule has a name and a home rather than a magic 5 in a
+ * component - `live.ts` is what applies it to a real session.
  */
 export const OPEN_TURN_WINDOW = 5;
