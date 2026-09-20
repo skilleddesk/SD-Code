@@ -92,9 +92,21 @@ export function getTransport(): SdcpTransport {
     catchingUp = false;
   }, 1500);
 
+  /** How old a replayed toast has to be before it is history rather than news. */
+  const TOAST_IS_HISTORY_MS = 30_000;
+
   unsubscribe = transport.subscribe((notification: Notification) => {
-    if (catchingUp && (notification.event.type === 'Toast' || notification.event.type === 'ToastDismissed')) {
-      return;
+    if (notification.event.type === 'Toast' || notification.event.type === 'ToastDismissed') {
+      /* The envelope carries the moment the daemon wrote the event, so "old" is a fact rather than a
+         guess about how long the backlog takes: a notification about something that happened half a
+         minute ago is the log talking, whether it arrives during the catch-up window or after it. The
+         daemon replays the backlog in answer to the window's first calls, which is later than the window
+         opened - a timer alone was not enough. */
+      const age = Date.now() - Date.parse(notification.ts);
+
+      if (catchingUp || !Number.isFinite(age) || age > TOAST_IS_HISTORY_MS) {
+        return;
+      }
     }
 
     eventLog.accept(notification);
