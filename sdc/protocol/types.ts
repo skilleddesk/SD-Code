@@ -654,7 +654,22 @@ export interface SdcpMethodMap {
   'session.fork': { params: { sessionId: string; atTurn?: number }; result: { sessionId: string } };
 
   'engine.start': {
-    params: { sessionId: string; prompt: string; engine: string; model: string; tier: TierName };
+    params: {
+      sessionId: string;
+      prompt: string;
+      engine: string;
+      model: string;
+      tier: TierName;
+      /**
+       * The provider the model was picked from, when the app knows it (`deepseek`).
+       *
+       * It is optional so the protocol stays compatible, and load-bearing when present: a provider's
+       * live list contains model ids this build's catalogue has never seen (`deepseek-v4-pro`), and
+       * without the provider the daemon cannot tell which endpoint - and which key - such an id belongs
+       * to. The turn then fails with `No API key for custom` for a provider that is connected.
+       */
+      provider?: string;
+    };
     result: { turnId: string };
   };
   'engine.cancel': { params: { turnId: string }; result: Record<string, never> };

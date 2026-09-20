@@ -3,7 +3,7 @@ import { sdcpCall } from '../lib/sdcp';
 import { isSdcpError } from '../lib/transport';
 import { strings } from '../strings';
 import { useDaemonStore } from './daemon';
-import { useModelStore, tierName, tierFromName } from './model';
+import { useModelStore, engineForProvider, tierName, tierFromName } from './model';
 import { useOverlayStore } from './overlays';
 import { usePrefsStore } from './prefs';
 import { withProviders, withWorkspace } from './reducer';
@@ -223,10 +223,31 @@ export async function loadModels(providerId: string | null, refresh: boolean): P
   }
 }
 
-/** Records the chosen model so the prompt area and the status bar use it. */
+/**
+ * Records the chosen model so the prompt area and the status bar use it.
+ *
+ * **Two places, and the second one was missing.** `models.select` tells the daemon which model the
+ * setting is, and until 0.7.2 that was the whole function - the window's own model store was never
+ * touched. The symptom was reported as *"connect hoy claude but chat e kisu likhle kaj hoy nah"*: press
+ * `Use` on a row in the Connect dialog, the row says `In use`, and the chat keeps running the model it
+ * had before, because `sendPrompt` reads the store and the store had never heard of the choice. The
+ * dropdown's `choose` is the same four facts, so it is what this calls.
+ */
 export async function chooseModel(modelId: string, providerId: string): Promise<boolean> {
   try {
     await sdcpCall('models.select', { modelId, providerId });
+
+    const { catalog, choose } = useModelStore.getState();
+    const row = catalog.find((model) => model.id === modelId && model.providerId === providerId);
+
+    choose({
+      engine: engineForProvider(providerId),
+      providerId,
+      model: modelId,
+      /* The row's own tier when the catalogue listed it, and the tier in hand otherwise - a provider's
+         live list can contain a model this build has no tier for. */
+      tier: row?.tier ?? useModelStore.getState().tier,
+    });
 
     return true;
   } catch (error) {
@@ -640,6 +661,16 @@ export interface TurnSeed {
   engine: string;
   model: string;
   tier: TierName;
+  /**
+   * The provider the model came from, when the app knows it.
+   *
+   * A model id from a provider's live list may be one this build's catalogue has never seen
+   * (`deepseek-v4-pro`), and the daemon routes a native API turn by that id: with no provider it falls
+   * back to the loopback `custom` endpoint and answers `No API key for custom` - for a provider that is
+   * connected, with its key stored under its own entry. The provider is a fact the app has and the
+   * daemon cannot derive, so it travels with the turn.
+   */
+  provider?: string;
 }
 
 /**
@@ -660,7 +691,7 @@ export interface TurnSeed {
  * translator's plain sentence for it, which lands in the turn stream like any other event.
  */
 export async function sendPrompt(prompt: string): Promise<string | null> {
-  const { tier, engine, model } = useModelStore.getState();
+  const { tier, engine, model, providerId } = useModelStore.getState();
 
   let sessionId = selectActiveSession()?.session.id ?? null;
 
@@ -672,7 +703,14 @@ export async function sendPrompt(prompt: string): Promise<string | null> {
     return null;
   }
 
-  const turnId = await startTurn({ sessionId, prompt, engine, model, tier: tierName(tier) });
+  const turnId = await startTurn({
+    sessionId,
+    prompt,
+    engine,
+    model,
+    tier: tierName(tier),
+    ...(providerId === null ? {} : { provider: providerId }),
+  });
 
   if (turnId !== null) {
     toast(strings.prompt.sent(engine, model));
@@ -814,6 +852,7 @@ export async function fixWithAgent(input: {
       : `${input.file}${input.line === undefined ? '' : `:${input.line}`}`;
 
   const prompt = [input.title, location, input.explanation].filter((part) => part !== '').join('\n');
+  const { providerId } = useModelStore.getState();
 
   await startTurn({
     sessionId: input.sessionId,
@@ -821,6 +860,9 @@ export async function fixWithAgent(input: {
     engine: input.engine,
     model: input.model,
     tier: input.tier,
+    /* The same fact the Send path sends: whoever runs this turn, the daemon needs to know which
+       provider the model came from to find its endpoint and its key. */
+    ...(providerId === null ? {} : { provider: providerId }),
   });
 }
 

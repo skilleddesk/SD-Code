@@ -44,6 +44,15 @@ pub struct Prompt {
     /// mistake - a fact about the session inferred from its content - and both are why "connect with
     /// an API key" did not work even with a valid key.
     pub model: String,
+    /// The provider the model was picked from, when the caller knows it (`deepseek`).
+    ///
+    /// The model id alone is not always enough: a provider's *live* list contains ids this build's
+    /// catalogue has never seen (`deepseek-v4-pro`), so nothing can say which endpoint it belongs to -
+    /// and `native_api` fell back to the loopback `custom` endpoint, whose key is a different entry, and
+    /// answered `No API key for custom` for a provider the person had already connected. The provider
+    /// travels with the prompt for the same reason the model does: the engine cannot guess a fact about
+    /// the session, and a wrong guess here is a failed turn, not a wrong label.
+    pub provider: Option<String>,
     /// The conversation so far, oldest first - the Session Bridge's payload (spec section 16.5).
     pub history: Vec<String>,
 }

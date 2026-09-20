@@ -22,60 +22,145 @@ use serde_json::{json, Value};
 use crate::engines::{Engine, EngineEvent, EngineStatus, Prompt};
 
 /// Which provider a model id belongs to, and where its endpoint is.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// The fields are owned `String`s because 0.7.2 resolves them from the catalogue rather than from a
+/// hand-written table: the provider that listed the model is the provider the request goes to
+/// (`protocol/models.json`), and its key comes from the same keychain entry the Provider Hub wrote.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Endpoint {
-    pub provider: &'static str,
-    /// The keychain entry this endpoint's key comes from.
-    pub key_ref: &'static str,
-    pub url: &'static str,
+    pub provider: String,
+    /// The keychain entry this endpoint's key comes from (`providers::key_ref(provider)`).
+    pub key_ref: String,
+    pub url: String,
     /// `anthropic` speaks `messages`, `openai` speaks `chat/completions`.
     pub dialect: &'static str,
 }
 
-/// The endpoints the adapter knows.
-pub const ENDPOINTS: &[Endpoint] = &[
-    Endpoint {
-        provider: "anthropic",
-        key_ref: "sdc.provider.anthropic-api",
-        url: "https://api.anthropic.com/v1/messages",
-        dialect: "anthropic",
-    },
-    Endpoint {
-        provider: "openai",
-        key_ref: "sdc.provider.openai-api",
-        url: "https://api.openai.com/v1/chat/completions",
-        dialect: "openai",
-    },
-    Endpoint {
-        provider: "custom",
-        key_ref: "sdc.provider.custom",
-        url: "http://127.0.0.1:8080/v1/chat/completions",
-        dialect: "openai",
-    },
+/// The endpoints this build can fall back to when the catalogue has never heard of the model.
+const FALLBACKS: &[(&str, &str, &str, &str)] = &[
+    ("anthropic", "sdc.provider.anthropic-api", "https://api.anthropic.com/v1/messages", "anthropic"),
+    ("openai", "sdc.provider.openai-api", "https://api.openai.com/v1/chat/completions", "openai"),
+    ("custom", "sdc.provider.custom", "http://127.0.0.1:8080/v1/chat/completions", "openai"),
 ];
 
-/// The endpoint for a model id: the first provider that prefixes it, else the custom loopback one.
-pub fn endpoint_for(model: &str) -> Endpoint {
-    ENDPOINTS
-        .iter()
-        .find(|endpoint| model.starts_with(endpoint.provider))
-        .copied()
-        .unwrap_or(ENDPOINTS[2])
+/// The chat URL for a catalogue block, derived from the URL it lists models at.
+///
+/// Every block's `live` is the `…/models` endpoint of the same API (`https://api.deepseek.com/v1/models`),
+/// so the chat URL is that URL minus `models` plus `chat/completions` - or `messages` for an
+/// `anthropic`-protocol block. `None` when the URL is not of that shape, which is the honest answer:
+/// deriving a guess from a non-model URL is how a request ends up at a host nobody chose.
+fn chat_url(live: &str, dialect: &str) -> Option<String> {
+    let base = live.strip_suffix("/models")?;
+    let path = if dialect == "anthropic" { "/messages" } else { "/chat/completions" };
+
+    Some(format!("{base}{path}"))
 }
 
-/// The model id a provider's own API expects: the registry's id without its `<provider>/` prefix.
+/// The endpoint for a model id, resolved from the catalogue that listed it.
 ///
-/// The registry spells a model `anthropic/claude-sonnet-4-5` because one list holds every provider;
-/// `api.anthropic.com` knows it as `claude-sonnet-4-5`, and a request that sends the prefixed form is
-/// rejected as an unknown model.
-pub fn api_model(model: &str) -> &str {
-    model.split_once('/').map(|(_provider, name)| name).unwrap_or(model)
+/// **This is the bug the user hit.** It used to be a three-row table - `anthropic`, `openai`, `custom` -
+/// matched by the model id's prefix. Every other provider the catalogue ships (DeepSeek, Groq,
+/// OpenRouter) therefore matched *nothing* and fell through to `custom`, whose key is
+/// `sdc.provider.custom`: the chat answered `No API key for custom` for a provider the person had
+/// already connected, and the model they picked could never work.
+///
+/// Two sources are consulted, in this order:
+///
+///  1. **the provider the app sent with the turn** - a fact, so it decides by itself. This is the one
+///     that covers a model the catalogue has never seen, which every provider's live list is full of.
+///  2. **the catalogue block whose models contain the id** - for callers that send only a model id.
+///
+/// `custom` remains the last resort, for an id nothing claims - which is what a hand-typed model id for
+/// a hand-configured endpoint is.
+pub fn endpoint_for(model: &str, provider: Option<&str>) -> Endpoint {
+    let blocks = crate::providers::models::blocked();
+
+    if let Some(id) = provider.filter(|id| !id.trim().is_empty()) {
+        if let Some(block) = blocks.iter().find(|block| block.id == id && block.protocol != "ollama") {
+            if let Some(endpoint) = endpoint_from(block) {
+                return endpoint;
+            }
+        }
+    }
+
+    let head = model.split('/').next().unwrap_or(model);
+    let name = api_model(model);
+
+    for block in &blocks {
+        /* Ollama is its own engine with its own protocol (`/api/chat`), so a native API turn has no
+           business being routed to it. */
+        if block.protocol == "ollama" {
+            continue;
+        }
+
+        let named = |wanted: &str| block.models.iter().any(|entry| entry["id"].as_str() == Some(wanted));
+        let is_this_provider = block.id == head || block.id.trim_end_matches("-api") == head;
+
+        if !(named(name) || (is_this_provider && named(model))) {
+            continue;
+        }
+
+        if let Some(endpoint) = endpoint_from(block) {
+            return endpoint;
+        }
+    }
+
+    let row = FALLBACKS
+        .iter()
+        .find(|(provider, _key, _url, _dialect)| *provider == head)
+        .copied()
+        .unwrap_or(FALLBACKS[2]);
+
+    Endpoint {
+        provider: row.0.to_string(),
+        key_ref: row.1.to_string(),
+        url: row.2.to_string(),
+        dialect: row.3,
+    }
 }
+
+/// A catalogue block as an endpoint: its key entry, its dialect, and the chat URL its live URL implies.
+/// `None` when the block has no derivable chat URL, so the caller can try the next candidate rather
+/// than send a request to a host nobody chose.
+fn endpoint_from(block: &crate::providers::models::ProviderBlock) -> Option<Endpoint> {
+    let dialect = if block.protocol == "anthropic" { "anthropic" } else { "openai" };
+
+    Some(Endpoint {
+        key_ref: crate::providers::key_ref(&block.id),
+        provider: block.id.clone(),
+        url: chat_url(&block.live, dialect)?,
+        dialect,
+    })
+}
+
+/// The model id a provider's own API expects: the catalogue's id without its provider prefix.
+///
+/// The catalogue spells a model `deepseek/deepseek-chat` because one list holds every provider, and
+/// `api.deepseek.com` knows it as `deepseek-chat`. Only a prefix that *is* a catalogue provider is
+/// stripped, because the rest of the id is the provider's own spelling: OpenRouter's
+/// `openrouter/anthropic/claude-sonnet-4-5` must reach it as `anthropic/claude-sonnet-4-5`, not as
+/// `claude-sonnet-4-5`, which is not a model it knows.
+pub fn api_model(model: &str) -> &str {
+    let Some((head, rest)) = model.split_once('/') else {
+        return model;
+    };
+
+    let head_is_a_provider = crate::providers::models::blocked()
+        .iter()
+        .any(|block| block.id == head || block.id.trim_end_matches("-api") == head);
+
+    if head_is_a_provider {
+        rest
+    } else {
+        model
+    }
+}
+
 
 /// The URL, headers and body of one turn. The key is a *parameter*, not a field: this function never
 /// touches the keychain, which is what keeps it pure and testable.
 pub fn build_request(
-    endpoint: Endpoint,
+    endpoint: &Endpoint,
     key: &str,
     model: &str,
     prompt: &Prompt,
@@ -106,7 +191,7 @@ pub fn build_request(
         (auth_name.to_string(), auth_value),
     ];
 
-    (endpoint.url.to_string(), headers, body.to_string())
+    (endpoint.url.clone(), headers, body.to_string())
 }
 
 /// Parses an SSE stream. Each `data:` line is one JSON object; `data: [DONE]` ends it. A comment or
@@ -326,8 +411,8 @@ impl Engine for NativeApi {
         /* The session's own model, not a guess from the prompt's text: `endpoint_for` used to be
            handed `&prompt.text`, so an API turn went to whichever endpoint the first word of the
            prompt happened to match - and to the loopback one otherwise. */
-        let endpoint = endpoint_for(&prompt.model);
-        let key = crate::auth::keychain::get(endpoint.key_ref).unwrap_or_default();
+        let endpoint = endpoint_for(&prompt.model, prompt.provider.as_deref());
+        let key = crate::auth::keychain::get(&endpoint.key_ref).unwrap_or_default();
 
         if key.is_empty() {
             return vec![EngineEvent::Failed(format!(
@@ -336,7 +421,7 @@ impl Engine for NativeApi {
             ))];
         }
 
-        let (url, headers, body) = build_request(endpoint, &key, &prompt.model, &prompt);
+        let (url, headers, body) = build_request(&endpoint, &key, &prompt.model, &prompt);
 
         match post_stream(&url, &headers, &body) {
             Ok(lines) => parse_sse(&lines),
@@ -366,6 +451,7 @@ mod tests {
             text: text.into(),
             /* The registry's spelling of the model the session is set to. */
             model: "anthropic/claude-sonnet-4-5".into(),
+            provider: None,
             history,
         }
     }
@@ -377,8 +463,12 @@ mod tests {
         assert_eq!(api_model("openai/gpt-5"), "gpt-5");
         assert_eq!(api_model("sonnet"), "sonnet");
 
-        let (_url, _headers, body) =
-            build_request(endpoint_for("anthropic/claude-sonnet-4-5"), "sk-ant-1", "anthropic/claude-sonnet-4-5", &prompt("hi", vec![]));
+        let (_url, _headers, body) = build_request(
+            &endpoint_for("anthropic/claude-sonnet-4-5", None),
+            "sk-ant-1",
+            "anthropic/claude-sonnet-4-5",
+            &prompt("hi", vec![]),
+        );
 
         assert!(body.contains(r#""model":"claude-sonnet-4-5""#), "{body}");
     }
@@ -388,15 +478,68 @@ mod tests {
     /// user happened to type the provider's name first.
     #[test]
     fn the_endpoint_follows_the_model_not_the_prompt() {
-        assert_eq!(endpoint_for("anthropic/claude-sonnet-4-5").provider, "anthropic");
-        assert_eq!(endpoint_for("openai/gpt-5").provider, "openai");
-        assert_eq!(endpoint_for("llama3.2:3b").provider, "custom");
+        assert_eq!(endpoint_for("anthropic/claude-sonnet-4-5", None).provider, "anthropic-api");
+        assert_eq!(endpoint_for("openai/gpt-5", None).provider, "openai-api");
+        assert_eq!(endpoint_for("llama3.2:3b", None).provider, "custom");
+    }
+
+    /// The bug the user hit: `deepseek-v4-pro` came from DeepSeek's own live list, so no block in this
+    /// build's catalogue mentions it. Without the provider it reaches the loopback endpoint and asks for
+    /// a key under `sdc.provider.custom`, while the DeepSeek key sits under `sdc.provider.deepseek`.
+    #[test]
+    fn the_provider_the_app_sent_decides_even_for_a_model_the_catalogue_never_saw() {
+        let chosen = endpoint_for("deepseek-v4-pro", Some("deepseek"));
+
+        assert_eq!(chosen.provider, "deepseek");
+        assert_eq!(chosen.key_ref, "sdc.provider.deepseek");
+        assert_eq!(chosen.url, "https://api.deepseek.com/v1/chat/completions");
+
+        /* And without it the same id is unresolvable, which is exactly why the provider has to travel
+           with the turn. */
+        assert_eq!(endpoint_for("deepseek-v4-pro", None).provider, "custom");
+    }
+
+    /// A catalogue id still resolves on its own, for a caller that sends only a model.
+    #[test]
+    fn a_catalogue_id_resolves_to_the_provider_that_listed_it() {
+        let deepseek = endpoint_for("deepseek-chat", None);
+
+        assert_eq!(deepseek.provider, "deepseek");
+        assert_eq!(deepseek.key_ref, "sdc.provider.deepseek");
+
+        let groq = endpoint_for("groq/llama-3.3-70b-versatile", None);
+
+        assert_eq!(groq.provider, "groq");
+        assert_eq!(groq.url, "https://api.groq.com/openai/v1/chat/completions");
+    }
+
+    /// A prefixed id keeps the rest of its own spelling: OpenRouter's ids carry a vendor prefix, and
+    /// sending it `claude-sonnet-4-5` would be a model it does not know.
+    #[test]
+    fn the_provider_prefix_comes_off_and_nothing_else_does() {
+        assert_eq!(api_model("deepseek/deepseek-chat"), "deepseek-chat");
+        assert_eq!(api_model("openrouter/anthropic/claude-sonnet-4-5"), "anthropic/claude-sonnet-4-5");
+        assert_eq!(api_model("sonnet"), "sonnet");
+    }
+
+    /// The catalogue's own spelling decides which provider a request goes to, so an `anthropic` block
+    /// still speaks `messages` with the key in `x-api-key`.
+    #[test]
+    fn anthropic_still_gets_its_own_dialect_from_the_catalogue() {
+        let anthropic = endpoint_for("anthropic/claude-sonnet-4-5", None);
+
+        assert_eq!(anthropic.dialect, "anthropic");
+        assert_eq!(anthropic.url, "https://api.anthropic.com/v1/messages", "{anthropic:?}");
     }
 
     #[test]
     fn anthropic_puts_the_key_in_its_own_header() {
-        let (url, headers, body) =
-            build_request(endpoint_for("anthropic/x"), "sk-ant-1", "sonnet", &prompt("hi", vec![]));
+        let (url, headers, body) = build_request(
+            &endpoint_for("anthropic/x", None),
+            "sk-ant-1",
+            "sonnet",
+            &prompt("hi", vec![]),
+        );
 
         assert!(url.ends_with("/v1/messages"));
         assert!(headers.iter().any(|(name, value)| name == "x-api-key" && value == "sk-ant-1"));
@@ -405,8 +548,12 @@ mod tests {
 
     #[test]
     fn openai_uses_a_bearer_token_and_replays_the_history() {
-        let (_url, headers, body) =
-            build_request(endpoint_for("openai/gpt-5"), "sk-1", "gpt-5", &prompt("hi", vec!["earlier".into()]));
+        let (_url, headers, body) = build_request(
+            &endpoint_for("openai/gpt-5", None),
+            "sk-1",
+            "gpt-5",
+            &prompt("hi", vec!["earlier".into()]),
+        );
 
         assert!(headers.iter().any(|(name, value)| name == "authorization" && value == "Bearer sk-1"));
         assert!(body.contains("earlier"));
@@ -462,6 +609,6 @@ mod tests {
 
     #[test]
     fn the_unknown_provider_falls_back_to_the_custom_endpoint() {
-        assert_eq!(endpoint_for("ollama/llama3").provider, "custom");
+        assert_eq!(endpoint_for("ollama/llama3", None).provider, "custom");
     }
 }

@@ -161,7 +161,7 @@
         "session.open": { "params": { "hostId": "string", "title": "string?", "prompt": "string?" }, "result": { "sessionId": "string" } },
         "session.close": { "params": { "sessionId": "string" }, "result": {} },
         "session.update": { "params": { "sessionId": "string", "title": "string?", "state": "string?" }, "result": {} },
-        "engine.start": { "params": { "sessionId": "string", "prompt": "string", "engine": "string", "model": "string", "tier": "Fast|Balanced|Deep" }, "result": { "turnId": "string" } },
+        "engine.start": { "params": { "sessionId": "string", "prompt": "string", "engine": "string", "model": "string", "tier": "Fast|Balanced|Deep", "provider": "string?" }, "result": { "turnId": "string" } },
         "engine.cancel": { "params": { "turnId": "string" }, "result": {} },
         "engine.kill": { "params": { "turnId": "string" }, "result": {} },
         "engine.status": { "params": { "turnId": "string" }, "result": { "state": "idle|running|awaiting|stuck|done|failed|killed", "engine": "string", "model": "string" } },

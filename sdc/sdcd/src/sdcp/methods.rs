@@ -456,6 +456,10 @@ impl Daemon {
             .opt_str("tier")
             .unwrap_or_else(|| crate::engines::tier_for(&engine_id).to_string());
         let prompt_text = envelope.opt_str("prompt").unwrap_or_default();
+        /* The provider the model was picked from. It is what makes a live-only model id
+           (`deepseek-v4-pro`, which this build's catalogue has never seen) resolvable to a real
+           endpoint instead of the loopback `custom` one. */
+        let provider = envelope.opt_str("provider").filter(|id| !id.trim().is_empty());
         let turn_id = format!("turn-{}", self.state.events.seq() + 1);
         let engine = self.state.engines.get(&engine_id).ok_or_else(|| {
             ErrorObject::not_found(format!(
@@ -489,7 +493,7 @@ impl Daemon {
         let state = self.state.clone();
         let notifier = out.clone();
         let answer_turn_id = turn_id.clone();
-        let plan = RunPlan { session_id, turn_id, engine_id, prompt_text, model, history };
+        let plan = RunPlan { session_id, turn_id, engine_id, prompt_text, model, provider, history };
 
         tokio::spawn(async move {
             run_turn(state, engine, plan, notifier).await;
@@ -1195,6 +1199,9 @@ struct RunPlan {
     /// registry. It travels to the engine inside the `Prompt`, because the engine cannot guess it -
     /// see the note on `Prompt::model`.
     model: String,
+    /// The provider the model belongs to, when the caller said. `native_api` needs it to find the
+    /// endpoint (and therefore the key entry) of a model id this build's catalogue has never seen.
+    provider: Option<String>,
     history: Vec<String>,
 }
 
@@ -1213,6 +1220,7 @@ async fn run_turn(
         turn_id: plan.turn_id.clone(),
         text: plan.prompt_text.clone(),
         model: plan.model.clone(),
+        provider: plan.provider.clone(),
         history: plan.history.clone(),
     };
     let events = engine.start(prompt).await;
