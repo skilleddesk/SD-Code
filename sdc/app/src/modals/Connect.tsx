@@ -1,5 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
-import { Check, ClipboardCopy, ExternalLink, RefreshCw, Terminal, TriangleAlert } from 'lucide-react';
+import {
+  Check,
+  ClipboardCopy,
+  ExternalLink,
+  KeyRound,
+  RefreshCw,
+  Search,
+  Terminal,
+  TriangleAlert,
+  Zap,
+} from 'lucide-react';
 
 import { strings } from '../strings';
 import {
@@ -15,27 +25,31 @@ import {
 } from '../store/intents';
 import { useOverlayStore } from '../store/overlays';
 import { useProviderStore } from '../store/providers';
+import { tierFromName, tierLabel } from '../store/model';
 import { toast } from '../store/toast';
-import { BTN, BTN_PRIMARY, BTN_SECONDARY } from '../panels/ui/button';
+import { Badge, type BadgeTone } from '../panels/ui/Badge';
+import { BTN, BTN_GHOST, BTN_LG, BTN_PRIMARY, BTN_SECONDARY, BTN_SM, BTN_SM_LG } from '../panels/ui/button';
+import { Field } from '../panels/ui/Field';
+import { Section } from '../panels/ui/Section';
 import { Modal } from './Modal';
 
 /**
- * `#connectBd` - the two flows that get a user working (spec section 9.10).
+ * `#connectBd` - the two flows that get a user working (spec section 9.10), re-drawn in 0.7.1.
  *
- * It is its own surface because these are the two things a person has to *do* before SDC can help
- * them, and neither fits in a card:
+ * The report that caused the redraw was a screenshot of the API-key dialog with everything on it circled:
+ * *"koto useless and normal… button gulaw useless… sob gulatai aki"*. Read honestly, that dialog was one
+ * flat column - an unlabelled password box, `Save` and `Refresh` squeezed together with a footnote
+ * wrapping between them, a tiny `MODELS` heading, and rows carrying a hand-rolled pill, a lowercase tier
+ * and a `Use` button shaped exactly like every other button on screen.
  *
- *  * **Sign in.** The daemon starts the CLI's own login (`cli.login`), which prints a URL. The URL is
- *    shown here with a copy button and a box for the code the browser gives back. SDC never sees the
- *    credential - the CLI writes it - and the CLI's own output is shown underneath, so a sign-in that
- *    goes sideways is visible instead of mysterious.
- *  * **API key and model.** The key goes to the keychain, and the model list is the daemon's
- *    catalogue: `live` rows came from the provider just now, `cached` rows are its last answer, and
- *    `bundled` rows shipped with this build. Refresh asks again; a refresh that could not reach the
- *    provider says so and keeps the list.
+ * The shape now is three parts, and every surface in this file follows it:
  *
- * The daemon does the work in both cases. This component polls and renders, and keeps no state that
- * the daemon or the event log already has.
+ *   header    what this is: a provider tile, the name, a status badge, one sentence
+ *   sections  the jobs: an uppercase name, the section's own controls, and a note under them
+ *   footer    the dialog's one decision on the right, the way out beside it
+ *
+ * Nothing is decided twice: `Save key` is in the footer rather than beside `Refresh`, `Refresh` belongs
+ * to the MODELS header, and the way out says `Close` - the same word as the frame's X.
  */
 export function Connect() {
   const open = useOverlayStore((state) => state.connectOpen);
@@ -45,37 +59,23 @@ export function Connect() {
   const providers = useProviderStore((state) => state.providers);
 
   const provider = providers.find((candidate) => candidate.id === providerId);
+  const connected = provider?.status === 'connected';
 
   const [key, setKey] = useState('');
   const [login, setLogin] = useState<CliLoginView | null>(null);
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
   const [models, setModels] = useState<ModelsView | null>(null);
+  const [filter, setFilter] = useState('');
 
-  /*
-   * The sign-in starts itself, and that is the 0.6.1 change to this modal.
-   *
-   * Clicking a subscription card means "use my Claude / ChatGPT / Gemini plan", and a person who has
-   * just clicked it should not then have to find a second button called `Sign in` to say the same
-   * thing again. Opening this modal in `login` mode starts the CLI's own login immediately; the CLI is
-   * the only party that can authenticate, so what the user gets is the provider's real page and a code
-   * to paste back - no credential ever passes through SDC.
-   *
-   * Once per open, tracked by provider id: a login that failed, or a user who cancelled, must not be
-   * restarted by a re-render. Closing the modal clears the note and the next open tries again; the
-   * `Try again` button is the retry inside one open.
-   */
   const startedFor = useRef<string | null>(null);
   const announced = useRef<string | null>(null);
+  const codeRef = useRef<HTMLInputElement | null>(null);
+  const outputRef = useRef<HTMLPreElement | null>(null);
+  const focusedFor = useRef<string | null>(null);
 
-  /*
-   * A finished sign-in says so out loud, once.
-   *
-   * The card flips because the daemon pushes a `ProviderStatus` the moment its `cli.login.status`
-   * sees the CLI's success line - and this is the sentence next to it, because "it worked" is the one
-   * thing a person cannot check for themselves: the credential is in the CLI's own store. Guarded by
-   * a ref keyed on the login id, since the modal polls once a second and would otherwise repeat it.
-   */
+  /* A finished sign-in says so out loud, once: the card flips because the daemon pushes a
+     `ProviderStatus`, and this is the sentence beside it. */
   useEffect(() => {
     if (login === null || !login.authenticated || announced.current === login.loginId) {
       return;
@@ -85,6 +85,8 @@ export function Connect() {
     toast(strings.connect.signedInToast(login.providerLabel));
   }, [login]);
 
+  /* The sign-in starts itself: clicking a subscription card means "use my plan", and a person who just
+     clicked it should not have to find a second button that says the same thing. */
   useEffect(() => {
     if (!open) {
       startedFor.current = null;
@@ -104,8 +106,7 @@ export function Connect() {
     });
   }, [open, mode, providerId]);
 
-  /* One poll per second while a sign-in is in flight: the URL, the CLI's tail, and the moment it says
-     it is done. The poll stops the instant the CLI has spoken, so a finished login costs nothing. */
+  /* One poll per second while a sign-in is in flight, and none after it has spoken. */
   useEffect(() => {
     if (login === null || login.authenticated || login.state === 'exited' || login.state === 'failed') {
       return undefined;
@@ -133,32 +134,17 @@ export function Connect() {
 
   const name = provider?.name ?? providerId ?? '';
 
-  /*
-   * Whether the CLI is still waiting for a code.
-   *
-   * The paste boxes are only drawn while that is true. A sign-in that has stopped - accepted, failed,
-   * cancelled - keeps no field: the screenshot that started this had a code box and a `Submit code`
-   * under a CLI that had already said `Login failed ... 400`, which invites a person to paste into
-   * something that cannot answer.
-   */
+  /* The paste boxes are drawn only while the CLI is still waiting for a code. A sign-in that has stopped
+     keeps no field: a box under a CLI that already said `Login failed` invites a person to paste into
+     something that cannot answer. */
   const waitingForCode =
     login !== null &&
     !login.authenticated &&
     login.url !== null &&
     (login.state === 'waiting_for_code' || login.state === 'waiting_for_url');
 
-  const codeRef = useRef<HTMLInputElement | null>(null);
-  const outputRef = useRef<HTMLPreElement | null>(null);
-  const focusedFor = useRef<string | null>(null);
-
-  /*
-   * The code field takes focus once, the moment the CLI is waiting for a code.
-   *
-   * Once, keyed by the login id: the poll re-renders this dialog every second, and a field that is
-   * re-focused on every render cannot be typed into - a paste needs a target that stays put. (The
-   * other half of that bug was in `Modal`, which stole focus to the *first* control, i.e. the URL field
-   * above this one, once a second.)
-   */
+  /* The code field takes focus once, keyed by login id: the poll re-renders this dialog every second, and
+     a field that is re-focused on every render cannot be typed into. */
   useEffect(() => {
     if (login === null || !waitingForCode || focusedFor.current === login.loginId) {
       return;
@@ -168,12 +154,8 @@ export function Connect() {
     codeRef.current?.focus();
   }, [login, waitingForCode]);
 
-  /*
-   * The CLI's own output scrolls inside its own box.
-   *
-   * The box has a fixed height, so one line more or less cannot resize the dialog and push the fields
-   * out from under the pointer - which is what "it goes up and nothing can be pasted" was.
-   */
+  /* The CLI's own output scrolls inside its own fixed-height box, so one line more or less cannot resize
+     the dialog and push the fields out from under the pointer. */
   useEffect(() => {
     const output = outputRef.current;
 
@@ -182,14 +164,7 @@ export function Connect() {
     }
   }, [login]);
 
-  /*
-   * A sign-in that finished closes itself, after long enough to read the line that says so.
-   *
-   * Reported as "auto connect hoye gale complete dekhiye cole jabe": the card has flipped, the toast has
-   * announced it, and a dialog that stays open over a finished job is a dialog the user has to close by
-   * hand for no reason. The X in the frame and Escape are still there for anyone who wants to leave
-   * early.
-   */
+  /* A sign-in that finished closes itself, after long enough to read the line that says so. */
   useEffect(() => {
     if (login === null || !login.authenticated) {
       return undefined;
@@ -200,8 +175,17 @@ export function Connect() {
     return () => window.clearTimeout(timer);
   }, [login, close]);
 
-  const copy = (url: string): void => {
-    void navigator.clipboard?.writeText(url).then(() => toast(strings.connect.copied));
+  const shown =
+    models === null
+      ? []
+      : models.models.filter((model) =>
+          filter.trim() === ''
+            ? true
+            : `${model.id} ${model.name}`.toLowerCase().includes(filter.trim().toLowerCase()),
+        );
+
+  const copy = (text: string): void => {
+    void navigator.clipboard?.writeText(text).then(() => toast(strings.connect.copied));
   };
 
   const signIn = (): void => {
@@ -233,298 +217,426 @@ export function Connect() {
     });
   };
 
+  const saveKey = (): void => {
+    setBusy(true);
+    void connectApiKey(providerId ?? '', key).then((saved) => {
+      setBusy(false);
+
+      if (saved) {
+        setKey('');
+        load(true);
+      }
+    });
+  };
+
   const use = (modelId: string): void => {
     void chooseModel(modelId, providerId ?? '').then((ok) => {
       if (ok) {
-        setModels((current) => (current === null ? current : { ...current, selected: { modelId, providerId: providerId ?? null } }));
+        setModels((current) =>
+          current === null ? current : { ...current, selected: { modelId, providerId: providerId ?? null } },
+        );
         toast(`${modelId} · ${strings.connect.selected}`);
       }
     });
   };
 
+  const leave = (): void => {
+    if (login !== null && !login.authenticated && login.state !== 'exited') {
+      void cancelCliLogin(login.loginId);
+    }
+
+    setLogin(null);
+    close();
+  };
+
+
   return (
-    <Modal
-      open={open}
-      label={`${strings.connect.title} · ${name}`}
-      onClose={() => {
-        if (login !== null && !login.authenticated && login.state !== 'exited') {
-          void cancelCliLogin(login.loginId);
-        }
+    <Modal open={open} label={`${strings.connect.title} · ${name}`} onClose={leave} center className="connect-dlg w-[min(620px,96vw)]">
+      <div className="flex flex-col" data-connect={mode} data-connect-provider={providerId ?? ''}>
+        {/* ---------------------------------------------------------------- header */}
+        <header className="flex items-start gap-[12px] border-b border-border-subtle px-[18px] py-[16px]">
+          <div className="grid h-[36px] w-[36px] shrink-0 place-items-center rounded-lg bg-accent-subtle text-accent">
+            {mode === 'login' ? <Terminal size={18} aria-hidden="true" /> : <KeyRound size={18} aria-hidden="true" />}
+          </div>
 
-        setLogin(null);
-        close();
-      }}
-      center
-      className="connect-dlg w-[min(560px,96vw)]"
-    >
-      <div className="flex flex-col gap-[14px] p-[16px]" data-connect={mode} data-connect-provider={providerId ?? ''}>
-        <div>
-          <h2 className="text-[14px] font-semibold text-text-primary">
-            {mode === 'login' ? strings.connect.loginTitle : strings.connect.apiTitle}
-          </h2>
-          <p className="mt-[4px] text-[12px] text-text-secondary">
-            {mode === 'login' ? strings.connect.loginBody : strings.connect.apiBody}
-          </p>
-        </div>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-[8px]">
+              <h2 className="truncate text-[14px] font-semibold text-text-primary">
+                {mode === 'login' ? strings.connect.loginTitle : strings.connect.apiTitle}
+              </h2>
 
-        {mode === 'login' ? (
-          <>
-            {login === null ? (
-              <div className="flex items-center gap-[8px]">
-                <button type="button" className={BTN_PRIMARY} onClick={signIn} disabled={busy} id="connectSignIn">
-                  <Terminal size={13} /> {strings.connect.signIn}
-                </button>
-                <span className="text-[11.5px] text-text-muted">{name}</span>
-              </div>
-            ) : null}
+              <Badge tone={connected ? 'success' : 'neutral'}>
+                {connected ? strings.connect.verifiedBadge : strings.connect.notConnectedBadge}
+              </Badge>
+            </div>
 
-            {login !== null ? (
-              <>
-                <div className="rounded-md border border-border-subtle bg-bg-raised p-[10px]">
-                  <div className="flex items-start gap-[6px] text-[11.5px] text-text-secondary">
-                    {login.authenticated ? (
-                      <>
-                        <Check size={13} className="mt-[1px] shrink-0 text-state-success" />
-                        <span>
-                          <span className="font-medium text-state-success">{strings.connect.authenticated}</span>
-                          {' · '}
-                          {strings.connect.signedInNote}
-                        </span>
-                      </>
-                    ) : login.state === 'failed' || login.state === 'cancelled' ? (
-                      /* The CLI stopped without a credential: say that, rather than leaving the
-                         `Waiting for the CLI…` line of a login that is over. */
-                      <>
-                        <TriangleAlert size={13} className="mt-[1px] shrink-0 text-state-error" />
-                        <span>{strings.connect.failed}</span>
-                      </>
-                    ) : login.state === 'exited' ? (
-                      <>
-                        <TriangleAlert size={13} className="mt-[1px] shrink-0 text-state-waiting" />
-                        <span>{strings.connect.finished}</span>
-                      </>
-                    ) : (
-                      <>
-                        <RefreshCw size={13} className="mt-[1px] shrink-0 animate-spin text-state-waiting" />
-                        <span>
-                          {login.state === 'waiting_for_code' ? strings.connect.waitingForCode : strings.connect.waiting}
-                        </span>
-                      </>
-                    )}
+            <p className="mt-[3px] text-[12px] leading-[1.55] text-text-secondary">
+              {mode === 'login' ? strings.connect.loginBody : `${name} · ${strings.connect.apiBody}`}
+            </p>
+          </div>
+        </header>
+
+        {/* ------------------------------------------------------------------ body */}
+        <div className="flex flex-col">
+          {mode === 'login' ? (
+            <>
+              {login === null ? (
+                <Section title={strings.connect.pageTitle} note={strings.connect.note}>
+                  <div className="flex items-center gap-[10px]">
+                    <button
+                      type="button"
+                      className={BTN_LG + ' ' + BTN_PRIMARY}
+                      onClick={signIn}
+                      disabled={busy}
+                      id="connectSignIn"
+                    >
+                      <Terminal size={14} aria-hidden="true" /> {strings.connect.signIn}
+                    </button>
+                    <span className="text-[11.5px] text-text-muted">{name}</span>
                   </div>
+                </Section>
+              ) : null}
 
-                  {waitingForCode ? (
-                    <>
-                      <div className="mt-[10px] text-[10px] font-bold uppercase tracking-[0.1em] text-text-muted">
-                        {strings.connect.pageLabel}
-                      </div>
-                      <div className="mt-[4px] flex items-center gap-[6px]">
-                        <input
-                          readOnly
-                          id="connectUrl"
-                          aria-label={strings.connect.copyLink}
-                          value={login.url ?? ''}
-                          className="min-w-0 flex-1 rounded-md border border-border-default bg-bg-input px-[8px] py-[6px] font-mono text-[11.5px] text-text-primary"
-                        />
-                        <button type="button" className={BTN_SECONDARY} onClick={() => copy(login.url ?? '')} id="connectCopy">
-                          <ClipboardCopy size={13} />
-                        </button>
-                        <a className={BTN_SECONDARY} href={login.url ?? '#'} target="_blank" rel="noreferrer noopener">
-                          <ExternalLink size={13} />
-                        </a>
-                      </div>
+              {login !== null ? (
+                <>
+                  <div className="border-b border-border-subtle px-[18px] py-[14px]">
+                    <div className="flex items-start gap-[8px] text-[12px] leading-[1.55]">
+                      {login.authenticated ? (
+                        <>
+                          <Check size={14} className="mt-[1px] shrink-0 text-state-success" aria-hidden="true" />
+                          <span className="text-text-secondary">
+                            <span className="font-semibold text-state-success">{strings.connect.authenticated}</span>
+                            {' · '}
+                            {strings.connect.signedInNote}
+                          </span>
+                        </>
+                      ) : login.state === 'failed' || login.state === 'cancelled' ? (
+                        <>
+                          <TriangleAlert size={14} className="mt-[1px] shrink-0 text-state-error" aria-hidden="true" />
+                          <span className="text-text-secondary">{strings.connect.failed}</span>
+                        </>
+                      ) : login.state === 'exited' ? (
+                        <>
+                          <TriangleAlert size={14} className="mt-[1px] shrink-0 text-state-waiting" aria-hidden="true" />
+                          <span className="text-text-secondary">{strings.connect.finished}</span>
+                        </>
+                      ) : (
+                        <>
+                          <RefreshCw
+                            size={14}
+                            className="mt-[1px] shrink-0 animate-spin text-state-waiting"
+                            aria-hidden="true"
+                          />
+                          <span className="text-text-secondary">
+                            {login.state === 'waiting_for_code' ? strings.connect.waitingForCode : strings.connect.waiting}
+                          </span>
+                        </>
+                      )}
+                    </div>
 
-                      <div className="mt-[10px] text-[10px] font-bold uppercase tracking-[0.1em] text-text-muted">
-                        {strings.connect.codeLabel}
-                      </div>
-                      <div className="mt-[4px] flex items-center gap-[6px]">
-                        <input
-                          ref={codeRef}
+                    {waitingForCode ? (
+                      <div className="mt-[12px] flex flex-col gap-[8px]">
+                        <Field
+                          inputRef={codeRef}
                           id="connectCode"
-                          aria-label={strings.connect.codeLabel}
+                          label={strings.connect.codeLabel}
                           placeholder={strings.connect.codePlaceholder}
                           value={code}
-                          onChange={(event) => setCode(event.target.value)}
-                          onKeyDown={(event) => {
-                            if (event.key === 'Enter' && code.trim() !== '') {
+                          onChange={setCode}
+                          onEnter={() => {
+                            if (code.trim() !== '') {
                               submit();
                             }
                           }}
-                          className="min-w-0 flex-1 rounded-md border border-border-default bg-bg-input px-[8px] py-[6px] font-mono text-[11.5px] text-text-primary placeholder:text-text-muted"
+                          hint={strings.connect.codeHint}
                         />
-                        {/* Disabled until there is something to submit: a primary button over an empty
-                            field is the design mistake that was reported, and it is also the one that
-                            sends an empty line to a CLI that is waiting for a code. */}
+
+                        <div className="flex justify-end">
+                          <button
+                            type="button"
+                            className={BTN + ' ' + BTN_PRIMARY}
+                            onClick={submit}
+                            disabled={busy || code.trim() === ''}
+                            id="connectSubmit"
+                          >
+                            {strings.connect.submitCode}
+                          </button>
+                        </div>
+                      </div>
+                    ) : null}
+
+                    {!login.authenticated &&
+                    (login.state === 'failed' || login.state === 'cancelled' || login.state === 'exited') ? (
+                      <div className="mt-[10px]">
                         <button
                           type="button"
-                          className={BTN_PRIMARY}
-                          onClick={submit}
-                          disabled={busy || code.trim() === ''}
-                          id="connectSubmit"
+                          className={BTN + ' ' + BTN_SECONDARY}
+                          onClick={signIn}
+                          disabled={busy}
+                          id="connectRetry"
                         >
-                          {strings.connect.submitCode}
+                          <RefreshCw size={13} aria-hidden="true" /> {strings.connect.tryAgain}
                         </button>
                       </div>
-                      <p className="mt-[6px] text-[11px] text-text-muted">{strings.connect.codeHint}</p>
-                    </>
+                    ) : null}
+                  </div>
+                  {login.url !== null && waitingForCode ? (
+                    <Section
+                      title={strings.connect.pageLabel}
+                      hint={login.providerLabel}
+                      action={
+                        <>
+                          <button
+                            type="button"
+                            className={BTN_SM + ' ' + BTN_GHOST}
+                            onClick={() => copy(login.url ?? '')}
+                            id="connectCopy"
+                          >
+                            <ClipboardCopy size={12} aria-hidden="true" /> {strings.connect.copyLink}
+                          </button>
+                          <a
+                            className={BTN_SM + ' ' + BTN_GHOST}
+                            href={login.url ?? '#'}
+                            target="_blank"
+                            rel="noreferrer noopener"
+                          >
+                            <ExternalLink size={12} aria-hidden="true" /> {strings.connect.openLink}
+                          </a>
+                        </>
+                      }
+                    >
+                      <input
+                        readOnly
+                        id="connectUrl"
+                        aria-label={strings.connect.copyLink}
+                        value={login.url ?? ''}
+                        className="w-full rounded-md border border-border-subtle bg-bg-input px-[10px] py-[7px] font-mono text-[11.5px] text-text-secondary"
+                      />
+                    </Section>
                   ) : null}
 
-                  {login.note !== null ? (
-                    <p className="mt-[8px] text-[11.5px] text-text-muted">{login.note}</p>
-                  ) : null}
+                  <Section
+                    title={strings.connect.outputTitle}
+                    hint={strings.connect.outputHint}
+                    action={
+                      <button
+                        type="button"
+                        className={BTN_SM + ' ' + BTN_GHOST}
+                        onClick={() => copy(login.lines.join('\n'))}
+                        disabled={login.lines.length === 0}
+                      >
+                        <ClipboardCopy size={12} aria-hidden="true" /> {strings.connect.copyOutput}
+                      </button>
+                    }
+                    note={login.note === null ? undefined : login.note}
+                  >
+                    <pre
+                      ref={outputRef}
+                      id="connectOutput"
+                      className="h-[132px] overflow-auto rounded-md border border-border-subtle bg-bg-input p-[10px] font-mono text-[11px] leading-[1.55] text-text-secondary"
+                    >
+                      {login.lines.length === 0 ? strings.connect.outputEmpty : login.lines.slice(-12).join('\n')}
+                    </pre>
+                  </Section>
+                </>
+              ) : null}
+            </>
+          ) : null}
 
-                  {/* The retry, for a sign-in that stopped: this is the one state that needs a
-                      control of its own, because the first attempt was started by the click that
-                      opened this modal. */}
-                  {!login.authenticated &&
-                  (login.state === 'failed' || login.state === 'cancelled' || login.state === 'exited') ? (
+          {mode === 'api' ? (
+            <>
+              <Section
+                title={strings.connect.keyTitle}
+                action={
+                  <Badge tone={key.trim() === '' ? 'muted' : 'warning'}>
+                    {key.trim() === ''
+                      ? connected
+                        ? strings.connect.keySaved
+                        : strings.connect.keyNotSaved
+                      : strings.connect.keyEditing}
+                  </Badge>
+                }
+                note={strings.connect.keyNote}
+              >
+                <Field
+                  id="connectKey"
+                  label={strings.connect.keyLabel}
+                  placeholder={strings.connect.keyPlaceholder}
+                  value={key}
+                  onChange={setKey}
+                  secret
+                  hint={strings.connect.keyHint(name)}
+                  onEnter={() => {
+                    if (key.trim() !== '') {
+                      saveKey();
+                    }
+                  }}
+                />
+              </Section>
+
+              <Section
+                title={strings.connect.modelsTitle}
+                hint={
+                  models === null
+                    ? undefined
+                    : strings.connect.modelsHint(shown.length, models.models.length, models.snapshot)
+                }
+                action={
+                  <>
                     <button
                       type="button"
-                      className={BTN_SECONDARY + ' mt-[8px]'}
-                      onClick={signIn}
+                      className={BTN_SM + ' ' + BTN_GHOST}
+                      onClick={() => load(false)}
                       disabled={busy}
-                      id="connectRetry"
+                      id="connectLoad"
                     >
-                      <RefreshCw size={13} /> {strings.connect.tryAgain}
+                      {strings.connect.loadModels}
                     </button>
-                  ) : null}
-                </div>
+                    <button
+                      type="button"
+                      className={BTN_SM + ' ' + BTN_GHOST}
+                      onClick={() => load(true)}
+                      disabled={busy}
+                      id="connectRefresh"
+                    >
+                      <RefreshCw size={12} aria-hidden="true" /> {strings.connect.refresh}
+                    </button>
+                  </>
+                }
+                note={
+                  models !== null && models.notes.length > 0 ? (
+                    <span id="connectNotes" className="text-state-waiting">
+                      {models.notes.join(' · ')}
+                    </span>
+                  ) : undefined
+                }
+              >
+                {models === null || models.models.length === 0 ? (
+                  <p className="text-[12px] text-text-secondary" id="connectEmpty">
+                    {strings.connect.modelsEmpty}
+                  </p>
+                ) : (
+                  <>
+                    {models.models.length > 5 ? (
+                      <div className="relative mb-[8px]">
+                        <Search
+                          size={12}
+                          aria-hidden="true"
+                          className="pointer-events-none absolute left-[9px] top-[9px] text-text-muted"
+                        />
+                        <input
+                          id="connectFilter"
+                          aria-label={strings.connect.modelFilter}
+                          placeholder={strings.connect.modelFilter}
+                          value={filter}
+                          onChange={(event) => setFilter(event.target.value)}
+                          className="w-full rounded-md border border-border-subtle bg-bg-input py-[7px] pl-[27px] pr-[10px] text-[12px] text-text-primary placeholder:text-text-muted focus:border-border-strong"
+                        />
+                      </div>
+                    ) : null}
 
-                <div>
-                  <div className="mb-[4px] text-[10px] font-bold uppercase tracking-[0.1em] text-text-muted">
-                    {strings.connect.outputTitle}
-                  </div>
-                  <pre
-                    ref={outputRef}
-                    id="connectOutput"
-                    className="h-[150px] overflow-auto rounded-md border border-border-subtle bg-bg-input p-[8px] font-mono text-[11px] leading-[1.5] text-text-secondary"
-                  >
-                    {login.lines.length === 0 ? strings.connect.outputEmpty : login.lines.slice(-12).join('\n')}
-                  </pre>
-                </div>
-              </>
-            ) : null}
-          </>
-        ) : null}
+                    {shown.length === 0 ? (
+                      <p className="text-[12px] text-text-muted" id="connectNoMatch">
+                        {strings.connect.modelNoMatch}
+                      </p>
+                    ) : (
+                      <ul className="flex max-h-[240px] flex-col gap-[4px] overflow-y-auto" id="connectModels">
+                        {shown.map((model) => {
+                          const inUse = models.selected.modelId === model.id;
+                          const tier = tierLabel(tierFromName(String(model.tier)));
 
-        {mode === 'api' ? (
-          <>
-            <div>
-              <input
-                type="password"
-                id="connectKey"
-                aria-label={strings.hub.keyLabel}
-                placeholder={strings.hub.keyPlaceholder}
-                value={key}
-                onChange={(event) => setKey(event.target.value)}
-                className="w-full rounded-md border border-border-default bg-bg-input px-[10px] py-[7px] font-mono text-[12.5px] text-text-primary placeholder:text-text-muted"
-              />
-              <div className="mt-[8px] flex flex-wrap items-center gap-[8px]">
-                <button
-                  type="button"
-                  className={BTN_PRIMARY}
-                  disabled={busy || key.trim() === ''}
-                  id="connectSave"
-                  onClick={() => {
-                    void connectApiKey(providerId ?? '', key).then((saved) => {
-                      if (saved) {
-                        load(true);
-                      }
-                    });
-                  }}
-                >
-                  {strings.hub.save}
-                </button>
-                <button type="button" className={BTN_SECONDARY} onClick={() => load(true)} disabled={busy} id="connectRefresh">
-                  <RefreshCw size={13} /> {strings.connect.refreshModels}
-                </button>
-                {models !== null ? (
-                  <span className="text-[11px] text-text-muted">{strings.connect.modelsSnapshot(models.snapshot)}</span>
-                ) : null}
-              </div>
-            </div>
+                          return (
+                            <li
+                              key={`${model.providerId}/${model.id}`}
+                              data-model={model.id}
+                              data-source={model.source}
+                              className={
+                                'model-row flex items-center gap-[10px] rounded-md border px-[10px] py-[8px] transition-colors duration-fast ease-ease ' +
+                                (inUse
+                                  ? 'border-accent bg-accent-subtle'
+                                  : 'border-border-subtle bg-bg-raised hover:border-border-default')
+                              }
+                            >
+                              <div className="min-w-0 flex-1">
+                                <div className="truncate text-[12.5px] font-medium text-text-primary">
+                                  {model.name === '' ? model.id : model.name}
+                                </div>
+                                <div className="mt-[1px] truncate font-mono text-[10.5px] text-text-muted">
+                                  {model.id}
+                                </div>
+                              </div>
 
-            <div>
-              <div className="mb-[6px] flex items-center justify-between">
-                <span className="text-[10px] font-bold uppercase tracking-[0.1em] text-text-muted">
-                  {strings.connect.modelsTitle}
-                </span>
-                <button type="button" className={BTN_SECONDARY} onClick={() => load(false)} disabled={busy} id="connectLoad">
-                  {strings.connect.loadModels}
-                </button>
-              </div>
+                              <div className="flex shrink-0 items-center gap-[5px]">
+                                <Badge tone="muted">{tier}</Badge>
+                                <Badge tone="muted">{strings.connect.context(model.ctx)}</Badge>
+                                <Badge tone="muted">{model.cost === '' ? '—' : model.cost}</Badge>
+                                <Badge
+                                  tone={SOURCE_TONE[model.source] ?? 'neutral'}
+                                  icon={Zap}
+                                  title={strings.connect.sourceHelp[model.source]}
+                                >
+                                  {strings.connect.source[model.source]}
+                                </Badge>
+                              </div>
 
-              {models === null || models.models.length === 0 ? (
-                <p className="text-[12px] text-text-secondary" id="connectEmpty">
-                  {strings.connect.modelsEmpty}
-                </p>
-              ) : (
-                <ul className="max-h-[240px] overflow-y-auto" id="connectModels">
-                  {models.models.map((model) => {
-                    const inUse = models.selected.modelId === model.id;
-
-                    return (
-                      <li
-                        key={`${model.providerId}/${model.id}`}
-                        data-model={model.id}
-                        data-source={model.source}
-                        className="flex items-center gap-[10px] border-b border-border-subtle py-[7px] last:border-0"
-                      >
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate font-mono text-[12px] text-text-primary">{model.id}</span>
-                          <span className="block text-[11px] text-text-muted">
-                            {model.tier} · {strings.connect.context(model.ctx)} · {model.cost || '—'}
-                          </span>
-                        </span>
-                        {/* Where the row came from: "always up to date" is a claim worth showing. */}
-                        <span
-                          title={strings.connect.sourceHelp[model.source]}
-                          className="shrink-0 rounded-full border border-border-subtle px-[8px] py-[2px] text-[10.5px] text-text-secondary"
-                        >
-                          {strings.connect.source[model.source]}
-                        </span>
-                        <button
-                          type="button"
-                          className={inUse ? BTN_SECONDARY : BTN_PRIMARY}
-                          disabled={inUse}
-                          onClick={() => use(model.id)}
-                        >
-                          {inUse ? strings.connect.selected : strings.connect.use}
-                        </button>
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-
-              {models !== null && models.notes.length > 0 ? (
-                <p className="mt-[8px] text-[11.5px] text-state-waiting" id="connectNotes">
-                  {models.notes.join(' · ')}
-                </p>
-              ) : null}
-            </div>
-          </>
-        ) : null}
-
-        <div className="flex items-center justify-end gap-[8px]">
-          <button
-            type="button"
-            className={BTN}
-            id="connectClose"
-            onClick={() => {
-              if (login !== null && !login.authenticated) {
-                void cancelCliLogin(login.loginId);
-              }
-
-              setLogin(null);
-              close();
-            }}
-          >
-            {strings.connect.cancel}
-          </button>
+                              {inUse ? (
+                                <span className="flex h-[24px] shrink-0 items-center gap-[5px] rounded-md bg-green-subtle px-[9px] text-[10.5px] font-semibold text-state-success">
+                                  <Check size={11} aria-hidden="true" /> {strings.connect.selected}
+                                </span>
+                              ) : (
+                                <button
+                                  type="button"
+                                  className={BTN_SM + ' ' + BTN_SECONDARY}
+                                  onClick={() => use(model.id)}
+                                >
+                                  {strings.connect.use}
+                                </button>
+                              )}
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    )}
+                  </>
+                )}
+              </Section>
+            </>
+          ) : null}
         </div>
 
+        {/* ---------------------------------------------------------------- footer */}
+        <footer className="flex items-center gap-[10px] border-t border-border-subtle bg-bg-raised px-[18px] py-[12px]">
+          <span className="min-w-0 truncate text-[11px] text-text-muted">
+            {mode === 'login' ? strings.connect.footer.login : strings.connect.footer.api}
+          </span>
+
+          <div className="ml-auto flex shrink-0 items-center gap-[8px]">
+            <button type="button" className={BTN_SM_LG + ' ' + BTN_SECONDARY} id="connectClose" onClick={leave}>
+              {strings.connect.close}
+            </button>
+
+            {mode === 'api' ? (
+              <button
+                type="button"
+                className={BTN_SM_LG + ' ' + BTN_PRIMARY}
+                id="connectSave"
+                disabled={busy || key.trim() === ''}
+                onClick={saveKey}
+              >
+                <KeyRound size={13} aria-hidden="true" /> {strings.connect.saveKey}
+              </button>
+            ) : null}
+          </div>
+        </footer>
       </div>
     </Modal>
   );
 }
+
+/** The tone a row's `source` badge gets: the provider's own answer is the good one. */
+const SOURCE_TONE: Record<string, BadgeTone> = {
+  live: 'success',
+  cache: 'neutral',
+  bundled: 'muted',
+};
+

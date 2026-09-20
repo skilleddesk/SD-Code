@@ -14,6 +14,62 @@ This file describes what changed, not what is planned. Anything still open is na
 release - the newest - and deletes the others when it publishes (`release.yml`, "Keep only this
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
+## [0.7.1] — the connection dialogs, re-drawn
+
+Same daemon, same behaviour, one surface rebuilt. The report was a screenshot of the API-key dialog with
+everything on it circled - unlabelled key box, `Save` and `Refresh` squeezed together with a footnote
+wrapping between them, a tiny `MODELS` heading, and a `Use` button shaped exactly like every other button
+on screen: *"koto useless and normal… button gulaw useless… sob gulatai aki"*. All of that was true.
+
+### Changed — the dialog has a shape now
+
+* **Header, sections, footer.** A provider tile, the name, a `connected` badge and one sentence; then
+  sections with an uppercase name, their own controls and a note under them (`Credential`, `Models`); then
+  the footer's single decision (`Save key`) beside the way out (`Close`). Nothing is decided twice:
+  `Save key` is no longer next to `Refresh`, and `Refresh` moved up into the section it refreshes.
+* **The key field is a field.** It has a label, a `Show`/`Hide` button, a `Paste` button, and a status
+  badge that says `saved` or `not saved yet` - the old one was a bare `<input type="password">` with a
+  placeholder and no label at all.
+* **The model list is a list.** A name over its id, muted badges for tier, context, cost and where the row
+  came from (`cached` / `live` / `bundled`), a filter box once there are more than five, and a row that is
+  in use is tinted with `✓ In use` instead of wearing a disabled button.
+
+### Fixed — a disabled button looked enabled
+
+The button tones never carried a `disabled:` state, so `Save` on an empty key box was the same saturated
+accent as `Save` with a key typed in. Nothing on screen said whether a press would do anything, which is
+the honest reason the buttons read as useless. Every base class now dims and refuses the pointer, and the
+sizes are named (`BTN_SM` 24px, `BTN` 28px, `BTN_LG` 34px) so a dialog can have hierarchy at all.
+
+### Fixed — the same four-line paragraph over the window at every launch
+
+`host.add` pushed the `ssh` probe's sentence as a `Toast` **as well as** onto the host's status line. Toasts
+are events, events are in the log, and the first connection replays the log - so a machine that could not
+be reached put the same paragraph (and, after three attempts, three of them) over the Provider Hub every
+time the app started. Three changes, from the cause outwards:
+
+* the daemon writes the probe's sentence to `HostStatus` only, where the card renders it;
+* the window drops `Toast` events that arrive during its catch-up window - a replayed toast is not news;
+* a toast's text clamps to two lines whatever it says, with the whole sentence on its `title`.
+
+### Fixed — smaller lies in the same dialog
+
+* `0K context` on a row whose catalogue has no context figure now reads `context not listed`.
+* `Balanced` and `fast` were the wire's own spelling: tiers are title-cased for display, and a row's tier
+  badge no longer disagrees with the tier the store keeps.
+* A missing price prints `—` rather than nothing at all.
+* The `MODELS` heading carries the count and the bundle's date (`2 rows · bundled 2026-09-20`), so the
+  snapshot stops wrapping between two buttons.
+
+### Verified
+
+`sdcd`: 129 unit tests, 5 lifecycle, 5 VCR, clippy clean under `-D warnings`. The window: `pnpm typecheck`,
+`pnpm lint`, 28 vitest tests, the bundle smoke run, and a real `SDC.exe` photographed over CDP - the
+screenshot is in `_verify/shots/connect-deepseek.png` and is how the redesign was checked. `_verify/` gained
+`shot-connect.mjs` (opens a provider's dialog and photographs it), `clean-probe-hosts.mjs` (removes the hosts
+a probe added - the SSH probes had left a real row in a real database) and `bump-version.mjs`.
+
+
 
 ## [0.7.0] — the boxes people actually type in, and a VPS you can actually reach
 
