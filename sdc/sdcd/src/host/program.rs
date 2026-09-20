@@ -124,6 +124,11 @@ pub fn command_for(resolved: &Path) -> Command {
 }
 
 /// True for a batch file, which `CreateProcess` cannot start on its own.
+///
+/// Windows only: on every other platform a `.cmd` is an ordinary file and wrapping it in a `cmd.exe`
+/// that does not exist would be worse than useless. The Linux and macOS CI jobs caught exactly that
+/// when this was not gated - the unit test that runs a `.cmd` failed on both.
+#[cfg(windows)]
 fn needs_a_shell(resolved: &Path) -> bool {
     let extension = resolved
         .extension()
@@ -134,9 +139,17 @@ fn needs_a_shell(resolved: &Path) -> bool {
     extension == "cmd" || extension == "bat"
 }
 
+#[cfg(not(windows))]
+fn needs_a_shell(_resolved: &Path) -> bool {
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    /* Only the Windows test touches the filesystem, so the import is gated with it - an unused import
+       is an error under `clippy -D warnings`, which every release job runs. */
+    #[cfg(windows)]
     use std::fs;
 
     /// The rule, without a filesystem: the platform's extensions first, the bare name last.
@@ -166,6 +179,11 @@ mod tests {
     }
 
     /// And the wrap: `npm`'s shim is a `.cmd`, so it is started through `cmd.exe`.
+    ///
+    /// Windows only, and that is not tidiness: on Linux and macOS this test *ran the `.cmd`*, failed,
+    /// and turned three release jobs red before a single installer was built. A platform rule belongs in
+    /// a test that names its platform.
+    #[cfg(windows)]
     #[test]
     fn a_batch_file_is_started_through_a_shell() {
         let directory = tempfile::TempDir::new().expect("a temporary directory");
