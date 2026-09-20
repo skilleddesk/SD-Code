@@ -15,6 +15,22 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [0.5.3] — the window says which build it is
+
+A user installed a build, saw the white box from 0.5.1, and reported it unfixed. The box *was* fixed -
+0.5.2 measures `rgb(6, 7, 10)` at that pixel, against `rgb(255, 255, 255)` in 0.5.0/0.5.1 - but nothing
+in the app said which build was on screen, so the only way to tell a fixed install from an old one was
+to trust the release notes. That is the defect this release fixes, on top of the one it documents.
+
+* **The status bar shows the build**: `v0.5.3 · sdcd 0.5.3`, beside the host and before the engine.
+  Both halves are shown because they can differ - a new window talking to a daemon left over from an
+  older install is exactly the case where the fixed window would look unfixed at the point of use. The
+  segment is clickable and copies the pair, which is what a bug report needs.
+* The measurement itself is now in the repository as a tool: `_verify/png-pixel.mjs` decodes a PNG
+  (no dependency) and prints the colour of named pixels, because a user's report is about pixels and
+  a computed style is not a pixel. The white box, in that tool's terms:
+  `(130,118) rgb(6, 7, 10) luminance 3%` on 0.5.2 versus `rgb(255, 255, 255)` on 0.5.0.
+
 ## [0.5.2] — the white box, the stray focus ring, and three CLIs that could not be found
 
 Three defects, all of them visible in one screenshot of the installed 0.5.1 build.

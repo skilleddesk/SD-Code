@@ -1,6 +1,6 @@
 [package]
 name = "sdcd"
-version = "0.5.2"
+version = "0.5.3"
 description = "SDC host daemon - session, engine, file, PTY, git and event-log service (spec section 3.1)"
 authors = ["Skilleddesk"]
 edition = "2021"
