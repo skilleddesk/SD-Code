@@ -1,0 +1,5 @@
+# Build toolchain for every Rust crate in this repository (app/src-tauri and sdcd).
+# `stable` resolves to rustup's default host on each platform; on Windows that is
+# x86_64-pc-windows-msvc, which is what Tauri requires for the WebView2 shell.
+[toolchain]
+channel = "stable"

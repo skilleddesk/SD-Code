@@ -1,0 +1,33 @@
+{
+  "compilerOptions": {
+    /* Type checking only - Vite/esbuild does the transpiling. */
+    "noEmit": true,
+
+    /* Language + platform. */
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "moduleDetection": "force",
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "resolveJsonModule": true,
+    "allowImportingTsExtensions": true,
+    "useDefineForClassFields": true,
+    "types": ["vite/client"],
+
+    /* Strictness (STEP 1 requirement: strict TypeScript). */
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitOverride": true,
+    "noImplicitReturns": true,
+    "forceConsistentCasingInFileNames": true,
+
+    /* Faster, and safe: dependencies are not ours to type check. */
+    "skipLibCheck": true
+  },
+  "include": ["src"]
+}

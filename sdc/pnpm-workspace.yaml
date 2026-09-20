@@ -1,0 +1,8 @@
+# SDC - pnpm workspace definition (monorepo root, spec section 4.1).
+#
+# `app` is the only npm workspace package in STEP 1. `protocol/` joins it in STEP 2,
+# when its package.json + generated SDCP TypeScript types exist; uncomment the line then.
+# `sdcd/` is a Rust crate, not an npm package - it is built with cargo (see README.md).
+packages:
+  - app
+  # - protocol

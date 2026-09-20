@@ -1,0 +1,197 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://skilleddesk.dev/sdcp/0.1/sdcp.schema.json",
+  "title": "SDCP 0.1 (Skilleddesk Code Protocol)",
+  "description": "The single source of truth for the wire format between the SDC app and a host daemon (sdcd). Spec section 5. Three shapes travel: a request envelope, a response, and a one-way notification. Every notification carries exactly one event from the append-only event catalogue (section 5.4); there is no other way for state to reach the UI (section 3.3). Both transports - unix socket / named pipe locally, WebSocket over an SSH tunnel remotely - carry the SAME envelope (section 3.1).",
+  "oneOf": [
+    { "$ref": "#/$defs/envelope" },
+    { "$ref": "#/$defs/response" },
+    { "$ref": "#/$defs/notification" }
+  ],
+  "$defs": {
+    "protocolVersion": {
+      "description": "Envelope/SDCP version. Moves only by the migration rules of section 5.7; additive changes keep it.",
+      "type": "string",
+      "const": "0.1"
+    },
+    "error": {
+      "type": "object",
+      "required": ["code", "message"],
+      "properties": {
+        "code": {
+          "description": "Stable, machine-readable. The UI never parses the message (principle P3).",
+          "type": "string",
+          "enum": [
+            "bad_request", "not_found", "not_ready", "permission_denied", "blocked_path",
+            "engine_failed", "engine_stuck", "budget_exceeded", "cancelled", "unsupported", "internal"
+          ]
+        },
+        "message": { "type": "string" },
+        "data": { "type": "object", "additionalProperties": true },
+        "retryable": { "type": "boolean", "default": false }
+      }
+    },
+    "envelope": {
+      "description": "Request. `params` is validated against `methods` below.",
+      "type": "object",
+      "required": ["v", "id", "method", "params"],
+      "additionalProperties": false,
+      "properties": {
+        "v": { "$ref": "#/$defs/protocolVersion" },
+        "id": { "description": "Caller-chosen correlation id; echoed by the response.", "type": "string" },
+        "method": { "type": "string", "enum": { "$ref": "#/$defs/methodNames" } },
+        "params": { "type": "object" },
+        "hostId": { "description": "Set when one app multiplexes several hosts over one socket.", "type": "string" }
+      }
+    },
+    "response": {
+      "description": "Exactly one of `result` / `error` is present.",
+      "type": "object",
+      "required": ["v", "id"],
+      "additionalProperties": false,
+      "properties": {
+        "v": { "$ref": "#/$defs/protocolVersion" },
+        "id": { "type": "string" },
+        "result": { "type": "object" },
+        "error": { "$ref": "#/$defs/error" }
+      },
+      "oneOf": [{ "required": ["result"] }, { "required": ["error"] }]
+    },
+    "notification": {
+      "description": "One-way server push. `seq` is monotonic per daemon run, which is what lets the reducer detect a gap and ask for a replay.",
+      "type": "object",
+      "required": ["v", "seq", "ts", "event"],
+      "additionalProperties": false,
+      "properties": {
+        "v": { "$ref": "#/$defs/protocolVersion" },
+        "seq": { "type": "integer", "minimum": 1 },
+        "ts": { "description": "RFC 3339, UTC. Supplied by the daemon's clock, never by the UI.", "type": "string", "format": "date-time" },
+        "sessionId": { "type": ["string", "null"] },
+        "turnId": { "type": ["string", "null"] },
+        "event": { "$ref": "#/$defs/event" }
+      }
+    },
+    "event": {
+      "description": "The append-only event catalogue (section 5.4). `type` is the discriminant; the reducer switches on it and nothing else.",
+      "type": "object",
+      "required": ["type"],
+      "properties": { "type": { "type": "string", "enum": { "$ref": "#/$defs/eventTypes" } } }
+    },
+    "methodNames": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "host.status", "host.doctor", "host.add", "host.remove",
+          "session.open", "session.close", "session.list", "session.update", "session.fork",
+          "engine.start", "engine.cancel", "engine.kill", "engine.status", "engine.switch",
+          "fs.read", "fs.write", "fs.list", "fs.stat", "fs.search",
+          "git.status", "git.diff", "git.checkpoint", "git.worktree",
+          "pty.open", "pty.write", "pty.resize", "pty.close",
+          "event.list", "event.append", "event.subscribe",
+          "provider.list", "provider.test", "provider.save", "provider.remove",
+          "provider.oauth.open", "provider.oauth.callback", "provider.local.doctor",
+          "provider.registry.list", "provider.registry.set",
+          "checkpoint.create", "checkpoint.list", "checkpoint.restore",
+          "rewind.apply", "rewind.redo",
+          "duel.start", "duel.keep", "duel.discard",
+          "permission.request", "permission.resolve",
+          "console.attach", "console.detach"
+        ]
+      }
+    },
+    "eventTypes": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "HostStatus", "ProviderStatus", "RegistryLoaded", "SessionOpened", "SessionClosed", "SessionUpdated",
+          "TurnStarted", "TurnDelta", "TurnCompleted", "ToolCallStarted", "ToolCallOutput",
+          "ToolCallCompleted", "ThinkingDelta", "ErrorRaised", "PermissionRequested",
+          "PermissionResolved", "CheckpointSaved", "RewindApplied", "Toast", "ToastDismissed",
+          "StuckDetected", "ConsoleError", "DuelStarted", "DuelResolved", "SessionBridged"
+        ]
+      }
+    },
+    "notificationMethods": {
+      "description": "Notification `method` values the daemon may push. The events themselves always travel as `event` notifications.",
+      "type": "array",
+      "items": { "type": "string", "enum": ["event", "log", "progress", "pong"] }
+    },
+    "provider": {
+      "type": "object",
+      "required": ["id", "name", "kind", "status"],
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "kind": { "type": "string", "enum": ["subscription", "api-key", "local", "custom"] },
+        "status": { "type": "string", "enum": ["connected", "needs-auth", "available", "error"] },
+        "detail": { "type": "string" },
+        "account": { "type": ["string", "null"] },
+        "logo": { "type": "string" },
+        "url": { "type": ["string", "null"] },
+        "protocol": { "type": ["string", "null"] }
+      }
+    },
+    "checkpoint": {
+      "type": "object",
+      "required": ["id", "turn", "ts", "filesHash"],
+      "properties": {
+        "id": { "type": "string" },
+        "turn": { "type": "integer" },
+        "ts": { "type": "string", "format": "date-time" },
+        "title": { "type": "string" },
+        "thumbnail": { "type": ["string", "null"], "description": "Path under the daemon data dir; null when the turn changed nothing renderable." },
+        "filesHash": { "type": "string" },
+        "rewindRef": { "type": ["integer", "null"] }
+      }
+    },
+    "methods": {
+      "description": "Per-method params/result schemas, kept terse on purpose: the shapes the UI actually consumes are the events above. `?` marks an optional member.",
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "host.status": { "params": {}, "result": { "hostId": "string", "name": "string", "type": "local|vps", "status": "connected|degraded|offline|connecting", "sdcd": "string" } },
+        "host.doctor": { "params": { "hostId": "string?" }, "result": { "checks": [{ "id": "string", "label": "string", "state": "ok|warn|fail", "detail": "string", "fix": "string?" }] } },
+        "host.add": { "params": { "type": "local|ssh", "target": "string?", "label": "string?" }, "result": { "hostId": "string" } },
+        "session.open": { "params": { "hostId": "string", "title": "string?", "prompt": "string?" }, "result": { "sessionId": "string" } },
+        "session.close": { "params": { "sessionId": "string" }, "result": {} },
+        "session.update": { "params": { "sessionId": "string", "title": "string?", "state": "string?" }, "result": {} },
+        "engine.start": { "params": { "sessionId": "string", "prompt": "string", "engine": "string", "model": "string", "tier": "Fast|Balanced|Deep" }, "result": { "turnId": "string" } },
+        "engine.cancel": { "params": { "turnId": "string" }, "result": {} },
+        "engine.kill": { "params": { "turnId": "string" }, "result": {} },
+        "engine.status": { "params": { "turnId": "string" }, "result": { "state": "idle|running|awaiting|stuck|done|failed|killed", "engine": "string", "model": "string" } },
+        "engine.switch": { "params": { "turnId": "string", "engine": "string", "model": "string", "reason": "string?" }, "result": { "turnId": "string", "bridgedFrom": "string" } },
+        "fs.read": { "params": { "path": "string" }, "result": { "path": "string", "text": "string", "sha256": "string" } },
+        "fs.write": { "params": { "path": "string", "text": "string" }, "result": { "path": "string", "sha256": "string", "checkpointId": "string" } },
+        "fs.search": { "params": { "query": "string", "glob": "string?" }, "result": { "hits": [{ "path": "string", "line": "integer", "text": "string" }] } },
+        "git.checkpoint": { "params": { "sessionId": "string", "turnId": "string?" }, "result": { "checkpointId": "string", "sha": "string" } },
+        "git.diff": { "params": { "sessionId": "string", "checkpointId": "string?" }, "result": { "patch": "string" } },
+        "pty.open": { "params": { "command": "string", "args": ["string"] }, "result": { "ptyId": "string" } },
+        "event.list": { "params": { "since": "integer?", "sessionId": "string?" }, "result": { "events": ["notification"] } },
+        "event.subscribe": { "params": { "since": "integer?" }, "result": { "fromSeq": "integer" } },
+        "provider.list": { "params": {}, "result": { "providers": ["provider"] } },
+        "provider.test": { "params": { "id": "string", "key": "string?" }, "result": { "ok": "boolean", "models": "integer", "detail": "string", "verified": "boolean", "error": "string?" } },
+        "provider.save": { "params": { "id": "string", "kind": "subscription|api-key|local|custom", "key": "string?", "label": "string?", "url": "string?", "protocol": "string?" }, "result": { "id": "string", "status": "string", "account": "string?" } },
+        "provider.remove": { "params": { "id": "string" }, "result": { "removed": "boolean" } },
+        "provider.oauth.open": { "params": { "id": "string" }, "result": { "url": "string", "state": "string" } },
+        "provider.oauth.callback": { "params": { "id": "string", "state": "string", "code": "string?" }, "result": { "ok": "boolean", "account": "string?" } },
+        "provider.local.doctor": { "params": {}, "result": { "daemon": "boolean", "endpoint": "string", "models": ["string"] } },
+        "provider.registry.list": { "params": {}, "result": { "models": [{ "id": "string", "provider": "string", "tier": "fast|balanced|deep", "ctx": "integer", "cost": "string", "enabled": "boolean" }] } },
+        "provider.registry.set": { "params": { "id": "string", "enabled": "boolean" }, "result": {} },
+        "checkpoint.create": { "params": { "sessionId": "string", "turnId": "string", "title": "string" }, "result": { "checkpointId": "string" } },
+        "checkpoint.list": { "params": { "sessionId": "string" }, "result": { "checkpoints": ["checkpoint"] } },
+        "checkpoint.restore": { "params": { "checkpointId": "string" }, "result": { "restored": "integer" } },
+        "rewind.apply": { "params": { "sessionId": "string", "turnId": "string" }, "result": { "removedTurns": "integer", "restoredFiles": "integer" } },
+        "rewind.redo": { "params": { "sessionId": "string" }, "result": { "turn": "integer?" } },
+        "duel.start": { "params": { "sessionId": "string", "prompt": "string", "engines": ["string"] }, "result": { "duelId": "string" } },
+        "duel.keep": { "params": { "duelId": "string", "keep": "string" }, "result": {} },
+        "duel.discard": { "params": { "duelId": "string" }, "result": {} },
+        "permission.request": { "params": { "sessionId": "string", "turnId": "string", "action": "string", "target": "string", "risk": "SAFE|MUTATING|DANGEROUS" }, "result": { "permissionId": "string" } },
+        "permission.resolve": { "params": { "permissionId": "string", "decision": "allow_once|always_allow|deny|show_me", "scope": "string?" }, "result": {} },
+        "console.attach": { "params": { "sessionId": "string", "url": "string" }, "result": { "attached": "boolean" } },
+        "console.detach": { "params": { "sessionId": "string" }, "result": { "detached": "boolean" } }
+      }
+    }
+  }
+}

@@ -1,0 +1,3 @@
+{"type":"vcr","engine":"ollama","kinds":["Delta","Delta","Done"]}
+{"message":{"content":"Rate limiting is "},"done":false}
+{"message":{"content":"the answer."},"done":true,"eval_count":12}

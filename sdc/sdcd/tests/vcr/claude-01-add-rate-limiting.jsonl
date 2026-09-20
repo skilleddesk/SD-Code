@@ -1,0 +1,8 @@
+{"type":"vcr","engine":"claude_code","kinds":["Thinking","Delta","Delta","ToolStarted","ToolCompleted","Delta","Done"]}
+{"type":"thinking","delta":"Reading src/auth.ts first."}
+{"type":"assistant_text","text":"Added express-rate-limit "}
+{"type":"assistant_text","text":"to the login route."}
+{"type":"tool_use","id":"c1","tool":"edit","name":"Edit","target":"src/auth.ts"}
+{"type":"tool_done","id":"c1","meta":"done · +18 −2","ok":true}
+{"type":"assistant_text","text":"Run the tests next."}
+{"type":"result","summary":"Done","meta":"1m 12s · 12,400 tokens · $0.16","pass":true}

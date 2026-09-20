@@ -1,0 +1,15 @@
+# SDC (Skilleddesk Code) — EditorConfig
+# https://editorconfig.org
+# Tauri 2 desktop app: Rust (src-tauri) + web frontend.
+
+# This is the top-most EditorConfig file: stop looking for parent configs.
+root = true
+
+# Applies to every file in this repository.
+[*]
+charset = utf-8
+end_of_line = lf
+indent_style = space
+indent_size = 2
+trim_trailing_whitespace = true
+insert_final_newline = true

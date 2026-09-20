@@ -1,0 +1,50 @@
+[package]
+name = "sdcd"
+version = "0.4.1"
+description = "SDC host daemon - session, engine, file, PTY, git and event-log service (spec section 3.1)"
+authors = ["Skilleddesk"]
+edition = "2021"
+rust-version = "1.77.2"
+publish = false
+
+# Layout is fixed by the master spec's module list (section 10) and mirrored in src/lib.rs's module
+# tree: sdcp/ (the protocol), store/ (SQLite), engines/ (the five adapters), fs/, git/, pty/, auth/,
+# host/, providers/, checkpoints/, rewind/, duel/, errors/, session_bridge/, console/.
+[dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "process", "time", "sync", "signal"] }
+tokio-stream = "0.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# SQLite, bundled: the schema of spec section 6 is the daemon's memory, so the build must not
+# depend on a system libsqlite3 the user may not have.
+rusqlite = { version = "0.32", features = ["bundled"] }
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+thiserror = "1"
+anyhow = "1"
+dirs = "5"
+sha2 = "0.10"
+hex = "0.4"
+async-trait = "0.1"
+
+[dev-dependencies]
+tempfile = "3"
+
+# The OS keychain is behind a feature: `keyring` needs a platform store (DPAPI / Keychain / Secret
+# Service) that a CI container or a headless box does not have, and a daemon that refuses to start
+# without one would be worse than one that says so. Off by default; the fallback is documented in
+# src/auth/keychain.rs and never writes a key into the SQLite file.
+[features]
+default = []
+keychain = ["dep:keyring"]
+
+[dependencies.keyring]
+version = "3"
+optional = true
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true
+

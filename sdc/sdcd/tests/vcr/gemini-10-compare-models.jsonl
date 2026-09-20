@@ -1,0 +1,3 @@
+{"type":"vcr","engine":"gemini","kinds":["Delta","Done"]}
+{"type":"text","text":"Sonnet is cheaper per task here."}
+{"type":"result","summary":"Done","meta":"40s","pass":true}

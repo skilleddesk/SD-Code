@@ -1,0 +1,270 @@
+<div align="center">
+
+<img src="app/src-tauri/icons/128x128@2x.png" alt="SDC — Skilleddesk Code" width="96" height="96" />
+
+<h1>SDC — Skilleddesk Code</h1>
+
+<p><strong>Local-first coding-agent workbench.</strong></p>
+
+<p>
+  <sub><strong>PROPRIETARY SOFTWARE — ALL RIGHTS RESERVED. NOT OPEN SOURCE.</strong><br />
+  Published for reading, review and security audit only; no licence to copy, modify or<br />
+  redistribute is granted. See <a href="../LICENSE">LICENSE</a>.</sub>
+</p>
+
+</div>
+
+---
+
+This repository is a **monorepo**: a Tauri 2 desktop app, a host daemon written in Rust,
+and the protocol definition that connects them.
+
+> **Status — the app and the daemon both run, and they talk to each other.**
+> The app is complete: topbar, sidebar, tabs, turn stream, prompt area, right panel, status bar,
+> command palette, Provider Hub (six flows), Settings (seven tabs), Search, Add host, Permission,
+> Time Machine, Duel and the F1 keymap reference — all folded from one append-only event log
+> (spec §3.3). The daemon implements the whole plan of spec §10: SDCP over newline-delimited JSON,
+> five engine adapters (`claude_code`, `codex`, `gemini`, `native_api`, `ollama`), the file guard,
+> a shadow git repository, processes, the keychain, the ten environment checks, the provider
+> backend, checkpoints, rewind, duel, the error translator, the Session Bridge and the console
+> bridge. The Tauri bridge (`app/src-tauri/src/sdcp.rs`) is what carries SDCP into the window.
+> What is still open is named, not hidden, in
+> [What is deliberately absent](#what-is-deliberately-absent).
+
+| Document | Role |
+| --- | --- |
+| `docs/MASTER_SPEC.md` | Master build specification v3.0. Locked stack (§4.1), UI law (§7–§9). Where it and the prototype disagree, the prototype wins (§7). |
+| `SETUP.md` | Fresh-machine toolchain guide (Node, pnpm, Rust, Tauri CLI, platform dependencies). |
+| `design/ui-prototype.html` | Working UI prototype — the UI source of truth. |
+| `design/tokens.json` | Design tokens extracted from the prototype CSS. |
+| `protocol/README.md` | What SDCP is, and the rules this directory will follow. |
+
+## Layout
+
+```
+sdc/
+├── app/                     Tauri 2 desktop app
+│   ├── src/                 React 18 + TypeScript (strict) frontend
+│   │   ├── layout/              the shell: region placeholders, Shell.css, viewport + keyboard hooks
+│   │   ├── store/               Zustand stores — layout.ts is the first one
+│   │   ├── styles/globals.css   design-token layer, Tailwind layers, base typography
+│   │   ├── strings.ts           every user-visible string (spec §2.7)
+│   │   └── App.tsx              composition root: #app, .workspace, the five regions
+│   ├── src-tauri/           Rust shell (window, plugins, capabilities, bundling)
+│   ├── package.json         @sdc/app — frontend scripts + Tauri CLI
+│   ├── vite.config.ts       Tauri-driven dev server (port 1420)
+│   ├── tailwind.config.ts   token aliases; no hardcoded colours (spec §8.1)
+│   ├── postcss.config.js    Tailwind + autoprefixer
+│   ├── tsconfig.json        strict type checking for src/
+│   ├── tsconfig.node.json   strict type checking for the build tooling
+│   ├── eslint.config.js     ESLint 9 flat config
+│   └── index.html           Vite entry document
+├── sdcd/                    Host daemon — a separate Rust binary (spec §3.1)
+│   ├── src/main.rs
+│   └── Cargo.toml
+├── protocol/                SDCP schema (JSON Schema + generated TS types) — README only in STEP 1
+├── design/                  tokens.json (authoritative), ui-prototype.html
+├── docs/                    MASTER_SPEC.md
+├── package.json             workspace root: scripts that fan out to app/ and sdcd/
+├── pnpm-workspace.yaml      the workspace definition
+└── README.md
+```
+
+## Toolchain
+
+Everything needed is installed step by step in `SETUP.md`. Short version:
+
+| Requirement | Version | Note |
+| --- | --- | --- |
+| Node.js | 20 LTS (target) | Newer versions work; the locked target is 20 LTS. |
+| pnpm | 10.x | The workspace manager (see below). |
+| Rust | stable, via rustup | Pinned by `rust-toolchain.toml`. `app/src-tauri` and `sdcd` are both cargo projects. |
+| Tauri CLI | 2.x | Installed as a dev dependency of `app`, so `pnpm tauri:dev` needs no global install. |
+| Windows only | MSVC Build Tools + WebView2 | Installed on this machine: VS 2022 Build Tools with MSVC 14.44.35207, Windows SDK 10.0.26100.0 and WebView2 153. Tauri cannot link a Windows build without them. |
+| Linux only | `webkit2gtk-4.1`, `libayatana-appindicator3` etc. | See `SETUP.md` §6. |
+
+## Why pnpm workspaces (and not a Makefile)
+
+The master spec mentions `make gen` as the token generator, and STEP 1 had to choose between a
+root `package.json` workspace and a Makefile. **pnpm workspaces won**, for four reasons:
+
+1. The acceptance command is `pnpm --filter app …`, which only exists in a pnpm workspace.
+2. pnpm is already the locked package manager, and `pnpm-workspace.yaml` gives one lockfile for
+   every JavaScript package (today `app/`; `protocol/` joins it in STEP 2).
+3. `make` is not part of the locked stack and is not present on a stock Windows machine, while
+   `pnpm` is required on all three target platforms anyway.
+4. Rust targets do not need `make`: `cargo` is already a task runner. The root scripts simply
+   forward to it (`pnpm sdcd:run`, `pnpm rust:clippy`).
+
+The token generator that the spec calls `make gen` therefore becomes a pnpm script
+(`pnpm tokens:gen`) in STEP 2, with the same contract: `design/tokens.json` →
+`tokens.css` + Tailwind theme. Nothing else changes.
+
+## Commands
+
+Run these from the repository root unless noted. `pnpm --filter app …` and
+`pnpm --filter @sdc/app …` are equivalent (`app` is the package directory, `@sdc/app` its name).
+
+| Command | What it does |
+| --- | --- |
+| `pnpm install` | Install all workspace dependencies. |
+| `pnpm dev` | Vite dev server on <http://localhost:1420> (browser only — no Tauri window). |
+| `pnpm build` | Type check + production frontend bundle into `app/dist`. |
+| `pnpm tauri:dev` | **Opens the desktop window** (Tauri dev: Vite server + Rust shell). |
+| `pnpm tauri:build` | Release build + installers for the current platform. |
+| `pnpm typecheck` | Strict TypeScript check of `src/` and of the build tooling. |
+| `pnpm lint` | ESLint over the frontend. |
+| `pnpm sdcd:run` | Build and run the host daemon (`cargo run` in `sdcd/`) — serves SDCP on `127.0.0.1:7811`. |
+| `pnpm test` | Vitest over the frontend: the reducer, the command registry, the strings contract. |
+| `pnpm sdcd:test` | `cargo test` in `sdcd/`: 65 tests, including the thirteen VCR fixtures of spec §11.6. |
+| `pnpm rust:fmt` / `pnpm rust:clippy` | Format / lint the daemon crate. |
+
+Inside `app/`: `pnpm tauri dev`, `pnpm tauri build`, `pnpm tauri icon <png>` also work directly.
+Inside `sdcd/`: plain `cargo run`, `cargo test`. Inside `app/src-tauri/`: `cargo check` type checks the
+bridge without building the window.
+
+## Run it
+
+Two ways, and they differ only in who answers SDCP.
+
+**1. Browser (fastest, no Rust build).** `pnpm dev` opens <http://localhost:1420>. `lib/sdcp.ts`
+finds no Tauri bridge and no `VITE_SDCP_URL`, so it starts the in-process daemon
+(`app/src/lib/daemon.ts`), which answers the *same* envelopes over `LoopbackTransport`. Every flow —
+the six Provider Hub flows, Settings, Search, Palette, Time Machine, Duel — is live, because the
+fallback is a daemon and not a mock: it appends to the same event log the reducer folds.
+
+**2. Desktop (`pnpm tauri:dev`).** The window loads, `TauriTransport` is chosen, and the first
+`sdcpCall` runs `sdcp_call` in `app/src-tauri/src/sdcp.rs`, which connects to `127.0.0.1:7811` —
+starting `sdcd` first if it is not already running (it looks next to the app binary, then in
+`sdcd/target/{release,debug}`). Everything the daemon pushes comes back as the `sdcp://event` Tauri
+event, so a turn's `TurnDelta` stream reaches the store after `engine.start` has already answered.
+
+**Which engine answers.** `engine.start` looks the engine up in `EngineRegistry`:
+`claude_code` (`claude --include-partial-messages`), `codex`, `gemini`, `native_api` (an `http://`
+endpoint streams today; a remote `https://` one reports that a TLS client is not linked in this
+build) and `ollama` (real NDJSON against `127.0.0.1:11434`). A CLI that is not installed produces a
+`ErrorRaised` that says so, with the doctor's `Install` row behind it — which is what the translator
+rule `missing-program` exists for.
+
+## Acceptance (STEP 1)
+
+| Criterion | Command | State |
+| --- | --- | --- |
+| Window shows "Hello SDC" | `pnpm --filter app tauri:dev` | **Verified** — window titled `SDC`, client area 1280×800 (measured 1296×839 including native decorations), showing "Hello SDC" with the Lucide terminal icon and the mono tagline on the `--bg-base` / `--bg-raised` tokens. 389 crates compiled in 1m46s. |
+| Daemon smoke line | `cargo run` inside `sdcd/` | **Verified** on the default MSVC toolchain — exits 0 and prints `sdcd ok`. (Also verified earlier with the gnu toolchain, before MSVC existed.) |
+| Strict TypeScript passes | `pnpm --filter app typecheck` | Verified — exits 0. Also verified: `pnpm --filter app lint` and `pnpm --filter app build`. |
+| Windows installer builds | `pnpm --filter app tauri:build` | **Verified** — `target/release/sdc.exe` (8.81 MB) and `bundle/msi/SDC_0.0.1_x64_en-US.msi` (4.26 MB), with WiX reporting `Finished 1 bundle`. Installer metadata read back: `ProductName = SDC`, `ProductVersion = 0.0.1`, `Manufacturer = skilleddesk`, `ARPPRODUCTICON = ProductIcon`. |
+| No feature code | — | Verified by inspection; see below. |
+
+## Build configuration decisions
+
+**Window (spec §7.2, task 3).** `src-tauri/tauri.conf.json` sets `title: "SDC"`, 1280×800,
+minimum 900×600, resizable, `decorations: true`, `transparent: false`, centred. The window label
+is `main`, which is what the capability file targets and what the frontend API refers to.
+
+**Identifier and bundles (task 4).** Bundle identifier `dev.skilleddesk.sdc`; bundle targets
+`["msi", "dmg", "appimage", "deb"]`. Because no host can build another platform's installer,
+each platform narrows the list through Tauri's platform config files:
+
+| File | Effective targets |
+| --- | --- |
+| `tauri.conf.json` (base) | `msi`, `dmg`, `appimage`, `deb` — the full cross-platform intent |
+| `tauri.windows.conf.json` | `msi` |
+| `tauri.macos.conf.json` | `dmg` |
+| `tauri.linux.conf.json` | `appimage`, `deb` |
+
+These files are merged over the base config automatically, so `pnpm tauri:build` works on every
+host without passing `--bundles` by hand.
+
+**Capabilities (task 4, minimal).** `src-tauri/capabilities/default.json` grants exactly three
+permission sets to the `main` window: `core:default` (Tauri's own safe defaults), `shell:default`
+(open `http(s)://`, `tel:`, `mailto:` links with a pre-configured scope) and `dialog:default`
+(message/open/save dialogs). The `fs` plugin is **not** installed and **not** granted —
+filesystem access arrives with explicit, reviewed scopes, never as a blanket allow. Registering
+a plugin in Rust grants nothing on its own; the capability file is the only grant.
+
+**CSP.** `app.security.csp` is `null` in STEP 1 (the Tauri template default) so that HMR is not
+fighting a policy while there is no remote content to protect. Tightening it is a release
+blocker and belongs with the fs scopes.
+
+**Icons.** `src-tauri/icons/` holds a generated placeholder set (background `--bg-base`, accent
+tile `--accent`, "SDC" wordmark): `32x32.png`, `128x128.png`, `128x128@2x.png`, `icon.png`
+(512, for Linux bundles), `icon.ico` (16–256, BMP entries) and `icon.icns`. Every artefact was
+generated from one 1024 px master and read back to confirm it loads. Replace the whole set with
+`pnpm --filter app tauri icon design/icon.png` once a real logo exists.
+
+**TypeScript strictness.** `strict: true` plus `noUnusedLocals`, `noUnusedParameters`,
+`noFallthroughCasesInSwitch`, `noImplicitOverride`, `noImplicitReturns`,
+`verbatimModuleSyntax`, `isolatedModules` and `forceConsistentCasingInFileNames`. Build tooling
+(`vite.config.ts`, `tailwind.config.ts`) is type checked separately in `tsconfig.node.json` with
+Node types instead of DOM types. `exactOptionalPropertyTypes` and `noUncheckedIndexedAccess` are
+deliberately off in STEP 1 — cheap to add per-module later, expensive to retrofit by surprise.
+
+**Tailwind 3, pinned.** The locked stack requires `tailwind.config.ts`; Tailwind 4 is CSS-first
+and has no config file, so `tailwindcss ^3.4` is pinned. Components take colour from token
+aliases whose values are CSS custom properties, declared in `src/styles/tokens.css` (spec
+§8.1–§8.4, mirrored 1:1 from `design/tokens.json`) and imported first by `globals.css`. The token
+namespace is part of the class name, so a class spells both the property and the role:
+`bg-bg-raised`, `text-text-primary`, `border-border-subtle`, `text-state-error`, `bg-diff-addBg`.
+The generator (`pnpm tokens:gen`) is still to be written; until then the two token files are kept
+identical by hand and must change together.
+
+**Tauri CLI.** The CLI is a dev dependency of `app/` (`@tauri-apps/cli`), so `pnpm tauri:dev`
+works without a global install. `cargo tauri` (the route `SETUP.md` describes) also works if the
+binary is on `PATH`; both read the same `tauri.conf.json`.
+
+**Release profile.** `app/src-tauri/Cargo.toml` builds releases with `lto`, `codegen-units = 1`,
+`opt-level = "s"` and `strip`. If release build time becomes a problem, relax `lto` first.
+
+## What is deliberately absent
+
+Nothing here is a stub that pretends: each gap below is a boundary the code states at the point where
+it is reached.
+
+* **A TLS client for the native API.** `native_api` builds an Anthropic `messages` request or an
+  OpenAI `chat/completions` request and parses both SSE dialects, and it streams today against an
+  `http://` endpoint (LM Studio, vLLM, llama.cpp). A remote `https://` endpoint answers
+  `a TLS client is not linked in this build; only http:// endpoints stream today` rather than
+  pretending the turn started. The `https` transport is the next crate to add (`rustls` + `hyper`).
+* **The provider OAuth token exchange.** `provider.oauth.open` returns a real URL and a real `state`;
+  `provider.oauth.callback` records the state and says the exchange lands with the OAuth step. No
+  token is invented, because a fake token would fail later in a stranger place.
+* **Checkpoint screenshots.** `checkpoints::screenshot` owns the path and the contract; the pixels
+  come from the app's WebView (`checkpoints::screenshot::record`), so a thumbnail appears when the
+  preview writes one. The rewind does not depend on it: files are restored from the shadow
+  repository, which is real today.
+* **The OS keychain is behind a feature that is off by default.** `keychain` compiles
+  (`cargo check --features keychain`, `keyring` v3) and would put a key in DPAPI / Keychain / Secret
+  Service, but a headless box or a CI container has no such store, so the default is the documented
+  file fallback under `<data>/keys/` (0600 on unix; Windows has no ACL applied yet). Turning the
+  feature on for desktop builds is on the next-step list, and `host.status` reports which store was
+  used either way.
+* **`provider.test` distinguishes "accepted" from "verified".** A key's shape is checked locally and
+  the answer carries `verified: false` plus a `detail` that says the provider was not contacted,
+  because this build cannot reach an `https://` endpoint. Only the local Ollama daemon (and an
+  `http://` endpoint) is really probed, and that answers `verified: true`. The browser's in-process
+  daemon asserts the happy path (`verified: true`) on purpose: it *is* the provider's stand-in.
+* **Installers for macOS and Linux, and a signed build.** The Windows `.msi` was verified in STEP 1;
+  `dmg`, `AppImage` and `deb` need their own hosts, and signing needs certificates that this
+  repository does not hold. `pnpm tauri:build` on each platform is the whole procedure.
+* **An axe-core pass and a screen-reader sweep.** The accessibility work is in the markup (roles,
+  `aria-current`, focus traps, `Escape` handling, the keymap reference), but the automated audit has
+  not been run in CI yet.
+* **`protocol/` is not an npm package yet.** `types.ts` is real and imported by the app; it joins the
+  workspace when a generator (schema → types) exists, so the two cannot drift.
+* **Federated/remote hosts beyond one SSH target.** `host.add` records an SSH host and the app's
+  switcher works; a second daemon on the far side of a tunnel is reached with `VITE_SDCP_URL` and is
+  not yet provisioned by the app.
+
+## Next step
+
+1. `native_api`'s HTTPS transport: `rustls` + `hyper`, so a remote Anthropic/OpenAI key streams
+   instead of reporting the missing client — and so `provider.test` can answer `verified: true` for a
+   saved key.
+2. Turn the `keychain` feature on for desktop builds (DPAPI / Keychain / Secret Service), with the
+   file fallback kept for a box that has no store, and an ACL on the Windows fallback until then.
+3. The provider OAuth token exchange, wired to `provider.oauth.callback`.
+4. The `schema → protocol/types.ts` generator, and `protocol/` as a workspace package.
+5. `dmg` / `AppImage` / `deb` builds and code signing on their own hosts.
+6. An axe-core run in CI, and a screen-reader pass over the palette, the Permission modal and the
+   Time Machine tab.
