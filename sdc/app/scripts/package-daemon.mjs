@@ -46,13 +46,16 @@ function cargo(args) {
   }
 }
 
-const triple = hostTriple();
+const triple = process.env.SDC_TARGET_TRIPLE?.trim() || hostTriple();
+const cross = process.env.SDC_TARGET_TRIPLE?.trim() ? ['--target', triple] : [];
 
 console.log(`sdcd: building release for ${triple}`);
 
-cargo(['build', '--release']);
+cargo(['build', '--release', ...cross]);
 
-const built = join(daemon, 'target', 'release', binary);
+const built = cross.length > 0
+  ? join(daemon, 'target', triple, 'release', binary)
+  : join(daemon, 'target', 'release', binary);
 
 if (!existsSync(built)) {
   throw new Error(`the daemon build produced no ${built}`);

@@ -15,6 +15,7 @@
 //! place where a protocol method is mapped onto a capability.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use serde_json::{json, Value};
 
@@ -88,6 +89,7 @@ impl Daemon {
             "pty.write" => self.pty_write(envelope),
             "pty.resize" => Ok(json!({})),
             "pty.close" => self.pty_close(envelope),
+            "shell.run" => self.shell_run(envelope, &*out),
 
             /* Providers ------------------------------------------------------------------------ */
             "provider.list" => Ok(json!({ "providers": providers::list(self.store()) })),
@@ -491,6 +493,76 @@ impl Daemon {
         let pty_id = envelope.require_str("ptyId")?;
 
         Ok(json!({ "closed": self.state.pty.close(&pty_id) }))
+    }
+
+    /// `shell.run`: one command, run to completion, with its output captured and its failure
+    /// translated.
+    ///
+    /// This is the daemon's **execute** step - the one an agent loop needs in order to *do* something
+    /// rather than describe it - and it is also what a user can drive directly. Two rules from the
+    /// rest of the daemon apply here, and they are why this is a handler rather than a pass-through:
+    ///
+    /// * a command may mutate the tree, so a checkpoint is written **before** it runs (principle P5);
+    /// * the run is announced as a tool call, so the turn stream shows it the way it shows an engine's
+    ///   own tool calls - the app needs no second way to render "a command ran".
+    fn shell_run(&self, envelope: &Envelope, out: &dyn Notifier) -> Result<Value, ErrorObject> {
+        let command = envelope.require_str("command")?;
+        let args: Vec<String> = envelope
+            .params
+            .get("args")
+            .and_then(Value::as_array)
+            .map(|args| args.iter().filter_map(Value::as_str).map(str::to_string).collect())
+            .unwrap_or_default();
+        let cwd = envelope.opt_str("cwd");
+        let session_id = envelope.opt_str("sessionId");
+        let turn_id = envelope.opt_str("turnId");
+        let timeout = Duration::from_secs(
+            envelope.opt_i64("timeoutMs").map(|ms| (ms as u64 / 1000).max(1)).unwrap_or(120),
+        );
+        let call_id = format!("shell-{}", self.state.events.seq() + 1);
+
+        if let (Some(session), Some(root)) = (session_id.as_deref(), envelope.opt_str("root")) {
+            let root = std::path::PathBuf::from(root);
+            let ordinal = self.state.events.seq();
+
+            if let Ok(fresh) = crate::checkpoints::create(
+                self.store(),
+                session,
+                ordinal,
+                &format!("Before `{command}`"),
+                Some(&root),
+                crate::checkpoints::screenshot::capture(),
+            ) {
+                out.push(
+                    event::checkpoint_saved(session, fresh.to_event_payload()),
+                    Some(session.to_string()),
+                    turn_id.clone(),
+                );
+            }
+        }
+
+        if let Some(turn) = turn_id.as_deref() {
+            out.push(
+                event::tool_call_started(turn, &call_id, "run", &command, cwd.as_deref().unwrap_or(".")),
+                session_id.clone(),
+                turn_id.clone(),
+            );
+        }
+
+        let result = self.state.pty.run_once(&command, &args, cwd.as_deref(), timeout)?;
+
+        if let Some(turn) = turn_id.as_deref() {
+            let status = if result["ok"] == Value::Bool(true) { "done" } else { "failed" };
+            let meta = format!("exit {} · {}ms", result["exitCode"], result["durationMs"].as_u64().unwrap_or(0));
+
+            out.push(
+                event::tool_call_completed(turn, &call_id, status, &meta, None),
+                session_id.clone(),
+                turn_id.clone(),
+            );
+        }
+
+        Ok(result)
     }
 
     fn permission_request(&self, envelope: &Envelope, out: &dyn Notifier) -> Result<Value, ErrorObject> {

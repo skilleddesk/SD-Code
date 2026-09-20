@@ -94,6 +94,12 @@ export type SdcpMethod =
   | 'pty.write'
   | 'pty.resize'
   | 'pty.close'
+  /**
+   * One command, run to completion by the daemon: the **execute** step an agent loop needs, and the
+   * one a user can drive directly. `ok` is the exit code's story; `error` is the plain-English
+   * translation of a failure (spec section 14.9); `timedOut` says the command was stopped.
+   */
+  | 'shell.run'
   | 'event.list'
   | 'event.append'
   | 'event.subscribe'
@@ -589,6 +595,37 @@ export interface SdcpMethodMap {
     result: Record<string, never>;
   };
   'pty.close': { params: { ptyId: string }; result: Record<string, never> };
+
+  /**
+   * One command, run to completion. The daemon writes a checkpoint before it starts (the command may
+   * mutate the tree) and reports the failure in words, never as a stack trace.
+   */
+  'shell.run': {
+    params: {
+      command: string;
+      args?: string[];
+      cwd?: string;
+      /** Given a session and a `root`, a checkpoint is written before the command runs. */
+      sessionId?: string;
+      turnId?: string;
+      root?: string;
+      /** How long the command may run; the default is 120 s. */
+      timeoutMs?: number;
+    };
+    result: {
+      command: string;
+      args: string[];
+      cwd: string | null;
+      exitCode: number | null;
+      ok: boolean;
+      stdout: string;
+      stderr: string;
+      durationMs: number;
+      timedOut: boolean;
+      truncated: boolean;
+      error: { title: string; explanation: string; rule: string; fixable: boolean } | null;
+    };
+  };
 
   'event.list': {
     params: { since?: number; sessionId?: string };

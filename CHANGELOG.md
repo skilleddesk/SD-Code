@@ -8,20 +8,42 @@ what `host.status` reports as the daemon's version.
 This file describes what changed, not what is planned. Anything still open is named in
 [`sdc/README.md` → What is deliberately absent](sdc/README.md#what-is-deliberately-absent).
 
-## [Unreleased]
+## [0.4.2] — the execute step, and installers for every platform
 
 ### Added
 
-* `app:check` (the Tauri bridge's `cargo check`) and `sdcd:test` workspace scripts, so the two Rust
-  crates can be checked without opening the window.
-* `_verify/sdcp-smoke.mjs` — a dev-only harness (outside the workspace) that starts a real `sdcd`,
-  exercises every method with realistic parameters, restarts the daemon on the same database and
-  checks that the log and the rows survived. 35 checks; it is what found the broadcast bug below.
+* **`shell.run` — the daemon's execute step.** One command, run to completion with both streams
+  captured, its exit code reported, and a non-zero exit translated into a plain sentence
+  (`{ "title", "explanation", "rule", "fixable" }`). This is the piece an agent loop needs in order to
+  *act* rather than describe, and it is what makes SDC more than a viewer of someone else's agent:
+  * a **deny list** refuses the handful of commands that destroy a machine (`rm -rf /`, `mkfs`,
+    `format c:`, `diskpart`, `shutdown`, `reboot`, `dd if=`, a fork bomb, `git push --force`) with the
+    reason attached, matched at the *start* of the line so `echo "rm -rf /tmp"` is not a false
+    positive, and one level into a shell (`sh -c "…"`) so wrapping does not hide it;
+  * a mutating run writes a **checkpoint before it starts**, and the run is announced as a tool call,
+    so the turn stream shows it the way it shows an engine's own tool calls;
+  * a **timeout** stops it, and the answer says `timedOut` instead of hanging a turn for ever;
+  * output is capped at 256 KB per stream (`truncated: true`) so a chatty command cannot fill the log.
+  The module says plainly that this is **not a sandbox**: the permission gate and the checkpoint are
+  the real protection.
+* **Cross-platform releases in CI** (`.github/workflows/release.yml`). No host can build another
+  platform's bundle, so the workflow builds each on its own runner — Windows (NSIS + MSI), macOS
+  (Intel and Apple Silicon DMGs), Linux (AppImage + deb) — runs the same gate a developer runs, and
+  attaches everything to one GitHub Release. Push a `v*` tag and all six installers exist.
+* `pnpm daemon:package` (`app/scripts/package-daemon.mjs`) builds `sdcd` in release and copies it under
+  the target triple Tauri's `externalBin` expects, so every installer carries the daemon. It honours
+  `SDC_TARGET_TRIPLE` for a cross build.
+* `pnpm app:check` (the Tauri bridge's `cargo check`) and `sdcd:test` workspace scripts.
 
-### Added — the Windows installers
+### Changed
 
-* `pnpm tauri:build` now produces an installable app: `SDC_0.4.1_x64-setup.exe` (NSIS) and
-  `SDC_0.4.1_x64_en-US.msi`, both carrying the daemon.
+* `beforeBuildCommand` is now `pnpm build && pnpm daemon:package`, so a build can never produce an
+  installer without a daemon in it - on any machine, CI included.
+
+### Added — the installers
+
+* `pnpm tauri:build` produces an installable app: `SDC_0.4.2_x64-setup.exe` (NSIS) and
+  `SDC_0.4.2_x64_en-US.msi`, both carrying the daemon.
 * **`sdcd` is bundled as a sidecar** (`bundle.externalBin`), produced by `pnpm daemon:package`
   (`app/scripts/package-daemon.mjs`: builds the daemon in release and copies it under the target
   triple Tauri expects). Before this, an installed app would have opened a window where every call
@@ -30,10 +52,14 @@ This file describes what changed, not what is planned. Anything still open is na
   install starts the daemon and folds *this* machine's real status into the store (engines, keychain
   backend, event count) instead of showing the seed until the first click. If the daemon does not
   answer, the app says so once, in plain words (`strings.daemon.offline`).
-* The app's own version moved from `0.0.1` to `0.4.1` (`tauri.conf.json`, both `Cargo.toml`s,
+* The app's own version moved from `0.0.1` to `0.4.2` (`tauri.conf.json`, both `Cargo.toml`s,
   `package.json` files), so what the About tab shows and what Windows has installed agree.
 * `generate.mjs` now ships next to the VCR fixtures, so a clone can regenerate them
   (`node sdc/sdcd/tests/vcr/generate.mjs`) without the machine-local `_verify/` harness.
+* `_verify/sdcp-smoke.mjs` — a dev-only harness (outside the workspace) that starts a real `sdcd`,
+  exercises every method with realistic parameters, restarts the daemon on the same database and
+  checks that the log and the rows survived. 38 checks now, and it is what found the broadcast bug
+  below.
 
 ### Fixed
 
@@ -189,4 +215,11 @@ against, and where the Tauri bridge closed the last gap between them.
 * Tauri 2 window (`SDC`, 1280×800, identifier `dev.skilleddesk.sdc`), the five-region `#app` grid,
   the token layer, `pnpm` workspaces and the platform-narrowed bundle targets.
 * The Windows `.msi` was built and its metadata read back (`ProductName = SDC`).
+
+
+[0.4.2]: https://github.com/skilleddesk/SD-Code/releases/tag/v0.4.2
+[0.4.1]: https://github.com/skilleddesk/SD-Code/releases/tag/v0.4.1
+[0.3.0]: https://github.com/skilleddesk/SD-Code/releases/tag/v0.3.0
+[0.2.0]: https://github.com/skilleddesk/SD-Code/releases/tag/v0.2.0
+[0.1.0]: https://github.com/skilleddesk/SD-Code/releases/tag/v0.1.0
 
