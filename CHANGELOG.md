@@ -14,6 +14,51 @@ This file describes what changed, not what is planned. Anything still open is na
 release - the newest - and deletes the others when it publishes (`release.yml`, "Keep only this
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
+## [0.7.11] — four sentences in this README that were no longer true
+
+Not a feature release. The README's "What is deliberately absent" is the part of the documentation that is
+supposed to cost something to write, and four of its claims had quietly stopped matching the code:
+
+* "**A TLS client for the native API** … the `https` transport is the next crate to add (`rustls` + `hyper`)"
+  - `post_https` has streamed `https://` over `ureq` (rustls + webpki roots) since **0.6.1**;
+* "a remote `https://` endpoint answers *a TLS client is not linked in this build*" - that sentence is not in
+  the code at all;
+* "**a remote list is `bundled` (or `cached`)** … because this build cannot reach without a TLS client" - the
+  model list is fetched live, and the SQLite cache in a working install carries `fetchedAt` timestamps from
+  real fetches;
+* "**`provider.test` … carries `verified: false`** because this build cannot reach an `https://` endpoint" -
+  it really contacts the provider and answers `verified: true`.
+
+The fix is the measurement, not a re-reading. `_verify/live-provider-test.mjs` makes one live round trip over
+TLS with a key nobody would want:
+
+```text
+$ node _verify/live-provider-test.mjs
+{ "result": { "verified": true, "error": "API key is invalid. (401)" } }
+```
+
+That is the whole point of the field: the request crossed TLS, presented the key, and read the provider's own
+answer about it. A `verified: false` here would have meant "we never asked".
+
+### Changed
+
+The four entries above are rewritten to say what the build does, and the next-step list loses the item that
+was already done. What the README now admits instead is narrower and true: a **streaming** turn against a paid
+`https://` endpoint has not been exercised from here (the transport under it is the same agent, and the
+`http://` loopback path is what `tests/streaming.rs` drives without a network), and the provider OAuth exchange
+needs a client registration with each provider - a person's job rather than a build's.
+
+### Verified
+
+Nothing in `sdcd` or the app changed, so this release is verified the way the others are, with the version
+string as the only difference in the artifacts: 166 daemon tests, clippy clean, 73 vitest cases, typecheck and
+lint clean, `protocol/check.mjs` at 0 differences, the built window renders, the axe audit reports 0
+violations, the window reports `v0.7.11 · sdcd 0.7.11`, and the four probes (`files`, `078`, `folder`, `075`)
+still pass against the installed build - plus the live provider call above, which is the evidence this release
+is about.
+
+
+
 ## [0.7.10] — the OS key store, a protocol that cannot drift silently, and the audit that was promised
 
 Three of the items on this README's next-step list, and one of them found more than it went looking for.
