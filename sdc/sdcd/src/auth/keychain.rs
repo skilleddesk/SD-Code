@@ -131,20 +131,22 @@ fn key_path(name: &str) -> Result<PathBuf, ErrorObject> {
     Ok(dir.join(name.replace(['/', '\\'], "_")))
 }
 
-/// Narrows a path to its owner: `0600` on unix, an ACL on Windows that drops inheritance.
+/// Narrows a path to its owner: `0600` on a **file** and `0700` on a **directory** on unix, and on Windows an
+/// ACL that drops inheritance and keeps the owner's full control.
 ///
-/// The Windows half is why this exists at all. Until 0.7.10 a key written by the fallback inherited the
-/// permissions of `%APPDATA%`, which on a shared machine means every account in `Users` - so "the fallback is
-/// a file with 0600" was only ever true on unix. `icacls` is the system tool for it (no extra dependency, and
-/// it is what an administrator would run by hand): `/inheritance:r` removes the inherited entries and
-/// `/grant:r` replaces the rest with the current account's. When it cannot be applied the error is returned,
-/// and `protection()` reports what the fallback really got.
+/// The file/directory difference is not cosmetic, and 0.7.10's CI is what taught it: `0600` on a *directory*
+/// clears the execute bit, and without execute the owner cannot create or open a file inside it at all - so
+/// `set` failed with `EACCES` on Linux and macOS while Windows (whose ACL grants full control) was happy. Four
+/// keychain tests panicked in `set` on the unix runners and nowhere else. The previous version of this code
+/// ignored the failure, which is why nobody had seen it.
 fn restrict_to_owner(path: &Path) -> Result<(), ErrorObject> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
 
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).map_err(ErrorObject::internal)
+        let mode = if path.is_dir() { 0o700 } else { 0o600 };
+
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).map_err(ErrorObject::internal)
     }
 
     #[cfg(windows)]
@@ -293,6 +295,33 @@ mod tests {
             !text.contains("BUILTIN\\Users") && !text.contains("Everyone"),
             "no group may read a key file: {text}"
         );
+    }
+
+    /// The fallback's directory is private **and still usable** - the difference CI caught in 0.7.10.
+    ///
+    /// `0600` on a directory clears its execute bit, and a directory you cannot search is a directory you
+    /// cannot write a key into: `set` failed with `EACCES` on the unix runners and passed on Windows, whose
+    /// ACL grants full control. This asserts the mode *and* the round trip, so a regression fails here first.
+    #[cfg(unix)]
+    #[test]
+    fn the_fallback_directory_is_private_and_still_usable() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let name = "sdc.test.keychain-dir";
+        let file = key_path(name).unwrap();
+        let directory = file.parent().expect("a keys directory").to_path_buf();
+        let mode = std::fs::metadata(&directory).unwrap().permissions().mode() & 0o777;
+
+        assert_eq!(mode, 0o700, "a directory the owner cannot search is a directory nothing can be written into");
+
+        set(name, "sk-dir-test").unwrap();
+        assert_eq!(get(name).as_deref(), Some("sk-dir-test"));
+
+        let file_mode = std::fs::metadata(&file).unwrap().permissions().mode() & 0o777;
+
+        assert_eq!(file_mode, 0o600, "the key file itself stays owner-only");
+
+        delete(name).unwrap();
     }
 
     #[test]
