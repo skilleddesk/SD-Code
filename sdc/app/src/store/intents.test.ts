@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { SdcpCallError } from '../lib/transport';
 import type { SessionView } from './types';
 
 /**
@@ -19,9 +20,12 @@ const sdcpCall = vi.hoisted(() => vi.fn());
 
 vi.mock('../lib/sdcp', () => ({ sdcpCall }));
 
-const { chooseModel, closeFolder, emptySessionOn, newChatOnHost, openFolderIn } = await import('./intents');
+const { chooseModel, closeFolder, emptySessionOn, newChatOnHost, openFolderIn, loadDirectory, toggleDirectory, openFile, closeFile } = await import('./intents');
 const { engineForProvider, useModelStore } = await import('./model');
+const { useFilesStore } = await import('./files');
+const { useLayoutStore } = await import('./layout');
 const { usePrefsStore } = await import('./prefs');
+const { useRightPanelStore } = await import('./rightPanel');
 const { useAppStore } = await import('./store');
 
 describe('chooseModel', () => {
@@ -299,6 +303,113 @@ describe('openFolderIn', () => {
 
     await expect(openFolderIn('H:\\SDC')).resolves.toBe('n9');
     expect(sdcpCall).toHaveBeenCalledWith('session.open', expect.objectContaining({ projectId: 'pr1' }));
+  });
+});
+
+/**
+ * The file tree (0.7.7) - `fs.list` and `fs.read`, which had no caller in the app until this release.
+ *
+ * Four behaviours are asserted, and each one is a decision rather than a detail:
+ *
+ *   1. the root read names **no path** - the session id is enough, which is the contract 0.7.6 gave the
+ *      file tools, and the daemon's answer is what the tree shows as its root;
+ *   2. opening a folder reads it once (expanding, collapsing and expanding again is not three requests);
+ *   3. clicking a file fills the Preview with the daemon's text, and - the part a click that looks dead
+ *      would fail - switches the right panel to Preview **and** unfolds it;
+ *   4. a failed read puts the daemon's own sentence on screen and leaves the tree alone.
+ */
+describe('the file tree', () => {
+  const listing = (path: string) => ({
+    path,
+    entries: [
+      { name: 'src', path: `${path}\\src`, dir: true, size: 0 },
+      { name: 'README.md', path: `${path}\\README.md`, dir: false, size: 42 },
+    ],
+    /* The `.env` in that folder is *not* in this array: the daemon filters it out and counts it. */
+    hidden: 1,
+  });
+
+  beforeEach(() => {
+    sdcpCall.mockReset();
+    useFilesStore.getState().reset();
+    usePrefsStore.setState({ activeTab: 's1', openTabs: ['s1'] });
+  });
+
+  it('reads the chat’s folder when no path is given, and takes the root from the answer', async () => {
+    sdcpCall.mockResolvedValue(listing('H:\\SDC'));
+
+    await loadDirectory(null);
+
+    expect(sdcpCall).toHaveBeenCalledWith('fs.list', { sessionId: 's1' });
+
+    const files = useFilesStore.getState();
+
+    expect(files.root).toBe('H:\\SDC');
+    expect(files.directories['H:\\SDC']?.entries.map((entry) => entry.name)).toEqual(['src', 'README.md']);
+    /* The guard's count travels: the tree says `1 name hidden` rather than being quietly short. */
+    expect(files.directories['H:\\SDC']?.hidden).toBe(1);
+  });
+
+  it('reads a folder once, however many times it is expanded', async () => {
+    sdcpCall.mockResolvedValue(listing('H:\\SDC\\src'));
+
+    await toggleDirectory('H:\\SDC\\src');
+    expect(useFilesStore.getState().expanded).toEqual(['H:\\SDC\\src']);
+
+    /* Collapsing reads nothing... */
+    await toggleDirectory('H:\\SDC\\src');
+    expect(useFilesStore.getState().expanded).toEqual([]);
+
+    /* ...and opening it again does not re-ask: the entries are already in the store. */
+    await toggleDirectory('H:\\SDC\\src');
+
+    expect(sdcpCall).toHaveBeenCalledTimes(1);
+    expect(sdcpCall).toHaveBeenCalledWith('fs.list', { path: 'H:\\SDC\\src' });
+  });
+
+  it('opens a file into the Preview, and unfolds the panel so the click is visible', async () => {
+    useLayoutStore.setState({ right: 'hidden' });
+    useRightPanelStore.setState({ activeTab: 'console', tabBySession: {} });
+    sdcpCall.mockResolvedValue({
+      path: 'H:\\SDC\\README.md',
+      text: '# SDC\n',
+      sha256: 'a'.repeat(64),
+      bytes: 6,
+      truncated: false,
+    });
+
+    await openFile('H:\\SDC\\README.md', 'README.md');
+
+    const files = useFilesStore.getState();
+
+    expect(files.open).toMatchObject({ name: 'README.md', text: '# SDC\n', truncated: false });
+    expect(files.opening).toBeNull();
+    expect(useLayoutStore.getState().right).toBe('visible');
+    expect(useRightPanelStore.getState().tabBySession.s1).toBe('preview');
+
+    closeFile();
+    expect(useFilesStore.getState().open).toBeNull();
+  });
+
+  it('shows the daemon’s sentence when a read fails, and keeps the tree', async () => {
+    sdcpCall.mockResolvedValue(listing('H:\\SDC'));
+    await loadDirectory(null);
+
+    /* The daemon's refusal, in the shape the transport really throws it (`blocked_path`): the tree has to
+       show the sentence rather than its own generic one. */
+    sdcpCall.mockRejectedValueOnce(
+      new SdcpCallError({
+        code: 'blocked_path',
+        message: 'H:\\SDC\\.env was refused because `.env` holds secrets',
+      }),
+    );
+    await openFile('H:\\SDC\\.env', '.env');
+
+    const files = useFilesStore.getState();
+
+    expect(files.open).toBeNull();
+    expect(files.error).toContain('holds secrets');
+    expect(files.directories['H:\\SDC']?.entries).toHaveLength(2);
   });
 });
 

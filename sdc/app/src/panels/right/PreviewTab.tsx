@@ -2,9 +2,11 @@ import { Camera, ChevronLeft, ChevronRight, ExternalLink, RotateCw } from 'lucid
 import { useState } from 'react';
 
 import { strings } from '../../strings';
+import { useFilesStore } from '../../store/files';
 import { toast } from '../../store/toast';
 import { BTN, BTN_BLOCK, BTN_SECONDARY } from '../ui/button';
 import { IconButton } from '../ui/IconButton';
+import { PreviewFile } from './PreviewFile';
 
 /**
  * The Preview tab - spec section 7.7.
@@ -35,16 +37,19 @@ const DEVICES: readonly Device[] = ['mobile', 'tablet', 'desktop'];
 
 export function PreviewTab() {
   const [device, setDevice] = useState<Device>('tablet');
+  const open = useFilesStore((state) => state.open);
 
   /*
-   * The URL the daemon would have attached for this session.
+   * A file that was clicked in the sidebar's tree takes the tab over (0.7.7).
    *
-   * SDCP 0.1 has no event for it yet - `console.attach` hands the daemon a URL and the daemon answers
-   * with the checks it ran - so this build has nothing to show in the frame, and the panel says that.
-   * What it used to show was worse: a hardcoded `localhost:5173/login` page, which read as a working
-   * preview of a dev server this window had never started.
+   * The tab is still the *preview* surface - `fs.list` and `fs.read` are the daemon's own read methods -
+   * and the frame below is a web preview that SDCP 0.1 cannot fill until a URL is attached
+   * (`console.attach`). So a file is the one thing this tab can honestly show today, which is exactly
+   * what the spec's Preview tab is for: a look at something without leaving the app.
    */
-  const previewUrl: string | null = null;
+  if (open !== null) {
+    return <PreviewFile />;
+  }
 
   const width = DEVICE_WIDTH[device];
 
@@ -71,7 +76,14 @@ export function PreviewTab() {
         />
 
         <div className="preview-url mx-[6px] min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap rounded-md border border-border-subtle bg-bg-input px-[10px] py-[5px] font-mono text-[10.5px] text-text-muted">
-          {previewUrl ?? strings.rightPanel.preview.noUrl}
+          {/*
+            No URL, and it says so. SDCP 0.1 has no event that carries an attached page (`console.attach`
+            hands the daemon a URL and the daemon answers with the checks it ran), so the box shows the
+            `noUrl` sentence rather than a hardcoded `localhost:5173/login` - which read as a working
+            preview of a dev server this window had never started. A file opened from the tree replaces
+            this whole tab; see `PreviewFile`.
+          */}
+          {strings.rightPanel.preview.noUrl}
         </div>
 
         <IconButton

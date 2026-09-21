@@ -14,6 +14,61 @@ This file describes what changed, not what is planned. Anything still open is na
 release - the newest - and deletes the others when it publishes (`release.yml`, "Keep only this
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
+## [0.7.7] — the folder a chat works in, now visible: a file tree and a file viewer
+
+0.7.6 gave a chat a working directory and put its name in the prompt toolbar, so *which* folder a turn runs
+in became a question with an answer. What was still missing was everything that *looks inside it*: `fs.list`
+and `fs.read` had been real methods since the schema was written and **no line of the app called either**
+(README, "What is deliberately absent"). This release is that caller.
+
+### Added — the sidebar's Files section
+
+A tree under the session list, showing **the active chat's folder** - not a list of folders, because a chat
+works in one directory (0.7.6), so the tree follows the session the way the pane does and switching chats
+switches the tree. A chat with no folder says how to get one (`Open a folder to see its files`).
+
+* **lazy, one `fs.list` per folder that is opened.** The daemon's listing is one level deep and says which
+  rows are folders, so opening `node_modules` costs one request rather than a walk;
+* **folders first, then files**, each sorted by name - a tree convention, decided in the window because the
+  daemon's listing is name-sorted;
+* **the folder's name is the row and the whole path is its tooltip**, the same rule the prompt chip follows;
+* **a Refresh button** (and a `files.refresh` palette row) for a file an engine just wrote;
+* **the guard's hidden names are counted out loud**: the daemon refuses `.env`, `*.pem` and its own data
+  directory, and now answers how many names it kept out, so a folder with a `.env` in it says
+  `1 name hidden` instead of being quietly one row short.
+
+### Added — `fs.read` opens a file in the Preview tab
+
+Clicking a file reads it (`fs.read`) and shows it in the right panel's Preview: the tab switches, **the panel
+unfolds if it was folded** - a click that shows nothing is the kind of lie this build keeps removing - and the
+file's own text appears in the app's mono type, with its name, its **whole path**, `2.4 KB · 128 lines` and
+the first eight characters of its `sha256` (the same hash a checkpoint stores). No syntax highlighting: there
+is no highlighter in this build, and a hand-rolled approximation would colour the wrong tokens.
+
+### Changed — `fs.list` takes a session, and both reads say when they are cut
+
+* `fs.list`'s `path` is **optional** now: with `sessionId` instead of a path it lists the **session's**
+  folder, which is the contract `git.*` and `fs.search` have had since 0.7.6 (the window knows the chat, the
+  daemon knows the folder). Its answer names the directory it listed and counts the hidden names.
+* `fs.read` caps the text at **1 MiB** and answers `bytes` (the file's real size) and `truncated`, so a large
+  file says `First 1 MB of 12.4 MB` rather than looking complete. The `sha256` is still computed over the
+  **whole file** (`fs::hash_file`, streaming): a hash of the first megabyte would be a hash of something that
+  is not the file.
+
+### Verified
+
+* `sdcd`: 161 tests, including two new `fs` unit tests (a listing says which row is a folder and how big it is;
+  a capped read reports the real size and the whole-file hash) and the lifecycle test extended to drive the
+  tree's own path: `fs.list { sessionId }` names the folder and hides `.env`, a 1.2 MB file comes back
+  `truncated: true` with `bytes: 1200000` and exactly one megabyte of text. Clippy clean.
+* `app`: 66 vitest cases (four new: the root read names no path and takes its root from the answer; a folder is
+  read once however often it is toggled; a file click switches the panel to Preview *and* unfolds it; a refused
+  read shows the daemon's own sentence and leaves the tree standing). Typecheck and lint at zero.
+* `_verify/probe-files.mjs`: in the running window - a chat is pointed at a fixture folder, the tree names it,
+  lists `README.md` as a file and `src` as a folder, says `1 name hidden` for the fixture's `.env`, expands
+  `src` lazily to reveal `main.ts`, opens `main.ts` into the Preview with the panel unfolded, closes it with
+  the ×, and deletes the chat it made.
+
 ## [0.7.6] — "chat er kono folder nai": a chat works in a folder now
 
 *"GUI file-picker nai. aita soho aro important kisu nai jeta vs code a thake"* — 0.7.5 fixed the picker.

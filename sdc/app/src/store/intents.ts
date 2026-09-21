@@ -4,10 +4,13 @@ import { sdcpCall } from '../lib/sdcp';
 import { isSdcpError } from '../lib/transport';
 import { strings } from '../strings';
 import { useDaemonStore } from './daemon';
+import { useFilesStore } from './files';
+import { useLayoutStore } from './layout';
 import { useModelStore, engineForProvider, tierName, tierFromName } from './model';
 import { useOverlayStore } from './overlays';
 import { usePrefsStore } from './prefs';
 import { withProjects, withProviders, withWorkspace } from './reducer';
+import { useRightPanelStore } from './rightPanel';
 import { selectActiveSession, dispatch, useAppStore } from './store';
 import type { AppState, HostView, TurnView } from './types';
 
@@ -450,6 +453,107 @@ export async function loadWorkspace(): Promise<void> {
 /* ------------------------------------------------------------------------------------------------
  * Folders: the directory a chat works in (0.7.6)
  * ---------------------------------------------------------------------------------------------- */
+
+/* ------------------------------------------------------------------------------------------------
+ * Files: the tree in the sidebar, and the file the Preview shows (0.7.7)
+ * ---------------------------------------------------------------------------------------------- */
+
+/**
+ * Opens or closes a folder's row, reading it the first time it is opened.
+ *
+ * The read is lazy on purpose: `fs.list` is one level deep, so a project with a `node_modules` in it
+ * costs one request per folder a person actually opens rather than a walk of the whole tree.
+ */
+export async function toggleDirectory(path: string): Promise<void> {
+  const files = useFilesStore.getState();
+
+  if (files.expanded.includes(path)) {
+    files.setExpanded(path, false);
+
+    return;
+  }
+
+  files.setExpanded(path, true);
+
+  if (files.directories[path] === undefined) {
+    await loadDirectory(path);
+  }
+}
+
+/**
+ * `fs.list` for one directory - or, with `null`, for the **chat's** folder.
+ *
+ * `null` is what the tree asks for at its root, and it is the same contract 0.7.6 gave `git.*` and
+ * `fs.search`: the window knows the chat, the daemon knows the folder. The answer names the directory
+ * it listed, so the tree can show the root's name without the app ever joining a path.
+ */
+export async function loadDirectory(path: string | null): Promise<void> {
+  const sessionId = usePrefsStore.getState().activeTab;
+
+  if (path !== null) {
+    useFilesStore.getState().startLoading(path);
+  }
+
+  try {
+    const answer =
+      path === null
+        ? await sdcpCall('fs.list', { sessionId: sessionId ?? undefined })
+        : await sdcpCall('fs.list', { path });
+    const files = useFilesStore.getState();
+
+    if (path === null) {
+      files.setRoot(answer.path);
+    }
+
+    useFilesStore
+      .getState()
+      .fill(answer.path, { entries: answer.entries, hidden: answer.hidden });
+  } catch (error) {
+    reportFailure(error, strings.files.failed);
+    useFilesStore.getState().fail(isSdcpError(error) ? error.message : strings.files.failed);
+  }
+}
+
+/**
+ * `fs.read` for the file a row was clicked on, and then **show** it.
+ *
+ * Showing it means the Preview tab and the panel itself: a person who clicked a file in the tree
+ * asked to see that file, and opening a tab behind a folded panel would be a click that looks like it
+ * did nothing. The `truncated` flag travels with the text, so a megabyte of a larger file is never
+ * mistaken for the whole of it.
+ */
+export async function openFile(path: string, name: string): Promise<void> {
+  useFilesStore.getState().startOpening(path);
+
+  try {
+    const answer = await sdcpCall('fs.read', { path });
+
+    useFilesStore.getState().setOpen({
+      path: answer.path,
+      name,
+      text: answer.text,
+      sha256: answer.sha256,
+      bytes: answer.bytes,
+      truncated: answer.truncated,
+    });
+
+    useLayoutStore.getState().showRight();
+    useRightPanelStore.getState().setActiveTab('preview', usePrefsStore.getState().activeTab);
+  } catch (error) {
+    reportFailure(error, strings.files.openFailed);
+    useFilesStore.getState().fail(isSdcpError(error) ? error.message : strings.files.openFailed);
+  }
+}
+
+/** Closes the open file: the Preview goes back to what it shows with nothing open. */
+export function closeFile(): void {
+  useFilesStore.getState().setOpen(null);
+}
+
+/** Re-reads a directory, so a file an engine just wrote shows up (the tree's Refresh). */
+export async function refreshDirectory(path: string): Promise<void> {
+  await loadDirectory(path);
+}
 
 /**
  * `project.list`, folded into the store - what makes an opened folder survive a reload.

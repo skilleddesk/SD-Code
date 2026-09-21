@@ -9,6 +9,7 @@ import {
   forceKillTurn,
   interruptTurn,
   openFolder,
+  refreshDirectory,
   resolvePermission,
   redoRewind,
   rewindTo,
@@ -126,7 +127,7 @@ function moveTimeline(step: number | 'start' | 'end'): void {
  * screen always agree about which folder they mean. `null` covers both reasons there may be nothing to do:
  * no chat is open, or the chat has no folder yet.
  */
-function activeFolder(): { sessionId: string; projectId: string; name: string } | null {
+function activeFolder(): { sessionId: string; projectId: string; name: string; root: string } | null {
   const activeTab = usePrefsStore.getState().activeTab;
 
   if (activeTab === null) {
@@ -141,6 +142,8 @@ function activeFolder(): { sessionId: string; projectId: string; name: string } 
         sessionId: session.id,
         projectId: session.projectId,
         name: nameOf(session.projectRoot ?? session.projectId),
+        /* The tree's refresh needs the path itself, not the name the chip shows. */
+        root: session.projectRoot ?? '',
       };
     }
   }
@@ -196,6 +199,7 @@ export const COMMANDS: readonly Command[] = [
   { id: 'folder.open', label: strings.main.noProject.action, icon: 'folder', group: 'actions', run: () => void openFolder() },
   { id: 'folder.change', label: strings.folder.change, icon: 'folder', group: 'actions', when: () => activeFolder() !== null, run: () => { const current = activeFolder(); if (current !== null) { void changeFolder(current.sessionId); } } },
   { id: 'folder.close', label: 'Close this folder', icon: 'folder', group: 'actions', when: () => activeFolder() !== null, run: () => { const current = activeFolder(); if (current !== null) { void closeFolder(current.projectId, current.name); } } },
+  { id: 'files.refresh', label: strings.files.refresh, icon: 'folder', group: 'actions', when: () => activeFolder() !== null, run: () => { const current = activeFolder(); if (current !== null) { void refreshDirectory(current.root); } } },
 ];
 
 /* ------------------------------------------------------------------------------------------------

@@ -104,23 +104,27 @@ pub fn stat(path: &Path) -> Result<Value, ErrorObject> {
     }))
 }
 
-/// A directory listing, one level deep.
+/// A directory listing, one level deep, and how many names it **hid**.
 ///
 /// A blocked name is filtered out of the listing as well as out of a read: a listing that *shows*
-/// `.env` but refuses to open it invites a support ticket, and "never send these to providers" is
-/// about the name reaching a model as much as the contents.
-pub fn list(path: &Path) -> Result<Vec<Value>, ErrorObject> {
+/// `.env` but refuses to open it invites a support ticket, and "never send these providers these
+/// files" is about the name reaching a model as much as the contents. The count comes back so a
+/// caller can say "3 names are hidden" rather than leaving a person wondering why their tree is short
+/// (the window's file tree says exactly that - principle P4).
+pub fn list(path: &Path) -> Result<(Vec<Value>, usize), ErrorObject> {
     guard(path)?;
 
     let entries = std::fs::read_dir(path)
         .map_err(|error| ErrorObject::not_found(format!("{}: {error}", path.display())))?;
     let mut rows = Vec::new();
+    let mut hidden = 0usize;
 
     for entry in entries.flatten() {
         let entry_path: PathBuf = entry.path();
         let metadata = entry.metadata().ok();
 
         if blocked_reason(&entry_path).is_some() {
+            hidden += 1;
             continue;
         }
 
@@ -134,7 +138,57 @@ pub fn list(path: &Path) -> Result<Vec<Value>, ErrorObject> {
 
     rows.sort_by(|left, right| left["name"].as_str().cmp(&right["name"].as_str()));
 
-    Ok(rows)
+    Ok((rows, hidden))
+}
+
+/// The SHA-256 of a whole file, read in chunks - for a file too large to hold in memory at once.
+///
+/// `read` hashes what it read, which is the whole file; this exists for the case where the *text* is
+/// capped but the hash must still be of the file rather than of its first megabyte.
+pub fn hash_file(path: &Path) -> Result<String, ErrorObject> {
+    use std::io::Read;
+
+    guard(path)?;
+
+    let mut file = std::fs::File::open(path)
+        .map_err(|error| ErrorObject::not_found(format!("{}: {error}", path.display())))?;
+    let mut hasher = Sha256::new();
+    let mut buffer = vec![0u8; 64 * 1024];
+
+    loop {
+        let read = file
+            .read(&mut buffer)
+            .map_err(|error| ErrorObject::internal(format!("{}: {error}", path.display())))?;
+
+        if read == 0 {
+            break;
+        }
+
+        hasher.update(&buffer[..read]);
+    }
+
+    Ok(hex::encode(hasher.finalize()))
+}
+
+/// Reads at most `cap` bytes of a file as text, and answers how large the file really is.
+///
+/// The window's file view uses this with a megabyte: a 200 MB log is not something to put in a
+/// WebView, and the honest answer is "this is the first megabyte" rather than a frozen panel.
+pub fn read_capped(path: &Path, cap: usize) -> Result<(String, u64), ErrorObject> {
+    use std::io::Read;
+
+    guard(path)?;
+
+    let mut file = std::fs::File::open(path)
+        .map_err(|error| ErrorObject::not_found(format!("{}: {error}", path.display())))?;
+    let size = file.metadata().map(|meta| meta.len()).unwrap_or(0);
+    let mut buffer = vec![0u8; cap.min(size.max(1) as usize)];
+
+    let read = file
+        .read(&mut buffer)
+        .map_err(|error| ErrorObject::internal(format!("{}: {error}", path.display())))?;
+
+    Ok((String::from_utf8_lossy(&buffer[..read]).to_string(), size))
 }
 
 /// A recursive text search, capped: at most `limit` hits and at most six levels down.
@@ -249,15 +303,52 @@ mod tests {
         std::fs::write(dir.path().join(".env"), "SECRET=1").unwrap();
         write(&dir.path().join("a.ts"), "const limiter = rateLimit();").unwrap();
 
-        let listing = list(dir.path()).unwrap();
+        let (listing, hidden) = list(dir.path()).unwrap();
         let names: Vec<&str> = listing.iter().filter_map(|row| row["name"].as_str()).collect();
 
         assert_eq!(names, vec!["a.ts"]);
+        /* The count travels with the listing: the window's file tree says how many names it cannot show
+           rather than leaving a person wondering why their folder is short. */
+        assert_eq!(hidden, 1);
 
         let hits = search(dir.path(), "rateLimit", None, 10).unwrap();
 
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0]["line"], 1);
+    }
+
+    #[test]
+    fn a_listing_says_which_entry_is_a_folder_and_how_big_it_is() {
+        let dir = tempfile::tempdir().unwrap();
+
+        std::fs::create_dir(dir.path().join("src")).unwrap();
+        write(&dir.path().join("README.md"), "# hi").unwrap();
+
+        let (listing, hidden) = list(dir.path()).unwrap();
+        let by_name = |name: &str| listing.iter().find(|row| row["name"] == name).cloned().unwrap();
+
+        assert_eq!(hidden, 0);
+        assert_eq!(by_name("src")["dir"], true);
+        assert_eq!(by_name("README.md")["dir"], false);
+        assert_eq!(by_name("README.md")["size"], 4);
+        /* And the absolute path comes with each row, so the tree can expand without joining strings. */
+        assert!(by_name("src")["path"].as_str().unwrap().ends_with("src"));
+    }
+
+    #[test]
+    fn a_capped_read_says_how_large_the_file_really_is() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("big.log");
+
+        write(&file, &"x".repeat(4096)).unwrap();
+
+        let (text, bytes) = read_capped(&file, 1024).unwrap();
+
+        assert_eq!(text.len(), 1024);
+        assert_eq!(bytes, 4096);
+        /* The hash is of the whole file, which is the point of `hash_file`: a hash of the first
+           kilobyte would be a hash of something that is not this file. */
+        assert_eq!(hash_file(&file).unwrap(), read(&file).unwrap().1);
     }
 
     #[test]

@@ -286,6 +286,19 @@ export interface FsHit {
 }
 
 /**
+ * One row of `fs.list` (0.7.7) - what the window's file tree draws.
+ *
+ * `dir` is why the tree can expand a folder without a `fs.stat` round trip per row, and `path` is
+ * absolute so nothing in the app has to join path strings (a join is where a separator goes wrong).
+ */
+export interface FsEntry {
+  name: string;
+  path: string;
+  dir: boolean;
+  size: number;
+}
+
+/**
  * The append-only event catalogue (spec section 5.4), as a discriminated union on `type`.
  *
  * These are the events the UI reducer projects (spec section 3.3). The first eighteen are the
@@ -723,12 +736,27 @@ export interface SdcpMethodMap {
     result: { turnId: string; bridgedFrom: string };
   };
 
-  'fs.read': { params: { path: string }; result: { path: string; text: string; sha256: string } };
+  'fs.read': {
+    params: { path: string };
+    result: {
+      path: string;
+      text: string;
+      sha256: string;
+      /** The file's real size, even when `text` was cut. */
+      bytes: number;
+      /** True when the file is larger than the daemon's cap, so `text` is its first megabyte. */
+      truncated: boolean;
+    };
+  };
   'fs.write': {
     params: { path: string; text: string };
     result: { path: string; sha256: string; checkpointId: string };
   };
-  'fs.list': { params: { path: string }; result: { entries: string[] } };
+  'fs.list': {
+    /** `path` may be omitted since 0.7.7: the **session's** folder is listed then. */
+    params: { path?: string; sessionId?: string };
+    result: { path: string; entries: FsEntry[]; hidden: number };
+  };
   'fs.stat': { params: { path: string }; result: { size: number; sha256: string } };
   'fs.search': { params: { query: string; glob?: string }; result: { hits: FsHit[] } };
 
