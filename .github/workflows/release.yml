@@ -125,7 +125,8 @@ jobs:
             # compiler errors, or the names and panic lines of the tests that failed.
             {
               grep -E '^error(\[|:)' cargo-test.log | head -8
-              grep -E '^(test .* FAILED|thread .* panicked|assertion)' cargo-test.log | head -8
+              grep -A 2 -E 'panicked at' cargo-test.log | head -12
+              grep -E '^(test .* FAILED|assertion)' cargo-test.log | head -8
               grep -E 'test result: FAILED' cargo-test.log | head -2
             } | sort -u | while IFS= read -r line; do
               echo "::error title=cargo test::$line"
