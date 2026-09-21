@@ -4,13 +4,17 @@ import { useLayoutStore } from '../store/layout';
 import { nextEngine, nextTier, useModelStore } from '../store/model';
 import { useOverlayStore } from '../store/overlays';
 import {
+  changeFolder,
+  closeFolder,
   forceKillTurn,
   interruptTurn,
+  openFolder,
   resolvePermission,
   redoRewind,
   rewindTo,
   startTurn,
 } from '../store/intents';
+import { nameOf } from '../lib/picker';
 import { toast } from '../store/toast';
 import { strings } from '../strings';
 
@@ -34,7 +38,7 @@ export type CommandGroup = 'global' | 'session' | 'model' | 'approval' | 'timeli
 export type CommandIcon =
   | 'plus' | 'plug' | 'serverPlus' | 'columns' | 'search' | 'check' | 'stethoscope' | 'settings'
   | 'keyboard' | 'panelLeft' | 'panelRight' | 'x' | 'zap' | 'brain' | 'clock' | 'ban' | 'shield'
-  | 'eye';
+  | 'eye' | 'folder';
 
 export interface Command {
   /** Stable id: what a keymap override file would name. */
@@ -115,6 +119,35 @@ function moveTimeline(step: number | 'start' | 'end'): void {
   }
 }
 
+/**
+ * The active chat's folder, if it has one - what `folder.change` and `folder.close` act on (0.7.6).
+ *
+ * It reads the two stores the prompt area's chip also reads, so a command in the palette and the chip on
+ * screen always agree about which folder they mean. `null` covers both reasons there may be nothing to do:
+ * no chat is open, or the chat has no folder yet.
+ */
+function activeFolder(): { sessionId: string; projectId: string; name: string } | null {
+  const activeTab = usePrefsStore.getState().activeTab;
+
+  if (activeTab === null) {
+    return null;
+  }
+
+  for (const host of useAppStore.getState().hosts) {
+    const session = host.sessions.find((candidate) => candidate.id === activeTab);
+
+    if (session?.projectId) {
+      return {
+        sessionId: session.id,
+        projectId: session.projectId,
+        name: nameOf(session.projectRoot ?? session.projectId),
+      };
+    }
+  }
+
+  return null;
+}
+
 /** One row per command. The palette, the F1 reference and the Keymap tab all render this array. */
 export const COMMANDS: readonly Command[] = [
   /* ---------------------------------------------------------------- Global (10) */
@@ -160,6 +193,9 @@ export const COMMANDS: readonly Command[] = [
   { id: 'host.add', label: strings.sidebar.addHost, icon: 'serverPlus', group: 'actions', run: () => useOverlayStore.getState().openAddHost() },
   { id: 'providers.open', label: 'Connect a provider / model', icon: 'plug', group: 'actions', run: () => useOverlayStore.getState().openHub() },
   { id: 'doctor.open', label: 'Run environment doctor', icon: 'stethoscope', group: 'actions', run: () => useOverlayStore.getState().openHub('doctor') },
+  { id: 'folder.open', label: strings.main.noProject.action, icon: 'folder', group: 'actions', run: () => void openFolder() },
+  { id: 'folder.change', label: strings.folder.change, icon: 'folder', group: 'actions', when: () => activeFolder() !== null, run: () => { const current = activeFolder(); if (current !== null) { void changeFolder(current.sessionId); } } },
+  { id: 'folder.close', label: 'Close this folder', icon: 'folder', group: 'actions', when: () => activeFolder() !== null, run: () => { const current = activeFolder(); if (current !== null) { void closeFolder(current.projectId, current.name); } } },
 ];
 
 /* ------------------------------------------------------------------------------------------------

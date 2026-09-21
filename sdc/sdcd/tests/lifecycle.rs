@@ -226,6 +226,228 @@ fn a_turn_carries_the_prompt_the_user_sent_and_no_invented_price() {
     let _ = wait_for_exit(&mut child, Duration::from_secs(10));
 }
 
+/**
+ * 0.7.6, end to end: `Open folder` binds a chat to a real directory, and everything downstream finds it.
+ *
+ * Three pieces live in three places, which is why this is asserted against the real binary:
+ *
+ *   `project.add`      writes the row and validates that the path is a folder;
+ *   `session.open`     binds the chat to it, and the `SessionOpened` event carries the folder so the
+ *                      window's chip is right on its first render;
+ *   `session.list`     reports it back, which is what makes the chat's folder survive a reload - and
+ *                      `git.status` / `fs.search` / the checkpoint paths then need only the session id,
+ *                      which is the whole point of the daemon knowing where the chat lives.
+ */
+#[test]
+fn a_folder_opened_on_a_chat_is_where_its_tools_look() {
+    let directory = TempDir::new().expect("a temporary directory");
+    let (mut child, port) = start(&["--idle-exit", "30"], &directory);
+
+    /* The folder the person "picks": a real directory, with a file for the search below to find. */
+    let project = directory.path().join("my-project");
+    std::fs::create_dir_all(&project).expect("a project folder");
+    std::fs::write(project.join("README.md"), "# hello from the folder\n").expect("a file to find");
+
+    let root = project.display().to_string();
+    let (added, _) = request_collect(port, "add-1", "project.add", serde_json::json!({ "root": root }));
+
+    let project_id = added
+        .pointer("/result/projectId")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_else(|| panic!("project.add did not answer with a projectId: {added}"))
+        .to_string();
+
+    /* The name is the last segment, because the dialog picks a path and nobody wants to type a label. */
+    assert_eq!(
+        added.pointer("/result/name").and_then(serde_json::Value::as_str),
+        Some("my-project")
+    );
+
+    /* Opening the same folder twice reuses the row: the button is safe to press again, which is what
+       stops a person from ending up with four rows for one directory. */
+    let (again, _) = request_collect(port, "add-2", "project.add", serde_json::json!({ "root": root }));
+
+    assert_eq!(
+        again.pointer("/result/projectId").and_then(serde_json::Value::as_str),
+        Some(project_id.as_str()),
+        "a second project.add for one folder must reuse its row"
+    );
+
+    /* A path that is not a folder is refused in words, rather than becoming a chat with no directory. */
+    let (refused, _) = request_collect(
+        port,
+        "add-3",
+        "project.add",
+        serde_json::json!({ "root": project.join("README.md").display().to_string() }),
+    );
+
+    assert!(refused.get("error").is_some(), "a file is not a folder: {refused}");
+
+    /* A **second** folder in the same second is a different project. This is the id-collision case: a
+       folder `INSERT OR REPLACE`d over another folder would change the first one's root and drag its
+       chats along, and `project.add` pushes no event, so an id taken from the event sequence would be
+       the same number twice. */
+    let other = directory.path().join("another-project");
+    std::fs::create_dir_all(&other).expect("a second project folder");
+
+    let (second, _) = request_collect(
+        port,
+        "add-4",
+        "project.add",
+        serde_json::json!({ "root": other.display().to_string() }),
+    );
+
+    assert_ne!(
+        second.pointer("/result/projectId").and_then(serde_json::Value::as_str),
+        Some(project_id.as_str()),
+        "two folders must not share a project id: {second}"
+    );
+
+    /* And the first folder is still the first folder - not silently re-pointed at the second. */
+    let (still, _) = request_collect(
+        port,
+        "add-5",
+        "project.add",
+        serde_json::json!({ "root": root }),
+    );
+
+    assert_eq!(
+        still.pointer("/result/root").and_then(serde_json::Value::as_str),
+        Some(root.as_str()),
+        "the first folder kept its own row: {still}"
+    );
+
+    let (opened, notifications) = request_collect(
+        port,
+        "open-1",
+        "session.open",
+        serde_json::json!({ "hostId": "local", "projectId": project_id, "title": "my-project" }),
+    );
+
+    let session_id = opened
+        .pointer("/result/sessionId")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_else(|| panic!("session.open did not answer with a sessionId: {opened}"))
+        .to_string();
+
+    let opened_event = notifications
+        .iter()
+        .find(|notification| {
+            notification.pointer("/event/type").and_then(serde_json::Value::as_str) == Some("SessionOpened")
+        })
+        .unwrap_or_else(|| panic!("no SessionOpened notification arrived; saw {notifications:?}"));
+
+    assert_eq!(
+        opened_event.pointer("/event/projectRoot").and_then(serde_json::Value::as_str),
+        Some(root.as_str()),
+        "SessionOpened must carry the folder the chat was opened on"
+    );
+
+    /* `session.list` is what a reloading window folds - the folder has to be in it. */
+    let (listed, _) = request_collect(port, "list-1", "session.list", serde_json::json!({}));
+    let empty = Vec::new();
+    let hosts = listed
+        .pointer("/result/hosts")
+        .and_then(serde_json::Value::as_array)
+        .unwrap_or(&empty);
+
+    let row = hosts
+        .iter()
+        .flat_map(|host| {
+            host.get("sessions")
+                .and_then(serde_json::Value::as_array)
+                .unwrap_or(&empty)
+        })
+        .find(|session| {
+            session.get("sessionId").and_then(serde_json::Value::as_str) == Some(session_id.as_str())
+        })
+        .unwrap_or_else(|| panic!("the new chat is not in session.list: {listed}"));
+
+    assert_eq!(row.get("projectRoot").and_then(serde_json::Value::as_str), Some(root.as_str()));
+    assert_eq!(row.get("projectId").and_then(serde_json::Value::as_str), Some(project_id.as_str()));
+
+    /* And the tools that used to demand a `root` parameter now take the session's: this search is the
+       *file in the folder*, found with nothing but a chat id. */
+    let (found, _) = request_collect(
+        port,
+        "search-1",
+        "fs.search",
+        serde_json::json!({ "sessionId": session_id, "query": "hello from the folder" }),
+    );
+
+    assert!(
+        found
+            .pointer("/result/hits")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|hits| !hits.is_empty()),
+        "fs.search with a sessionId must look in that chat's folder: {found}"
+    );
+
+    let _ = request(port, "stop", "host.shutdown");
+    let _ = wait_for_exit(&mut child, Duration::from_secs(10));
+}
+
+/**
+ * 0.7.6: a chat that has **run a turn** can be deleted.
+ *
+ * `session.close` was `DELETE FROM sessions WHERE id = ?` while `foreign_keys` is ON and a turn references
+ * its session, so deleting a chat that had been used answered `FOREIGN KEY constraint failed` - and the
+ * window's Delete button showed exactly that sentence as a toast, with the chat still there. The 0.7.5 probe
+ * never saw it: it deleted the chat it had just made, which had no turns. This is the same deletion for a
+ * used chat, and it asserts the turn rows go with it rather than being orphaned.
+ */
+#[test]
+fn a_chat_that_has_run_a_turn_can_be_deleted() {
+    let directory = TempDir::new().expect("a temporary directory");
+    let (mut child, port) = start(&["--idle-exit", "30"], &directory);
+
+    /* A turn, so rows reference the chat. The engine does not have to exist: `engine.start` writes the turn
+       row (and pushes `TurnStarted`) before it looks for the program. */
+    let (started, _) = request_collect(
+        port,
+        "turn-1",
+        "engine.start",
+        serde_json::json!({
+            "sessionId": "s-used",
+            "prompt": "hello",
+            "engine": "claude_code",
+            "model": "sonnet",
+            "tier": "Balanced",
+        }),
+    );
+
+    assert!(started.get("result").is_some(), "engine.start refused the turn: {started}");
+
+    let (closed, _) = request_collect(port, "close-1", "session.close", serde_json::json!({ "sessionId": "s-used" }));
+
+    assert!(
+        closed.get("error").is_none(),
+        "closing a chat that had run a turn failed: {closed}"
+    );
+
+    /* And the chat is gone from the list - not merely reported closed. */
+    let (listed, _) = request_collect(port, "list-1", "session.list", serde_json::json!({}));
+    let empty = Vec::new();
+    let hosts = listed
+        .pointer("/result/hosts")
+        .and_then(serde_json::Value::as_array)
+        .unwrap_or(&empty);
+
+    let gone = hosts
+        .iter()
+        .flat_map(|host| {
+            host.get("sessions")
+                .and_then(serde_json::Value::as_array)
+                .unwrap_or(&empty)
+        })
+        .all(|session| session.get("sessionId").and_then(serde_json::Value::as_str) != Some("s-used"));
+
+    assert!(gone, "the deleted chat is still in session.list: {listed}");
+
+    let _ = request(port, "stop", "host.shutdown");
+    let _ = wait_for_exit(&mut child, Duration::from_secs(10));
+}
+
 fn wait_for_exit(child: &mut Child, within: Duration) -> Option<std::process::ExitStatus> {
     let deadline = Instant::now() + within;
 

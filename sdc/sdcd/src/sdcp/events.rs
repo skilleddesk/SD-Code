@@ -160,10 +160,26 @@ pub mod event {
         base("RegistryLoaded", json!({ "models": models }))
     }
 
-    pub fn session_opened(session_id: &str, host_id: &str, title: &str, prompt: &str) -> Value {
+    pub fn session_opened(
+        session_id: &str,
+        host_id: &str,
+        title: &str,
+        prompt: &str,
+        project_id: Option<&str>,
+        project_root: Option<&str>,
+    ) -> Value {
         base(
             "SessionOpened",
-            json!({ "sessionId": session_id, "hostId": host_id, "title": title, "prompt": prompt }),
+            json!({
+                "sessionId": session_id,
+                "hostId": host_id,
+                "title": title,
+                "prompt": prompt,
+                /* `null` for a chat with no folder, which is every chat the user never pointed at one -
+                   and the truth, rather than an empty string a reader would have to interpret. */
+                "projectId": project_id,
+                "projectRoot": project_root,
+            }),
         )
     }
 

@@ -538,9 +538,11 @@ impl Store {
     pub fn sessions_for_host(&self, host_id: &str) -> Result<Vec<Value>> {
         let connection = self.connection.lock().unwrap();
         let mut statement = connection.prepare(
-            "SELECT id, host_id, title, prompt, state, unread, attention,
-                    CAST((julianday('now') - julianday(updated_at)) * 1440 AS INTEGER)
-             FROM sessions WHERE host_id = ?1 ORDER BY updated_at DESC",
+            "SELECT s.id, s.host_id, s.title, s.prompt, s.state, s.unread, s.attention,
+                    CAST((julianday('now') - julianday(s.updated_at)) * 1440 AS INTEGER),
+                    s.project_id, p.root
+             FROM sessions s LEFT JOIN projects p ON p.id = s.project_id
+             WHERE s.host_id = ?1 ORDER BY s.updated_at DESC",
         )?;
 
         let rows = statement.query_map(params![host_id], |row| {
@@ -553,6 +555,8 @@ impl Store {
                 "unread": row.get::<_, i64>(5)?,
                 "attention": row.get::<_, Option<String>>(6)?,
                 "minutesAgo": row.get::<_, i64>(7)?.max(0),
+                "projectId": row.get::<_, Option<String>>(8)?,
+                "projectRoot": row.get::<_, Option<String>>(9)?,
             }))
         })?;
 
@@ -565,6 +569,10 @@ impl Store {
     ///
     /// This is what makes an added host survive a restart. The window used to ask for nothing, so a
     /// host that had been added on Monday was gone on Tuesday even though its row was still here.
+    ///
+    /// Since 0.7.6 a row also carries the folder its chat works in (`projectId`, `projectRoot`), joined
+    /// from `projects`: that is what makes "which directory am I in" answerable after a reload, and what
+    /// the engines read as their working directory.
     pub fn hosts_with_sessions(&self) -> Result<Vec<Value>> {
         let mut hosts = self.hosts()?;
 
@@ -621,6 +629,9 @@ impl Store {
             params![id],
         )?;
         connection.execute("DELETE FROM sessions WHERE host_id = ?1", params![id])?;
+        /* The host's projects go with it - and after its sessions, because a session references its
+           project and `foreign_keys` is ON. */
+        connection.execute("DELETE FROM projects WHERE host_id = ?1", params![id])?;
         connection.execute("DELETE FROM hosts WHERE id = ?1", params![id])?;
 
         Ok(sessions)
@@ -628,22 +639,171 @@ impl Store {
 
 
 
-    pub fn insert_session(&self, id: &str, host_id: &str, title: &str, prompt: &str) -> Result<()> {
+    /* ----------------------------------------------------------------------------------------------
+     * Projects: the folder a chat works in (0.7.6)
+     *
+     * The `projects` table has been in the schema since the first migration and `sessions.project_id`
+     * with it, but nothing ever wrote either: a chat had no working directory, the engines ran wherever
+     * the daemon had been started, and both `checkpoint_create` and `rewind_apply` took the root as a
+     * *parameter* the app never sent - so a checkpoint hashed no files and a rewind restored only the
+     * conversation. These functions are the half that was missing.
+     * -------------------------------------------------------------------------------------------- */
+
+    /// The next project id: `pr<n>`, one past the highest this database has ever handed out.
+    ///
+    /// Read from the table rather than taken from `events.seq()`, and that is the difference between a
+    /// working id and a silently destructive one. `project.add` pushes **no event** - a folder is a place,
+    /// not a happening - so the event sequence does not move between two adds, and two folders opened in
+    /// the same second would both have been `pr6`: the second `INSERT OR REPLACE` would have *replaced* the
+    /// first project's row, changing its root and name and dragging its chats along with it. `MAX` only
+    /// ever moves up, across restarts and across removals, which is what makes the id an identity.
+    pub fn next_project_id(&self) -> Result<String> {
+        let connection = self.connection.lock().unwrap();
+        let highest: i64 = connection.query_row(
+            "SELECT COALESCE(MAX(CAST(SUBSTR(id, 3) AS INTEGER)), 0) FROM projects WHERE id LIKE 'pr%'",
+            [],
+            |row| row.get(0),
+        )?;
+
+        Ok(format!("pr{}", highest + 1))
+    }
+
+    pub fn add_project(&self, id: &str, host_id: &str, root: &str, name: &str) -> Result<()> {
         let now = chrono::Utc::now().to_rfc3339();
         let connection = self.connection.lock().unwrap();
 
         connection.execute(
-            "INSERT OR REPLACE INTO sessions (id, host_id, title, prompt, state, turn_count, unread, updated_at, created_at)
-             VALUES (?1, ?2, ?3, ?4, 'idle', 0, 0, ?5, ?5)",
-            params![id, host_id, title, prompt, now],
+            "INSERT OR REPLACE INTO projects (id, host_id, root, name, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![id, host_id, root, name, now],
         )?;
 
         Ok(())
     }
 
-    /// Renames or re-states a session. `None` leaves a column alone, which is what makes one method
-    /// serve both `session.update` and the state changes a turn causes.
-    pub fn update_session(&self, id: &str, title: Option<&str>, state: Option<&str>, attention: Option<&str>, unread: Option<i64>) -> Result<()> {
+    /// The project a host already has for a root, if any - what makes `project.add` idempotent, so
+    /// opening the same folder twice does not leave two rows for one directory.
+    pub fn project_at(&self, host_id: &str, root: &str) -> Result<Option<String>> {
+        let connection = self.connection.lock().unwrap();
+        let mut statement =
+            connection.prepare("SELECT id FROM projects WHERE host_id = ?1 AND root = ?2")?;
+        let mut rows = statement.query_map(params![host_id, root], |row| row.get::<_, String>(0))?;
+
+        match rows.next() {
+            Some(row) => Ok(Some(row?)),
+            None => Ok(None),
+        }
+    }
+
+    pub fn project(&self, id: &str) -> Result<Option<Value>> {
+        let connection = self.connection.lock().unwrap();
+        let mut statement =
+            connection.prepare("SELECT id, host_id, root, name FROM projects WHERE id = ?1")?;
+        let mut rows = statement.query_map(params![id], |row| {
+            Ok(serde_json::json!({
+                "projectId": row.get::<_, String>(0)?,
+                "hostId": row.get::<_, String>(1)?,
+                "root": row.get::<_, String>(2)?,
+                "name": row.get::<_, String>(3)?,
+            }))
+        })?;
+
+        match rows.next() {
+            Some(row) => Ok(Some(row?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Every project, with how many chats are bound to it - `project.list`, and the rows a window folds
+    /// so a folder survives a reload.
+    pub fn projects(&self) -> Result<Vec<Value>> {
+        let connection = self.connection.lock().unwrap();
+        let mut statement = connection.prepare(
+            "SELECT p.id, p.host_id, p.root, p.name, COUNT(s.id)
+             FROM projects p LEFT JOIN sessions s ON s.project_id = p.id
+             GROUP BY p.id ORDER BY p.created_at",
+        )?;
+
+        let rows = statement.query_map([], |row| {
+            Ok(serde_json::json!({
+                "projectId": row.get::<_, String>(0)?,
+                "hostId": row.get::<_, String>(1)?,
+                "root": row.get::<_, String>(2)?,
+                "name": row.get::<_, String>(3)?,
+                "chats": row.get::<_, i64>(4)?,
+            }))
+        })?;
+
+        collect_json(rows)
+    }
+
+    /// Removes a project and **unbinds** its chats rather than deleting them, and answers how many were
+    /// unbound.
+    ///
+    /// A chat is a conversation: closing the folder it pointed at must not throw the conversation away,
+    /// which is the silent loss principle P4 forbids. `project_id` goes to `NULL`, the session rows stay,
+    /// and the chats that were looking at that folder now say they have none.
+    pub fn remove_project(&self, id: &str) -> Result<i64> {
+        let connection = self.connection.lock().unwrap();
+        let unbound = connection.execute(
+            "UPDATE sessions SET project_id = NULL WHERE project_id = ?1",
+            params![id],
+        )? as i64;
+
+        connection.execute("DELETE FROM projects WHERE id = ?1", params![id])?;
+
+        Ok(unbound)
+    }
+
+    /// The folder a session works in, or `None` when it has no project.
+    ///
+    /// This is the one lookup the engines and the file tools need: `engine.start` uses it as the CLI's
+    /// working directory, and `fs.search` / `git.*` / the checkpoint and rewind paths use it as their
+    /// root when the caller does not send one.
+    pub fn session_project_root(&self, session_id: &str) -> Result<Option<String>> {
+        let connection = self.connection.lock().unwrap();
+        let mut statement = connection.prepare(
+            "SELECT p.root FROM sessions s JOIN projects p ON p.id = s.project_id WHERE s.id = ?1",
+        )?;
+        let mut rows = statement.query_map(params![session_id], |row| row.get::<_, String>(0))?;
+
+        match rows.next() {
+            Some(row) => Ok(Some(row?)),
+            None => Ok(None),
+        }
+    }
+
+    pub fn insert_session(
+        &self,
+        id: &str,
+        host_id: &str,
+        title: &str,
+        prompt: &str,
+        project_id: Option<&str>,
+    ) -> Result<()> {
+        let now = chrono::Utc::now().to_rfc3339();
+        let connection = self.connection.lock().unwrap();
+
+        connection.execute(
+            "INSERT OR REPLACE INTO sessions (id, host_id, project_id, title, prompt, state, turn_count, unread, updated_at, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, 'idle', 0, 0, ?6, ?6)",
+            params![id, host_id, project_id, title, prompt, now],
+        )?;
+
+        Ok(())
+    }
+
+    /// Renames, re-states or re-points a session. `None` leaves a column alone, which is what makes one
+    /// method serve `session.update`, the state changes a turn causes, and `Open folder` binding a chat to
+    /// a project.
+    pub fn update_session(
+        &self,
+        id: &str,
+        title: Option<&str>,
+        state: Option<&str>,
+        attention: Option<&str>,
+        unread: Option<i64>,
+        project_id: Option<&str>,
+    ) -> Result<()> {
         let now = chrono::Utc::now().to_rfc3339();
         let connection = self.connection.lock().unwrap();
 
@@ -653,17 +813,31 @@ impl Store {
                 state = COALESCE(?3, state),
                 attention = COALESCE(?4, attention),
                 unread = COALESCE(?5, unread),
-                updated_at = ?6
+                project_id = COALESCE(?6, project_id),
+                updated_at = ?7
              WHERE id = ?1",
-            params![id, title, state, attention, unread, now],
+            params![id, title, state, attention, unread, project_id, now],
         )?;
 
         Ok(())
     }
 
+    /// `session.close`: the chat and everything hanging off it - children first.
+    ///
+    /// `foreign_keys` is ON, and a turn, a checkpoint, a rewind entry and a permission row each reference
+    /// their session, so `DELETE FROM sessions` on a chat that had **run a turn** answered
+    /// `FOREIGN KEY constraint failed` - and the window showed that sentence as a toast instead of deleting
+    /// the chat. It never showed up while testing with a freshly made, unused chat, which is the only kind
+    /// the 0.7.5 probe deleted; the 0.7.6 probe deleted the sidebar's first row, which has turns, and the
+    /// daemon's own words came back. `delete_host` has done this correctly for a whole host since 0.6.1;
+    /// this is the same four statements for one session.
     pub fn delete_session(&self, id: &str) -> Result<()> {
         let connection = self.connection.lock().unwrap();
 
+        connection.execute("DELETE FROM rewind_stack WHERE session_id = ?1", params![id])?;
+        connection.execute("DELETE FROM checkpoints WHERE session_id = ?1", params![id])?;
+        connection.execute("DELETE FROM turns WHERE session_id = ?1", params![id])?;
+        connection.execute("DELETE FROM permissions WHERE session_id = ?1", params![id])?;
         connection.execute("DELETE FROM sessions WHERE id = ?1", params![id])?;
 
         Ok(())

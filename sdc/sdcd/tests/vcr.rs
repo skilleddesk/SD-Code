@@ -14,10 +14,10 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use sdcd::engines::ollama::parse_chat_line;
-use sdcd::engines::parse_stream_line;
-use sdcd::engines::native_api::parse_sse;
-use sdcd::engines::EngineEvent;
+use sdcd::engines::cli::push_stream_line;
+use sdcd::engines::native_api::{parse_sse, push_sse_line};
+use sdcd::engines::ollama::{parse_chat_line, push_chat_line};
+use sdcd::engines::{parse_stream_line, EngineEvent, Recorder};
 
 /// The fixture directory, relative to this test file's crate root.
 fn fixtures() -> Vec<PathBuf> {
@@ -25,7 +25,11 @@ fn fixtures() -> Vec<PathBuf> {
     let mut files: Vec<PathBuf> = fs::read_dir(&directory)
         .unwrap_or_else(|error| panic!("reading {}: {error}", directory.display()))
         .filter_map(|entry| entry.ok().map(|entry| entry.path()))
-        .filter(|path| path.extension().map(|extension| extension == "jsonl").unwrap_or(false))
+        .filter(|path| {
+            path.extension()
+                .map(|extension| extension == "jsonl")
+                .unwrap_or(false)
+        })
         .collect();
 
     files.sort();
@@ -119,4 +123,69 @@ fn a_changed_stream_shows_up_as_a_changed_replay() {
 
     assert_eq!(kinds, vec!["Delta".to_string()]);
     assert_ne!(kinds, expected(&fixtures()[0]));
+}
+
+/// The fixture's header engine and its body lines.
+fn fixture(path: &Path) -> (String, Vec<String>) {
+    let raw = fs::read_to_string(path)
+        .unwrap_or_else(|error| panic!("reading {}: {error}", path.display()));
+    let mut lines = raw.lines().filter(|line| !line.trim().is_empty());
+    let header: serde_json::Value =
+        serde_json::from_str(lines.next().unwrap_or("{}")).expect("a vcr header line");
+
+    (
+        header
+            .get("engine")
+            .and_then(|value| value.as_str())
+            .unwrap_or("claude_code")
+            .to_string(),
+        lines.map(str::to_string).collect(),
+    )
+}
+
+/// **The live path and the collected path must not disagree.**
+///
+/// Since 0.7.4 every adapter has two ways into its parser: `start` pushes each line the moment it
+/// arrives (through `push_stream_line`, `push_sse_line` or `push_chat_line`), and the fixtures replay
+/// the same lines as a finished batch (`collect_stream`, `parse_sse`, `parse_chat_line`). Those two
+/// have to produce the same events in the same order, or a live turn would draw something a replayed
+/// one does not - which is precisely the class of bug the report *"akbare answare disse"* came from.
+///
+/// The ending rule (what a stream that stops without a result says) is *not* compared here: it belongs
+/// to the drain, and each adapter tests it on its own.
+#[test]
+fn every_fixture_streams_line_by_line_to_the_kinds_it_declares() {
+    for path in fixtures() {
+        let name = path.file_name().unwrap().to_string_lossy().to_string();
+        let (engine, body) = fixture(&path);
+        let recorder = Recorder::new();
+        let sink = recorder.sink();
+        let mut ended = false;
+
+        for line in &body {
+            match engine.as_str() {
+                "ollama" => push_chat_line(line, &mut ended, &sink),
+                "native_api" => push_sse_line(line, &mut ended, &sink),
+                _ => push_stream_line(line, &mut ended, &sink),
+            }
+        }
+
+        let streamed: Vec<String> = recorder
+            .events()
+            .iter()
+            .map(kind_of)
+            .map(str::to_string)
+            .collect();
+
+        assert_eq!(
+            streamed,
+            replay(&path),
+            "fixture {name} streamed differently"
+        );
+        assert_eq!(
+            streamed,
+            expected(&path),
+            "fixture {name} no longer matches its declaration"
+        );
+    }
 }

@@ -3,6 +3,7 @@ import {
   Brain,
   CircleCheckBig,
   Columns2,
+  FolderOpen,
   Keyboard,
   PanelLeft,
   PanelRight,
@@ -47,6 +48,7 @@ const ICONS: Partial<Record<CommandIcon, LucideIcon>> = {
   x: X,
   zap: Zap,
   brain: Brain,
+  folder: FolderOpen,
 };
 
 export function Palette() {

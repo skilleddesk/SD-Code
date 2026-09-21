@@ -1,4 +1,5 @@
-import { useEffect } from 'react';
+import { X } from 'lucide-react';
+import { useEffect, useRef } from 'react';
 
 import { useAppStore } from '../store/store';
 import { useToastStore } from '../store/toast';
@@ -13,7 +14,15 @@ import { strings } from '../strings';
  * shows state and a component that owns it (master spec section 3.3).
  *
  * Each toast's hold is its own: 3s by default, 10s for the rewind's `Undo this`, because undoing a
- * rewind is a decision rather than a notification. Clicking the action chip dismisses it right away.
+ * rewind is a decision rather than a notification. **Every toast also carries an ×** (0.7.5): the
+ * report was *"delete korle notification ashe ... remove ar option thake nah"*, and it was exact - the
+ * close control existed only next to an action chip, so a message with no action (`Chat deleted`) could
+ * not be closed by hand at all, only waited out.
+ *
+ * The timers live in a map keyed by toast id rather than in one effect run's array, and that is the
+ * other half of the same report: an effect that re-armed *every* toast whenever any toast changed meant
+ * a window with any traffic at all kept pushing the oldest message's deadline back for ever, so a toast
+ * that looked immortal was simply never given its 3 seconds.
  */
 export function Toast() {
   const toasts = useToastStore((state) => state.toasts);
@@ -28,20 +37,47 @@ export function Toast() {
   const holdKey = useAppStore((state) =>
     state.toasts.map((toast) => `${toast.id}:${toast.holdMs}`).join('|'),
   );
+  /** One timer per toast id, so a toast that arrives later cannot extend an earlier one's life. */
+  const timers = useRef(new Map<number, number>());
 
   useEffect(() => {
-    const timers = toasts.map((toast) =>
-      window.setTimeout(() => dismiss(toast.id), toast.holdMs),
-    );
+    const live = new Set(toasts.map((toast) => toast.id));
 
-    return () => {
-      for (const timer of timers) {
+    for (const [id, timer] of timers.current) {
+      if (!live.has(id)) {
         window.clearTimeout(timer);
+        timers.current.delete(id);
       }
-    };
-    /* The key is the ids *and* their holds, so a re-render that changes neither restarts nothing. */
+    }
+
+    for (const toast of toasts) {
+      if (timers.current.has(toast.id)) {
+        continue;
+      }
+
+      timers.current.set(
+        toast.id,
+        window.setTimeout(() => {
+          timers.current.delete(toast.id);
+          dismiss(toast.id);
+        }, toast.holdMs),
+      );
+    }
+    /* The key is the ids *and* their holds, so a re-render that changes neither touches no timer. */
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [holdKey, dismiss]);
+
+  useEffect(() => {
+    const running = timers.current;
+
+    return () => {
+      for (const timer of running.values()) {
+        window.clearTimeout(timer);
+      }
+
+      running.clear();
+    };
+  }, []);
 
   if (toasts.length === 0) {
     return null;
@@ -83,6 +119,18 @@ export function Toast() {
               {toast.action}
             </button>
           )}
+          <button
+            type="button"
+            className={
+              'toast-close grid h-[18px] w-[18px] shrink-0 place-items-center rounded-sm text-text-muted transition-colors duration-fast ease-ease hover:bg-bg-hover hover:text-text-primary ' +
+              (toast.action === null ? 'ml-auto' : '')
+            }
+            title={strings.toast.close}
+            aria-label={strings.toast.close}
+            onClick={() => dismiss(toast.id)}
+          >
+            <X size={12} aria-hidden="true" />
+          </button>
         </div>
       ))}
     </div>

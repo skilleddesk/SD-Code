@@ -96,7 +96,7 @@ mod tests {
         let store = Arc::new(Store::in_memory().unwrap());
 
         store.upsert_host("local", "Local", "local", None, "connected", None).unwrap();
-        store.insert_session("s1", "local", "Add rate limiting", "add rate limiting").unwrap();
+        store.insert_session("s1", "local", "Add rate limiting", "add rate limiting", None).unwrap();
 
         for turn in [12, 13, 14] {
             store

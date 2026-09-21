@@ -18,7 +18,7 @@ use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 
-use crate::engines::{collect_stream, EngineEvent, Prompt};
+use crate::engines::{parse_stream_line, EngineEvent, EventSink, Prompt, GENERIC_ENDING};
 
 /// Where a CLI wants the prompt.
 ///
@@ -80,10 +80,47 @@ impl CliAdapter {
         &self.spec
     }
 
-    /// Spawns the CLI, writes the prompt (plus the replay history of a bridged session), and reads
-    /// the structured stream until it ends.
+    /// The program, resolved the way the shell would, **inside the chat's folder**.
     ///
-    /// Three things about this function are the result of a defect rather than of a design:
+    /// This is the half of `run` that decides where the engine works. `host::program` resolves the name
+    /// the way the shell does - which is what makes an npm-installed CLI (`claude.cmd`, `codex.cmd`,
+    /// `gemini.cmd` on Windows) startable at all - and the folder makes the difference between an engine
+    /// that edits the project someone opened and one that edits the folder the daemon was started in.
+    /// Until 0.7.6 a chat had no folder, so every turn ran in the second one.
+    ///
+    /// A root that is not a directory is **ignored** rather than fatal: the folder may have been moved or
+    /// renamed since the chat was opened, and a turn that refuses to start is worse than one that runs
+    /// where the daemon is. It is also why this is a `is_dir` check and not a migration.
+    ///
+    /// Extracted from `run` because `Command::get_current_dir` is the only way to assert the working
+    /// directory without starting a process - see `the_engine_runs_in_the_chats_folder` below.
+    fn command(&self, prompt: &Prompt) -> Command {
+        let mut command = match crate::host::program::launch(self.spec.program) {
+            Some((executable, prefix)) => {
+                let mut command = Command::new(executable);
+
+                command.args(prefix);
+
+                command
+            }
+            None => Command::new(self.spec.program),
+        };
+
+        if let Some(root) = prompt
+            .project_root
+            .as_deref()
+            .filter(|root| std::path::Path::new(root).is_dir())
+        {
+            command.current_dir(root);
+        }
+
+        command
+    }
+
+    /// Spawns the CLI, writes the prompt (plus the replay history of a bridged session), and reads the
+    /// structured stream until it ends - **pushing each line's events as the line arrives**.
+    ///
+    /// Four things about this function are the result of a defect rather than of a design:
     ///
     /// * **the prompt's placement is the CLI's** (`PromptPlacement`), because Gemini's headless mode
     ///   takes it as an argument;
@@ -91,8 +128,14 @@ impl CliAdapter {
     ///   `claude --include-partial-messages requires --print and --output-format=stream-json` stayed
     ///   invisible for a release: the child refused to run, printed that sentence to a pipe nobody
     ///   read, and the turn ended with an empty transcript;
-    /// * **silence is reported as the CLI's own sentence**, never as "the stream ended".
-    pub async fn run(&self, prompt: &Prompt) -> Vec<EngineEvent> {
+    /// * **silence is reported as the CLI's own sentence**, never as "the stream ended";
+    /// * **the stream is not collected first.** It used to be read into a `Vec<String>`, parsed once
+    ///   the child had exited, and handed back as one batch - so a turn that streamed for two minutes
+    ///   reached the window in one piece at the end of it (*"akbare answare disse"*). Every event now
+    ///   goes to `sink` on the line it arrived on, and the daemon forwards it while the CLI is still
+    ///   talking. The prompt is still the only thing written to stdin, and stdin is still closed right
+    ///   after it - the CLIs read the prompt, not the stream, from there.
+    pub async fn run(&self, prompt: &Prompt, sink: &EventSink) {
         /* The body is built first, because an argument-placed prompt has to go in with the flags. */
         let mut body = String::new();
 
@@ -119,18 +162,8 @@ impl CliAdapter {
 
         /* `host::program` resolves the name the way the shell does - which is what makes an
            npm-installed CLI (`claude.cmd`, `codex.cmd`, `gemini.cmd` on Windows) startable at all. The
-           fallback keeps the old behaviour for a name that cannot be found, so the failure still
-           arrives as the missing-program sentence rather than as `None`. */
-        let mut command = match crate::host::program::launch(self.spec.program) {
-            Some((executable, prefix)) => {
-                let mut command = Command::new(executable);
-
-                command.args(prefix);
-
-                command
-            }
-            None => Command::new(self.spec.program),
-        };
+           command it builds already carries the chat's folder - see `command`. */
+        let mut command = self.command(prompt);
 
         command
             .args(&args)
@@ -144,8 +177,13 @@ impl CliAdapter {
             Ok(child) => child,
             Err(error) => {
                 /* A missing CLI is a *check* the doctor reports, not a crash: the turn answers with
-                   the reason in plain words (spec section 14.9). */
-                return vec![EngineEvent::Failed(missing_program_message(self.spec.program, &error))];
+                the reason in plain words (spec section 14.9). */
+                sink.send(EngineEvent::Failed(missing_program_message(
+                    self.spec.program,
+                    &error,
+                )));
+
+                return;
             }
         };
 
@@ -178,11 +216,14 @@ impl CliAdapter {
         }
 
         let mut lines = Vec::new();
+        let mut ended = false;
 
         if let Some(stdout) = child.stdout.take() {
             let mut reader = BufReader::new(stdout).lines();
 
             while let Ok(Some(line)) = reader.next_line().await {
+                push_stream_line(&line, &mut ended, sink);
+
                 lines.push(line);
             }
         }
@@ -198,11 +239,19 @@ impl CliAdapter {
             None => String::new(),
         };
 
-        let mut events = collect_stream(lines.clone());
+        /* A stream that never reached a result ends with the CLI's own sentence, in the CLI's own
+           words when it has any - the rule `explain_failure` stated for a collected stream, applied
+           here to one that has already gone out. Nothing is added when the CLI did reach `result`
+           or `error`: that line is its own structured answer and it has already been sent. */
+        if !ended {
+            let mut ending = vec![EngineEvent::Failed(GENERIC_ENDING.to_string())];
 
-        explain_failure(&mut events, self.spec.program, &stderr, plain_text_of(&lines));
+            explain_failure(&mut ending, self.spec.program, &stderr, plain_text_of(&lines));
 
-        events
+            for event in ending {
+                sink.send(event);
+            }
+        }
     }
 
     /// Kills the child of one turn. `engine.kill` and `engine.cancel` both land here; the difference
@@ -217,7 +266,35 @@ impl CliAdapter {
 
     /// True while a turn's child is alive - the input to the `Running`/`Stuck` decision.
     pub fn is_running(&self, turn_id: &str) -> bool {
-        self.children.lock().map(|children| children.contains_key(turn_id)).unwrap_or(false)
+        self.children
+            .lock()
+            .map(|children| children.contains_key(turn_id))
+            .unwrap_or(false)
+    }
+}
+
+/// One line of a CLI's stream, on its way to the window: parse it, push what it carried, and latch
+/// when it ended the turn.
+///
+/// **This is the live path's rule**, and it is a function rather than three lines inside `run` so a
+/// test can hold it against `collect_stream` over the VCR fixtures (`tests/vcr.rs`): the same line
+/// must produce the same event whether it is pushed on arrival or parsed out of a finished batch, and
+/// nothing after a `result`/`error` line belongs to the turn.
+///
+/// `ended` is the caller's latch, because `run` keeps reading to the end of stdout: a child that is
+/// still writing must not block on a full pipe while the daemon has stopped listening.
+pub fn push_stream_line(line: &str, ended: &mut bool, sink: &EventSink) {
+    if *ended {
+        return;
+    }
+
+    for event in parse_stream_line(line) {
+        *ended = event.is_terminal();
+        sink.send(event);
+
+        if *ended {
+            break;
+        }
     }
 }
 
@@ -245,10 +322,7 @@ fn plain_text_of(lines: &[String]) -> Option<String> {
         .iter()
         .rev()
         .map(|line| line.trim())
-        .find(|line| {
-            !line.is_empty()
-                && serde_json::from_str::<serde_json::Value>(line).is_err()
-        })
+        .find(|line| !line.is_empty() && serde_json::from_str::<serde_json::Value>(line).is_err())
         .map(str::to_string)
 }
 
@@ -310,6 +384,56 @@ pub fn missing_program_message(program: &str, error: &std::io::Error) -> String 
 mod tests {
     use super::*;
     use crate::engines::{claude_code::CLAUDE_SPEC, codex::CODEX_SPEC, gemini::GEMINI_SPEC};
+
+    /// A prompt whose only interesting field is the folder, with the rest at "nothing was chosen" - the
+    /// shape `run` builds for a chat that has no provider, no history and a default model.
+    fn prompt_in(folder: Option<&str>) -> Prompt {
+        Prompt {
+            session_id: "s1".to_string(),
+            turn_id: "t1".to_string(),
+            text: "hello".to_string(),
+            model: "sonnet".to_string(),
+            provider: None,
+            history: Vec::new(),
+            project_root: folder.map(str::to_string),
+        }
+    }
+
+    /// 0.7.6: the child process is started **in the chat's folder**.
+    ///
+    /// This is the assertion the whole feature exists for. Before it, a chat had no working directory, so
+    /// `Command::spawn` inherited the daemon's own - the folder someone happened to start `sdcd` from.
+    /// An engine that is asked to "fix the login route" would then look for it in the daemon's folder
+    /// rather than in the project.
+    #[test]
+    fn the_engine_runs_in_the_chats_folder() {
+        let folder = std::env::temp_dir();
+        let engine = CliAdapter::new(CLAUDE_SPEC);
+        let command = engine.command(&prompt_in(Some(&folder.display().to_string())));
+
+        assert_eq!(command.as_std().get_current_dir(), Some(folder.as_path()));
+    }
+
+    /// And a chat with no folder runs where the daemon is, with no `current_dir` set at all - which is the
+    /// behaviour every chat had before 0.7.6, kept deliberately: the alternative is refusing to start.
+    #[test]
+    fn a_chat_without_a_folder_runs_where_the_daemon_is() {
+        let engine = CliAdapter::new(CLAUDE_SPEC);
+
+        assert!(engine.command(&prompt_in(None)).as_std().get_current_dir().is_none());
+    }
+
+    /// A folder that is gone (moved, deleted, renamed) is ignored rather than fatal: the turn starts in
+    /// the daemon's directory and the transcript says what the engine did, which is better than an
+    /// `engine.start` that fails because yesterday's path no longer exists.
+    #[test]
+    fn a_folder_that_is_gone_is_ignored() {
+        let missing = std::env::temp_dir().join("sdc-no-such-folder-0-7-6");
+        let engine = CliAdapter::new(CLAUDE_SPEC);
+        let command = engine.command(&prompt_in(Some(&missing.display().to_string())));
+
+        assert!(command.as_std().get_current_dir().is_none());
+    }
 
     /// The shapes that were measured against the installed CLIs (`_verify/cli-shapes.mjs`).
     #[test]
@@ -415,5 +539,5 @@ mod tests {
         );
         assert_eq!(plain_text_of(&[r#"{"a":1}"#.to_string()]), None);
     }
-}
 
+}

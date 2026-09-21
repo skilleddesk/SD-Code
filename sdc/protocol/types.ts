@@ -77,6 +77,10 @@ export type SdcpMethod =
   | 'session.list'
   | 'session.update'
   | 'session.fork'
+  /** The folder a chat works in (0.7.6). */
+  | 'project.add'
+  | 'project.list'
+  | 'project.remove'
   | 'engine.start'
   | 'engine.cancel'
   | 'engine.kill'
@@ -218,6 +222,26 @@ export interface SessionRecord {
   state: 'idle' | 'running' | 'waiting' | 'success' | 'error';
   turnCount: number;
   updatedAt: string;
+  /** The folder this chat works in, when it has one (0.7.6). `null`/absent means "no folder yet". */
+  projectId?: string | null;
+  projectRoot?: string | null;
+}
+
+/**
+ * A folder a chat can work in (0.7.6) - `project.add` / `project.list`.
+ *
+ * `chats` is how many sessions are bound to it, which is what `project.remove` reports back and what a
+ * sidebar row would count. The row exists in the daemon's schema from the first migration
+ * (`projects`, with `sessions.project_id`); 0.7.6 is where the app can create one.
+ */
+export interface ProjectRecord {
+  projectId: string;
+  hostId: string;
+  /** The absolute path on the host, as the person picked it. */
+  root: string;
+  /** The last path segment, or a name the daemon was given. */
+  name: string;
+  chats: number;
 }
 
 /**
@@ -250,6 +274,9 @@ export interface SessionListItem {
   /** The daemon computed this; the reducer may never read a wall clock. */
   minutesAgo: number;
   attention?: 'awaiting_approval' | 'stuck' | 'budget_stop' | null;
+  /** The folder this chat works in, when it has one (0.7.6); the engines run there. */
+  projectId?: string | null;
+  projectRoot?: string | null;
 }
 
 export interface FsHit {
@@ -325,6 +352,9 @@ export interface SessionOpenedEvent {
   hostId: string;
   title: string;
   prompt: string;
+  /** The folder the chat was opened on, when `Open folder` created it (0.7.6). */
+  projectId?: string | null;
+  projectRoot?: string | null;
 }
 
 export interface SessionClosedEvent {
@@ -338,6 +368,9 @@ export interface SessionUpdatedEvent {
   title?: string;
   prompt?: string;
   state?: 'idle' | 'running' | 'waiting' | 'success' | 'error';
+  /** The folder this chat works in, when the update was `Open folder` on an existing chat (0.7.6). */
+  projectId?: string | null;
+  projectRoot?: string | null;
   /** Unread turns; a non-zero count is the blue sidebar badge. */
   unread?: number;
   /**
@@ -642,16 +675,23 @@ export interface SdcpMethodMap {
   };
 
   'session.open': {
-    params: { hostId: string; title?: string; prompt?: string };
-    result: { sessionId: string };
+    params: { hostId: string; title?: string; prompt?: string; projectId?: string };
+    result: { sessionId: string; projectId?: string | null; projectRoot?: string | null };
   };
   'session.close': { params: { sessionId: string }; result: Record<string, never> };
   'session.list': { params: Record<string, never>; result: { hosts: HostRecord[] } };
   'session.update': {
-    params: { sessionId: string; title?: string; state?: SessionRecord['state'] };
-    result: Record<string, never>;
+    params: { sessionId: string; title?: string; state?: SessionRecord['state']; projectId?: string };
+    result: { projectId?: string | null; projectRoot?: string | null };
   };
   'session.fork': { params: { sessionId: string; atTurn?: number }; result: { sessionId: string } };
+
+  'project.add': {
+    params: { hostId?: string; root: string; name?: string };
+    result: { projectId: string; hostId: string; root: string; name: string };
+  };
+  'project.list': { params: Record<string, never>; result: { projects: ProjectRecord[] } };
+  'project.remove': { params: { projectId: string }; result: { removed: boolean; chats: number } };
 
   'engine.start': {
     params: {
