@@ -48,7 +48,7 @@ surprising rather than expected.
 | Lint | `pnpm lint` | `eslint`, including the hooks rules. |
 | Frontend tests | `pnpm test` | The reducer, the command registry, and the store-selector rule. |
 | The window renders | `pnpm build && pnpm --filter @sdc/app smoke` | The built bundle mounts in a real browser: `#root` is not empty, `#app` is there, there is text, and nothing threw. |
-| Daemon tests | `cargo test --manifest-path sdcd/Cargo.toml` | 161 tests, including the seven that start the real daemon (idle exit, `host.shutdown`, hand-started stays, the prompt a turn carries, a folder a chat works in and the tree that lists it, a chat that has run a turn being deleted, a host added once) and the two in `tests/streaming.rs` that measure a turn arriving while the engine talks. |
+| Daemon tests | `cargo test --manifest-path sdcd/Cargo.toml` | 162 tests, including the eight that start the real daemon (idle exit, `host.shutdown`, hand-started stays, the prompt a turn carries, a folder a chat works in and the tree that lists it, a fork that carries the conversation, a chat that has run a turn being deleted, a host added once) and the two in `tests/streaming.rs` that measure a turn arriving while the engine talks. |
 | Clippy | `cargo clippy --manifest-path sdcd/Cargo.toml --all-targets -- -D warnings` and the same for `app/src-tauri/Cargo.toml` | No warnings, in the daemon or the bridge. |
 | Versions agree | `node _verify/version-report.mjs` | One number in the five files, in both lockfiles, in the daemon's `--version`, in the window's `VersionInfo` and in the installer names - and it exits 1 if the five disagree. |
 

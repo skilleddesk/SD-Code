@@ -14,6 +14,58 @@ This file describes what changed, not what is planned. Anything still open is na
 release - the newest - and deletes the others when it publishes (`release.yml`, "Keep only this
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
+## [0.7.8] — two methods the schema declared and the daemon never answered
+
+Both of these were *declared* in `sdcp.schema.json` and `protocol/types.ts` from the beginning, and both were
+on the README's next-step list with the honest note that nothing was behind them. Neither needed a new idea;
+they needed the code that should have been there.
+
+### Added — `session.fork`
+
+The daemon answered `unknown method`, so the fork the spec draws beside a session had no implementation and
+the app had no button. Now:
+
+* `session.fork { sessionId, atTurn? }` → `{ sessionId, turns, title }`. A fork is a new chat with the same
+  folder and the same conversation **up to a turn**;
+* the turns are **copied into the fork's own rows** (`Store::copy_turns`, new ids `f<parent>-<ordinal>`), so a
+  rewind in the fork cannot reach back into the parent and a reload shows the fork's conversation;
+* `atTurn` is **inclusive** (that is what "fork from here" means when a person points at a turn) and omitting
+  it forks the whole conversation;
+* the copied turns are **replayed into the log** (`TurnStarted` / `TurnDelta` / `TurnCompleted`). The window's
+  transcript *is* the log, so a fork whose history existed only in the database would look like an empty chat;
+  a turn that was `running` in the parent is copied and replayed as `done`, because nothing is running in the
+  fork;
+* the window: a **Fork** button on every session row (it appears on hover beside Rename and Delete) and a
+  `Fork this chat` palette row. The fork opens in its own tab and says how many turns came with it.
+
+### Added — `cli.recipes` in the Connect dialog
+
+The daemon has answered `cli.recipes` since 0.7.0 - `installed` comes from the same `doctor::has` the
+environment doctor uses - and **no line of the app read it**. So Connect on a subscription provider whose CLI
+was missing launched the login and then reported the failure: the sentence a person needed ("install
+`claude`") arrived as the explanation of something that had already gone wrong.
+
+Now the dialog reads the recipe **before** it starts anything and shows a row: `` `claude` is installed `` or
+`` `claude` is not installed `` plus the daemon's own install words, a **Copy** button and **Check again**.
+The sign-in no longer starts itself for a program that is not there (that is the point of reading the recipe
+first), while the `Sign in` button stays where it is for a machine the doctor cannot see into. The row is drawn
+in both cases: "it is installed" is information too, and a row that only appeared on failure is a row nobody
+can find when it matters.
+
+### Verified
+
+* `sdcd`: 162 tests, including `a_forked_chat_carries_the_conversation_that_came_before_it` against the real
+  binary - two turns, a fork at turn 1 that copies exactly one, the `SessionOpened` and the replayed
+  `TurnStarted` for the fork, a whole-conversation fork with no `atTurn`, and both chats in `session.list`
+  afterwards. Clippy clean.
+* `app`: 67 vitest cases (five new: the recipe is picked per provider and answers `null` for an API-key one and
+  for an unreachable daemon; the fork's call carries the chat's id and its answer's `sessionId` is what a tab
+  opens on, or `null` so no tab is opened on nothing).
+* `_verify/probe-078.mjs`: in the running window - a real row is forked, the fork arrives titled
+  `<title> (fork)` and open, the probe deletes it again; then the hub is opened and the recipe row is compared
+  with the daemon's own `cli.recipes` answer (program and `installed`), which is the part that cannot be faked
+  by a hardcoded sentence.
+
 ## [0.7.7] — the folder a chat works in, now visible: a file tree and a file viewer
 
 0.7.6 gave a chat a working directory and put its name in the prompt toolbar, so *which* folder a turn runs

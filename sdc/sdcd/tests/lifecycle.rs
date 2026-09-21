@@ -533,6 +533,121 @@ fn a_chat_that_has_run_a_turn_can_be_deleted() {
     let _ = wait_for_exit(&mut child, Duration::from_secs(10));
 }
 
+/**
+ * 0.7.8: `session.fork` - the method `protocol/types.ts` has declared since it was written, and the daemon
+ * answered `unknown method` for.
+ *
+ * A fork is a new chat with the same conversation up to a turn. Three things are asserted, and the third is
+ * the one that matters to a *window*:
+ *
+ *   1. the answer names the new chat, how many turns came with it, and the derived title;
+ *   2. `atTurn` is inclusive, so forking at turn 1 of a two-turn chat copies one turn;
+ *   3. the copied turns arrive as **events** (`TurnStarted` / `TurnCompleted`) - the window's transcript is
+ *      the log, so a fork whose history lived only in the database would look like an empty chat.
+ */
+#[test]
+fn a_forked_chat_carries_the_conversation_that_came_before_it() {
+    let directory = TempDir::new().expect("a temporary directory");
+    let (mut child, port) = start(&["--idle-exit", "30"], &directory);
+
+    /* Two turns, so `atTurn` has something to stop at. The engine is not installed, which does not matter:
+       the turn rows are written before the program is looked for. */
+    for index in 1..=2 {
+        let (started, _) = request_collect(
+            port,
+            &format!("turn-{index}"),
+            "engine.start",
+            serde_json::json!({
+                "sessionId": "s-parent",
+                "prompt": format!("question {index}"),
+                "engine": "claude_code",
+                "model": "sonnet",
+                "tier": "Balanced",
+            }),
+        );
+
+        assert!(started.get("result").is_some(), "engine.start refused turn {index}: {started}");
+    }
+
+    /* Forked at turn 1: the branch point is inclusive, so exactly one turn should come with it. */
+    let (forked, notifications) = request_collect(
+        port,
+        "fork-1",
+        "session.fork",
+        serde_json::json!({ "sessionId": "s-parent", "atTurn": 1 }),
+    );
+
+    let fork_id = forked
+        .pointer("/result/sessionId")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_else(|| panic!("session.fork did not answer with a sessionId: {forked}"))
+        .to_string();
+
+    assert_eq!(forked.pointer("/result/turns").and_then(serde_json::Value::as_u64), Some(1));
+
+    let title = forked
+        .pointer("/result/title")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+
+    assert!(title.ends_with("(fork)"), "the fork's title must say where it came from: {title}");
+
+    /* The fork is announced, and its one turn is replayed into the log. */
+    let opened = notifications
+        .iter()
+        .find(|notification| {
+            notification.pointer("/event/type").and_then(serde_json::Value::as_str) == Some("SessionOpened")
+                && notification.pointer("/event/sessionId").and_then(serde_json::Value::as_str)
+                    == Some(fork_id.as_str())
+        })
+        .unwrap_or_else(|| panic!("no SessionOpened for the fork; saw {notifications:?}"));
+
+    assert_eq!(opened.pointer("/event/title").and_then(serde_json::Value::as_str), Some(title));
+
+    let replayed = notifications
+        .iter()
+        .filter(|notification| {
+            notification.pointer("/event/sessionId").and_then(serde_json::Value::as_str)
+                == Some(fork_id.as_str())
+                && notification.pointer("/event/type").and_then(serde_json::Value::as_str)
+                    == Some("TurnStarted")
+        })
+        .count();
+
+    assert_eq!(replayed, 1, "the fork's turn must be replayed into the log: {notifications:?}");
+
+    /* And the whole conversation forks when `atTurn` is left out. */
+    let (whole, _) = request_collect(port, "fork-2", "session.fork", serde_json::json!({ "sessionId": "s-parent" }));
+
+    assert_eq!(
+        whole.pointer("/result/turns").and_then(serde_json::Value::as_u64),
+        Some(2),
+        "a fork with no `atTurn` carries the whole conversation: {whole}"
+    );
+
+    /* Both chats are in the list, and the parent was not touched. */
+    let (listed, _) = request_collect(port, "list-1", "session.list", serde_json::json!({}));
+    let empty = Vec::new();
+    let ids: Vec<&str> = listed
+        .pointer("/result/hosts")
+        .and_then(serde_json::Value::as_array)
+        .unwrap_or(&empty)
+        .iter()
+        .flat_map(|host| {
+            host.get("sessions")
+                .and_then(serde_json::Value::as_array)
+                .unwrap_or(&empty)
+        })
+        .filter_map(|session| session.get("sessionId").and_then(serde_json::Value::as_str))
+        .collect();
+
+    assert!(ids.contains(&"s-parent"), "the parent is gone after a fork: {listed}");
+    assert!(ids.contains(&fork_id.as_str()), "the fork is not in the list: {listed}");
+
+    let _ = request(port, "stop", "host.shutdown");
+    let _ = wait_for_exit(&mut child, Duration::from_secs(10));
+}
+
 fn wait_for_exit(child: &mut Child, within: Duration) -> Option<std::process::ExitStatus> {
     let deadline = Instant::now() + within;
 

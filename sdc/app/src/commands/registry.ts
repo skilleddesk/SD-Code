@@ -1,4 +1,5 @@
 import { ensureSplitSecondary, usePrefsStore } from '../store/prefs';
+import { sessionActions } from '../store/sessions';
 import { useAppStore } from '../store/store';
 import { useLayoutStore } from '../store/layout';
 import { nextEngine, nextTier, useModelStore } from '../store/model';
@@ -39,7 +40,7 @@ export type CommandGroup = 'global' | 'session' | 'model' | 'approval' | 'timeli
 export type CommandIcon =
   | 'plus' | 'plug' | 'serverPlus' | 'columns' | 'search' | 'check' | 'stethoscope' | 'settings'
   | 'keyboard' | 'panelLeft' | 'panelRight' | 'x' | 'zap' | 'brain' | 'clock' | 'ban' | 'shield'
-  | 'eye' | 'folder';
+  | 'eye' | 'folder' | 'fork';
 
 export interface Command {
   /** Stable id: what a keymap override file would name. */
@@ -151,6 +152,25 @@ function activeFolder(): { sessionId: string; projectId: string; name: string; r
   return null;
 }
 
+/**
+ * A chat's title by its id - for a palette row that says what it is about to fork.
+ *
+ * The row's *label* is the same for every chat (`Fork this chat`), so the title is only used for the
+ * sentence the fork raises; `null` means the id is not in the tree at all, in which case there is nothing
+ * to fork and the command does nothing.
+ */
+function activeChat(sessionId: string): string | null {
+  for (const host of useAppStore.getState().hosts) {
+    const session = host.sessions.find((candidate) => candidate.id === sessionId);
+
+    if (session !== undefined) {
+      return session.title;
+    }
+  }
+
+  return null;
+}
+
 /** One row per command. The palette, the F1 reference and the Keymap tab all render this array. */
 export const COMMANDS: readonly Command[] = [
   /* ---------------------------------------------------------------- Global (10) */
@@ -158,6 +178,7 @@ export const COMMANDS: readonly Command[] = [
   { id: 'search.open', label: 'Search everything', hint: 'Ctrl P', icon: 'search', group: 'global', keys: ['ctrl+p', 'meta+p'], inInput: true, run: () => useOverlayStore.getState().openSearch() },
   { id: 'chat.new', label: strings.sidebar.newChat, hint: 'Ctrl N', icon: 'plus', group: 'global', keys: ['ctrl+n', 'meta+n'], run: () => useOverlayStore.getState().openNewChat({ x: 12, y: 52 }) },
   { id: 'tab.close', label: strings.tabs.close, hint: 'Ctrl W', icon: 'x', group: 'global', keys: ['ctrl+w', 'meta+w'], run: () => { const prefs = usePrefsStore.getState(); if (prefs.activeTab !== null) { prefs.closeTab(prefs.activeTab); } } },
+  { id: 'chat.fork', label: strings.sidebar.actions.fork, icon: 'fork', group: 'actions', when: () => usePrefsStore.getState().activeTab !== null, run: () => { const id = usePrefsStore.getState().activeTab; if (id === null) { return; } const found = activeChat(id); if (found !== null) { sessionActions.forkSession(id, found); } } },
   { id: 'sidebar.toggle', label: strings.topbar.sidebar.title, hint: 'Ctrl B', icon: 'panelLeft', group: 'global', keys: ['ctrl+b', 'meta+b'], run: () => useLayoutStore.getState().toggleSidebar() },
   { id: 'panel.toggle', label: strings.topbar.right.title, hint: 'Ctrl J', icon: 'panelRight', group: 'global', keys: ['ctrl+j', 'meta+j'], run: () => useLayoutStore.getState().toggleRight() },
   { id: 'split.toggle', label: strings.tabs.split.title, hint: 'Ctrl \\', icon: 'columns', group: 'global', keys: ['ctrl+\\', 'meta+\\'], inInput: true, run: () => { useLayoutStore.getState().toggleSplit(); ensureSplitSecondary(); toast(useLayoutStore.getState().split ? strings.tabs.split.on : strings.tabs.split.off); } },

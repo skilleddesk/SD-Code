@@ -68,6 +68,7 @@ impl Daemon {
             /* Sessions ------------------------------------------------------------------------ */
             "session.open" => self.session_open(envelope, &*out),
             "session.update" => self.session_update(envelope, &*out),
+            "session.fork" => self.session_fork(envelope, &*out),
             "session.close" => self.session_close(envelope, &*out),
             "session.list" => Ok(json!({ "hosts": self.store().hosts_with_sessions().map_err(ErrorObject::internal)? })),
 
@@ -478,6 +479,97 @@ impl Daemon {
         );
 
         Ok(json!({ "projectId": project_id, "projectRoot": root }))
+    }
+
+    /// `session.fork` - declared in the schema and in `protocol/types.ts` since they were written, and
+    /// answered `unknown method` until now.
+    ///
+    /// A fork is a new chat with the same folder and the same conversation **up to a turn**, so a person can
+    /// take a different branch without losing where they were. Three things make it honest:
+    ///
+    ///   * the turns are **copied into the fork's own rows** (`Store::copy_turns`), so a rewind in the fork
+    ///     cannot reach back into the parent and a reload shows the fork's conversation rather than an empty
+    ///     chat;
+    ///   * `atTurn` is **inclusive**, because that is what "fork from here" means when a person points at a
+    ///     turn on screen, and omitting it forks the whole conversation;
+    ///   * the copied turns are **replayed into the log** (`TurnStarted` / `TurnDelta` / `TurnCompleted` per
+    ///     turn). The window's transcript *is* the log - `session.list` carries titles, not turns - so a fork
+    ///     whose history lived only in the database would look like an empty chat until an engine was asked
+    ///     something. A turn that was `running` in the parent is copied and replayed as `done`: nothing is
+    ///     running in the fork.
+    fn session_fork(&self, envelope: &Envelope, out: &dyn Notifier) -> Result<Value, ErrorObject> {
+        let parent_id = envelope.require_str("sessionId")?;
+        let at_turn = envelope.opt_i64("atTurn");
+        let parent = self.store().session(&parent_id).map_err(ErrorObject::internal)?;
+
+        let Some(parent) = parent else {
+            return Err(ErrorObject::not_found(format!("no session `{parent_id}`")));
+        };
+
+        let host_id = parent["hostId"].as_str().unwrap_or("local").to_string();
+        let project_id = parent["projectId"].as_str().map(str::to_string);
+        let root = parent["projectRoot"].as_str().map(str::to_string);
+        let title = parent["title"].as_str().unwrap_or("Chat").to_string();
+        let prompt = parent["prompt"].as_str().unwrap_or_default().to_string();
+        let fork_id = format!("n{}", self.state.events.seq() + 1);
+        let fork_title = format!("{title} (fork)");
+
+        self.store()
+            .insert_session(&fork_id, &host_id, &fork_title, &prompt, project_id.as_deref())
+            .map_err(ErrorObject::internal)?;
+
+        let copied = self.store().copy_turns(&parent_id, &fork_id, at_turn).map_err(ErrorObject::internal)?;
+
+        out.push(
+            event::session_opened(
+                &fork_id,
+                &host_id,
+                &fork_title,
+                &prompt,
+                project_id.as_deref(),
+                root.as_deref(),
+            ),
+            Some(fork_id.clone()),
+            None,
+        );
+
+        /* The transcript, replayed - see the note above. `ordinal` is kept, so the fork's turns are numbered
+           the way the parent's were and a rewind to `turn-3` means the same thing in both. */
+        for turn in self.store().turns(&fork_id).map_err(ErrorObject::internal)? {
+            let ordinal = turn["ordinal"].as_i64().unwrap_or(0);
+            let turn_id = turn["turnId"].as_str().unwrap_or_default().to_string();
+            let engine = turn["engine"].as_str().unwrap_or("claude_code");
+            let model = turn["model"].as_str().unwrap_or("default");
+            let tier = turn["tier"].as_str().unwrap_or("Balanced");
+            let asked = turn["prompt"].as_str().unwrap_or_default();
+            let answer = turn["answer"].as_str().unwrap_or_default();
+            let summary = turn["summary"].as_str().unwrap_or_default();
+            let state = turn["state"].as_str().unwrap_or("done");
+            let session = Some(fork_id.clone());
+
+            out.push(
+                event::turn_started(&turn_id, &fork_id, engine, model, tier, asked),
+                session.clone(),
+                Some(turn_id.clone()),
+            );
+
+            if !answer.is_empty() {
+                out.push(event::turn_delta(&turn_id, answer), session.clone(), Some(turn_id.clone()));
+            }
+
+            out.push(
+                event::turn_completed(
+                    &turn_id,
+                    summary,
+                    &json!({ "ordinal": ordinal, "state": state, "replayed": true }).to_string(),
+                    None,
+                ),
+                session,
+                Some(turn_id),
+            );
+        }
+
+        Ok(json!({ "sessionId": fork_id, "turns": copied, "title": fork_title }))
     }
 
     fn session_close(&self, envelope: &Envelope, out: &dyn Notifier) -> Result<Value, ErrorObject> {
