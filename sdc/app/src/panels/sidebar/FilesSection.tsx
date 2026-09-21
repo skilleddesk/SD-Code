@@ -5,7 +5,7 @@ import type { FsEntry } from '../../../../protocol/types';
 import { nameOf } from '../../lib/picker';
 import { sizeOf, strings } from '../../strings';
 import { useFilesStore, type DirectoryView } from '../../store/files';
-import { loadDirectory, openFile, refreshDirectory, toggleDirectory } from '../../store/intents';
+import { loadDirectory, loadGitStatus, openDiff, openFile, refreshDirectory, toggleDirectory } from '../../store/intents';
 import { findSession, useSessionsStore } from '../../store/sessions';
 
 /**
@@ -47,7 +47,7 @@ export function FilesSection() {
   const session = activeTab === null ? null : findSession(hosts, activeTab);
   const root = session?.session.projectRoot ?? null;
 
-  const { root: storedRoot, directories, expanded, loading, error } = useFilesStore();
+  const { root: storedRoot, directories, expanded, loading, error, git } = useFilesStore();
 
   /* The session's folder is the tree's root, and the store is *told* rather than asked: `session.projectRoot`
      is the one answer to "which folder am I in", and a second copy in the store would be a second answer. */
@@ -65,6 +65,10 @@ export function FilesSection() {
     if (useFilesStore.getState().directories[root] === undefined) {
       void loadDirectory(null);
     }
+
+    /* The branch and the changed-file count come with the folder (0.7.9): the same question at the same time,
+       and `git.status` takes a session id exactly as `fs.list` does. */
+    void loadGitStatus();
   }, [root]);
 
   if (root === null) {
@@ -100,11 +104,43 @@ export function FilesSection() {
       </div>
 
       <div
-        className="files-root mb-[2px] truncate font-mono text-[11px] text-text-secondary"
+        className="files-root mb-[2px] flex items-center gap-[6px] font-mono text-[11px] text-text-secondary"
         title={strings.files.rootTitle(root)}
         data-files-root={root}
       >
-        {nameOf(root)}
+        <span className="min-w-0 truncate">{nameOf(root)}</span>
+
+        {/*
+          The branch and the changed count (0.7.9), from `git.status` - and a Diff button beside them when
+          there is something to see. A folder without git shows neither: no badge, no error, because a folder
+          that is not a repository is a normal folder.
+        */}
+        {git === null ? null : (
+          <>
+            <span
+              className={
+                'files-git shrink-0 rounded-sm px-[5px] py-[1px] text-[10px] ' +
+                (git.dirty > 0 ? 'bg-orange-subtle text-state-waiting' : 'bg-bg-raised text-text-muted')
+              }
+              title={git.branch}
+              data-git-branch={git.branch}
+              data-git-dirty={String(git.dirty)}
+            >
+              {git.dirty > 0 ? strings.files.gitDirty(git.branch, git.dirty) : strings.files.gitClean(git.branch)}
+            </span>
+
+            {git.dirty === 0 ? null : (
+              <button
+                type="button"
+                id="filesDiff"
+                className="files-diff shrink-0 rounded-sm border border-border-subtle px-[5px] py-[1px] text-[10px] text-text-secondary transition-colors duration-fast ease-ease hover:border-border-default hover:text-text-primary"
+                onClick={() => void openDiff()}
+              >
+                {strings.files.diff}
+              </button>
+            )}
+          </>
+        )}
       </div>
 
       <div className="files-tree" role="tree" aria-label={strings.files.title}>

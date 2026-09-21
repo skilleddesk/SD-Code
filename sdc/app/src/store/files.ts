@@ -40,6 +40,12 @@ export interface OpenFileView {
   truncated: boolean;
 }
 
+/** The branch and changed-file count for the chat's folder, as `git.status` answered it. */
+export interface GitView {
+  branch: string;
+  dirty: number;
+}
+
 export interface FilesState {
   /** The folder being shown, or `null` when the chat has none. */
   root: string | null;
@@ -55,6 +61,10 @@ export interface FilesState {
   open: OpenFileView | null;
   /** The path being opened, so the row that was clicked can show a spinner. */
   opening: string | null;
+  /** The folder's git state (0.7.9), or `null` for a folder with no git - which is not a failure. */
+  git: GitView | null;
+  /** The working tree's diff (0.7.9), shown in the Preview instead of a file. */
+  diff: string | null;
 }
 
 export interface FilesActions {
@@ -68,6 +78,10 @@ export interface FilesActions {
   startOpening: (path: string) => void;
   /** The file arrived - or `null`, when one was closed. */
   setOpen: (file: OpenFileView | null) => void;
+  /** The folder's git state - or `null` when there is none to show. */
+  setGit: (git: GitView | null) => void;
+  /** The working tree's diff - or `null` when the diff was closed. */
+  setDiff: (patch: string | null) => void;
   /** Forget everything, for a chat whose folder changed: the old paths are not in the new tree. */
   reset: () => void;
 }
@@ -80,6 +94,8 @@ const initialFilesState: FilesState = {
   error: null,
   open: null,
   opening: null,
+  git: null,
+  diff: null,
 };
 
 export const useFilesStore = create<FilesState & FilesActions>()((set, get) => ({
@@ -122,7 +138,13 @@ export const useFilesStore = create<FilesState & FilesActions>()((set, get) => (
 
   startOpening: (path) => set((state) => ({ ...state, opening: path, error: null })),
 
-  setOpen: (file) => set((state) => ({ ...state, open: file, opening: null })),
+  setOpen: (file) => set((state) => ({ ...state, open: file, opening: null, diff: null })),
+
+  setGit: (git) => set((state) => ({ ...state, git })),
+
+  /* Opening a diff takes the tab over from the file it was showing - the two are the same surface, and a
+     diff *beside* a file would be two answers to one question on a 400px panel. */
+  setDiff: (patch) => set((state) => ({ ...state, diff: patch, open: patch === null ? state.open : null })),
 
   reset: () => set({ ...initialFilesState }),
 }));

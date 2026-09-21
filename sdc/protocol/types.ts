@@ -752,8 +752,13 @@ export interface SdcpMethodMap {
     };
   };
   'fs.write': {
-    params: { path: string; text: string };
-    result: { path: string; sha256: string; checkpointId: string };
+    params: { path: string; text: string; sessionId?: string; turnId?: string };
+    /**
+     * `bytes` is what was written. There is no `checkpointId` here: the checkpoint a Save takes (P5) arrives as
+     * a `CheckpointSaved` event, which is where the Time Machine reads it from - and the field this type used to
+     * declare was one the daemon never answered.
+     */
+    result: { path: string; sha256: string; bytes: number };
   };
   'fs.list': {
     /** `path` may be omitted since 0.7.7: the **session's** folder is listed then. */
@@ -763,8 +768,12 @@ export interface SdcpMethodMap {
   'fs.stat': { params: { path: string }; result: { size: number; sha256: string } };
   'fs.search': { params: { query: string; glob?: string }; result: { hits: FsHit[] } };
 
-  'git.status': { params: { sessionId: string }; result: { branch: string; dirty: number } };
-  'git.diff': { params: { sessionId: string; checkpointId?: string }; result: { patch: string } };
+  'git.status': { params: { sessionId?: string; root?: string }; result: { branch: string; dirty: number } };
+  'git.diff': {
+    /** Either a session (whose folder is used) or a `root`; the daemon refuses both-missing in words. */
+    params: { sessionId?: string; root?: string; checkpointId?: string; sha?: string };
+    result: { patch: string };
+  };
   'git.checkpoint': {
     params: { sessionId: string; turnId?: string };
     result: { checkpointId: string; sha: string };
