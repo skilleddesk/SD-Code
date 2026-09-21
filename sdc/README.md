@@ -298,7 +298,9 @@ it is reached.
   worse than one that says which store it used. On Windows that file now gets an ACL
   (`icacls /inheritance:r /grant:r <account>:F`) instead of inheriting `%APPDATA%` - until 0.7.10 a key was
   readable by every account in `Users`. `host.status` reports both: `keychain` (`os`/`file`) and
-  `keyProtection` (`os`/`acl`/`mode`).
+  `keyProtection` (`os`/`acl`/`mode`). The fallback's directory is `0700` and the file `0600`, which 0.7.12 had
+  to be told by CI: `0600` on a directory clears the execute bit, and a directory you cannot search is a
+  directory no key can be written into.
 * **`provider.test` really contacts the provider, and says so in `verified`.** Since 0.6.1 a key is used for
   one read-only call to the provider's own model list over TLS, and both outcomes are first-class: a key the
   provider accepts answers with the models it knows and `verified: true`, and a key it rejects answers with the
@@ -316,7 +318,10 @@ it is reached.
   `app/scripts/a11y-bundle.mjs` audits the built window over WCAG 2.0/2.1 A + AA with `serious`/`critical`
   failures failing the build, and it reports **0 violations** on the screen the app opens on. What no automated
   pass covers is the rest of the window - the palette, the Permission modal, the Time Machine tab - and what a
-  screen reader actually *says*; that sweep is still on the list below.
+  screen reader actually *says*; that sweep is still on the list below. One thing 0.7.12 learned about the
+  audit itself: its verdict depends on the **state** the app opens with. 0.7.10's green run was green because
+  that install had no chats, and the `nested-interactive` violation it missed needs a host with rows under it;
+  the fix was verified against a populated window.
 * **`protocol/` is not an npm package yet, and it no longer drifts silently.** `protocol/check.mjs` (0.7.10)
   compares the schema's method names, shapes and event types with `protocol/types.ts` **and with the daemon's
   dispatch table**, and it runs in CI - which is what the missing generator was for. Turning the folder into a

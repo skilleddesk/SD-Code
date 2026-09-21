@@ -216,7 +216,10 @@ jobs:
             if ($tag -eq $current) { continue }
 
             Write-Host "deleting release $tag"
-            gh release delete $tag --yes --cleanup-tag
+            # The release goes, the tag stays: a version is a point in history that a clone should carry, and
+            # `--cleanup-tag` deleted them too - which is how the v0.7.9-v0.7.11 tags disappeared when this
+            # step first ran against a diagnostic tag.
+            gh release delete $tag --yes
           }
 
           Write-Host 'remaining:'

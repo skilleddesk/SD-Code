@@ -14,6 +14,62 @@ This file describes what changed, not what is planned. Anything still open is na
 release - the newest - and deletes the others when it publishes (`release.yml`, "Keep only this
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
+## [0.7.12] — what CI caught that no local run could
+
+0.7.10 shipped with a bug that only exists on unix, and this release is the fix plus the three things the hunt
+for it turned up. The CI log is not readable without being the repository's owner, so the *gate* had to learn
+to talk: a failing `cargo test` now puts its compiler errors, its failing test names and its panic lines into
+GitHub **annotations**, which are readable. That is how the cause was found in one run instead of five.
+
+### Fixed — the keys directory was `0600`, which clears the execute bit
+
+`restrict_to_owner` applied `0600` to the *directory* as well as to the key file. On unix that removes the
+**execute** bit, and without execute the owner cannot create or open a file *inside* that directory at all - so
+`set()` failed with `EACCES` and four tests panicked (`auth::keychain::tests::round_trips…` and
+`::an_empty_secret_deletes_the_entry`, plus `providers::tests::saving_a_key_writes_the_keychain…` and
+`::removing_a_provider_forgets_the_secret…`). Windows was happy throughout, because its ACL grants full control.
+The mode is now `0700` for a directory and `0600` for a file, and a unix-only test asserts both *and* the round
+trip, so the next regression fails on the machine it happens on.
+
+The previous version of this code ignored the failure (it was `let _ = set_permissions(…)`), which is why the
+bug had never been seen: 0.7.10 turned the ignored result into a returned error, and CI said so.
+
+### Fixed — a button inside a button in the sidebar's host header
+
+`nested-interactive`, which axe calls a **serious** violation: the host row was a `div role="button"` wrapping
+the `+` and the remove button. A control inside a control is not reachable by keyboard and is announced as one
+thing where there are three. The header is a plain container now and the fold/unfold is its own button, named
+after the host it folds.
+
+This one is worth a note about *when* the audit found it: the first green run was green because that install had
+no chats to show, and the violation needs a host with rows under it. The audit's honesty depends on the state
+the app opens with - which is exactly why 0.7.10's "0 violations" was not the whole truth, and why this release
+re-ran it against a populated window.
+
+### Fixed — two copies of "where is the browser"
+
+`smoke-bundle.mjs` and `a11y-bundle.mjs` each carried their own list of browser paths, and they disagreed:
+smoke knew about `/Applications/Microsoft Edge.app`, a11y did not. On the macOS runner - which has Edge and no
+Chrome - the window rendered and the audit could not start, so the release job failed. One list now, in
+`app/scripts/browser.mjs`, used by both.
+
+### Changed — the release prunes releases, not tags
+
+The "keep only this release" step called `gh release delete --cleanup-tag`, so pruning a release also deleted
+its **tag** - and a version is a point in history a fresh clone should carry, not an attachment. It deletes the
+release and keeps the tag now.
+
+### Verified
+
+* `sdcd`: 167 tests, clippy clean with and without `--features keychain`. The four keychain tests that failed on
+  Linux and macOS pass there now, as reported by CI's own annotations.
+* `app`: 73 vitest cases, typecheck and lint clean, `pnpm smoke` green, and `pnpm smoke:a11y` at **0
+  violations** - measured against the window that produced the `nested-interactive` finding, not a fresh one.
+* CI on Linux: every step green, including `Checks (protocol)`, `Checks (cargo test)` and the axe audit inside
+  "The built window renders" - which is the first time the audit has run in the release pipeline.
+
+
+
 ## [0.7.11] — four sentences in this README that were no longer true
 
 Not a feature release. The README's "What is deliberately absent" is the part of the documentation that is

@@ -26,6 +26,8 @@ import { createServer } from 'node:http';
 import { dirname, extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { annotate, findBrowser, noBrowser } from './browser.mjs';
+
 const here = dirname(fileURLToPath(import.meta.url));
 const dist = join(here, '..', 'dist');
 const axe = join(here, '..', 'node_modules', 'axe-core', 'axe.min.js');
@@ -126,30 +128,6 @@ pre{color:#eee;font:12px monospace}</style>
   }
 </script>`;
 
-function browser() {
-  const names =
-    process.platform === 'win32'
-      ? ['msedge.exe', 'chrome.exe', 'chromium.exe']
-      : ['google-chrome', 'google-chrome-stable', 'chromium', 'chromium-browser', 'microsoft-edge'];
-
-  const directories = (process.env.PATH ?? '')
-    .split(process.platform === 'win32' ? ';' : ':')
-    .filter(Boolean);
-
-  const candidates = [
-    process.env.SDC_BROWSER,
-    process.env.CHROME_PATH,
-    ...directories.flatMap((directory) => names.map((name) => join(directory, name))),
-    'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
-    'C:/Program Files/Google/Chrome/Application/chrome.exe',
-    '/usr/bin/google-chrome',
-    '/usr/bin/chromium',
-    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-  ].filter(Boolean);
-
-  return candidates.find((candidate) => existsSync(candidate)) ?? null;
-}
-
 const server = createServer((request, response) => {
   const url = new URL(request.url ?? '/', 'http://127.0.0.1');
 
@@ -178,18 +156,11 @@ const server = createServer((request, response) => {
 await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
 
 const port = server.address().port;
-const executable = browser();
+const executable = findBrowser();
 
 if (!executable) {
-  if (process.env.CI) {
-    console.error('a11y: no Chromium-family browser found in CI (set SDC_BROWSER)');
-    server.close();
-    process.exit(2);
-  }
-
-  console.log('a11y: no Chromium-family browser found - skipped (set SDC_BROWSER to check locally)');
   server.close();
-  process.exit(0);
+  process.exit(noBrowser('a11y'));
 }
 
 console.log(`a11y: serving ${dist} on ${port}, auditing with ${executable}`);
@@ -248,6 +219,7 @@ if (report === null) {
 }
 
 if (report.error) {
+  annotate('a11y', report.error);
   console.error(`a11y: ${report.error}`);
   process.exit(1);
 }
@@ -258,9 +230,15 @@ const blocking = violations.filter(
 );
 
 for (const violation of violations) {
+  const blocking = violation.impact === 'critical' || violation.impact === 'serious';
+
   console.log(
-    `${blocking.includes(violation) ? 'FAIL' : 'note'} ${violation.id} (${violation.impact}) x${violation.nodes} - ${violation.help}`,
+    `${blocking ? 'FAIL' : 'note'} ${violation.id} (${violation.impact}) x${violation.nodes} - ${violation.help}`,
   );
+
+  if (blocking) {
+    annotate('a11y', `${violation.id} (${violation.impact}) x${violation.nodes} - ${(violation.where ?? []).join(' ')}`);
+  }
 
   for (const where of violation.where ?? []) {
     console.log(`      at ${where}`);

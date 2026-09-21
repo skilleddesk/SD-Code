@@ -93,6 +93,8 @@ export const strings = {
       rename: 'Rename',
       delete: 'Delete',
       fork: 'Fork this chat',
+      /** The host header's toggle, which names the host it folds (0.7.12 - it is a real button now). */
+      toggleHost: (name: string): string => `${name} · fold or unfold`,
       newChatOnHost: 'New chat on this host',
       removeHost: 'Remove this host',
     },
