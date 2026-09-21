@@ -91,19 +91,28 @@ jobs:
         working-directory: sdc
         run: pnpm install --frozen-lockfile
 
-      - name: Checks
+      - name: Checks (typecheck)
         working-directory: sdc
-        # The same gate a developer runs, so a release cannot be published from a tree that would not
-        # pass review. Kept short on purpose: the installers are the point of this workflow.
-        # Since 0.7.10 it also parses `protocol/sdcp.schema.json` and compares it with `protocol/types.ts`
-        # and with the daemon's dispatch table - the file had never been read by anything, which is why it
-        # still held invalid JSON (`["string"]?`) and nine methods with no `params`/`result` shape.
-        run: |
-          pnpm typecheck
-          pnpm lint
-          pnpm test
-          node protocol/check.mjs
-          cargo test --manifest-path sdcd/Cargo.toml
+        run: pnpm typecheck
+
+      - name: Checks (lint)
+        working-directory: sdc
+        run: pnpm lint
+
+      - name: Checks (vitest)
+        working-directory: sdc
+        run: pnpm test
+
+      # The schema, `types.ts` and the daemon's dispatch table, compared (0.7.10). `protocol/sdcp.schema.json`
+      # had never been parsed by anything, which is how it held invalid JSON (`["string"]?`) and nine methods
+      # with no `params`/`result` shape without anyone noticing.
+      - name: Checks (protocol)
+        working-directory: sdc
+        run: node protocol/check.mjs
+
+      - name: Checks (cargo test)
+        working-directory: sdc
+        run: cargo test --manifest-path sdcd/Cargo.toml
 
       - name: The built window renders
         working-directory: sdc
