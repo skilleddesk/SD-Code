@@ -16,11 +16,13 @@ import {
   cancelCliLogin,
   chooseModel,
   connectApiKey,
+  loadCliRecipe,
   loadModels,
   pollCliLogin,
   startCliLogin,
   submitCliLoginCode,
   type CliLoginView,
+  type CliRecipeView,
   type ModelsView,
 } from '../store/intents';
 import { useOverlayStore } from '../store/overlays';
@@ -63,6 +65,7 @@ export function Connect() {
 
   const [key, setKey] = useState('');
   const [login, setLogin] = useState<CliLoginView | null>(null);
+  const [recipe, setRecipe] = useState<CliRecipeView | null>(null);
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
   const [models, setModels] = useState<ModelsView | null>(null);
@@ -85,8 +88,23 @@ export function Connect() {
     toast(strings.connect.signedInToast(login.providerLabel));
   }, [login]);
 
+  /* The recipe, read before anything is started: it is what says whether the CLI this provider signs in
+     through exists on this machine. Read on every open, because a person who just installed `claude` in a
+     terminal and came back should see it. */
+  useEffect(() => {
+    if (!open || mode !== 'login' || providerId === undefined || providerId === null) {
+      setRecipe(null);
+
+      return;
+    }
+
+    void loadCliRecipe(providerId).then(setRecipe);
+  }, [open, mode, providerId]);
+
   /* The sign-in starts itself: clicking a subscription card means "use my plan", and a person who just
-     clicked it should not have to find a second button that says the same thing. */
+     clicked it should not have to find a second button that says the same thing.
+     Except when the CLI is not installed: then the recipe row is what they need, and starting a login to
+     report "not found" would be the failure explaining itself instead of a step to take first (0.7.8). */
   useEffect(() => {
     if (!open) {
       startedFor.current = null;
@@ -97,6 +115,12 @@ export function Connect() {
       return;
     }
 
+    /* `null` means "not read yet" for a provider that has no recipe at all - so this waits for the read
+       rather than guessing, and a provider without a recipe (an API key one) never auto-starts a login. */
+    if (recipe === null || !recipe.installed) {
+      return;
+    }
+
     startedFor.current = providerId;
     setBusy(true);
 
@@ -104,7 +128,7 @@ export function Connect() {
       setBusy(false);
       setLogin(view);
     });
-  }, [open, mode, providerId]);
+  }, [open, mode, providerId, recipe]);
 
   /* One poll per second while a sign-in is in flight, and none after it has spoken. */
   useEffect(() => {
@@ -280,6 +304,68 @@ export function Connect() {
         <div className="flex flex-col">
           {mode === 'login' ? (
             <>
+              {/*
+                The recipe, before the sign-in: `claude` / `codex` / `gemini` are separate programs, and this
+                row is where "install it first" is said - as a step, not as the aftermath of a failure.
+                It is drawn whether the program is there or not: `claude is installed` is information too,
+                and a row that only appears on failure would be a row nobody can find when it matters.
+              */}
+              {recipe === null ? null : (
+                <div
+                  className="connect-recipe flex items-start gap-[8px] border-b border-border-subtle px-[18px] py-[12px] text-[11.5px] leading-[1.55]"
+                  id="connectRecipe"
+                  data-recipe-program={recipe.program}
+                  data-recipe-installed={recipe.installed ? 'true' : 'false'}
+                >
+                  {recipe.installed ? (
+                    <Check size={13} className="mt-[2px] shrink-0 text-state-success" aria-hidden="true" />
+                  ) : (
+                    <TriangleAlert size={13} className="mt-[2px] shrink-0 text-state-waiting" aria-hidden="true" />
+                  )}
+
+                  <div className="min-w-0 flex-1">
+                    <div className={recipe.installed ? 'text-text-secondary' : 'font-semibold text-text-primary'}>
+                      {recipe.installed
+                        ? strings.connect.recipe.present(recipe.program)
+                        : strings.connect.recipe.missing(recipe.program)}
+                    </div>
+
+                    {recipe.installed ? null : (
+                      <>
+                        <div className="mt-[2px] text-text-secondary">{strings.connect.recipe.missingBody}</div>
+                        <pre className="mt-[6px] overflow-x-auto rounded-sm border border-border-subtle bg-bg-input px-[8px] py-[6px] font-mono text-[11px] text-text-primary">
+                          {recipe.note}
+                        </pre>
+
+                        <div className="mt-[8px] flex items-center gap-[6px]">
+                          <button
+                            type="button"
+                            id="connectRecipeCopy"
+                            className={BTN_SM + ' ' + BTN_SECONDARY}
+                            onClick={() => copy(recipe.note)}
+                          >
+                            <ClipboardCopy size={11} aria-hidden="true" /> {strings.connect.recipe.copy}
+                          </button>
+                          <button
+                            type="button"
+                            id="connectRecipeRecheck"
+                            className={BTN_SM + ' ' + BTN_SECONDARY}
+                            onClick={() => {
+                              void loadCliRecipe(recipe.providerId).then((next) => {
+                                setRecipe(next);
+                                toast(strings.connect.recipe.recheckToast);
+                              });
+                            }}
+                          >
+                            <RefreshCw size={11} aria-hidden="true" /> {strings.connect.recipe.recheck}
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
+
               {login === null ? (
                 <Section title={strings.connect.pageTitle} note={strings.connect.note}>
                   <div className="flex items-center gap-[10px]">

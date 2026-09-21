@@ -20,7 +20,7 @@ const sdcpCall = vi.hoisted(() => vi.fn());
 
 vi.mock('../lib/sdcp', () => ({ sdcpCall }));
 
-const { chooseModel, closeFolder, emptySessionOn, newChatOnHost, openFolderIn, loadDirectory, toggleDirectory, openFile, closeFile } = await import('./intents');
+const { chooseModel, closeFolder, forkSession, loadCliRecipe, emptySessionOn, newChatOnHost, openFolderIn, loadDirectory, toggleDirectory, openFile, closeFile } = await import('./intents');
 const { engineForProvider, useModelStore } = await import('./model');
 const { useFilesStore } = await import('./files');
 const { useLayoutStore } = await import('./layout');
@@ -410,6 +410,75 @@ describe('the file tree', () => {
     expect(files.open).toBeNull();
     expect(files.error).toContain('holds secrets');
     expect(files.directories['H:\\SDC']?.entries).toHaveLength(2);
+  });
+});
+
+/**
+ * `cli.recipes` (0.7.8) - the row that says "install `claude` first" *before* a sign-in starts.
+ *
+ * The daemon has answered this method since 0.7.0 and nothing in the app read it, so Connect on a provider
+ * whose CLI was missing started the login and then reported the failure. The intent is what the dialog calls;
+ * it picks the provider's own recipe out of the list and answers `null` for a provider that has none, which
+ * is how an API-key provider is told apart from a subscription one.
+ */
+describe('loadCliRecipe', () => {
+  const recipes = {
+    recipes: [
+      { providerId: 'claude', label: 'Claude', program: 'claude', note: 'npm i -g @anthropic-ai/claude-code', installed: true },
+      { providerId: 'codex', label: 'Codex', program: 'codex', note: 'npm i -g @openai/codex', installed: false },
+    ],
+  };
+
+  beforeEach(() => {
+    sdcpCall.mockReset();
+    sdcpCall.mockResolvedValue(recipes);
+  });
+
+  it('answers the provider’s own recipe, with the daemon’s install words', async () => {
+    await expect(loadCliRecipe('codex')).resolves.toMatchObject({
+      program: 'codex',
+      installed: false,
+      note: 'npm i -g @openai/codex',
+    });
+    expect(sdcpCall).toHaveBeenCalledWith('cli.recipes', {});
+  });
+
+  it('answers null for a provider with no CLI sign-in', async () => {
+    await expect(loadCliRecipe('deepseek')).resolves.toBeNull();
+  });
+
+  it('answers null instead of failing when the daemon is unreachable', async () => {
+    sdcpCall.mockRejectedValueOnce(new SdcpCallError({ code: 'not_ready', message: 'not connected' }));
+
+    await expect(loadCliRecipe('claude')).resolves.toBeNull();
+  });
+});
+
+/**
+ * `session.fork` (0.7.8) - a method the schema declared and the daemon answered `unknown method` for.
+ *
+ * The window's half is two lines of intent, and both are worth asserting: the call carries the chat's id and
+ * nothing else (the daemon derives the title, so the two cannot disagree), and the answer's `sessionId` is
+ * what the caller opens a tab on.
+ */
+describe('forkSession', () => {
+  beforeEach(() => {
+    sdcpCall.mockReset();
+  });
+
+  it('asks the daemon to fork the chat and answers the new id', async () => {
+    sdcpCall.mockResolvedValue({ sessionId: 'n9', turns: 3, title: 'Login bug (fork)' });
+
+    await expect(forkSession('s1', 'Login bug')).resolves.toBe('n9');
+    expect(sdcpCall).toHaveBeenCalledWith('session.fork', { sessionId: 's1' });
+  });
+
+  it('answers null when the daemon refuses, so no tab is opened on nothing', async () => {
+    sdcpCall.mockRejectedValueOnce(
+      new SdcpCallError({ code: 'not_found', message: 'no session `s1`' }),
+    );
+
+    await expect(forkSession('s1', 'Login bug')).resolves.toBeNull();
   });
 });
 

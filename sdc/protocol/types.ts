@@ -697,7 +697,10 @@ export interface SdcpMethodMap {
     params: { sessionId: string; title?: string; state?: SessionRecord['state']; projectId?: string };
     result: { projectId?: string | null; projectRoot?: string | null };
   };
-  'session.fork': { params: { sessionId: string; atTurn?: number }; result: { sessionId: string } };
+  'session.fork': {
+    params: { sessionId: string; atTurn?: number };
+    result: { sessionId: string; /** How many turns came with the fork. */ turns: number; title: string };
+  };
 
   'project.add': {
     params: { hostId?: string; root: string; name?: string };

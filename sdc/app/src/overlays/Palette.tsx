@@ -4,6 +4,7 @@ import {
   CircleCheckBig,
   Columns2,
   FolderOpen,
+  GitFork,
   Keyboard,
   PanelLeft,
   PanelRight,
@@ -49,6 +50,7 @@ const ICONS: Partial<Record<CommandIcon, LucideIcon>> = {
   zap: Zap,
   brain: Brain,
   folder: FolderOpen,
+  fork: GitFork,
 };
 
 export function Palette() {

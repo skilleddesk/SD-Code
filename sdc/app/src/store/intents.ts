@@ -132,6 +132,41 @@ export interface CliLoginView {
   ms: number;
 }
 
+/**
+ * One row of `cli.recipes`: how a subscription provider's CLI is signed in, and whether **this** machine
+ * has the program at all (0.7.8).
+ *
+ * The `installed` flag is the whole point of reading this before a sign-in starts: `claude`, `codex` and
+ * `gemini` are separate programs, and "Connect" on a provider whose program is missing used to *start* the
+ * login and then fail with the reason - so the sentence a person needed arrived as the explanation of a
+ * failure instead of as a step they could take first.
+ */
+export interface CliRecipeView {
+  providerId: string;
+  label: string;
+  program: string;
+  note: string;
+  installed: boolean;
+}
+
+/**
+ * The recipe for one provider, or `null` when it has no CLI sign-in (an API-key provider).
+ *
+ * The daemon's `cli.recipes` answers all of them with `installed` checked by the same `doctor::has` the
+ * environment doctor uses, so the two cannot disagree about whether a program is there.
+ */
+export async function loadCliRecipe(providerId: string): Promise<CliRecipeView | null> {
+  try {
+    const { recipes } = await sdcpCall('cli.recipes', {});
+
+    return recipes.find((recipe) => recipe.providerId === providerId) ?? null;
+  } catch {
+    /* A recipe that cannot be read is not worth a toast: the dialog still has its Sign in button, and the
+       daemon's own sentence arrives if the program really is missing. */
+    return null;
+  }
+}
+
 /** The model catalogue, as `models.list` answers it. */
 export interface ModelsView {
   models: {
@@ -553,6 +588,31 @@ export function closeFile(): void {
 /** Re-reads a directory, so a file an engine just wrote shows up (the tree's Refresh). */
 export async function refreshDirectory(path: string): Promise<void> {
   await loadDirectory(path);
+}
+
+/**
+ * Spec section 9.14's fork: branch this chat into a new one, each keeping its own turns.
+ *
+ * `session.fork` has been in the schema and in `protocol/types.ts` since they were written, and the daemon
+ * answered `unknown method` until 0.7.8 - so the button that the spec draws next to a session had nothing
+ * behind it. The daemon copies the conversation's turns into the new chat and replays them into the log, so
+ * the fork arrives on screen with its transcript rather than as an empty row.
+ *
+ * `title` is only for the sentence: the fork's own title is derived by the daemon (`<title> (fork)`), which
+ * is where it can see the parent's title without a race.
+ */
+export async function forkSession(sessionId: string, title: string): Promise<string | null> {
+  try {
+    const { sessionId: forked, turns } = await sdcpCall('session.fork', { sessionId });
+
+    toast(strings.sidebar.forked(title, turns));
+
+    return forked;
+  } catch (error) {
+    reportFailure(error, 'Could not fork that chat');
+
+    return null;
+  }
 }
 
 /**

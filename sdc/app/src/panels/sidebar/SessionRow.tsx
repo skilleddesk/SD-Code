@@ -1,4 +1,4 @@
-import { Pencil, Trash2 } from 'lucide-react';
+import { GitFork, Pencil, Trash2 } from 'lucide-react';
 
 import { strings } from '../../strings';
 import {
@@ -36,7 +36,7 @@ export interface SessionRowProps {
 }
 
 export function SessionRow({ session, active }: SessionRowProps) {
-  const { openSession, renameSession, deleteSession } = useSessionsStore();
+  const { openSession, renameSession, deleteSession, forkSession } = useSessionsStore();
 
   const unread = session.unread > 0;
   const blocked = session.attention !== undefined;
@@ -123,6 +123,18 @@ export function SessionRow({ session, active }: SessionRowProps) {
             : '[background:linear-gradient(90deg,transparent,var(--bg-hover)_20%)]')
         }
       >
+        <button
+          type="button"
+          className="sess-btn grid h-[20px] w-[20px] place-items-center rounded-sm text-text-muted transition-all duration-fast ease-ease hover:bg-bg-active hover:text-text-primary"
+          title={strings.sidebar.actions.fork}
+          aria-label={strings.sidebar.actions.fork}
+          onClick={(event) => {
+            event.stopPropagation();
+            forkSession(session.id, session.title);
+          }}
+        >
+          <GitFork size={11} aria-hidden="true" />
+        </button>
         <button
           type="button"
           className="sess-btn grid h-[20px] w-[20px] place-items-center rounded-sm text-text-muted transition-all duration-fast ease-ease hover:bg-bg-active hover:text-text-primary"

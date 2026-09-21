@@ -1,6 +1,6 @@
 [package]
 name = "sdc"
-version = "0.7.7"
+version = "0.7.8"
 description = "SDC (Skilleddesk Code) - Tauri 2 desktop shell"
 authors = ["Skilleddesk"]
 edition = "2021"

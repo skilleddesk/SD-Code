@@ -4,6 +4,7 @@ import { useAppStore } from './store';
 import { ensureSplitSecondary, usePrefsStore } from './prefs';
 import {
   closeSession,
+  forkSession as forkIntent,
   newChatOnHost as newChatIntent,
   renameSession as renameIntent,
 } from './intents';
@@ -50,6 +51,8 @@ export interface SessionsStore {
   newChatOnHost: (hostId: string) => void;
   renameSession: (id: string, title: string) => void;
   deleteSession: (id: string) => void;
+  /** Branch this chat into a new one, and open it (0.7.8). */
+  forkSession: (id: string, title: string) => void;
   toggleHostCollapsed: (hostId: string) => void;
   filterSessions: (query: string) => void;
   setActiveHost: (hostId: string) => void;
@@ -60,11 +63,15 @@ export interface SessionsStore {
 /**
  * The verbs, defined once at module scope so they never take part in the memo key.
  *
+ * Exported as `sessionActions` as well, because a *command* (the palette, the keymap) is not a component and
+ * cannot call a hook - `_verify`-style probes and the registry both need the same behaviour as the sidebar's
+ * buttons, not a second implementation of it.
+ *
  * `newChatOnHost` is the one that spans both halves: the daemon appends `SessionOpened` *before* it
  * answers the call, so by the time the promise resolves the session is in the log and the tab can
  * be opened on a session that already exists.
  */
-const actions = {
+export const sessionActions = {
   openSession: (id: string): void => {
     usePrefsStore.getState().openTab(id);
   },
@@ -90,6 +97,14 @@ const actions = {
   deleteSession: (id: string): void => {
     usePrefsStore.getState().closeTab(id);
     void closeSession(id);
+  },
+
+  forkSession: (id: string, title: string): void => {
+    void forkIntent(id, title).then((forked) => {
+      if (forked !== null) {
+        usePrefsStore.getState().openTab(forked);
+      }
+    });
   },
 
   toggleHostCollapsed: (hostId: string): void => {
@@ -132,7 +147,7 @@ function useSessionsSlice(): SessionsStore {
       collapsedHosts,
       filter,
       counter,
-      ...actions,
+      ...sessionActions,
     }),
     [hosts, openTabs, activeTab, activeHostId, splitSecondary, collapsedHosts, filter, counter],
   );

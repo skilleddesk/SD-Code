@@ -92,9 +92,15 @@ export const strings = {
     actions: {
       rename: 'Rename',
       delete: 'Delete',
+      fork: 'Fork this chat',
       newChatOnHost: 'New chat on this host',
       removeHost: 'Remove this host',
     },
+    /** The fork lands on screen with its transcript, and its name says where it came from (0.7.8). */
+    forked: (title: string, turns: number): string =>
+      turns === 0
+        ? `Forked “${title}”`
+        : `Forked “${title}” · ${turns} turn${turns === 1 ? '' : 's'} came with it`,
     /** The confirmation before a host goes - it names what goes with it (spec section 9.12's other half). */
     removeHostConfirm: (name: string, sessions: number): string =>
       sessions === 0
@@ -556,6 +562,23 @@ export const strings = {
    */
   connect: {
     title: 'Connect',
+    /**
+     * The CLI recipe, shown *before* a sign-in starts (0.7.8).
+     *
+     * `claude`, `codex` and `gemini` are three separate programs, and Connect on a provider whose program is
+     * missing used to launch the login and then report the failure - so the sentence a person needed ("install
+     * `claude`") arrived as the explanation of something that had already gone wrong. The row says it first,
+     * with the daemon's own install words (`cli.recipes`' `note`) and a copy button, and the Sign in button
+     * stays where it is for a machine the doctor cannot see into.
+     */
+    recipe: {
+      missing: (program: string): string => `\`${program}\` is not installed`,
+      missingBody: 'Install it first - these are the words to run:',
+      present: (program: string): string => `\`${program}\` is installed`,
+      copy: 'Copy',
+      recheck: 'Check again',
+      recheckToast: 'Checked again',
+    },
     loginTitle: 'Sign in with the CLI',
     loginBody:
       'This starts the CLI’s own sign-in. Approve the page in your browser, then paste the code it shows back here — the credential is written by the CLI, never by SDC.',

@@ -271,6 +271,12 @@ it is reached.
   `http://` endpoint (LM Studio, vLLM, llama.cpp). A remote `https://` endpoint answers
   `a TLS client is not linked in this build; only http:// endpoints stream today` rather than
   pretending the turn started. The `https` transport is the next crate to add (`rustls` + `hyper`).
+* **`session.fork` no longer answers `unknown method`.** Since 0.7.8 the daemon copies a chat's turns into a
+  new chat (its own rows, `atTurn` inclusive, replayed into the log so the fork's transcript *is* the
+  conversation) and the sidebar has a **Fork** button on every row plus a `Fork this chat` palette row.
+* **`cli.recipes` is read before a sign-in, not after a failure.** The Connect dialog shows the provider's
+  recipe first (`` `claude` is installed `` / `` is not installed ``, the daemon's own install words, a Copy
+  button and Check again) and no longer starts a login for a program this machine does not have.
 * **The provider OAuth token exchange.** `provider.oauth.open` returns a real URL and a real `state`;
   `provider.oauth.callback` records the state and says the exchange lands with the OAuth step. No
   token is invented, because a fake token would fail later in a stranger place.
@@ -324,11 +330,9 @@ it is reached.
 3. Turn the `keychain` feature on for desktop builds (DPAPI / Keychain / Secret Service), with the
    file fallback kept for a box that has no store, and an ACL on the Windows fallback until then.
 4. The provider OAuth token exchange, wired to `provider.oauth.callback`.
-5. `cli.recipes` in the Connect modal, so "install `claude` first" is visible *before* a sign-in is
-   started rather than as the reason it failed.
-6. `session.fork`: the method is in the schema and `protocol/types.ts` and the daemon answers
-   `unknown method`.
-7. The `schema → protocol/types.ts` generator, and `protocol/` as a workspace package.
-8. `dmg` / `AppImage` / `deb` builds and code signing on their own hosts.
-9. An axe-core run in CI, and a screen-reader pass over the palette, the Permission modal and the
+5. An axe-core run in CI, and a screen-reader pass over the palette, the Permission modal and the
    Time Machine tab.
+6. The `schema → protocol/types.ts` drift check, and `protocol/` as a workspace package.
+7. A provisioned remote host: `host.add` records an `ssh` target and the app can `ssh` to it, but a second
+   `sdcd` on the far side of a tunnel is still reached by hand (`VITE_SDCP_URL`).
+8. Code signing for the installers, which needs certificates this repository does not hold.

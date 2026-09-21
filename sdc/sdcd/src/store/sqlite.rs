@@ -772,6 +772,64 @@ impl Store {
         }
     }
 
+    /// One session row, or `None` - what `session.fork` reads before it copies anything.
+    pub fn session(&self, id: &str) -> Result<Option<Value>> {
+        let connection = self.connection.lock().unwrap();
+        let mut statement = connection.prepare(
+            "SELECT s.id, s.host_id, s.project_id, p.root, s.title, s.prompt, s.state
+             FROM sessions s LEFT JOIN projects p ON p.id = s.project_id WHERE s.id = ?1",
+        )?;
+
+        let mut rows = statement.query_map(params![id], |row| {
+            Ok(serde_json::json!({
+                "sessionId": row.get::<_, String>(0)?,
+                "hostId": row.get::<_, String>(1)?,
+                "projectId": row.get::<_, Option<String>>(2)?,
+                "projectRoot": row.get::<_, Option<String>>(3)?,
+                "title": row.get::<_, String>(4)?,
+                "prompt": row.get::<_, String>(5)?,
+                "state": row.get::<_, String>(6)?,
+            }))
+        })?;
+
+        match rows.next() {
+            Some(row) => Ok(Some(row?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Copies a session's turns into another session, up to and including `at_turn` (all of them when it is
+    /// `None`), and answers how many were copied - what `session.fork` is.
+    ///
+    /// **New ids**, because `turns.id` is a primary key and a copied row that kept its id would collide with
+    /// the original (and the panel's React key would be the same for two different chats). `f<parent>-<n>`
+    /// is also how a log reads: this turn came from that chat.
+    ///
+    /// The turn *rows* are copied rather than shared, so the fork's transcript is its own: a rewind in the
+    /// fork cannot reach back into the parent, and `session.list` after a reload shows the fork's
+    /// conversation instead of an empty chat.
+    pub fn copy_turns(&self, from_session: &str, to_session: &str, at_turn: Option<i64>) -> Result<i64> {
+        let connection = self.connection.lock().unwrap();
+        let now = chrono::Utc::now().to_rfc3339();
+
+        let copied = connection.execute(
+            "INSERT OR REPLACE INTO turns (id, session_id, ordinal, engine, model, tier, prompt, answer, summary, state, started_at, finished_at)
+             SELECT 'f' || session_id || '-' || ordinal, ?2, ordinal, engine, model, tier, prompt, answer, summary,
+                    CASE state WHEN 'running' THEN 'done' ELSE state END, started_at, ?3
+             FROM turns WHERE session_id = ?1 AND (?4 IS NULL OR ordinal <= ?4)",
+            params![from_session, to_session, now, at_turn],
+        )? as i64;
+
+        if copied > 0 {
+            connection.execute(
+                "UPDATE sessions SET turn_count = ?2, updated_at = ?3 WHERE id = ?1",
+                params![to_session, copied, now],
+            )?;
+        }
+
+        Ok(copied)
+    }
+
     pub fn insert_session(
         &self,
         id: &str,
