@@ -261,16 +261,21 @@ it is reached.
   changes its command or its success line needs that table corrected - which is why the UI shows the
   CLI's raw output instead of only "failed". SDC never sees the credential either way: the CLI writes
   it to its own store.
-* **A model list can be `bundled` rather than `live`.** `models.list` asks each provider's own
-  endpoint, caches the answer, and falls back to `protocol/models.json`; the row says which of the
-  three it is. A remote provider is `https://`, which this build cannot reach without a TLS client, so
-  until that lands a remote list is `bundled` (or `cached`) and says so. Ollama, being local `http://`,
-  is listed live.
-* **A TLS client for the native API.** `native_api` builds an Anthropic `messages` request or an
-  OpenAI `chat/completions` request and parses both SSE dialects, and it streams today against an
-  `http://` endpoint (LM Studio, vLLM, llama.cpp). A remote `https://` endpoint answers
-  `a TLS client is not linked in this build; only http:// endpoints stream today` rather than
-  pretending the turn started. The `https` transport is the next crate to add (`rustls` + `hyper`).
+* **A model list is live whenever it can be, and the row says which of the three it is.** `models.list` asks
+  each provider's own endpoint, caches the answer with the time it arrived, and falls back to
+  `protocol/models.json`; the three sources are `live`, `cache` and `bundled`. A remote provider's list is
+  fetched over TLS (the cache in a working install carries `fetchedAt` timestamps from real fetches); a build
+  with no network, or a provider that answers with an error, falls back and says so.
+* **The native API's TLS client exists, and this README claimed it did not.** `native_api` builds an Anthropic
+  `messages` request or an OpenAI `chat/completions` request, parses both SSE dialects, and has streamed an
+  `https://` endpoint over `ureq` (rustls + the webpki roots) since **0.6.1** - `post_https` in
+  `engines/native_api.rs`. The sentence that stood here ("a remote `https://` endpoint answers *a TLS client is
+  not linked in this build*… the next crate to add (`rustls` + `hyper`)") was two releases out of date, and
+  0.7.11 **measured** it instead of re-reading it: a key nobody wants, sent to the provider's own model list,
+  came back with the provider's sentence and `verified: true` (`_verify/live-provider-test.mjs`). What is still
+  narrow is the attention this build has had on the *streaming* remote path - the transport under it is the same
+  agent, but a turn against a paid endpoint has not been exercised from here - and the `http://` loopback path
+  that LM Studio, vLLM and llama.cpp speak, which is the one a test can drive without a network.
 * **`session.fork` no longer answers `unknown method`.** Since 0.7.8 the daemon copies a chat's turns into a
   new chat (its own rows, `atTurn` inclusive, replayed into the log so the fork's transcript *is* the
   conversation) and the sidebar has a **Fork** button on every row plus a `Fork this chat` palette row.
@@ -294,11 +299,13 @@ it is reached.
   (`icacls /inheritance:r /grant:r <account>:F`) instead of inheriting `%APPDATA%` - until 0.7.10 a key was
   readable by every account in `Users`. `host.status` reports both: `keychain` (`os`/`file`) and
   `keyProtection` (`os`/`acl`/`mode`).
-* **`provider.test` distinguishes "accepted" from "verified".** A key's shape is checked locally and
-  the answer carries `verified: false` plus a `detail` that says the provider was not contacted,
-  because this build cannot reach an `https://` endpoint. Only the local Ollama daemon (and an
-  `http://` endpoint) is really probed, and that answers `verified: true`. The browser's in-process
-  daemon asserts the happy path (`verified: true`) on purpose: it *is* the provider's stand-in.
+* **`provider.test` really contacts the provider, and says so in `verified`.** Since 0.6.1 a key is used for
+  one read-only call to the provider's own model list over TLS, and both outcomes are first-class: a key the
+  provider accepts answers with the models it knows and `verified: true`, and a key it rejects answers with the
+  provider's own sentence (`API key is invalid. (401)`) and `verified: true` as well, because the question *was*
+  asked. `verified: false` is what "we could not ask" means - no key stored, or the endpoint unreachable - and
+  0.7.11 measured the first case live rather than trusting the note that used to be here
+  (`_verify/live-provider-test.mjs`). A local Ollama daemon is probed the same way, over `http://`.
 * **Installers for macOS and Linux, and a signed build.** CI publishes all of them (`*.dmg` ×2,
   `*.AppImage`, `*.deb`, `*.msi`, `*_x64-setup.exe`); on Windows the **installed** app was verified end
   to end in 0.4.4 — silent install, the window renders, the daemon it started is 0.4.4, no console
@@ -332,10 +339,10 @@ it is reached.
 
 ## Next step
 
-1. `native_api`'s HTTPS transport: `rustls` + `hyper`, so a remote Anthropic/OpenAI key streams
-   instead of reporting the missing client — and so `provider.test` can answer `verified: true` for a
-   saved key.
-2. The provider OAuth token exchange, wired to `provider.oauth.callback`.
+1. The provider OAuth token exchange, wired to `provider.oauth.callback` - the transport is ready (see above),
+   and what it needs is a client registration with each provider, which is a person's job rather than a build's.
+2. A streaming turn against a paid `https://` endpoint, so the remote path is verified end to end and not just
+   its transport.
 3. A screen-reader pass over the palette, the Permission modal and the Time Machine tab - the automated
    audit covers the screen the app opens on, and this is the part that needs a person.
 4. `protocol/` as a workspace package, now that `protocol/check.mjs` is what keeps it honest.
