@@ -112,7 +112,27 @@ jobs:
 
       - name: Checks (cargo test)
         working-directory: sdc
-        run: cargo test --manifest-path sdcd/Cargo.toml
+        # `bash` on every platform, because the failure summary below is built with a pipe and a status array.
+        shell: bash
+        run: |
+          set +e
+          cargo test --manifest-path sdcd/Cargo.toml 2>&1 | tee cargo-test.log
+          status=${PIPESTATUS[0]}
+
+          if [ "$status" -ne 0 ]; then
+            # A job's **annotations** are the one part of a failing run that can be read from the API without
+            # being the repository's owner, and the log is not. So the reason travels there: the first real
+            # compiler errors, or the names and panic lines of the tests that failed.
+            {
+              grep -E '^error(\[|:)' cargo-test.log | head -8
+              grep -E '^(test .* FAILED|thread .* panicked|assertion)' cargo-test.log | head -8
+              grep -E 'test result: FAILED' cargo-test.log | head -2
+            } | sort -u | while IFS= read -r line; do
+              echo "::error title=cargo test::$line"
+            done
+
+            exit "$status"
+          fi
 
       - name: The built window renders
         working-directory: sdc
