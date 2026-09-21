@@ -53,46 +53,49 @@ export function HostGroup({ host, filter, activeTab, collapsed }: HostGroupProps
 
   return (
     <div className={'host-group mb-[2px]' + (collapsed ? ' collapsed' : '')} data-host={host.id}>
-      <div
-        className="host-header group flex min-w-0 cursor-pointer select-none items-center gap-[8px] rounded-md py-[6px] pr-[6px] pl-[4px] text-[11.5px] text-text-secondary transition-colors duration-fast ease-ease hover:bg-bg-hover hover:text-text-primary"
-        role="button"
-        tabIndex={0}
-        aria-expanded={!collapsed}
-        onClick={() => toggleHostCollapsed(host.id)}
-        onKeyDown={(event) => {
-          if (event.key === 'Enter') {
-            toggleHostCollapsed(host.id);
-          }
-        }}
-      >
-        <ChevronDown
-          size={11}
-          aria-hidden="true"
-          className={
-            'host-chev shrink-0 text-text-muted transition-transform duration-200 ease-ease ' +
-            (collapsed ? '-rotate-90' : '')
-          }
-        />
-        <HostIcon type={host.type} />
-        <span className="host-name min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap font-medium">
-          {host.name}
-        </span>
-        <span
-          className={'host-status h-[7px] w-[7px] shrink-0 rounded-full ' + HOST_STATUS_CLASS[host.status]}
-          title={HOST_STATUS_LABEL[host.status]}
-        />
-        <span className="host-count shrink-0 rounded-full border border-border-subtle bg-bg-raised px-[6px] py-[1px] font-mono text-[9.5px] font-medium text-text-muted">
-          {host.sessions.length}
-        </span>
+      {/*
+        The header is a **container**, and the toggle is a real button inside it (0.7.12).
+
+        It used to be a `div role="button"` wrapping the whole row - including the `+` and the remove button,
+        which are buttons themselves. `nested-interactive` is what axe calls that, and it is a real problem
+        rather than a rule for its own sake: a button inside a button is not reachable by keyboard, and a screen
+        reader announces one control where there are three. The audit only *found* it once the app opened with
+        a host that had chats in it, which is why the first green run was green.
+      */}
+      <div className="host-header group flex min-w-0 items-center gap-[8px] rounded-md py-[6px] pr-[6px] pl-[4px] text-[11.5px] text-text-secondary transition-colors duration-fast ease-ease hover:bg-bg-hover hover:text-text-primary">
+        <button
+          type="button"
+          className="host-toggle flex min-w-0 flex-1 items-center gap-[8px] text-left"
+          aria-expanded={!collapsed}
+          aria-label={strings.sidebar.actions.toggleHost(host.name)}
+          onClick={() => toggleHostCollapsed(host.id)}
+        >
+          <ChevronDown
+            size={11}
+            aria-hidden="true"
+            className={
+              'host-chev shrink-0 text-text-muted transition-transform duration-200 ease-ease ' +
+              (collapsed ? '-rotate-90' : '')
+            }
+          />
+          <HostIcon type={host.type} />
+          <span className="host-name min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap font-medium">
+            {host.name}
+          </span>
+          <span
+            className={'host-status h-[7px] w-[7px] shrink-0 rounded-full ' + HOST_STATUS_CLASS[host.status]}
+            title={HOST_STATUS_LABEL[host.status]}
+          />
+          <span className="host-count shrink-0 rounded-full border border-border-subtle bg-bg-raised px-[6px] py-[1px] font-mono text-[9.5px] font-medium text-text-muted">
+            {host.sessions.length}
+          </span>
+        </button>
         <button
           type="button"
           className="host-add grid h-[18px] w-[18px] shrink-0 place-items-center rounded-sm text-text-muted opacity-0 transition-all duration-fast ease-ease group-hover:opacity-100 hover:bg-bg-active hover:text-text-primary"
           title={strings.sidebar.actions.newChatOnHost}
           aria-label={strings.sidebar.actions.newChatOnHost}
-          onClick={(event) => {
-            event.stopPropagation();
-            newChatOnHost(host.id);
-          }}
+          onClick={() => newChatOnHost(host.id)}
         >
           <Plus size={11} aria-hidden="true" />
         </button>

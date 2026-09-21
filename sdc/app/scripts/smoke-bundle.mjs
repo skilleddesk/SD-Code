@@ -20,6 +20,8 @@ import { createServer } from 'node:http';
 import { dirname, extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { annotate, findBrowser, noBrowser } from './browser.mjs';
+
 const here = dirname(fileURLToPath(import.meta.url));
 const dist = join(here, '..', 'dist');
 const settleMs = Number(process.env.SDC_SMOKE_SETTLE_MS ?? 4000);
@@ -222,32 +224,6 @@ const harness = `<!doctype html>
   }, ${settleMs});
 </script>`;
 
-/** A Chromium-family browser, wherever this machine keeps one.
- *
- * No `--version` probe: on Windows `msedge.exe --version` *opens Edge* rather than printing and
- * exiting, so asking a browser binary what it is hangs the build. Looking for the file is enough. */
-function browser() {
-  const names = process.platform === 'win32'
-    ? ['msedge.exe', 'chrome.exe', 'chromium.exe']
-    : ['google-chrome', 'google-chrome-stable', 'chromium', 'chromium-browser', 'microsoft-edge'];
-
-  const directories = (process.env.PATH ?? '').split(process.platform === 'win32' ? ';' : ':').filter(Boolean);
-
-  const candidates = [
-    process.env.SDC_BROWSER,
-    process.env.CHROME_PATH,
-    /* The usual places, for a shell whose PATH is not the desktop's. */
-    ...directories.flatMap((directory) => names.map((name) => join(directory, name))),
-    'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
-    'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
-    'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-    '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
-  ].filter(Boolean);
-
-  return candidates.find((candidate) => existsSync(candidate)) ?? null;
-}
-
 /** The report the page wrote, out of the DOM the browser printed. */
 function reportFrom(dom) {
   const match = /<pre id="smoke-report"[^>]*>([\s\S]*?)<\/pre>/.exec(dom);
@@ -297,19 +273,11 @@ const server = createServer((request, response) => {
 await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
 
 const port = server.address().port;
-const executable = browser();
+const executable = findBrowser();
 
 if (!executable) {
-  /* A developer without a Chromium on their machine is not blocked; a release is. */
-  if (process.env.CI) {
-    console.error('smoke: no Chromium-family browser found in CI (set SDC_BROWSER)');
-    server.close();
-    process.exit(2);
-  }
-
-  console.log('smoke: no Chromium-family browser found - skipped (set SDC_BROWSER to check locally)');
   server.close();
-  process.exit(0);
+  process.exit(noBrowser('smoke'));
 }
 
 console.log(`smoke: serving ${dist} on ${port}, checking with ${executable}`);
@@ -385,6 +353,7 @@ for (const [name, ok, detail] of checks) {
   console.log(`${ok ? 'ok  ' : 'FAIL'} ${name} - ${detail}`);
 
   if (!ok) {
+    annotate('smoke', `${name} - ${detail}`);
     failed += 1;
   }
 }
