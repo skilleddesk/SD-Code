@@ -774,11 +774,40 @@ impl Daemon {
         })
     }
 
+    /// How much of a file `fs.read` will put in one answer: 1 MiB.
+    ///
+    /// The window's file view reads through this, and a 200 MB log is not something to hand a WebView.
+    /// What comes back says it was cut (`truncated: true`, and `bytes` is the file's real size), and the
+    /// `sha256` is still of the **whole file** - a hash of the first megabyte would be a hash of
+    /// something that is not the file.
+    const MAX_READ_BYTES: usize = 1024 * 1024;
+
     fn fs_read(&self, envelope: &Envelope) -> Result<Value, ErrorObject> {
         let path = std::path::PathBuf::from(envelope.require_str("path")?);
-        let (text, sha256) = crate::fs::read(&path)?;
+        let size = std::fs::metadata(&path).map(|meta| meta.len()).unwrap_or(0);
 
-        Ok(json!({ "path": path.display().to_string(), "text": text, "sha256": sha256 }))
+        if size <= Self::MAX_READ_BYTES as u64 {
+            let (text, sha256) = crate::fs::read(&path)?;
+
+            return Ok(json!({
+                "path": path.display().to_string(),
+                "text": text,
+                "sha256": sha256,
+                "bytes": size,
+                "truncated": false,
+            }));
+        }
+
+        let (text, bytes) = crate::fs::read_capped(&path, Self::MAX_READ_BYTES)?;
+        let sha256 = crate::fs::hash_file(&path)?;
+
+        Ok(json!({
+            "path": path.display().to_string(),
+            "text": text,
+            "sha256": sha256,
+            "bytes": bytes,
+            "truncated": true,
+        }))
     }
 
     fn fs_write(&self, envelope: &Envelope) -> Result<Value, ErrorObject> {
@@ -789,10 +818,24 @@ impl Daemon {
         Ok(json!({ "path": path.display().to_string(), "sha256": sha256, "bytes": text.len() }))
     }
 
+    /// `fs.list` - one level of a directory, for the window's file tree.
+    ///
+    /// `path` is **optional** since 0.7.7: without one the *session's* folder is listed, which is what
+    /// the tree asks for - it knows the chat, not the directory - and it is the same rule `root_for`
+    /// applies to `git.*` and `fs.search`. The answer names the directory it listed, so a caller that
+    /// gave only a session id can say which folder it is looking at, and counts the names the guard hid.
     fn fs_list(&self, envelope: &Envelope) -> Result<Value, ErrorObject> {
-        let path = std::path::PathBuf::from(envelope.require_str("path")?);
+        let path = match envelope.opt_str("path") {
+            Some(path) => std::path::PathBuf::from(path),
+            None => self.root_required(envelope)?,
+        };
+        let (entries, hidden) = crate::fs::list(&path)?;
 
-        Ok(json!({ "entries": crate::fs::list(&path)? }))
+        Ok(json!({
+            "path": path.display().to_string(),
+            "entries": entries,
+            "hidden": hidden,
+        }))
     }
 
     fn fs_stat(&self, envelope: &Envelope) -> Result<Value, ErrorObject> {

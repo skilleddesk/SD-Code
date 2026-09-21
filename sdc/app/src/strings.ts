@@ -224,6 +224,37 @@ export const strings = {
     },
   },
 
+  /** The file tree in the sidebar and the file the Preview shows (0.7.7). */
+  files: {
+    /** The section's own heading, and the `title` of its root row. */
+    title: 'Files',
+    /** The root row's tooltip: the whole path, since the label is only the folder's name. */
+    rootTitle: (path: string): string => path,
+    /** A chat with no folder has no tree: the way in is the empty state's `Open folder`. */
+    noFolder: 'Open a folder to see its files',
+    /** `Reading…` while `fs.list` is out. */
+    loading: 'Reading…',
+    /** An empty directory is a fact, not a failure. */
+    empty: 'Nothing in this folder',
+    /**
+     * The guard's count, said out loud: `3 names hidden`. A tree that is quietly three rows short is
+     * exactly the kind of half-truth this build keeps removing (principle P4), and the daemon already
+     * sends the number.
+     */
+    hidden: (count: number): string => `${count} ${count === 1 ? 'name' : 'names'} hidden`,
+    /** `2.4 KB · 128 lines` - what the Preview's header says about the open file. */
+    fileMeta: (bytes: number, lines: number): string => `${sizeOf(bytes)} · ${lines} ${lines === 1 ? 'line' : 'lines'}`,
+    /** The honest note on a file the daemon had to cut short. */
+    truncated: (bytes: number): string => `First 1 MB of ${sizeOf(bytes)}`,
+    /** The × on the Preview's file header. */
+    close: 'Close this file',
+    /** The tree's refresh, for a file an engine just wrote. */
+    refresh: 'Refresh files',
+    /** Failed reads, in the daemon's own words when it has them. */
+    failed: 'Could not read that folder',
+    openFailed: 'Could not open that file',
+  },
+
   /** Folders - the directory a chat works in (spec section 7.13's `No project`, v0.7.6). */
   folder: {
     /** The chip in the prompt area: `No folder` when the chat has none. */
@@ -1095,3 +1126,22 @@ export const strings = {
 } as const;
 
 export type Strings = typeof strings;
+
+/**
+ * `2.4 KB` - a file size a person can read.
+ *
+ * Used by the file tree's file rows and the Preview's header, and it rounds to one decimal because
+ * the question it answers is "is this big?" rather than "how many bytes exactly" - `truncated` in the
+ * Preview says the exact size when the answer matters.
+ */
+export function sizeOf(bytes: number): string {
+  if (bytes < 1024) {
+    return `${bytes} B`;
+  }
+
+  if (bytes < 1024 * 1024) {
+    return `${(bytes / 1024).toFixed(1)} KB`;
+  }
+
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}

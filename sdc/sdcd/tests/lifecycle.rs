@@ -383,6 +383,91 @@ fn a_folder_opened_on_a_chat_is_where_its_tools_look() {
         "fs.search with a sessionId must look in that chat's folder: {found}"
     );
 
+    /* The window's file tree (0.7.7) lists the same folder, again from nothing but the session id, and it
+       needs three things the plain name listing could not give it: which rows are folders, how big they
+       are, and how many names the guard kept out. */
+    std::fs::write(project.join(".env"), "SECRET=1\n").expect("a file the guard must hide");
+
+    let (listed_dir, _) =
+        request_collect(port, "dir-1", "fs.list", serde_json::json!({ "sessionId": session_id }));
+
+    assert_eq!(
+        listed_dir.pointer("/result/path").and_then(serde_json::Value::as_str),
+        Some(root.as_str()),
+        "fs.list must name the folder it listed: {listed_dir}"
+    );
+    assert_eq!(
+        listed_dir.pointer("/result/hidden").and_then(serde_json::Value::as_u64),
+        Some(1),
+        "the guard hid `.env` and the answer must say so: {listed_dir}"
+    );
+
+    let empty = Vec::new();
+    let entries = listed_dir
+        .pointer("/result/entries")
+        .and_then(serde_json::Value::as_array)
+        .unwrap_or(&empty);
+    let readme = entries
+        .iter()
+        .find(|entry| entry.get("name").and_then(serde_json::Value::as_str) == Some("README.md"))
+        .unwrap_or_else(|| panic!("README.md is not in the listing: {listed_dir}"));
+
+    assert_eq!(readme.get("dir").and_then(serde_json::Value::as_bool), Some(false));
+    /* The size is the file's own, not a guess: the tree shows it beside the name. */
+    let expected_size = std::fs::metadata(project.join("README.md")).expect("the fixture file").len();
+
+    assert_eq!(readme.get("size").and_then(serde_json::Value::as_u64), Some(expected_size));
+    assert!(
+        readme.get("path").and_then(serde_json::Value::as_str).is_some_and(|path| path.ends_with("README.md")),
+        "each row carries its absolute path: {readme}"
+    );
+    assert!(
+        !entries.iter().any(|entry| entry.get("name").and_then(serde_json::Value::as_str) == Some(".env")),
+        "a blocked name must not be listed at all: {listed_dir}"
+    );
+
+    /* A file bigger than the read cap comes back cut, and **says so** - with the hash still of the whole
+       file, because a hash of the first megabyte is a hash of something that is not the file. */
+    let big = project.join("big.log");
+    std::fs::write(&big, "x".repeat(1_200_000)).expect("a file larger than the cap");
+
+    let (read_big, _) = request_collect(
+        port,
+        "read-1",
+        "fs.read",
+        serde_json::json!({ "path": big.display().to_string() }),
+    );
+
+    assert_eq!(
+        read_big.pointer("/result/truncated").and_then(serde_json::Value::as_bool),
+        Some(true),
+        "a 1.2 MB file must come back truncated: {read_big}"
+    );
+    assert_eq!(
+        read_big.pointer("/result/bytes").and_then(serde_json::Value::as_u64),
+        Some(1_200_000),
+        "`bytes` is the file's real size, not the preview's: {read_big}"
+    );
+    assert_eq!(
+        read_big.pointer("/result/text").and_then(serde_json::Value::as_str).map(str::len),
+        Some(1024 * 1024),
+        "the text is the first megabyte: {read_big}"
+    );
+
+    /* The small file is not cut, and says that too. */
+    let (read_readme, _) = request_collect(
+        port,
+        "read-2",
+        "fs.read",
+        serde_json::json!({ "path": project.join("README.md").display().to_string() }),
+    );
+
+    assert_eq!(
+        read_readme.pointer("/result/truncated").and_then(serde_json::Value::as_bool),
+        Some(false),
+        "README.md fits: {read_readme}"
+    );
+
     let _ = request(port, "stop", "host.shutdown");
     let _ = wait_for_exit(&mut child, Duration::from_secs(10));
 }

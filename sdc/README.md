@@ -305,20 +305,19 @@ it is reached.
   chats; the app's switcher works. A second daemon on the far side of a tunnel is reached with
   `VITE_SDCP_URL` and is not yet provisioned by the app, so an added host is a *record* of a machine
   rather than a second `sdcd` to talk to.
-* **A file tree / project browser in the sidebar.** Since 0.7.6 a chat *has* a working directory: `project.add`
-  / `project.list` / `project.remove` exist, `session.open` takes a `projectId`, `session.list` reports
-  `projectId` + `projectRoot` per chat, `session.update` can re-point a chat, the engines are started **in**
-  that folder, and the prompt toolbar shows it (`Working in SDC`, full path in the tooltip). What is still
-  absent is everything that *browses* a project: **no file tree**, no folder rows in the sidebar, no way to
-  open a file from the window, and `fs.list` still has no caller in `app/src` (the folder chooser is the native
-  dialog, not `fs.list`-driven). Opening a file into a reader/editor is the next thing to build, and it is what
-  makes the folder that 0.7.6 added visible.
+* **A file tree is a tree; an editor is not here.** Since 0.7.7 the sidebar shows the folder a chat works in
+  (`fs.list`, lazily, with the guard's hidden names counted) and a click opens a file in the right panel's
+  Preview (`fs.read`, capped at a megabyte and saying so). What is still absent is everything *editing*: no
+  tabs of open files, no syntax highlighting, no diff view, no saving (`fs.write` is implemented and has no
+  caller in the app), and no git view (`git.status` / `git.diff` are implemented and have none either).
+  Writing a file back from the window is the next thing to build, and it is the one that needs the
+  checkpoint-before-mutation rule (P5) wired to a UI gesture rather than to a tool call.
 
 ## Next step
 
-1. The file tree: `fs.list` / `fs.read` driven (they are real methods with no caller in the app), a Files
-   section beside the chats, and opening a file into the right panel's Preview tab - so the folder a chat works
-   in is something the person can *see* rather than only read in a chip.
+1. Editing: an open-file tab set, `fs.write` behind a Save action with a checkpoint first (P5), and the
+   `git.status` / `git.diff` that says what the turn changed - the three methods that are real on the daemon
+   and unreachable from the window.
 2. `native_api`'s HTTPS transport: `rustls` + `hyper`, so a remote Anthropic/OpenAI key streams
    instead of reporting the missing client — and so `provider.test` can answer `verified: true` for a
    saved key.

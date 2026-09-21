@@ -3,6 +3,7 @@ import { Plus, Search, ServerCog } from 'lucide-react';
 import { strings } from '../../strings';
 import { anchorBelow, useOverlayStore } from '../../store/overlays';
 import { useSessionsStore } from '../../store/sessions';
+import { FilesSection } from './FilesSection';
 import { HostGroup } from './HostGroup';
 
 /**
@@ -76,6 +77,10 @@ export function Sidebar() {
             collapsed={collapsedHosts[host.id] === true}
           />
         ))}
+
+        {/* The active chat's folder, as a tree (0.7.7) - `FilesSection` reads the session itself, so a
+            chat with no folder is its own case rather than a prop this component has to compute. */}
+        <FilesSection />
       </div>
 
       <div className="sidebar-bottom shrink-0 border-t border-border-subtle px-[10px] py-[8px]">
