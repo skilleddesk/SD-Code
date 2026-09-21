@@ -648,6 +648,120 @@ fn a_forked_chat_carries_the_conversation_that_came_before_it() {
     let _ = wait_for_exit(&mut child, Duration::from_secs(10));
 }
 
+/**
+ * 0.7.9: a Save from the window writes the file **and takes a checkpoint first** (principle P5).
+ *
+ * `fs.write` was implemented and unreachable from the app until this release, and the checkpoint-before-
+ * mutation rule lived only on the tool-call path. The rule is enforced in the daemon now - where the file is
+ * changed - so this asserts three things against the real binary:
+ *
+ *   1. the write happens, and `fs.read` sees the new text;
+ *   2. a `CheckpointSaved` arrives **for the chat**, with a files hash, which is only non-empty because the
+ *      daemon resolved the chat's folder (`root_for`, 0.7.6) and hashed what was about to change;
+ *   3. a write with **no** session takes no checkpoint - a caller with no chat has nothing to checkpoint
+ *      against, and inventing one would put an orphan row in the Time Machine.
+ */
+#[test]
+fn a_save_takes_a_checkpoint_before_it_changes_the_file() {
+    let directory = TempDir::new().expect("a temporary directory");
+    let (mut child, port) = start(&["--idle-exit", "30"], &directory);
+
+    let project = directory.path().join("saved-project");
+    std::fs::create_dir_all(&project).expect("a project folder");
+    let file = project.join("notes.md");
+    std::fs::write(&file, "one\n").expect("a file to save over");
+
+    /* A chat with that folder, so the daemon has a root to hash. */
+    let (added, _) = request_collect(
+        port,
+        "add-1",
+        "project.add",
+        serde_json::json!({ "root": project.display().to_string() }),
+    );
+    let project_id = added
+        .pointer("/result/projectId")
+        .and_then(serde_json::Value::as_str)
+        .expect("a projectId")
+        .to_string();
+
+    let (opened, _) = request_collect(
+        port,
+        "open-1",
+        "session.open",
+        serde_json::json!({ "hostId": "local", "projectId": project_id, "title": "notes" }),
+    );
+    let session_id = opened
+        .pointer("/result/sessionId")
+        .and_then(serde_json::Value::as_str)
+        .expect("a sessionId")
+        .to_string();
+
+    let (saved, notifications) = request_collect(
+        port,
+        "write-1",
+        "fs.write",
+        serde_json::json!({ "path": file.display().to_string(), "text": "one\ntwo\n", "sessionId": session_id }),
+    );
+
+    assert!(saved.get("result").is_some(), "fs.write refused the save: {saved}");
+    assert_eq!(
+        saved.pointer("/result/bytes").and_then(serde_json::Value::as_u64),
+        Some(8),
+        "the answer says how much was written: {saved}"
+    );
+
+    let checkpoint = notifications
+        .iter()
+        .find(|notification| {
+            notification.pointer("/event/type").and_then(serde_json::Value::as_str) == Some("CheckpointSaved")
+        })
+        .unwrap_or_else(|| panic!("a Save must push a checkpoint before it writes; saw {notifications:?}"));
+
+    assert_eq!(
+        checkpoint.pointer("/event/sessionId").and_then(serde_json::Value::as_str),
+        Some(session_id.as_str())
+    );
+    assert!(
+        checkpoint
+            .pointer("/event/checkpoint/filesHash")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|hash| !hash.is_empty()),
+        "the checkpoint must hash the folder it is protecting: {checkpoint}"
+    );
+
+    /* The file really changed. */
+    let (read_back, _) = request_collect(
+        port,
+        "read-1",
+        "fs.read",
+        serde_json::json!({ "path": file.display().to_string() }),
+    );
+
+    assert_eq!(
+        read_back.pointer("/result/text").and_then(serde_json::Value::as_str),
+        Some("one\ntwo\n")
+    );
+
+    /* And a write with no session is a write with no checkpoint. */
+    let (bare, bare_notifications) = request_collect(
+        port,
+        "write-2",
+        "fs.write",
+        serde_json::json!({ "path": file.display().to_string(), "text": "three\n" }),
+    );
+
+    assert!(bare.get("result").is_some(), "a session-less write must still work: {bare}");
+    assert!(
+        !bare_notifications.iter().any(|notification| {
+            notification.pointer("/event/type").and_then(serde_json::Value::as_str) == Some("CheckpointSaved")
+        }),
+        "a write with no chat must not invent a checkpoint: {bare_notifications:?}"
+    );
+
+    let _ = request(port, "stop", "host.shutdown");
+    let _ = wait_for_exit(&mut child, Duration::from_secs(10));
+}
+
 fn wait_for_exit(child: &mut Child, within: Duration) -> Option<std::process::ExitStatus> {
     let deadline = Instant::now() + within;
 

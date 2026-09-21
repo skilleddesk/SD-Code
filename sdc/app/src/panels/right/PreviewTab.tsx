@@ -6,6 +6,7 @@ import { useFilesStore } from '../../store/files';
 import { toast } from '../../store/toast';
 import { BTN, BTN_BLOCK, BTN_SECONDARY } from '../ui/button';
 import { IconButton } from '../ui/IconButton';
+import { PreviewDiff } from './PreviewDiff';
 import { PreviewFile } from './PreviewFile';
 
 /**
@@ -37,16 +38,18 @@ const DEVICES: readonly Device[] = ['mobile', 'tablet', 'desktop'];
 
 export function PreviewTab() {
   const [device, setDevice] = useState<Device>('tablet');
+  const diff = useFilesStore((state) => state.diff);
   const open = useFilesStore((state) => state.open);
 
   /*
-   * A file that was clicked in the sidebar's tree takes the tab over (0.7.7).
-   *
-   * The tab is still the *preview* surface - `fs.list` and `fs.read` are the daemon's own read methods -
-   * and the frame below is a web preview that SDCP 0.1 cannot fill until a URL is attached
-   * (`console.attach`). So a file is the one thing this tab can honestly show today, which is exactly
-   * what the spec's Preview tab is for: a look at something without leaving the app.
+   * The tab shows, in this order: a diff (0.7.9, what the turn changed), a file (0.7.7, what is in the
+   * folder), or the web preview below - which SDCP 0.1 cannot fill until a URL is attached
+   * (`console.attach`), so it says so rather than drawing a page nobody started.
    */
+  if (diff !== null) {
+    return <PreviewDiff />;
+  }
+
   if (open !== null) {
     return <PreviewFile />;
   }

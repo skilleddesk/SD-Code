@@ -256,6 +256,24 @@ export const strings = {
     close: 'Close this file',
     /** The tree's refresh, for a file an engine just wrote. */
     refresh: 'Refresh files',
+    /** Edit / Save / Cancel in the file view (0.7.9). Saving takes a checkpoint first (P5). */
+    edit: 'Edit this file',
+    save: 'Save',
+    saving: 'Saving…',
+    cancel: 'Cancel',
+    saved: (name: string): string => `Saved ${name} · a checkpoint was taken first`,
+    saveFailed: 'Could not save that file',
+    /** Shown beside the meta line while the draft differs from what is on disk. */
+    unsaved: 'edited',
+    /** The git header, and the diff behind its button (0.7.9). */
+    gitClean: (branch: string): string => `${branch} · clean`,
+    gitDirty: (branch: string, count: number): string =>
+      `${branch} · ${count} changed`,
+    diff: 'Diff',
+    diffTitle: (branch: string): string => `Working tree · ${branch}`,
+    diffEmpty: 'Nothing has changed in this folder.',
+    diffClose: 'Close the diff',
+    diffFailed: 'Could not read the diff',
     /** Failed reads, in the daemon's own words when it has them. */
     failed: 'Could not read that folder',
     openFailed: 'Could not open that file',

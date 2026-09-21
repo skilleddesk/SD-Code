@@ -311,28 +311,27 @@ it is reached.
   chats; the app's switcher works. A second daemon on the far side of a tunnel is reached with
   `VITE_SDCP_URL` and is not yet provisioned by the app, so an added host is a *record* of a machine
   rather than a second `sdcd` to talk to.
-* **A file tree is a tree; an editor is not here.** Since 0.7.7 the sidebar shows the folder a chat works in
-  (`fs.list`, lazily, with the guard's hidden names counted) and a click opens a file in the right panel's
-  Preview (`fs.read`, capped at a megabyte and saying so). What is still absent is everything *editing*: no
-  tabs of open files, no syntax highlighting, no diff view, no saving (`fs.write` is implemented and has no
-  caller in the app), and no git view (`git.status` / `git.diff` are implemented and have none either).
-  Writing a file back from the window is the next thing to build, and it is the one that needs the
-  checkpoint-before-mutation rule (P5) wired to a UI gesture rather than to a tool call.
+* **Editing is one file at a time, and there is no editor.** Since 0.7.7 the sidebar shows the folder a chat
+  works in (`fs.list`, lazily, with the guard's hidden names counted) and a click opens a file in the right
+  panel's Preview (`fs.read`, capped at a megabyte and saying so); since 0.7.9 that file can be **edited and
+  saved** (`fs.write`, with the daemon taking a checkpoint first - P5 on a UI gesture), the Files header shows
+  the branch and the changed count (`git.status`) and **Diff** opens the patch (`git.diff`). What is still
+  absent is everything an editor is: no multi-file tab set, no syntax highlighting, no rename/delete from the
+  tree, no search across the project from the window, and no marker for which line a turn touched. Each is a
+  feature with its own questions ("which file is current when two are open?", "what does a half-typed line
+  mean?") and none of them is needed to make Save honest.
 
 ## Next step
 
-1. Editing: an open-file tab set, `fs.write` behind a Save action with a checkpoint first (P5), and the
-   `git.status` / `git.diff` that says what the turn changed - the three methods that are real on the daemon
-   and unreachable from the window.
-2. `native_api`'s HTTPS transport: `rustls` + `hyper`, so a remote Anthropic/OpenAI key streams
+1. `native_api`'s HTTPS transport: `rustls` + `hyper`, so a remote Anthropic/OpenAI key streams
    instead of reporting the missing client — and so `provider.test` can answer `verified: true` for a
    saved key.
-3. Turn the `keychain` feature on for desktop builds (DPAPI / Keychain / Secret Service), with the
+2. Turn the `keychain` feature on for desktop builds (DPAPI / Keychain / Secret Service), with the
    file fallback kept for a box that has no store, and an ACL on the Windows fallback until then.
-4. The provider OAuth token exchange, wired to `provider.oauth.callback`.
-5. An axe-core run in CI, and a screen-reader pass over the palette, the Permission modal and the
+3. The provider OAuth token exchange, wired to `provider.oauth.callback`.
+4. An axe-core run in CI, and a screen-reader pass over the palette, the Permission modal and the
    Time Machine tab.
-6. The `schema → protocol/types.ts` drift check, and `protocol/` as a workspace package.
-7. A provisioned remote host: `host.add` records an `ssh` target and the app can `ssh` to it, but a second
+5. The `schema → protocol/types.ts` drift check, and `protocol/` as a workspace package.
+6. A provisioned remote host: `host.add` records an `ssh` target and the app can `ssh` to it, but a second
    `sdcd` on the far side of a tunnel is still reached by hand (`VITE_SDCP_URL`).
-8. Code signing for the installers, which needs certificates this repository does not hold.
+7. Code signing for the installers, which needs certificates this repository does not hold.

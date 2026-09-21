@@ -1,5 +1,5 @@
 import type { PermissionDecision, PermissionRisk, TierName } from '../../../protocol/types';
-import { pickFolder } from '../lib/picker';
+import { nameOf, pickFolder } from '../lib/picker';
 import { sdcpCall } from '../lib/sdcp';
 import { isSdcpError } from '../lib/transport';
 import { strings } from '../strings';
@@ -588,6 +588,115 @@ export function closeFile(): void {
 /** Re-reads a directory, so a file an engine just wrote shows up (the tree's Refresh). */
 export async function refreshDirectory(path: string): Promise<void> {
   await loadDirectory(path);
+  /* The same Refresh re-reads the branch and the changed count: a file an engine wrote changes both, and a
+     badge that only updates when the folder changes is a badge that lies after the most interesting event. */
+  await loadGitStatus();
+}
+
+/**
+ * Saves the open file (`fs.write`) - **and the daemon takes a checkpoint first** (principle P5).
+ *
+ * The checkpoint is not written here on purpose: a rule about not changing a file without a checkpoint
+ * belongs where the file is changed, or the first caller that forgets it is a caller that silently skips it.
+ * The window sends the chat's id and the daemon, which knows the folder (0.7.6), hashes the files before the
+ * write and pushes `CheckpointSaved`. That is the same path `shell.run` has taken since 0.7.0, and it makes
+ * "Save" the first *UI gesture* that honours the rule.
+ *
+ * The store is updated from what was saved rather than by re-reading: the text is known, and the daemon's
+ * answer carries the new hash, so a second request would only tell us what we already have.
+ */
+export async function saveFile(path: string, text: string): Promise<boolean> {
+  const sessionId = usePrefsStore.getState().activeTab;
+  const open = useFilesStore.getState().open;
+
+  try {
+    const answer = await sdcpCall('fs.write', {
+      path,
+      text,
+      ...(sessionId === null ? {} : { sessionId }),
+    });
+
+    useFilesStore.getState().setOpen(
+      open === null || open.path !== path
+        ? open
+        : { ...open, text, sha256: answer.sha256, bytes: answer.bytes, truncated: false },
+    );
+    toast(strings.files.saved(nameOf(path)));
+
+    /* The badge is live, not a snapshot: a Save is exactly the moment the changed count and the Diff button
+       become interesting, and reading `git.status` once when the folder was opened left both stale (found by
+       the probe, which saved a line and watched `0 changed` stay `0`). */
+    await loadGitStatus();
+
+    return true;
+  } catch (error) {
+    reportFailure(error, strings.files.saveFailed);
+
+    return false;
+  }
+}
+
+/**
+ * `git.status` for the chat's folder - the branch and how many files the working tree has changed.
+ *
+ * Read for the Files header, next to the folder's name: "which branch, and has anything changed" is the
+ * question a person asks right after "which folder am I in", and both come from the daemon (neither is
+ * guessed from the machine the window happens to run on).
+ */
+export async function loadGitStatus(): Promise<void> {
+  const sessionId = usePrefsStore.getState().activeTab;
+
+  if (sessionId === null) {
+    useFilesStore.getState().setGit(null);
+
+    return;
+  }
+
+  try {
+    const answer = await sdcpCall('git.status', {
+      sessionId,
+      ...(useFilesStore.getState().root === null ? {} : { root: useFilesStore.getState().root ?? undefined }),
+    });
+
+    /* An empty branch name is the daemon saying "this folder is not a repository": no badge, and no invented
+       `master` from the shadow repository's own `git init` - which is what the 0.7.9 probe caught, with a
+       `master · clean` badge over a folder git knew nothing about. */
+    useFilesStore
+      .getState()
+      .setGit(answer.branch === '' ? null : { branch: answer.branch, dirty: answer.dirty });
+  } catch {
+    /* Not a git folder, or no git on this machine: no badge, and no toast either. A folder without git is
+       a normal folder, not a failure. */
+    useFilesStore.getState().setGit(null);
+  }
+}
+
+/** `git.diff` for the chat's folder, shown in the Preview behind the file view's Diff button. */
+export async function openDiff(): Promise<boolean> {
+  const sessionId = usePrefsStore.getState().activeTab;
+  const root = useFilesStore.getState().root;
+
+  try {
+    const { patch } = await sdcpCall('git.diff', {
+      sessionId: sessionId ?? undefined,
+      ...(root === null ? {} : { root }),
+    });
+
+    useFilesStore.getState().setDiff(patch);
+    useLayoutStore.getState().showRight();
+    useRightPanelStore.getState().setActiveTab('preview', sessionId);
+
+    return true;
+  } catch (error) {
+    reportFailure(error, strings.files.diffFailed);
+
+    return false;
+  }
+}
+
+/** Closes the diff, putting the file view (or the empty Preview) back. */
+export function closeDiff(): void {
+  useFilesStore.getState().setDiff(null);
 }
 
 /**

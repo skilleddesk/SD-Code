@@ -14,6 +14,74 @@ This file describes what changed, not what is planned. Anything still open is na
 release - the newest - and deletes the others when it publishes (`release.yml`, "Keep only this
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
+## [0.7.9] — editing: Save (with a checkpoint first) and the diff of what changed
+
+0.7.7 made the folder *visible*; three methods stayed unreachable from the window - `fs.write`, `git.status`
+and `git.diff` - and with them the answers to "can I fix this line here?" and "what did the turn change?".
+
+### Added — Edit and Save in the file view
+
+A file opened from the tree gets an **Edit** button: the text becomes a `<textarea>`, **Save** writes it
+(`fs.write`) and **Cancel** puts the read text back.
+
+**The daemon takes the checkpoint, before the write.** `fs.write` now honours principle P5 itself: given a
+`sessionId` it resolves the chat's folder (0.7.6), hashes the files that are about to change, pushes
+`CheckpointSaved` - and only then writes a byte. The rule is enforced where the file is changed rather than by
+the caller, because a rule the caller enforces is a rule the next caller forgets; `shell.run` has taken that
+path since 0.7.0 and this is the same one. A caller with **no** session takes no checkpoint: there is nothing
+to checkpoint against, and an orphan row in the Time Machine would be worse than none.
+
+A file the daemon had to **truncate** cannot be edited at all: saving the visible megabyte over the whole file
+would silently delete the rest of it. The button is absent and the meta line says why.
+
+### Added — the branch, the changed count, and the patch
+
+* the Files header carries **`main · 3 changed`** (or `main · clean`) from `git.status`, and the Diff button
+  appears beside it when there is something to see. A folder that is not a repository shows neither - no
+  badge, no error, because a folder without git is a normal folder;
+* **Diff** opens the patch in the Preview: `+`, `-` and `@@` lines tinted by their first character, the branch
+  named in the header, and nothing parsed into a diff model - a hand-rolled parser that disagrees with `git`
+  about a rename or a binary file is worse than no parser;
+* both take the **session's** folder, the contract 0.7.6 gave the file tools, so the window sends a chat id and
+  the daemon knows where to look.
+
+### Changed — two protocol entries that had been lying
+
+`fs.write`'s declared result carried a `checkpointId` the daemon has never answered (the checkpoint travels as
+a `CheckpointSaved` event, which is where the Time Machine reads it) and `git.diff` demanded a `sessionId` while
+the daemon accepted a `root` too. Both are now what the daemon actually does, with the params it actually takes.
+
+### Fixed — `git.status` was describing the **shadow** repository
+
+The probe caught this on its first run, and it is the oldest lie in this release: `git.status` ran
+`git rev-parse --abbrev-ref HEAD` through `run`, which passes the *shadow* repository's `--git-dir`. So a
+project on `main` was told **`master`** - the branch a bare `git init` leaves behind - and a folder that is not
+a repository at all got a confident `master · clean`. The badge asks "which branch is my project on?" and was
+answering about a repository its owner has never heard of.
+
+Now `git.status` asks the project's own repository (or the one above it, the way a shell would) and answers
+**no branch and no count** for a folder that has none, which the window draws as no badge at all. `git.diff`
+prefers the project's own repository too, and keeps the shadow as the fallback - a checkpoint's diff is the
+only history a folder without git has. Two daemon tests pin both halves, and the badge is re-read on every
+Refresh and after every Save, because a status read once when the folder opened is stale the moment it
+matters.
+
+### Verified
+
+* `sdcd`: 165 tests, including `a_save_takes_a_checkpoint_before_it_changes_the_file` against the real binary -
+  a Save pushes `CheckpointSaved` with a **non-empty files hash** (only possible because the chat's folder was
+  resolved), `fs.read` then shows the new text, and a write with no session pushes no checkpoint at all. Two
+  more pin the `git.status` fix: a repository of its own reports its own branch (`probe-branch`, not the
+  shadow's `master`) and its own working tree, a folder without one reports neither, and `git.diff` comes from
+  the project's repository when there is one. Clippy clean.
+* **`app` 73 vitest cases (six new: Save sends the chat's id, takes the daemon's new hash, and re-reads
+  `git.status` so the badge and the Diff button cannot go stale; a refused save leaves the file as it was;
+  `git.status` fills the badge; a non-repository clears it; and the diff opens and closes).
+* `_verify/probe-files.mjs` now also drives the whole editing path in the running window: it makes its fixture a
+  **git repository** with one commit, opens a file, edits it, presses Save, checks the file shows what was
+  saved, that the toast says a checkpoint was taken first, that the git badge went from `0` to `1` changed, and
+  that the patch from `git.diff` carries the line that was written.
+
 ## [0.7.8] — two methods the schema declared and the daemon never answered
 
 Both of these were *declared* in `sdcp.schema.json` and `protocol/types.ts` from the beginning, and both were

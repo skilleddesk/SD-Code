@@ -86,7 +86,7 @@ impl Daemon {
 
             /* The engines' environment ------------------------------------------------------- */
             "fs.read" => self.fs_read(envelope),
-            "fs.write" => self.fs_write(envelope),
+            "fs.write" => self.fs_write(envelope, &*out),
             "fs.list" => self.fs_list(envelope),
             "fs.stat" => self.fs_stat(envelope),
             "fs.search" => self.fs_search(envelope),
@@ -902,12 +902,54 @@ impl Daemon {
         }))
     }
 
-    fn fs_write(&self, envelope: &Envelope) -> Result<Value, ErrorObject> {
+    /// `fs.write` - the one method that changes a file, and therefore the one that must not change it without
+    /// a checkpoint first (principle P5).
+    ///
+    /// Until 0.7.9 nothing could reach this method from the window - it was implemented and had no caller -
+    /// and the checkpoint-before-mutation rule lived only on the tool-call path. Now the file view's Save
+    /// calls it, and the rule is enforced **here**: for this file, in this place, whatever asked for the
+    /// write. `sessionId` is optional, because a caller with no chat (a probe, a script) has nothing to
+    /// checkpoint *against*; with one, the checkpoint is taken first and pushed as `CheckpointSaved` before a
+    /// single byte is written - a checkpoint taken afterwards would be a photograph of the damage.
+    fn fs_write(&self, envelope: &Envelope, out: &dyn Notifier) -> Result<Value, ErrorObject> {
         let path = std::path::PathBuf::from(envelope.require_str("path")?);
         let text = envelope.opt_str("text").unwrap_or_default();
+        let session_id = envelope.opt_str("sessionId");
+        let turn_id = envelope.opt_str("turnId");
+
+        if let Some(session) = session_id.as_deref() {
+            let name = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("a file")
+                .to_string();
+            /* The root comes from the session (0.7.6), so the checkpoint hashes the files that are about to
+               change rather than nothing. */
+            let root = self.root_for(envelope)?;
+
+            if let Ok(fresh) = crate::checkpoints::create(
+                self.store(),
+                session,
+                self.state.events.seq(),
+                &format!("Before editing {name}"),
+                root.as_deref(),
+                crate::checkpoints::screenshot::capture(),
+            ) {
+                out.push(
+                    event::checkpoint_saved(session, fresh.to_event_payload()),
+                    Some(session.to_string()),
+                    turn_id.clone(),
+                );
+            }
+        }
+
         let sha256 = crate::fs::write(&path, &text)?;
 
-        Ok(json!({ "path": path.display().to_string(), "sha256": sha256, "bytes": text.len() }))
+        Ok(json!({
+            "path": path.display().to_string(),
+            "sha256": sha256,
+            "bytes": text.len(),
+        }))
     }
 
     /// `fs.list` - one level of a directory, for the window's file tree.

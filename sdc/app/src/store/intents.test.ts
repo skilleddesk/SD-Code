@@ -20,7 +20,7 @@ const sdcpCall = vi.hoisted(() => vi.fn());
 
 vi.mock('../lib/sdcp', () => ({ sdcpCall }));
 
-const { chooseModel, closeFolder, forkSession, loadCliRecipe, emptySessionOn, newChatOnHost, openFolderIn, loadDirectory, toggleDirectory, openFile, closeFile } = await import('./intents');
+const { chooseModel, closeDiff, closeFolder, forkSession, loadCliRecipe, loadGitStatus, saveFile, emptySessionOn, newChatOnHost, openDiff, openFolderIn, loadDirectory, toggleDirectory, openFile, closeFile } = await import('./intents');
 const { engineForProvider, useModelStore } = await import('./model');
 const { useFilesStore } = await import('./files');
 const { useLayoutStore } = await import('./layout');
@@ -479,6 +479,138 @@ describe('forkSession', () => {
     );
 
     await expect(forkSession('s1', 'Login bug')).resolves.toBeNull();
+  });
+});
+
+/**
+ * `fs.write` (0.7.9) - the Save behind the file view's Edit button, and the P5 rule it brings with it.
+ *
+ * The checkpoint is **not** taken by this intent: `fs.write` takes it, in the daemon, where the file is
+ * changed. That is the whole point - a rule enforced by the caller is a rule the next caller forgets. What
+ * this asserts is that the window passes the chat's id (so the daemon can find the folder and hash the files)
+ * and that the store's open file takes the daemon's new hash rather than keeping the old one.
+ */
+describe('saveFile', () => {
+  beforeEach(() => {
+    sdcpCall.mockReset();
+    useFilesStore.getState().reset();
+    usePrefsStore.setState({ activeTab: 's1', openTabs: ['s1'] });
+  });
+
+  it('writes through the daemon, with the chat id, and takes the new hash', async () => {
+    useFilesStore.getState().setOpen({
+      path: 'H:\\SDC\\README.md',
+      name: 'README.md',
+      text: '# old\n',
+      sha256: 'a'.repeat(64),
+      bytes: 6,
+      truncated: false,
+    });
+    sdcpCall.mockResolvedValue({ path: 'H:\\SDC\\README.md', sha256: 'b'.repeat(64), bytes: 12 });
+
+    await expect(saveFile('H:\\SDC\\README.md', '# new\n# more\n')).resolves.toBe(true);
+
+    expect(sdcpCall).toHaveBeenCalledWith('fs.write', {
+      path: 'H:\\SDC\\README.md',
+      text: '# new\n# more\n',
+      sessionId: 's1',
+    });
+
+    const opened = useFilesStore.getState().open;
+
+    expect(opened?.text).toBe('# new\n# more\n');
+    expect(opened?.sha256).toBe('b'.repeat(64));
+    expect(opened?.bytes).toBe(12);
+  });
+
+  it('leaves the file as it was when the daemon refuses, and says so', async () => {
+    useFilesStore.getState().setOpen({
+      path: 'H:\\SDC\\.env',
+      name: '.env',
+      text: '',
+      sha256: 'a'.repeat(64),
+      bytes: 0,
+      truncated: false,
+    });
+    sdcpCall.mockRejectedValueOnce(
+      new SdcpCallError({ code: 'blocked_path', message: '`.env` holds secrets' }),
+    );
+
+    await expect(saveFile('H:\\SDC\\.env', 'SECRET=1')).resolves.toBe(false);
+    expect(useFilesStore.getState().open?.text).toBe('');
+  });
+});
+
+/**
+ * `git.status` and `git.diff` (0.7.9) - the two methods that answer "what did the turn change?".
+ *
+ * Both took a `root` the app did not have; both now take the **session's** folder (0.7.6's contract), and the
+ * window reads them from the Files header and the Preview's Diff button. A folder that is not a repository is
+ * asserted too: `git.status` refusing is a normal answer, so the store clears the badge instead of toasting.
+ */
+describe('the folder’s git state', () => {
+  beforeEach(() => {
+    sdcpCall.mockReset();
+    useFilesStore.getState().reset();
+    usePrefsStore.setState({ activeTab: 's1', openTabs: ['s1'] });
+  });
+
+  it('reads the branch and the changed count for the chat’s folder', async () => {
+    useFilesStore.getState().setRoot('H:\\SDC');
+    sdcpCall.mockResolvedValue({ branch: 'main', dirty: 3 });
+
+    await loadGitStatus();
+
+    expect(sdcpCall).toHaveBeenCalledWith('git.status', { sessionId: 's1', root: 'H:\\SDC' });
+    expect(useFilesStore.getState().git).toEqual({ branch: 'main', dirty: 3 });
+  });
+
+  it('re-reads it after a save, so the badge and the Diff button are never stale', async () => {
+    useFilesStore.getState().setRoot('H:\\SDC');
+    useFilesStore.getState().setOpen({
+      path: 'H:\\SDC\\README.md',
+      name: 'README.md',
+      text: 'one\n',
+      sha256: 'a'.repeat(64),
+      bytes: 4,
+      truncated: false,
+    });
+
+    /* The write answers first, then the status. A mock that returned the same object for both would hide the
+       difference the probe found: the write succeeded and the badge still said `0 changed`. */
+    sdcpCall.mockImplementation((method: string) =>
+      method === 'fs.write'
+        ? Promise.resolve({ path: 'H:\\SDC\\README.md', sha256: 'b'.repeat(64), bytes: 8 })
+        : Promise.resolve({ branch: 'main', dirty: 1 }),
+    );
+
+    await expect(saveFile('H:\\SDC\\README.md', 'one\ntwo\n')).resolves.toBe(true);
+
+    expect(sdcpCall).toHaveBeenCalledWith('git.status', { sessionId: 's1', root: 'H:\\SDC' });
+    expect(useFilesStore.getState().git).toEqual({ branch: 'main', dirty: 1 });
+  });
+
+  it('shows no badge for a folder without git, rather than a failure', async () => {
+    useFilesStore.getState().setRoot('H:\\notes');
+    sdcpCall.mockRejectedValueOnce(
+      new SdcpCallError({ code: 'internal', message: 'H:\\notes: not a git repository' }),
+    );
+
+    await loadGitStatus();
+
+    expect(useFilesStore.getState().git).toBeNull();
+  });
+
+  it('opens the diff in the Preview, and closes it again', async () => {
+    useFilesStore.getState().setRoot('H:\\SDC');
+    sdcpCall.mockResolvedValue({ patch: 'diff --git a/README.md b/README.md\n' });
+
+    await expect(openDiff()).resolves.toBe(true);
+    expect(sdcpCall).toHaveBeenCalledWith('git.diff', { sessionId: 's1', root: 'H:\\SDC' });
+    expect(useFilesStore.getState().diff).toContain('diff --git');
+
+    closeDiff();
+    expect(useFilesStore.getState().diff).toBeNull();
   });
 });
 
