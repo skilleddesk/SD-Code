@@ -4,6 +4,39 @@ What has to be true before a tag, and what to do after it. It exists because of 
 automated gate passed and every installer produced a window with nothing in it, and the reason was that
 nobody had opened the *installed* app. The checks below are the ones that would have caught it.
 
+## Where the version lives
+
+Five files, and nothing else types it by hand:
+
+| File | What it drives |
+| --- | --- |
+| `sdc/sdcd/Cargo.toml` | the daemon: `VERSION = env!("CARGO_PKG_VERSION")` → `host.status.sdcd`, the `HostStatus` event, `sdcd --version` |
+| `sdc/app/src-tauri/Cargo.toml` | the app crate, which is what `sdcp_status.appVersion` reports |
+| `sdc/app/package.json` | the window: the status bar's `v0.7.5 · sdcd 0.7.5` cell and Settings → About |
+| `sdc/app/src-tauri/tauri.conf.json` | the bundle: MSI `ProductVersion`, `SDC_0.7.5_x64-setup.exe`, the exe's `VersionInfo` |
+| `sdc/package.json` | the workspace root, for a reader |
+
+Bump all five with one command, from the repo root:
+
+```powershell
+node _verify/bump-version.mjs 0.7.6
+```
+
+The two `Cargo.lock` entries follow on the next build, because `cargo` writes them. **Kill the running
+window first** (`Get-Process sdc, sdcd | Stop-Process -Force`): `tauri build` fails with `Access is denied
+(os error 5)` while `sdc.exe` is held open, and the release that produced that error is not the one you
+just built.
+
+The same number has to be readable from four places, and 0.7.5 is the release where the first two stopped
+lying (About's rows were literals saying `v0.4.4` on a 0.7.5 build):
+
+```powershell
+node _verify/version-report.mjs                                        # all of it at once; exit 1 when the five disagree
+sdc/sdcd/target/release/sdcd.exe --version                             # sdcd 0.7.5 (SDCP 0.1)
+node _verify/probe-versions.mjs 9251                                   # inside the running window: status bar cell + About rows
+(Get-Item sdc/app/src-tauri/target/release/sdc.exe).VersionInfo.FileVersion
+```
+
 ## Before the tag
 
 Run from `sdc/`. All of these run in CI as well; running them here is what makes a failed CI run
@@ -15,9 +48,9 @@ surprising rather than expected.
 | Lint | `pnpm lint` | `eslint`, including the hooks rules. |
 | Frontend tests | `pnpm test` | The reducer, the command registry, and the store-selector rule. |
 | The window renders | `pnpm build && pnpm --filter @sdc/app smoke` | The built bundle mounts in a real browser: `#root` is not empty, `#app` is there, there is text, and nothing threw. |
-| Daemon tests | `cargo test --manifest-path sdcd/Cargo.toml` | 101 tests, including the three that start the real daemon (idle exit, `host.shutdown`, hand-started stays). |
+| Daemon tests | `cargo test --manifest-path sdcd/Cargo.toml` | 159 tests, including the seven that start the real daemon (idle exit, `host.shutdown`, hand-started stays, the prompt a turn carries, a folder a chat works in, a chat that has run a turn being deleted, a host added once) and the two in `tests/streaming.rs` that measure a turn arriving while the engine talks. |
 | Clippy | `cargo clippy --manifest-path sdcd/Cargo.toml --all-targets -- -D warnings` and the same for `app/src-tauri/Cargo.toml` | No warnings, in the daemon or the bridge. |
-| Versions agree | `grep -r '"version"' package.json app/package.json app/src-tauri/tauri.conf.json app/src-tauri/Cargo.toml sdcd/Cargo.toml` | One number everywhere, plus `strings.ts`'s three copies. |
+| Versions agree | `node _verify/version-report.mjs` | One number in the five files, in both lockfiles, in the daemon's `--version`, in the window's `VersionInfo` and in the installer names - and it exits 1 if the five disagree. |
 
 ## The packaged app (Windows, WebView2)
 

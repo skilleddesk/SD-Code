@@ -15,7 +15,7 @@
 //! the machine.
 
 use sdcd::engines::native_api::{build_request, endpoint_for, post_stream};
-use sdcd::engines::Prompt;
+use sdcd::engines::{EventSink, Prompt};
 
 fn prompt(text: &str) -> Prompt {
     Prompt {
@@ -26,6 +26,7 @@ fn prompt(text: &str) -> Prompt {
         model: "claude-sonnet-4-5".to_string(),
         provider: None,
         history: Vec::new(),
+        project_root: None,
     }
 }
 
@@ -36,7 +37,7 @@ fn anthropic_answers_a_bogus_key_with_its_own_sentence() {
     let endpoint = endpoint_for("anthropic/claude-sonnet-4", None);
     let (url, headers, body) = build_request(&endpoint, "sk-ant-bogus-key", "claude-sonnet-4", &prompt("hi"));
 
-    let reason = post_stream(&url, &headers, &body).expect_err("a bogus key must not be accepted");
+    let reason = post_stream(&url, &headers, &body, &EventSink::discarding()).expect_err("a bogus key must not be accepted");
 
     println!("anthropic said: {reason}");
 
@@ -50,7 +51,7 @@ fn openai_answers_a_bogus_key_with_its_own_sentence() {
     let endpoint = endpoint_for("openai/gpt-5", None);
     let (url, headers, body) = build_request(&endpoint, "sk-bogus-key", "gpt-5", &prompt("hi"));
 
-    let reason = post_stream(&url, &headers, &body).expect_err("a bogus key must not be accepted");
+    let reason = post_stream(&url, &headers, &body, &EventSink::discarding()).expect_err("a bogus key must not be accepted");
 
     println!("openai said: {reason}");
 

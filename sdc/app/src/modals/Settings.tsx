@@ -1,3 +1,5 @@
+import { version as APP_VERSION } from '../../../package.json';
+import { SDCP_VERSION } from '../../../protocol/types';
 import { useState, type ReactNode } from 'react';
 import {
   Bell,
@@ -143,6 +145,7 @@ export function Settings() {
         {tab === 'about' ? (
           <AboutTab
             host={host === null ? '' : `${host.name} · ${host.platform}`}
+            daemon={host?.sdcd ?? ''}
             onDoctor={() => {
               close();
               openHub('doctor');
@@ -371,9 +374,29 @@ function KeymapTab() {
   );
 }
 
-/** About (spec section 9.11): versions, this host, the three diagnostics and telemetry. */
-function AboutTab({ host, onDoctor }: { host: string; onDoctor: () => void }) {
+/**
+ * About (spec section 9.11): versions, this host, the three diagnostics and telemetry.
+ *
+ * The three version rows are filled from the things they describe - `package.json` for this window,
+ * the event log's `HostStatus` for the daemon, `protocol/types.ts` for the protocol - because as
+ * literals they were wrong: on a 0.7.5 build the dialog still said `v0.4.4`. `StatusBar` reads the same
+ * two halves for its version cell, so the two cannot drift either.
+ */
+function AboutTab({
+  host,
+  daemon,
+  onDoctor,
+}: {
+  host: string;
+  daemon: string;
+  onDoctor: () => void;
+}) {
   const about = strings.settings.about;
+  const versions: Record<string, string> = {
+    app: `v${APP_VERSION}`,
+    daemon: daemon === '' ? 'not reported' : `v${daemon}`,
+    protocol: SDCP_VERSION,
+  };
 
   return (
     <>
@@ -382,8 +405,8 @@ function AboutTab({ host, onDoctor }: { host: string; onDoctor: () => void }) {
 
       <div className="mb-[22px]">
         {about.rows.map((row) => (
-          <Row key={row.label} label={row.label}>
-            <span className="font-mono text-[12px] text-text-secondary">{row.value}</span>
+          <Row key={row.id} label={row.label}>
+            <span className="font-mono text-[12px] text-text-secondary">{versions[row.id] ?? ''}</span>
           </Row>
         ))}
 

@@ -86,7 +86,7 @@ mod tests {
         /* The schema's foreign keys are real: a checkpoint belongs to a session, and a session to a
            host. Seeding them is what makes the constraint meaningful rather than decorative. */
         store.upsert_host("local", "Local", "local", None, "connected", None).unwrap();
-        store.insert_session("s1", "local", "Add rate limiting", "add").unwrap();
+        store.insert_session("s1", "local", "Add rate limiting", "add", None).unwrap();
 
         let fresh = create(&store, "s1", 3, "Added validation", None, None).unwrap();
 
@@ -106,7 +106,7 @@ mod tests {
         let store = Arc::new(Store::in_memory().unwrap());
 
         store.upsert_host("local", "Local", "local", None, "connected", None).unwrap();
-        store.insert_session("s1", "local", "Add rate limiting", "add").unwrap();
+        store.insert_session("s1", "local", "Add rate limiting", "add", None).unwrap();
 
         create(&store, "s1", 4, "first", None, None).unwrap();
         create(&store, "s1", 4, "second", None, None).unwrap();

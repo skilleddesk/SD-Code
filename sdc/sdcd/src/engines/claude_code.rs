@@ -8,7 +8,7 @@
 use async_trait::async_trait;
 
 use crate::engines::cli::{CliAdapter, CliSpec, PromptPlacement};
-use crate::engines::{Engine, EngineEvent, EngineStatus, Prompt};
+use crate::engines::{Engine, EngineStatus, EventSink, Prompt};
 
 /// The one flag that makes this adapter honest.
 pub const PARTIAL_MESSAGES_FLAG: &str = "--include-partial-messages";
@@ -66,8 +66,8 @@ impl Engine for ClaudeCode {
         "claude_code"
     }
 
-    async fn start(&self, prompt: Prompt) -> Vec<EngineEvent> {
-        self.cli.run(&prompt).await
+    async fn start(&self, prompt: Prompt, sink: &EventSink) {
+        self.cli.run(&prompt, sink).await
     }
 
     async fn cancel(&self, turn_id: &str) -> bool {

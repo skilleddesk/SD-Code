@@ -6,7 +6,7 @@
 use async_trait::async_trait;
 
 use crate::engines::cli::{CliAdapter, CliSpec, PromptPlacement};
-use crate::engines::{Engine, EngineEvent, EngineStatus, Prompt};
+use crate::engines::{Engine, EngineStatus, EventSink, Prompt};
 
 /// `gemini -p <prompt> --output-format stream-json --skip-trust` is the headless form.
 ///
@@ -59,8 +59,8 @@ impl Engine for Gemini {
         "gemini"
     }
 
-    async fn start(&self, prompt: Prompt) -> Vec<EngineEvent> {
-        self.cli.run(&prompt).await
+    async fn start(&self, prompt: Prompt, sink: &EventSink) {
+        self.cli.run(&prompt, sink).await
     }
 
     async fn cancel(&self, turn_id: &str) -> bool {

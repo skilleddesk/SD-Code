@@ -1,4 +1,5 @@
 import type { PermissionDecision, PermissionRisk, TierName } from '../../../protocol/types';
+import { pickFolder } from '../lib/picker';
 import { sdcpCall } from '../lib/sdcp';
 import { isSdcpError } from '../lib/transport';
 import { strings } from '../strings';
@@ -6,8 +7,9 @@ import { useDaemonStore } from './daemon';
 import { useModelStore, engineForProvider, tierName, tierFromName } from './model';
 import { useOverlayStore } from './overlays';
 import { usePrefsStore } from './prefs';
-import { withProviders, withWorkspace } from './reducer';
+import { withProjects, withProviders, withWorkspace } from './reducer';
 import { selectActiveSession, dispatch, useAppStore } from './store';
+import type { AppState, HostView, TurnView } from './types';
 
 /**
  * The intents - the UI's verbs (master spec section 3.3: "the UI never mutates state directly; it
@@ -260,8 +262,61 @@ export async function chooseModel(modelId: string, providerId: string): Promise<
  * Sessions and hosts
  * ---------------------------------------------------------------------------------------------- */
 
+/**
+ * The empty chat a host already has, if any - what `+ New chat` should land on.
+ *
+ * The report was *"bar bar new open korle onk chat open hoi"*: every click ran `session.open`, so five
+ * clicks left five chats - four of them empty rows the person then had to delete one at a time. A new
+ * chat is *one* new chat, so the click re-uses the host's untouched one when there is one, and only
+ * asks the daemon when there is not.
+ *
+ * A chat is **empty** when the log holds no turn for it, which is the same fact `Pane` uses to choose
+ * between its empty state and the stream - not a title, and not a heuristic about how long ago it was
+ * touched. The order is the sidebar's, so an idle host keeps answering with the same chat instead of
+ * minting a new row every time.
+ *
+ * Pure, and exported, because this is a decision about two lists rather than about a store: the test in
+ * `intents.test.ts` holds it against the shapes the daemon actually sends.
+ */
+export function emptySessionOn(
+  hosts: readonly HostView[],
+  turns: readonly Pick<TurnView, 'sessionId'>[],
+  hostId: string,
+  activeTab: string | null,
+): string | null {
+  const host = hosts.find((candidate) => candidate.id === hostId);
+
+  if (host === undefined) {
+    return null;
+  }
+
+  const empty = host.sessions.filter(
+    (session) => !turns.some((turn) => turn.sessionId === session.id),
+  );
+
+  /* The chat the caret is already in wins - a click while an untouched chat is open then costs nothing
+     at all - and otherwise the newest empty one, which is the last row the sidebar draws. */
+  const focused = empty.find((session) => session.id === activeTab);
+
+  return focused?.id ?? empty.at(-1)?.id ?? null;
+}
+
 /** Create an empty session on a host and focus its prompt (spec sections 7.3, 9.5). */
 export async function newChatOnHost(hostId: string): Promise<string | null> {
+  const state = useAppStore.getState();
+  const existing = emptySessionOn(
+    state.hosts,
+    state.turns,
+    hostId,
+    usePrefsStore.getState().activeTab,
+  );
+
+  if (existing !== null) {
+    toast(strings.sidebar.reusedChatOn(hostId));
+
+    return existing;
+  }
+
   try {
     const { sessionId } = await sdcpCall('session.open', {
       hostId,
@@ -386,6 +441,216 @@ export async function loadWorkspace(): Promise<void> {
   } catch (error) {
     reportFailure(error, strings.daemon.offline);
   }
+
+  /* The folders are the other half of "where am I": a chat's row says which project it is bound to, and
+     `project.list` says what those rows point at - a root, a name, and how many chats are in each. */
+  await loadProjects();
+}
+
+/* ------------------------------------------------------------------------------------------------
+ * Folders: the directory a chat works in (0.7.6)
+ * ---------------------------------------------------------------------------------------------- */
+
+/**
+ * `project.list`, folded into the store - what makes an opened folder survive a reload.
+ *
+ * A read, so a state patch (`withProjects`) rather than a stream of events, for the same reason
+ * `session.list` is one. Nothing asked for this list before 0.7.6 because nothing could be there to ask
+ * for: the `projects` table and `sessions.project_id` had been in the schema since the first migration
+ * with nothing writing either, so a chat had no working directory at all and the engines ran wherever the
+ * daemon had been started.
+ */
+export async function loadProjects(): Promise<void> {
+  try {
+    const { projects } = await sdcpCall('project.list', {});
+
+    useAppStore.setState((state) => withProjects(state, projects));
+  } catch (error) {
+    reportFailure(error, strings.daemon.offline);
+  }
+}
+
+/**
+ * `Open folder` - spec section 7.13's `No project` state, and the way out of it.
+ *
+ * The dialog is `lib/picker.ts`'s (the same `tauri-plugin-dialog` the paperclip uses, in `directory`
+ * mode), so this is a real folder chooser and not a text field: a path typed by hand is a path that is
+ * wrong about a separator, and the daemon then has to refuse it.
+ *
+ * `hostId` defaults to `local` because that is where this build's engines run - a folder on a VPS host is
+ * a later step, and defaulting to `local` keeps the button honest until it is.
+ */
+export async function openFolder(hostId = 'local'): Promise<string | null> {
+  let root: string | null;
+
+  try {
+    root = await pickFolder();
+  } catch (error) {
+    reportFailure(error, strings.prompt.pickFailed);
+
+    return null;
+  }
+
+  return root === null ? null : openFolderIn(root, hostId);
+}
+
+/**
+ * The half of `Open folder` that runs *after* something answered with a path.
+ *
+ * Split out so a folder can be opened by anything that is not the native dialog - a test, a drop, a future
+ * `--folder` argument - and so the dialog and the daemon call can be tested separately.
+ *
+ * Three things happen, in this order, and the order is the point:
+ *
+ *   1. `project.add` - the daemon validates the path (`is_dir`) and answers with the id. Opening the same
+ *      folder twice reuses its row instead of leaving two rows for one directory;
+ *   2. the chat - the host's *empty* chat if it has one (the rule `+ New chat` has followed since 0.7.5,
+ *      so opening a folder does not leave an orphan row behind), otherwise a new chat opened with
+ *      `projectId`, so its very first event already carries the folder;
+ *   3. landing in it - the tab opens and the prompt takes the caret, because a person who just chose a
+ *      folder wants to type in it.
+ */
+export async function openFolderIn(root: string, hostId = 'local'): Promise<string | null> {
+  let sessionId: string;
+  let message: string;
+
+  try {
+    const { projectId, name } = await sdcpCall('project.add', { hostId, root });
+
+    await loadProjects();
+
+    const state = useAppStore.getState();
+    const empty = emptySessionOn(
+      state.hosts,
+      state.turns,
+      hostId,
+      usePrefsStore.getState().activeTab,
+    );
+
+    if (empty !== null) {
+      await sdcpCall('session.update', { sessionId: empty, projectId });
+
+      sessionId = empty;
+      message = strings.folder.pointed(name, titleOf(state, empty));
+    } else {
+      const opened = await sdcpCall('session.open', {
+        hostId,
+        projectId,
+        title: name,
+        prompt: strings.sidebar.sessions.newChat.prompt,
+      });
+
+      sessionId = opened.sessionId;
+      message = strings.folder.opened(name);
+    }
+  } catch (error) {
+    reportFailure(error, strings.folder.couldNotOpen);
+
+    return null;
+  }
+
+  /* Said and focused *after* the daemon's work, so a focus that cannot happen is never reported as a
+     folder that could not open. */
+  toast(message);
+  landIn(sessionId);
+
+  return sessionId;
+}
+
+/**
+ * `Change folder` on a chat that already exists: the same dialog, another destination.
+ *
+ * This is what the prompt area's folder chip calls. The daemon's `SessionUpdated` carries the new
+ * `projectRoot`, so the chip follows without this function touching state.
+ */
+export async function changeFolder(sessionId: string): Promise<boolean> {
+  const state = useAppStore.getState();
+  const host = state.hosts.find((candidate) =>
+    candidate.sessions.some((session) => session.id === sessionId),
+  );
+  let root: string | null;
+
+  try {
+    root = await pickFolder();
+  } catch (error) {
+    reportFailure(error, strings.prompt.pickFailed);
+
+    return false;
+  }
+
+  if (root === null) {
+    return false;
+  }
+
+  try {
+    const { projectId, name } = await sdcpCall('project.add', { hostId: host?.id ?? 'local', root });
+
+    await sdcpCall('session.update', { sessionId, projectId });
+    await loadProjects();
+    toast(strings.folder.changed(name));
+
+    return true;
+  } catch (error) {
+    reportFailure(error, strings.folder.couldNotChange);
+
+    return false;
+  }
+}
+
+/**
+ * `project.remove`: close the folder, keep the chats.
+ *
+ * The daemon unbinds every chat that was looking at it (`project_id` → NULL) and deletes the row; the
+ * conversations stay, which is the whole reason this is not `session.close` in a loop. The workspace is
+ * re-read afterwards, because the rows this window holds still point at a folder that no longer exists -
+ * the same reason `loadWorkspace` exists at all.
+ */
+export async function closeFolder(projectId: string, name: string): Promise<boolean> {
+  try {
+    const { chats } = await sdcpCall('project.remove', { projectId });
+
+    await loadWorkspace();
+
+    /* The daemon toasts for itself when chats were unbound - it knows the count; the quiet case is ours. */
+    if (chats === 0) {
+      toast(strings.folder.closed(name, 0));
+    }
+
+    return true;
+  } catch (error) {
+    reportFailure(error, strings.folder.couldNotChange);
+
+    return false;
+  }
+}
+
+/** Opens the chat's tab and puts the caret in its prompt - where a person wants to be after a folder. */
+function landIn(sessionId: string): void {
+  usePrefsStore.getState().openTab(sessionId);
+
+  /* A window-less context (the unit tests) has no DOM to focus; the tab is still open, which is the part
+     that matters. Same guard as `lib/picker.ts` and `lib/sdcp.ts` use for the same reason. */
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  /* The pane renders a tick later; a macrotask is enough and does not depend on a frame clock. */
+  window.setTimeout(() => {
+    document.querySelector<HTMLTextAreaElement>('.prompt-box textarea')?.focus();
+  }, 0);
+}
+
+/** A session's title, wherever it sits in the tree - for a sentence about it. */
+function titleOf(state: AppState, sessionId: string): string {
+  for (const host of state.hosts) {
+    const found = host.sessions.find((session) => session.id === sessionId);
+
+    if (found !== undefined) {
+      return found.title;
+    }
+  }
+
+  return sessionId;
 }
 
 /**

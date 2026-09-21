@@ -87,6 +87,8 @@ export const strings = {
     deleteConfirm: (title: string): string => `Delete "${title}"?`,
     deleted: 'Chat deleted',
     newChatOn: (host: string): string => `New chat on ${host}`,
+    /** `+ New chat` when the host already had an empty chat to land on (0.7.5). */
+    reusedChatOn: (host: string): string => `Using the empty chat on ${host}`,
     actions: {
       rename: 'Rename',
       delete: 'Delete',
@@ -152,6 +154,13 @@ export const strings = {
         addVps: 'Add a VPS',
       },
     },
+    /** Spec section 7.13's `No project` state: "Open a folder to get started" (v0.7.6). */
+    noProject: {
+      title: 'Open a folder to get started',
+      description:
+        'A chat works inside a folder: the engine runs there and the files it touches are the ones you see.',
+      action: 'Open folder',
+    },
     /** A session with no turns yet: what the pane says instead of drawing someone else's chat. */
     emptyPane: {
       title: 'Nothing here yet',
@@ -215,6 +224,28 @@ export const strings = {
     },
   },
 
+  /** Folders - the directory a chat works in (spec section 7.13's `No project`, v0.7.6). */
+  folder: {
+    /** The chip in the prompt area: `No folder` when the chat has none. */
+    none: 'No folder',
+    /** Tooltip on that chip, and the menu item that re-points a chat. */
+    change: 'Change folder',
+    /** `Working in SDC` - the chip's label. The full path is the chip's tooltip. */
+    workingIn: (name: string): string => `Working in ${name}`,
+    /** `Opened SDC` - what the daemon answered, said back to the person. */
+    opened: (name: string): string => `Opened ${name}`,
+    /** The chat already existed and was pointed at the folder instead of a second chat being made. */
+    pointed: (name: string, chat: string): string => `Pointed “${chat}” at ${name}`,
+    changed: (name: string): string => `Now working in ${name}`,
+    /** `Closed SDC · 2 chats kept their conversation` - a folder going away is not a chat going away. */
+    closed: (name: string, chats: number): string =>
+      chats === 0
+        ? `Closed ${name}`
+        : `Closed ${name} · ${chats} chat${chats === 1 ? '' : 's'} kept their conversation`,
+    couldNotOpen: 'Could not open that folder',
+    couldNotChange: 'Could not change this chat’s folder',
+  },
+
   /** Prompt area and model dropdown - spec sections 7.6 and 9.3. */
   prompt: {
     placeholder: 'Ask or describe what you want to build…',
@@ -229,11 +260,15 @@ export const strings = {
     },
     toolbar: {
       attach: 'Attach a file',
-      image: 'Paste image',
+      /** It opens a dialog now (`lib/picker.ts`), so it says so: a button that promises a paste and
+          opens a file browser is the kind of small lie this build keeps removing. */
+      image: 'Pick an image',
       file: '@ file',
       command: '/ command',
     },
     send: 'Send',
+    /** The picker itself failed to open (a missing capability, a broken plugin) - not a cancel. */
+    pickFailed: 'Could not open the file picker',
     tip: {
       file: '@',
       fileLabel: 'reference file',
@@ -573,6 +608,8 @@ export const strings = {
   /** Toast stack - spec section 9.14. */
   toast: {
     dismiss: 'Dismiss',
+    /** The × on every toast (0.7.5): a message with no action chip had no way to be closed by hand. */
+    close: 'Close',
   },
 
   /**
@@ -1012,10 +1049,17 @@ export const strings = {
     about: {
       title: 'About',
       desc: 'Version and diagnostic information.',
+      /**
+       * The three version rows: **labels only**, because the values are read from the things they
+       * describe. They used to be literals in this table, and on 0.7.5 they still said `v0.4.4` - a row
+       * that cannot go stale is a row that is not typed by hand. `AboutTab` fills them from
+       * `package.json` (the app), the event log's `HostStatus` (the daemon) and `protocol/types.ts`
+       * (the protocol), which is where `StatusBar`'s version cell reads two of them as well.
+       */
       rows: [
-        { label: 'SDC App', value: 'v0.4.4' },
-        { label: 'sdcd daemon', value: 'v0.4.4' },
-        { label: 'SDCP protocol', value: '0.1' },
+        { id: 'app', label: 'SDC App' },
+        { id: 'daemon', label: 'sdcd daemon' },
+        { id: 'protocol', label: 'SDCP protocol' },
       ],
       /** `This host` is filled in from the event log's `HostStatus`, not hardcoded. */
       hostRow: 'This host',

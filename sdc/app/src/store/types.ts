@@ -42,6 +42,29 @@ export interface SessionView {
   minutesAgo: number;
   unread: number;
   attention?: 'awaiting_approval' | 'stuck' | 'budget_stop';
+  /**
+   * The folder this chat works in (0.7.6), or `null` for a chat that has no project.
+   *
+   * `projectRoot` is the absolute path the engines are started in - which is why the prompt area shows it:
+   * "which directory am I in" is the one question a coding agent's user asks first, and before 0.7.6 the
+   * answer was "whatever folder the daemon was started in", which the app could not even display.
+   */
+  projectId?: string | null;
+  projectRoot?: string | null;
+}
+
+/**
+ * A folder a chat can work in (0.7.6) - one row of `project.list`.
+ *
+ * `chats` is how many chats are bound to it, which is what says whether closing the folder will unbind
+ * anything (`project.remove` leaves the conversations alone).
+ */
+export interface ProjectView {
+  id: string;
+  hostId: string;
+  root: string;
+  name: string;
+  chats: number;
 }
 
 export interface HostView {
@@ -229,6 +252,9 @@ export interface AppState {
    * layout are NOT here - they are UI preferences and live in src/store/prefs.ts (spec section 3.3).
    */
   hosts: HostView[];
+
+  /** The folders chats can work in (0.7.6), oldest first, as `project.list` reports them. */
+  projects: ProjectView[];
 
   providers: ProviderView[];
   registry: RegistryModel[];

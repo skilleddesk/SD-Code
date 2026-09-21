@@ -7,9 +7,9 @@
 //! `engine.start` is the interesting one. It answers with a `turnId` immediately and then, in a task
 //! of its own, runs the engine adapter and pushes the whole turn through the notifier -
 //! `TurnStarted`, `ThinkingDelta`, the tool calls, a `CheckpointSaved` *before* the mutating tool
-//! (principle P5) and the `TurnDelta` stream. That is the acceptance item "a fake `engine.start`
-//! streams a few TurnDelta events to the UI store", and it is also how the real CLIs behave: the call
-//! returns, the answer arrives later.
+//! (principle P5) and the `TurnDelta` stream, **each event as the engine produced it**. That is the
+//! acceptance item "a fake `engine.start` streams a few TurnDelta events to the UI store", and it is
+//! also how the real CLIs behave: the call returns, the answer arrives later.
 //!
 //! Every module of the daemon is reached from here, which is the point of the file - it is the one
 //! place where a protocol method is mapped onto a capability.
@@ -20,7 +20,7 @@ use std::time::Duration;
 use serde_json::{json, Value};
 
 use crate::duel;
-use crate::engines::{EngineStatus, Prompt};
+use crate::engines::{EngineStatus, EventSink, Prompt};
 use crate::errors::translator;
 use crate::host;
 use crate::providers;
@@ -70,6 +70,12 @@ impl Daemon {
             "session.update" => self.session_update(envelope, &*out),
             "session.close" => self.session_close(envelope, &*out),
             "session.list" => Ok(json!({ "hosts": self.store().hosts_with_sessions().map_err(ErrorObject::internal)? })),
+
+            /* The folder a chat works in (0.7.6). `add` and `list` are answers; `remove` also pushes a
+               toast, because closing a folder that had chats in it is a thing the person should see. */
+            "project.add" => self.project_add(envelope),
+            "project.list" => Ok(json!({ "projects": self.store().projects().map_err(ErrorObject::internal)? })),
+            "project.remove" => self.project_remove(envelope, &*out),
 
             /* Engines ------------------------------------------------------------------------- */
             "engine.start" => self.engine_start(envelope, out),
@@ -395,6 +401,7 @@ impl Daemon {
         let host_id = envelope.opt_str("hostId").unwrap_or_else(|| "local".into());
         let title = envelope.opt_str("title").unwrap_or_else(|| "New chat".into());
         let prompt = envelope.opt_str("prompt").unwrap_or_default();
+        let project_id = envelope.opt_str("projectId").filter(|id| !id.trim().is_empty());
         let session_id = format!("n{}", self.state.events.seq() + 1);
 
         let host_name = if host_id == "local" { "Local" } else { host_id.as_str() };
@@ -403,24 +410,59 @@ impl Daemon {
             .ensure_host(&host_id, host_name, "local", "connected")
             .map_err(ErrorObject::internal)?;
         self.store()
-            .insert_session(&session_id, &host_id, &title, &prompt)
+            .insert_session(&session_id, &host_id, &title, &prompt, project_id.as_deref())
             .map_err(ErrorObject::internal)?;
+
+        let root = self.project_root_of(project_id.as_deref())?;
+
         out.push(
-            event::session_opened(&session_id, &host_id, &title, &prompt),
+            event::session_opened(
+                &session_id,
+                &host_id,
+                &title,
+                &prompt,
+                project_id.as_deref(),
+                root.as_deref(),
+            ),
             Some(session_id.clone()),
             None,
         );
 
-        Ok(json!({ "sessionId": session_id }))
+        Ok(json!({ "sessionId": session_id, "projectId": project_id, "projectRoot": root }))
+    }
+
+    /// The root of a project id, when there is one. Shared by `session.open`, `session.update` and the
+    /// two places that answer with a folder.
+    fn project_root_of(&self, project_id: Option<&str>) -> Result<Option<String>, ErrorObject> {
+        let Some(id) = project_id else {
+            return Ok(None);
+        };
+
+        Ok(self
+            .store()
+            .project(id)
+            .map_err(ErrorObject::internal)?
+            .and_then(|project| project.get("root").and_then(Value::as_str).map(str::to_string)))
     }
 
     fn session_update(&self, envelope: &Envelope, out: &dyn Notifier) -> Result<Value, ErrorObject> {
         let session_id = envelope.require_str("sessionId")?;
         let title = envelope.opt_str("title");
         let state = envelope.opt_str("state");
+        /* `Open folder` on an existing chat: the folder it works in changes, and the window's chip
+           follows the `SessionUpdated` below rather than guessing. */
+        let project_id = envelope.opt_str("projectId").filter(|id| !id.trim().is_empty());
+        let root = self.project_root_of(project_id.as_deref())?;
 
         self.store()
-            .update_session(&session_id, title.as_deref(), state.as_deref(), None, None)
+            .update_session(
+                &session_id,
+                title.as_deref(),
+                state.as_deref(),
+                None,
+                None,
+                project_id.as_deref(),
+            )
             .map_err(ErrorObject::internal)?;
         out.push(
             event::session_updated(json!({
@@ -428,12 +470,14 @@ impl Daemon {
                 "title": title,
                 "state": state,
                 "minutesAgo": 0,
+                "projectId": project_id,
+                "projectRoot": root,
             })),
             Some(session_id),
             None,
         );
 
-        Ok(json!({}))
+        Ok(json!({ "projectId": project_id, "projectRoot": root }))
     }
 
     fn session_close(&self, envelope: &Envelope, out: &dyn Notifier) -> Result<Value, ErrorObject> {
@@ -443,6 +487,80 @@ impl Daemon {
         self.store().delete_session(&session_id).map_err(ErrorObject::internal)?;
 
         Ok(json!({}))
+    }
+
+    /* -----------------------------------------------------------------------------------------
+     * Projects: the folder a chat works in (0.7.6)
+     * -------------------------------------------------------------------------------------- */
+
+    /// `project.add`: what `Open folder` calls. Answers with the project, and **reuses** the row when the
+    /// host already has that root, because opening the same folder twice must not leave two rows for one
+    /// directory - which is also what makes the button safe to press again.
+    ///
+    /// The validation is the reason this is a method rather than a row the app writes: `is_dir` is asked
+    /// here, so a path that is a file, a typo, or a folder on a host that cannot see it is refused in the
+    /// daemon's own words instead of becoming a chat whose working directory does not exist.
+    fn project_add(&self, envelope: &Envelope) -> Result<Value, ErrorObject> {
+        let host_id = envelope.opt_str("hostId").unwrap_or_else(|| "local".into());
+        let root = envelope.require_str("root")?;
+
+        if !std::path::Path::new(&root).is_dir() {
+            return Err(ErrorObject::bad_request(format!("`{root}` is not a folder")));
+        }
+
+        if let Some(existing) = self.store().project_at(&host_id, &root).map_err(ErrorObject::internal)? {
+            return Ok(self
+                .store()
+                .project(&existing)
+                .map_err(ErrorObject::internal)?
+                .unwrap_or_else(|| json!({ "projectId": existing, "hostId": host_id, "root": root })));
+        }
+
+        self.store()
+            .ensure_host(&host_id, if host_id == "local" { "Local" } else { host_id.as_str() }, "local", "connected")
+            .map_err(ErrorObject::internal)?;
+
+        let id = self.store().next_project_id().map_err(ErrorObject::internal)?;
+        let name = envelope
+            .opt_str("name")
+            .filter(|name| !name.trim().is_empty())
+            .unwrap_or_else(|| folder_name(&root));
+
+        self.store().add_project(&id, &host_id, &root, &name).map_err(ErrorObject::internal)?;
+
+        Ok(json!({ "projectId": id, "hostId": host_id, "root": root, "name": name }))
+    }
+
+    /// `project.remove`: closes the folder. Its chats are **unbound**, not deleted - a chat is a
+    /// conversation, and a folder is a place to have it. The answer says how many chats were unbound.
+    fn project_remove(&self, envelope: &Envelope, out: &dyn Notifier) -> Result<Value, ErrorObject> {
+        let project_id = envelope.require_str("projectId")?;
+        let project = self.store().project(&project_id).map_err(ErrorObject::internal)?;
+
+        if project.is_none() {
+            return Err(ErrorObject::not_found(format!("no project `{project_id}`")));
+        }
+
+        let name = project
+            .as_ref()
+            .and_then(|project| project.get("name").and_then(Value::as_str))
+            .unwrap_or("the folder")
+            .to_string();
+        let chats = self.store().remove_project(&project_id).map_err(ErrorObject::internal)?;
+
+        if chats > 0 {
+            out.push(
+                event::toast(
+                    &format!("Closed {name} · {chats} chat{} kept their conversation", if chats == 1 { "" } else { "s" }),
+                    None,
+                    None,
+                ),
+                None,
+                None,
+            );
+        }
+
+        Ok(json!({ "removed": true, "chats": chats }))
     }
 
     /// `engine.start`: answer now, stream later.
@@ -489,11 +607,28 @@ impl Daemon {
             Some(turn_id.clone()),
         );
 
+        /* The folder this chat works in, resolved *now* from the session's project and carried in the
+           plan, so the engine can be started inside it. A chat bound to a folder runs there; a chat with
+           none runs wherever the daemon was started, which is what every chat did before 0.7.6. */
+        let project_root = self
+            .store()
+            .session_project_root(&session_id)
+            .map_err(ErrorObject::internal)?;
+
         /* The turn runs on its own task, so the response can go back before the first token does. */
         let state = self.state.clone();
         let notifier = out.clone();
         let answer_turn_id = turn_id.clone();
-        let plan = RunPlan { session_id, turn_id, engine_id, prompt_text, model, provider, history };
+        let plan = RunPlan {
+            session_id,
+            turn_id,
+            engine_id,
+            prompt_text,
+            model,
+            provider,
+            history,
+            project_root,
+        };
 
         tokio::spawn(async move {
             run_turn(state, engine, plan, notifier).await;
@@ -610,6 +745,35 @@ impl Daemon {
             .map(std::path::PathBuf::from)
     }
 
+    /// The root a file or git method works in: the one the envelope names, or the one the **session** has.
+    ///
+    /// The envelope stays first, because a caller that names a directory means that directory. The session
+    /// is the fallback 0.7.6 added, and it is the one that matters in practice: the app knows a chat's id,
+    /// the daemon knows which folder that chat was pointed at, and a tool that had to be told both would
+    /// be asking the caller to repeat a fact the daemon already holds.
+    fn root_for(&self, envelope: &Envelope) -> Result<Option<std::path::PathBuf>, ErrorObject> {
+        if let Some(root) = self.project_root(envelope) {
+            return Ok(Some(root));
+        }
+
+        let Some(session_id) = envelope.opt_str("sessionId") else {
+            return Ok(None);
+        };
+
+        Ok(self
+            .store()
+            .session_project_root(&session_id)
+            .map_err(ErrorObject::internal)?
+            .map(std::path::PathBuf::from))
+    }
+
+    /// The root these methods need, or the sentence that says what to send instead.
+    fn root_required(&self, envelope: &Envelope) -> Result<std::path::PathBuf, ErrorObject> {
+        self.root_for(envelope)?.ok_or_else(|| {
+            ErrorObject::bad_request("`root` is required, or a `sessionId` whose chat has a folder")
+        })
+    }
+
     fn fs_read(&self, envelope: &Envelope) -> Result<Value, ErrorObject> {
         let path = std::path::PathBuf::from(envelope.require_str("path")?);
         let (text, sha256) = crate::fs::read(&path)?;
@@ -636,7 +800,7 @@ impl Daemon {
     }
 
     fn fs_search(&self, envelope: &Envelope) -> Result<Value, ErrorObject> {
-        let root = std::path::PathBuf::from(envelope.opt_str("root").unwrap_or_else(|| ".".into()));
+        let root = self.root_for(envelope)?.unwrap_or_else(|| std::path::PathBuf::from("."));
         let query = envelope.require_str("query")?;
         let glob = envelope.opt_str("glob");
         let limit = envelope.opt_i64("limit").unwrap_or(50).clamp(1, 500) as usize;
@@ -645,14 +809,14 @@ impl Daemon {
     }
 
     fn git_status(&self, envelope: &Envelope) -> Result<Value, ErrorObject> {
-        let root = self.project_root(envelope).ok_or_else(|| ErrorObject::bad_request("`root` is required"))?;
+        let root = self.root_required(envelope)?;
         let (branch, dirty) = crate::git::status(&root)?;
 
         Ok(json!({ "branch": branch, "dirty": dirty }))
     }
 
     fn git_diff(&self, envelope: &Envelope) -> Result<Value, ErrorObject> {
-        let root = self.project_root(envelope).ok_or_else(|| ErrorObject::bad_request("`root` is required"))?;
+        let root = self.root_required(envelope)?;
         let patch = crate::git::diff(&root, envelope.opt_str("sha").as_deref())?;
 
         Ok(json!({ "patch": patch }))
@@ -691,7 +855,12 @@ impl Daemon {
             .params
             .get("args")
             .and_then(Value::as_array)
-            .map(|args| args.iter().filter_map(Value::as_str).map(str::to_string).collect())
+            .map(|args| {
+                args.iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect()
+            })
             .unwrap_or_default();
 
         self.state.pty.open(&command, &args, envelope.opt_str("cwd").as_deref())
@@ -728,12 +897,23 @@ impl Daemon {
             .params
             .get("args")
             .and_then(Value::as_array)
-            .map(|args| args.iter().filter_map(Value::as_str).map(str::to_string).collect());
+            .map(|args| {
+                args.iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect()
+            });
         let pump = envelope
             .params
             .get("pump")
             .and_then(Value::as_array)
-            .map(|lines| lines.iter().filter_map(Value::as_str).map(str::to_string).collect());
+            .map(|lines| {
+                lines
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect()
+            });
         let started = self.state.logins.start(
             &provider_id,
             envelope.opt_str("program").as_deref(),
@@ -905,7 +1085,12 @@ impl Daemon {
             .params
             .get("args")
             .and_then(Value::as_array)
-            .map(|args| args.iter().filter_map(Value::as_str).map(str::to_string).collect())
+            .map(|args| {
+                args.iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect()
+            })
             .unwrap_or_default();
         let cwd = envelope.opt_str("cwd");
         let session_id = envelope.opt_str("sessionId");
@@ -915,8 +1100,7 @@ impl Daemon {
         );
         let call_id = format!("shell-{}", self.state.events.seq() + 1);
 
-        if let (Some(session), Some(root)) = (session_id.as_deref(), envelope.opt_str("root")) {
-            let root = std::path::PathBuf::from(root);
+        if let (Some(session), Some(root)) = (session_id.as_deref(), self.root_for(envelope)?.as_deref()) {
             let ordinal = self.state.events.seq();
 
             if let Ok(fresh) = crate::checkpoints::create(
@@ -924,7 +1108,7 @@ impl Daemon {
                 session,
                 ordinal,
                 &format!("Before `{command}`"),
-                Some(&root),
+                Some(root),
                 crate::checkpoints::screenshot::capture(),
             ) {
                 out.push(
@@ -996,7 +1180,8 @@ impl Daemon {
         let session_id = envelope.opt_str("sessionId").unwrap_or_else(|| "s1".into());
         let title = envelope.opt_str("title").unwrap_or_else(|| "Checkpoint".into());
         let turn = envelope.opt_i64("turn").unwrap_or_else(|| self.state.events.seq());
-        let root = envelope.opt_str("projectRoot").map(std::path::PathBuf::from);
+        /* The session's folder when the caller does not send one - see `root_for`. */
+        let root = self.root_for(envelope)?;
         let fresh = crate::checkpoints::create(
             self.store(),
             &session_id,
@@ -1018,12 +1203,22 @@ impl Daemon {
     fn rewind_apply(&self, envelope: &Envelope, out: &dyn Notifier) -> Result<Value, ErrorObject> {
         let session_id = envelope.opt_str("sessionId").unwrap_or_else(|| "s1".into());
         let turn = crate::checkpoints::turn_of(&envelope.require_str("turnId")?);
-        let root = envelope.opt_str("projectRoot").map(std::path::PathBuf::from);
+        /* The session's folder when the caller does not send one: a rewind restores the files of the chat
+           it belongs to, which is the folder that chat works in. */
+        let root = self.root_for(envelope)?;
         let applied = crate::rewind::apply(self.store(), &session_id, turn, root.as_deref())?;
 
-        out.push(applied.to_event_payload(&session_id), Some(session_id.clone()), None);
         out.push(
-            event::toast(&format!("Rewound to turn {turn}"), Some("Undo this"), Some(10_000)),
+            applied.to_event_payload(&session_id),
+            Some(session_id.clone()),
+            None,
+        );
+        out.push(
+            event::toast(
+                &format!("Rewound to turn {turn}"),
+                Some("Undo this"),
+                Some(10_000),
+            ),
             Some(session_id),
             None,
         );
@@ -1056,7 +1251,13 @@ impl Daemon {
             .params
             .get("engines")
             .and_then(Value::as_array)
-            .map(|engines| engines.iter().filter_map(Value::as_str).map(str::to_string).collect())
+            .map(|engines| {
+                engines
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect()
+            })
             .unwrap_or_else(|| vec!["claude_code".to_string(), "codex".to_string()]);
         let engines = duel::plan(&requested)?;
         let duel_id = format!("duel-{}", self.state.events.seq() + 1);
@@ -1203,10 +1404,17 @@ struct RunPlan {
     /// endpoint (and therefore the key entry) of a model id this build's catalogue has never seen.
     provider: Option<String>,
     history: Vec<String>,
+    /// The folder the chat works in, or `None` for a chat that has no project. It reaches the adapters
+    /// inside the `Prompt`, which is where every fact about the session that the engine cannot guess
+    /// travels - the same reason the model and the provider are there.
+    project_root: Option<String>,
 }
 
 /// Runs one turn and pushes its events - including the checkpoint that must exist *before* a mutating
 /// tool runs (principle P5).
+///
+/// The engine's stream is *followed*, not awaited: each item is pushed the moment it arrives, which is
+/// what makes the turn stream live (see the note on the channel below).
 async fn run_turn(
     state: Arc<DaemonState>,
     engine: Arc<dyn crate::engines::Engine>,
@@ -1222,12 +1430,31 @@ async fn run_turn(
         model: plan.model.clone(),
         provider: plan.provider.clone(),
         history: plan.history.clone(),
+        project_root: plan.project_root.clone(),
     };
-    let events = engine.start(prompt).await;
     let mut answer = String::new();
     let mut checkpoint_written = false;
 
-    for event in events {
+    /* The engine runs on its own task and writes into a channel; this loop reads it and pushes each
+      event out while the engine is still talking.
+    *
+    * `let events = engine.start(prompt).await;` is what used to be here, and it is the whole defect
+    * the report *"akbare answare disse"* names: the adapter's stream was complete before the first
+    * notification left this function, so a two-minute turn arrived as one lump - thinking, tool
+    * calls and answer together - with the window looking idle until the end.
+    *
+    * The channel keeps the two properties the checkpoint rule needs: **order** (one producer, one
+    * consumer, so a `ToolCallStarted` cannot overtake the `CheckpointSaved` written for it below) and
+    * **a single place that talks to the notifier** (this loop, never the engine). */
+    let (sink, mut stream) = EventSink::channel();
+    let running = tokio::spawn(async move {
+        engine.start(prompt, &sink).await;
+
+        /* `sink` is dropped here, which is what ends the loop below: no separate "done" signal can be
+        lost on the way. */
+    });
+
+    while let Some(event) = stream.recv().await {
         match event {
             crate::engines::EngineEvent::Delta(delta) => {
                 answer.push_str(&delta);
@@ -1239,13 +1466,17 @@ async fn run_turn(
             crate::engines::EngineEvent::ToolStarted { call_id, tool, name, target } => {
                 if !checkpoint_written && ["edit", "write", "delete"].contains(&tool.as_str()) {
                     let ordinal = state.events.seq();
+                    /* The chat's own folder, so a checkpoint written before a mutating tool hashes the
+                       files that tool is about to touch. Until 0.7.6 this passed `None`, which meant the
+                       checkpoint recorded a conversation and no files at all. */
+                    let root = plan.project_root.as_deref().map(std::path::Path::new);
 
                     if let Ok(fresh) = crate::checkpoints::create(
                         &state.store,
                         &plan.session_id,
                         ordinal,
                         &format!("Before {name}"),
-                        None,
+                        root,
                         crate::checkpoints::screenshot::capture(),
                     ) {
                         out.push(
@@ -1306,11 +1537,15 @@ async fn run_turn(
         }
     }
 
+    /* The task is joined so the turn's own bookkeeping cannot race it: a `finish_turn` before the
+    engine's last event was pushed would be a stored answer that is missing its tail. */
+    let _ = running.await;
+
     let failed = answer.is_empty();
     let state_name = if failed { "error" } else { "success" };
 
     let _ = state.store.finish_turn(&plan.turn_id, &answer, "Done", state_name);
-    let _ = state.store.update_session(&plan.session_id, None, Some(state_name), None, Some(0));
+    let _ = state.store.update_session(&plan.session_id, None, Some(state_name), None, Some(0), None);
 
     out.push(
         event::session_updated(json!({
@@ -1375,9 +1610,10 @@ fn probe_ssh(target: &crate::auth::remote::SshTarget) -> (String, String) {
     let output = command.args(&args).output();
 
     match output {
-        Ok(output) if output.status.success() => {
-            ("connected".to_string(), format!("{} is reachable", target.user_host))
-        }
+        Ok(output) if output.status.success() => (
+            "connected".to_string(),
+            format!("{} is reachable", target.user_host),
+        ),
         Ok(output) => (
             "offline".to_string(),
             ssh_refusal(&target.user_host, &String::from_utf8_lossy(&output.stderr)),
@@ -1417,6 +1653,18 @@ fn ssh_refusal(target: &str, stderr: &str) -> String {
 
     /* Everything else is reported in `ssh`'s own words: a timeout, a refused port, a bad key. */
     format!("{target} did not answer: {line}")
+}
+
+/// The last segment of a path: the name `Open folder` gives a project without asking the user for one.
+/// `H:\SDC` becomes `SDC`, `/home/me/app` becomes `app`, and a path with no last segment (a drive root,
+/// `/`) keeps itself rather than becoming an empty label.
+fn folder_name(root: &str) -> String {
+    std::path::Path::new(root)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(str::to_string)
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| root.to_string())
 }
 
 /// The first non-empty line of a program's output - a sentence, not a wall of stderr.
@@ -1460,5 +1708,153 @@ mod tests {
 
         assert!(host_key.contains("known_hosts"), "{host_key}");
     }
-}
 
+    /// The acceptance test for live streaming - the report *"akbare answare disse"*, in code.
+    ///
+    /// The fake engine **cannot finish until the daemon has already pushed its first delta**: it sends
+    /// `Hel`, then waits for a signal that only the notifier's `push` of that delta can open, and only
+    /// then sends the rest. If `run_turn` still collected the stream before forwarding it - which is
+    /// exactly what it did until 0.7.4 - the turn would deadlock here, and the timeout below would fail
+    /// the suite instead of hanging it.
+    ///
+    /// So the assertion is about **when** the event left the daemon, not only about its text: the
+    /// second half of the answer exists only because the first half had already been delivered.
+    #[tokio::test]
+    async fn a_turn_streams_its_deltas_while_the_engine_is_still_running() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use tokio::sync::oneshot;
+
+        /// An engine whose second half is gated on the daemon's delivery of its first half.
+        struct Halfway {
+            release: std::sync::Mutex<Option<oneshot::Receiver<()>>>,
+        }
+
+        #[async_trait::async_trait]
+        impl crate::engines::Engine for Halfway {
+            fn id(&self) -> &'static str {
+                "halfway"
+            }
+
+            async fn start(&self, _prompt: Prompt, sink: &EventSink) {
+                sink.send(crate::engines::EngineEvent::Delta("Hel".to_string()));
+
+                let release = self
+                    .release
+                    .lock()
+                    .unwrap_or_else(|poison| poison.into_inner())
+                    .take();
+
+                if let Some(release) = release {
+                    let _ = release.await;
+                }
+
+                sink.send(crate::engines::EngineEvent::Delta("lo".to_string()));
+                sink.send(crate::engines::EngineEvent::Done {
+                    summary: "Done".to_string(),
+                    meta: String::new(),
+                    pass: Some(true),
+                });
+            }
+
+            async fn cancel(&self, _turn_id: &str) -> bool {
+                false
+            }
+
+            fn status(&self, _turn_id: &str) -> EngineStatus {
+                EngineStatus::Running
+            }
+        }
+
+        /// A notifier that opens the gate on the first `TurnDelta` it is given.
+        struct GateNotifier {
+            opened: AtomicBool,
+            release: std::sync::Mutex<Option<oneshot::Sender<()>>>,
+            events: std::sync::Mutex<Vec<Value>>,
+        }
+
+        impl GateNotifier {
+            fn kinds(&self) -> Vec<String> {
+                self.events
+                    .lock()
+                    .unwrap_or_else(|poison| poison.into_inner())
+                    .iter()
+                    .filter_map(|event| {
+                        event
+                            .get("type")
+                            .and_then(Value::as_str)
+                            .map(str::to_string)
+                    })
+                    .collect()
+            }
+        }
+
+        impl Notifier for GateNotifier {
+            fn push(
+                &self,
+                event: Value,
+                _session: Option<String>,
+                _turn: Option<String>,
+            ) -> Option<i64> {
+                let first_delta = event.get("type").and_then(Value::as_str) == Some("TurnDelta")
+                    && !self.opened.swap(true, Ordering::SeqCst);
+
+                if first_delta {
+                    let release = self
+                        .release
+                        .lock()
+                        .unwrap_or_else(|poison| poison.into_inner())
+                        .take();
+
+                    if let Some(release) = release {
+                        let _ = release.send(());
+                    }
+                }
+
+                self.events
+                    .lock()
+                    .unwrap_or_else(|poison| poison.into_inner())
+                    .push(event);
+
+                None
+            }
+        }
+
+        let (release, gated) = oneshot::channel();
+        let notifier = Arc::new(GateNotifier {
+            opened: AtomicBool::new(false),
+            release: std::sync::Mutex::new(Some(release)),
+            events: std::sync::Mutex::new(Vec::new()),
+        });
+        let state = DaemonState::bootstrap(Some(std::path::PathBuf::from(":memory:")))
+            .expect("bootstrapping a daemon for the test");
+        let plan = RunPlan {
+            session_id: "s1".to_string(),
+            turn_id: "turn-1".to_string(),
+            engine_id: "halfway".to_string(),
+            prompt_text: "hi".to_string(),
+            model: "sonnet".to_string(),
+            provider: None,
+            history: Vec::new(),
+            project_root: None,
+        };
+        let engine: Arc<dyn crate::engines::Engine> = Arc::new(Halfway {
+            release: std::sync::Mutex::new(Some(gated)),
+        });
+        let out: Arc<dyn Notifier> = notifier.clone();
+
+        let ran = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            run_turn(state, engine, plan, out),
+        )
+        .await;
+
+        assert!(
+            ran.is_ok(),
+            "the turn never ended: the daemon was not forwarding deltas as they arrived"
+        );
+        assert_eq!(
+            notifier.kinds(),
+            vec!["TurnDelta", "TurnDelta", "TurnCompleted", "SessionUpdated"]
+        );
+    }
+}

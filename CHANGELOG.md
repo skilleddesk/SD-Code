@@ -14,6 +14,349 @@ This file describes what changed, not what is planned. Anything still open is na
 release - the newest - and deletes the others when it publishes (`release.yml`, "Keep only this
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
+## [0.7.6] — "chat er kono folder nai": a chat works in a folder now
+
+*"GUI file-picker nai. aita soho aro important kisu nai jeta vs code a thake"* — 0.7.5 fixed the picker.
+The other half of that report is this one: **which directory a chat works in**. A chat had no working
+directory at all, so `sdcd` ran every engine in whatever folder it had been started from.
+
+### Fixed — a chat had no working directory
+
+The daemon's schema has had `projects` and `sessions.project_id` since the first migration and **nothing
+ever wrote either row**. `engine.start` built a `Command` with no `current_dir`, so a `claude_code` turn in
+a chat called `SDC` ran in the daemon's own directory - the folder someone happened to start the daemon
+from, and not the project on screen. Three more things followed from the same hole:
+
+* `checkpoint_create` and `rewind_apply` took the root as a **parameter the app never sent**, so a
+  checkpoint hashed no files (`files_hash` was of nothing) and a rewind restored the conversation only -
+  the file half of a rewind had never once run;
+* `git.status` and `git.diff` refused with `` `root` is required `` unless the caller named a directory,
+  which neither the app nor any tool caller knew;
+* `session.list` had no `projectId`, so even a chat that *had* a folder would have lost it on the next
+  reload.
+
+### Fixed — deleting a chat that had been used failed
+
+The 0.7.6 probe deleted the sidebar's first row instead of a freshly made chat, and the daemon answered in its
+own words: `FOREIGN KEY constraint failed`. `session.close` was `DELETE FROM sessions WHERE id = ?` while
+`foreign_keys` is ON and a turn, a checkpoint, a rewind entry and a permission row each *reference* their
+session - so **every chat that had run a turn** was undeletable, and the Delete button showed a constraint
+error as a toast with the chat still there. It hid for as long as it did because it was only ever tested
+against a chat that had just been made (which has no turns). `delete_session` now deletes the children first,
+the same four statements `delete_host` has used for a whole host since 0.6.1, and
+`a_chat_that_has_run_a_turn_can_be_deleted` in `tests/lifecycle.rs` is the regression test: a turn is started
+against a chat, the chat is closed, and the list is asked afterwards.
+
+### Added — `project.add`, `project.list`, `project.remove`
+
+Three additive methods, in the shape the rest of the protocol already uses (`session.list` is a read that
+answers rows; a list is a read's result, not a stream of events):
+
+```
+project.add     { hostId?, root, name? }  ->  { projectId, hostId, root, name }
+project.list    { }                       ->  { projects: [{ projectId, hostId, root, name, chats }] }
+project.remove  { projectId }             ->  { removed: true, chats }
+```
+
+* **`project.add` validates the path** (`is_dir`) and refuses a file, a typo or a folder a host cannot see
+  with `` `<path>` is not a folder `` - which is why this is a method rather than a row the app writes. It
+  **reuses** the row when the host already has that root, so pressing `Open folder` twice does not leave
+  two rows for one directory.
+* **`project.remove` unbinds its chats rather than deleting them** (`project_id` → `NULL`, then the row),
+  and answers how many chats were unbound. A chat is a conversation and a folder is a place to have it:
+  closing the folder must not throw the conversation away (principle P4). When chats *were* unbound the
+  daemon pushes a toast saying so, because that is a thing the person should see.
+* `session.open` gained an optional `projectId`, `session.update` gained one too (that is what "change this
+  chat's folder" calls), and `session.list` reports `projectId` **and** `projectRoot` per row - so a folder
+  survives a reload.
+* `SessionOpened` and `SessionUpdated` carry the folder. A chat opened on a folder is right on its **first
+  render**, with no second round trip to find out where it is.
+
+### Added — the folder is where the engine runs
+
+`Prompt` gained `project_root`, filled by `engine.start` from the session's project, and `cli.rs` starts the
+child process **in** it. A chat with a folder runs there; a chat with none runs where the daemon is, which is
+what every chat did before. A folder that has been moved or deleted since is **ignored rather than fatal**: a
+turn that refuses to start is worse than one that runs where the daemon is.
+
+`fs.search`, `git.status`, `git.diff`, `git.checkpoint`, `shell.run`, `checkpoint_create` and `rewind_apply`
+all resolve the root the same way now (`root_for`): the envelope's own `root` / `projectRoot` first, because a
+caller that names a directory means it, then **the session's folder**. That is the fix for the
+checkpoint/rewind hole above - the app knows a chat's id, the daemon knows the folder, and a tool that had to
+be told both was being asked to repeat a fact the daemon already held.
+
+### Added — `Open folder` in the window
+
+* The empty state is now spec section 7.13's **two** states: `No project` ("Open a folder to get started")
+  when the window has no folder at all, and the familiar `No chat open` once it has one. The `Open folder`
+  chip is the way out of the first, and opens the same native dialog the paperclip uses
+  (`tauri-plugin-dialog`, `directory: true`) - a real folder chooser, not a text field.
+* Opening a folder lands the person in a chat: the host's **empty** chat is re-pointed if it has one (the rule
+  `+ New chat` has followed since 0.7.5, so opening a folder leaves no orphan row behind), otherwise a chat is
+  opened **with** the folder. The tab opens and the caret goes to the prompt.
+* The prompt toolbar gained a **folder chip** beside the model selector: `Working in SDC` (the last path
+  segment) with the **full path as its tooltip**, or `No folder` for a chat that has none. It is absent when no
+  chat is open, because then there is no chat whose folder could be shown. Pressing it opens the same dialog
+  and re-points *this* chat.
+* Three palette commands: `Open folder`, `Change folder` (on the active chat) and `Close this folder`
+  (`project.remove`, then the workspace is re-read).
+
+### Changed — the app's state gained a list
+
+`AppState.projects` (`ProjectView`), folded by `withProjects` from `project.list`, and `SessionView` gained
+`projectId` / `projectRoot`. Both are **reads folded as state patches**, the same contract `session.list` has
+had since 0.6.1 - a folder is not something that *happens* to a chat the way a turn does, it is where the chat
+is. `loadWorkspace` now loads both lists, so a window that reloads knows both.
+
+### Verified
+
+* `sdcd`: 144 unit tests plus 6 lifecycle tests against the real binary, including
+  `a_folder_opened_on_a_chat_is_where_its_tools_look`: `project.add` (validate, reuse, refuse a file) →
+  `session.open {projectId}` → the `SessionOpened` payload → `session.list` rows → **`fs.search` with nothing
+  but a `sessionId`**, which finds a file in that folder. Three unit tests assert `Command::get_current_dir`:
+  the engine runs in the chat's folder, a chat with no folder sets none at all, a folder that is gone is
+  ignored. Clippy clean.
+* `app`: 58 vitest cases (11 new: the folder arrives with the chat, a rename does not clear it, it survives
+  the `session.list` replace, `project.list` is folded and replaced, `openFolderIn` re-points the empty chat /
+  opens a new one / reports a refused path / will not land on a chat that has run a turn, `closeFolder`
+  re-reads the workspace). Typecheck and lint at zero.
+* `_verify/probe-folder.mjs`: in the running window - click `Open folder`, answer the **real** Windows folder
+  dialog (`_verify/answer-folder-dialog.ps1`), then read the chip's label and tooltip, reload the window and
+  read them again.
+
+## [0.7.5] — "GUI file-picker nai", one chat per click, and a toast nobody could close
+
+*"GUI file-picker nai. aita soho aro important kisu nai jeta vs code a thake. sudu local ashe. Aita fix
+koro and bar bar new open korle onk chat open hoi and delete korle notification ashe middle a but
+automatic jai nah ba remove ar option thake nah fix koro"* — three reports, three separate faults, none of
+them about an engine.
+
+### Fixed — the paperclip promised a file and opened nothing
+
+`tauri-plugin-dialog` was a dependency, registered in `src-tauri/src/lib.rs`, and allowed by
+`capabilities/default.json` (`dialog:default`). No line of the app ever called it: the two toolbar buttons
+in the prompt box were `toast(...)` calls, so `Attach a file` and `Paste image` announced themselves and
+did nothing.
+
+`app/src/lib/picker.ts` is the picker now - `open()` with `multiple: true, directory: false` and, for the
+image button, an image filter - and what it returns becomes a reference **inside the prompt**:
+
+```
+@H:\SDC\README.md
+```
+
+That is the shape an engine can act on, and it is a fact about the protocol rather than a taste: `engine.start`
+carries the prompt and nothing else, so a path in the prompt travels to the daemon today while an attachment
+chip would be decoration until attachments travel with the turn. The `1 file` chip beside the model selector
+became the real count (`attached` was a `useState` with no setter), the caret goes back to the prompt box, and
+the chip resets when the turn is sent. A browser tab has no filesystem to point at, so the fallback opens an
+`<input type="file">` and returns names (`path === name` is how the caller can tell).
+
+The image button also stopped saying `Paste image`: it opens a picker, so it says `Pick an image`.
+
+### Fixed — `+ New chat` made a new chat every time
+
+`newChatOnHost` called `session.open` on every click, so five clicks left five chats - four of them empty
+rows to delete by hand. `emptySessionOn` (exported from `store/intents.ts`, and pure) decides first: the
+host's existing chat with **no turn in the log for it** is the chat the click lands on, preferring the tab
+the caret is already in. Only a host with nothing empty gets a new row.
+
+### Fixed — a toast could not be closed, and its 3 seconds kept being pushed back
+
+Two faults in the same stack:
+
+* the close control was rendered **only next to an action chip**, so a message with no action (`Chat
+  deleted`) could not be dismissed by hand at all - only waited out;
+* the timer effect re-armed **every** toast whenever any toast appeared or left, so in a window with any
+  traffic the oldest message's deadline moved for ever. Measured before the fix: two toasts, the older one
+  still on screen after 3.4s.
+
+Now every toast carries an ×, and the timers live in a map keyed by toast id: a toast gets one timer, a
+toast that arrives later does not touch it, and the timer that fires removes its own entry.
+
+### Added — a version you can check from inside the window
+
+The number lives in five files, and the one place a person looks at it - Settings → About - had it typed
+by hand: on this 0.7.5 build the dialog said `v0.4.4`. The three rows now come from what they describe
+(`package.json` for the window, the event log's `HostStatus` for the daemon, `protocol/types.ts` for the
+protocol), which is where the status bar's `v0.7.5 · sdcd 0.7.5` cell already read its two.
+
+With that, a bump is one command and a check is one command:
+
+```
+node _verify/bump-version.mjs 0.7.6     # the five files that carry it
+node _verify/version-report.mjs         # what every place says now; exit 1 when they disagree
+```
+
+`version-report.mjs` prints the five files, both lockfiles, the built daemon's `--version`, the window's
+`VersionInfo` and every installer under `bundle/`, so "is my install actually the version I think?" is
+answered from the tree rather than from memory; `probe-versions.mjs` answers it from the running window
+instead, out of the status bar cell and the About rows. The recipe is in `docs/RELEASE.md`, including the
+trap: `tauri build` fails with `Access is denied (os error 5)` while `sdc.exe` is still running, and the
+installer that build leaves behind is the *previous* one - which is how a fix appears not to work.
+
+Fixed in the same dialog: About's `This host` row read `Local · ` with a separator pointing at nothing.
+`session.list` replaces the host rows and the `hosts` table has no `platform` column, so the one field the
+list does not carry was being blanked - the same replace that `sdcd` already survived. `platform` survives
+it now, pinned by a reducer test.
+
+### Verified
+
+`_verify/probe-075.mjs` runs all three in the built window. The dialog is answered from outside the page,
+because it cannot be answered from inside it: Tauri freezes `window.__TAURI_INTERNALS__` (assigning to
+`invoke` silently does nothing - a wrapper was measured never to run while `sdcp_status` answered anyway),
+so `_verify/answer-dialog.ps1` finds the window with UI Automation and sends `WM_CHAR` to the file-name box
+plus `WM_COMMAND(IDOK)` to the dialog. Against the 0.7.5 build:
+
+```
+new chat: rows before 16 -> 17, 17, 17
+new chat toast: "Using the empty chat on local"
+ok   the second and third clicks changed nothing
+click: {"clicked":true,"before":"1 file"}
+dialog: dialog: Open · answered: H:\SDC\README.md
+prompt: "@H:\\SDC\\README.md " · chip: "2 files" · focused: true
+ok   the paperclip was there and was clicked
+ok   it opened the file dialog
+ok   the dialog was answered with a path
+ok   the prompt carries the picked path as a reference
+ok   the chip counted one more file ("1 file" → "2 files")
+ok   the caret went back to the prompt box
+toast after delete: {"texts":["Chat deleted"],"closes":1}
+3.2s later: []
+two toasts: 2 · 3.4s after the first: 1 · after the ×: 0
+ok   the delete toast carries a close ×
+ok   it left on its own after its hold
+ok   two toasts stack
+ok   the older toast expired without waiting for the newer one
+ok   the × closed the last one by hand
+
+0.7.5: pass
+```
+
+`_verify/probe-streaming.mjs` still passes against this build (`the stream was live for 326ms before the
+turn ended`), `_verify/probe-versions.mjs` passes against it too (`v0.7.5 · sdcd 0.7.5` in the status bar,
+`v0.7.5 / v0.7.5 / 0.1` in About, and `Local · windows · x86_64` as the host row), and the suites are green:
+`sdcd` **154 tests** with clippy clean under `-D warnings`, the window's `pnpm typecheck`, `pnpm lint` and
+**47 vitest tests** (nine new: `lib/picker.test.ts` for the path shapes, `store/intents.test.ts` for the
+empty-chat rule and the "does not ask the daemon" half of it, `store/reducer.test.ts` for the platform that
+survives `session.list`).
+
+Two things the user asked for are **not** in this build, and are named rather than half-built:
+
+* **"sudu local ashe"** — the app still has one real host (`local`) and remote hosts are a *record* of a
+  machine rather than a second daemon this window talks to. That is the SSH step, not this one.
+* the **project (working-directory) browser** — the README's own next step, and the thing a VS Code user
+  notices first: no folder is attached to a chat, so the engines run in whatever directory the daemon was
+  started in. `fs.list` exists on the daemon and has no caller in the app yet.
+
+
+## [0.7.4] — "live dakha jai nah, akbare answare disse"
+
+*"suno ak ak kore issue solve kori. akhon claude and deepseek api kaj korse. But bisoy ta holo claude
+code/cline/codex or others - a command dile jemon thinking ki korse sob kisu live dakha jai chat a,
+aitate tamon kisui hosse nah, akbare answare disse."* — **the engine streamed and the daemon
+collected.** `claude --include-partial-messages`, DeepSeek's SSE and Ollama's NDJSON were all arriving
+a token at a time; `sdcd` held every one of them until the turn was over and then handed the window a
+finished transcript.
+
+### Fixed — `Engine::start` answered with a `Vec<EngineEvent>`
+
+The contract itself was the defect: an adapter returned its whole stream, so `run_turn` could not push
+anything before the engine had finished, and `TurnStarted` was followed by nothing for minutes. It now
+takes a sink:
+
+```rust
+async fn start(&self, prompt: Prompt, sink: &EventSink);
+```
+
+`EventSink` is an `Arc` around one closure with no transport knowledge in it. `run_turn` hands in a
+channel and consumes it while the engine runs (`EventSink::channel`), which keeps the two properties
+the checkpoint rule needs — **order** (one producer, one consumer, so a `ToolCallStarted` cannot
+overtake the `CheckpointSaved` written for it) and **one place that talks to the notifier**. A `Vec` is
+still available where a whole stream in one piece is wanted (`Recorder`, `start_recording`).
+
+### Fixed — every adapter parsed a finished batch
+
+* **`cli.rs`** read stdout into a `Vec<String>`, parsed it after `child.wait()`, and only then answered.
+  Each line is now parsed and pushed the moment `next_line` returns it (`push_stream_line`, which latches
+  at the first `result`/`error`, exactly as `collect_stream` did). The "a CLI that never reached a
+  result" rule is unchanged, and now runs against a stream that has already gone out.
+* **`native_api`** read the whole HTTPS/HTTP body (`read_lines`) and then parsed it. `post_stream` now
+  reads the response head, checks the status, and drains the body line by line, pushing each frame as it
+  arrives (`push_sse_line`); a body that closes without `[DONE]` still ends the turn with `Done` rather
+  than leaving it `running` for ever. The blocking call runs under `spawn_blocking`, so it no longer
+  parks a runtime worker for the length of an answer. `parse_sse` stays as the collected form and is a
+  fold over the same `parse_sse_line`.
+* **`ollama`** read the whole body into a `String` and split it. It now streams over its own socket
+  (`drain_chat`, `push_chat_line`), and its "not running" sentence belongs to the connect failure rather
+  than to every failure.
+* **The chunked framing is decoded** (`engines/body.rs`). A stream of unknown length is sent
+  `Transfer-Encoding: chunked`, and reading such a body as raw lines gives size lines where frames
+  should be — and a chunk boundary in the middle of a JSON object, which is a turn that stops
+  mid-answer. Read without the framing decoded:
+
+  ```
+  1a            <- a chunk size, where a frame should be
+  {"message":{"content":"He      <- the object, cut in half
+  ```
+
+### Fixed — the provider's own reasoning reached no one
+
+`native_api` read `delta/thinking` (Anthropic) and nothing else, so a DeepSeek reasoner's
+`reasoning_content` was dropped on the floor: the model thought and the window showed a model that does
+not think. `parse_sse_line` now reads `/delta/thinking`, `/choices/0/delta/reasoning_content`,
+`/delta/reasoning_content` and `/choices/0/delta/reasoning`, and they all become the same
+`EngineEvent::Thinking` the thinking block of spec section 7.5 draws. An `error` frame *inside* a stream
+(`{"type":"error","error":{…}}`) is now a failure with the provider's own sentence instead of a silence.
+
+### Added — the window follows the stream (spec section 9.7)
+
+`Pane` scrolls with the growth of the live turn while the reader is at the bottom, and stops the moment
+they scroll up (24px of slack). The effect's dependency is the live turn's shape — its answer length,
+its thinking length, its tool count — because `toTurns` builds a new array on every render.
+
+### Verified
+
+`sdcd`: **154 tests** (141 unit, 5 lifecycle, 6 VCR, 2 streaming) with clippy clean under
+`-D warnings`, and
+the new `tests/streaming.rs` measures the property over a real chunked socket: the test's server writes
+one token, waits until that token is *in the sink*, and only then writes the rest — a collector cannot
+pass it, because it would be waiting for the end of the body that only its own read can end.
+`tests/vcr.rs` holds the live path and the collected path to the same events over all thirteen fixtures,
+so a line cannot mean one thing on arrival and another in a batch.
+
+`_verify/probe-streaming.mjs` is the end-to-end check. Against the real `claude_code` CLI, through the
+real daemon, over SDCP:
+
+```
++    197ms  -> engine.start answered {"turnId":"turn-1"}
++    198ms  TurnStarted
++   1912ms  TurnDelta        1 2 3 4
++   2409ms  TurnDelta         5 6 7 8
++   2410ms  TurnDelta         9 10 11 12
++   2410ms  TurnDelta         13 14 15 16
++   2410ms  TurnDelta         17 18 19 20
++   2507ms  TurnCompleted    Done
+
+ok   the turn reached TurnCompleted
+ok   engine.start answered first (+197ms)
+ok   5 TurnDelta events arrived
+ok   the first delta arrived at +1912ms
+ok   the first delta beat TurnCompleted by 595ms
+ok   the stream was live for 595ms before the turn ended
+ok   the deltas were spread over 498ms, not one lump
+ok   no delta was invented before the call answered
+
+streaming: pass
+```
+
+The number that matters is `the stream was live for 595ms` — zero, before this change, for every
+engine: a collected stream hands every delta over in the same tick as `TurnCompleted`, so that
+difference was 0ms on every run.
+
+The window: `pnpm typecheck`, `pnpm lint`, **38 vitest tests**, unchanged.
+
+
 ## [0.7.3] — the answer had no place to go
 
 *"ami to oke sms korasi… kono response pelam nah, sudu done lakha aslo"* — **the engine answered and the

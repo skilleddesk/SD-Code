@@ -87,7 +87,7 @@ mod tests {
         let store = Store::in_memory().unwrap();
 
         store.upsert_host("local", "Local", "local", None, "connected", None).unwrap();
-        store.insert_session("s1", "local", "Add rate limiting", "add rate limiting to the login route").unwrap();
+        store.insert_session("s1", "local", "Add rate limiting", "add rate limiting to the login route", None).unwrap();
         store.start_turn("turn-1", "s1", 1, "claude_code", "sonnet", "Balanced", "add rate limiting").unwrap();
         store.finish_turn("turn-1", "Added the limiter to the login route.", "Done", "done").unwrap();
 

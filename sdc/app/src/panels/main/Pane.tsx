@@ -1,4 +1,5 @@
 import { MessageSquare } from 'lucide-react';
+import { useEffect, useRef } from 'react';
 
 import { strings } from '../../strings';
 import type { Host, Session } from '../../store/sessions';
@@ -39,6 +40,48 @@ export function Pane({ session, host, showHeader }: PaneProps) {
   const streamTurns = toTurns(turns, session.id);
   const collapsed = collapsedSummary(turns, session.id);
 
+  /*
+   * Spec section 9.7's first two rows: `user at the bottom → auto-scroll follow`, `user above → the
+   * scroll stops`. It matters now in a way it could not before 0.7.4: an engine's answer arrives a
+   * token at a time, and a stream that grows below the fold is a stream nobody reads. When the reader
+   * has scrolled up - to re-read an earlier turn, or to open a tool card - the view is theirs and this
+   * effect leaves it alone until they come back to the bottom.
+   *
+   * `pinned` is a ref because it is never drawn: it is read once, when an event lands. The effect's
+   * dependency is the live turn's *shape* rather than the array, because `toTurns` builds a new array
+   * on every render and the array itself would scroll on a hover.
+   */
+  const scroll = useRef<HTMLDivElement>(null);
+  const pinned = useRef(true);
+  const live = streamTurns[streamTurns.length - 1];
+  const grown = [
+    streamTurns.length,
+    live?.answer?.text.length ?? 0,
+    live?.thinking?.text.length ?? 0,
+    live?.tools.length ?? 0,
+  ].join(':');
+
+  useEffect(() => {
+    const element = scroll.current;
+
+    if (element === null || !pinned.current) {
+      return;
+    }
+
+    element.scrollTop = element.scrollHeight;
+  }, [grown]);
+
+  /** 24px of slack: a trackpad's last nudge is not "the reader scrolled away". */
+  const onScroll = () => {
+    const element = scroll.current;
+
+    if (element === null) {
+      return;
+    }
+
+    pinned.current = element.scrollHeight - element.scrollTop - element.clientHeight <= 24;
+  };
+
   return (
     <div
       className={
@@ -61,7 +104,11 @@ export function Pane({ session, host, showHeader }: PaneProps) {
         </div>
       ) : null}
 
-      <div className="pane-scroll flex-1 overflow-y-auto px-[28px] pb-[16px] pt-[20px] max-600:px-[16px] max-600:pt-[14px]">
+      <div
+        className="pane-scroll flex-1 overflow-y-auto px-[28px] pb-[16px] pt-[20px] max-600:px-[16px] max-600:pt-[14px]"
+        ref={scroll}
+        onScroll={onScroll}
+      >
         <div className="pane-inner mx-auto max-w-[780px]">
           {streamTurns.length === 0 ? (
             /* A fresh session, and the app says so instead of drawing someone else's conversation. */

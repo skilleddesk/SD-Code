@@ -1,4 +1,4 @@
-import type { HostRecord, ProviderRecord, RegistryModel } from '../../../protocol/types';
+import type { HostRecord, ProjectRecord, ProviderRecord, RegistryModel } from '../../../protocol/types';
 import type {
   AppEvent,
   AppState,
@@ -7,6 +7,7 @@ import type {
   DoctorCheckView,
   HostView,
   PermissionView,
+  ProjectView,
   ProviderView,
   SessionView,
   ToastRecord,
@@ -45,6 +46,8 @@ export const EMPTY_STATE: AppState = {
   seq: 0,
   lastTs: '',
   hosts: [],
+  /** The folders chats can work in (0.7.6), filled by `project.list` - see `withProjects`. */
+  projects: [],
   providers: [],
   registry: [],
   toasts: [],
@@ -189,6 +192,10 @@ function reduce(state: AppState, entry: AppEvent): AppState {
         state: 'idle',
         minutesAgo: 0,
         unread: 0,
+        /* `Open folder` creates the chat *with* its folder, so the window knows which directory it is in
+           from the first render rather than after a second round trip (0.7.6). */
+        projectId: event.projectId ?? null,
+        projectRoot: event.projectRoot ?? null,
       };
 
       return {
@@ -240,6 +247,10 @@ function reduce(state: AppState, entry: AppEvent): AppState {
                 minutesAgo: event.minutesAgo ?? session.minutesAgo,
                 unread: event.unread ?? session.unread,
                 attention,
+                /* `Open folder` on an existing chat (0.7.6): the folder the turn will run in. An event
+                   that does not mention a project leaves what the session already had alone. */
+                projectId: event.projectId ?? session.projectId,
+                projectRoot: event.projectRoot ?? session.projectRoot,
               };
             }),
           };
@@ -766,8 +777,10 @@ export function withProviders(state: AppState, providers: readonly ProviderRecor
  * *happens* (`HostStatus`, `HostRemoved`, `SessionOpened`); what is read is read.
  *
  * Replacing rather than merging is the honest direction: the daemon's rows are the authority, so a
- * host the daemon does not have is a host this window must stop drawing. `sdcd` survives because the
- * list does not carry it - `host.status` is what reported it, and it is still true.
+ * host the daemon does not have is a host this window must stop drawing. Two fields survive a replace,
+ * because the list does not carry them: `sdcd` (`host.status` reported it, and it is still true) and
+ * `platform` (the same - the `hosts` table has no such column, so a replace was blanking it and About's
+ * `This host` row read `Local · ` with a separator pointing at nothing).
  */
 export function withWorkspace(state: AppState, hosts: readonly HostRecord[]): AppState {
   return {
@@ -778,7 +791,7 @@ export function withWorkspace(state: AppState, hosts: readonly HostRecord[]): Ap
       type: host.hostType,
       status: host.status,
       sdcd: state.hosts.find((known) => known.id === host.hostId)?.sdcd ?? '',
-      platform: host.platform ?? '',
+      platform: host.platform ?? state.hosts.find((known) => known.id === host.hostId)?.platform ?? '',
       sessions: host.sessions.map((session) => ({
         id: session.sessionId,
         title: session.title,
@@ -786,11 +799,41 @@ export function withWorkspace(state: AppState, hosts: readonly HostRecord[]): Ap
         state: session.state,
         minutesAgo: session.minutesAgo,
         unread: session.unread,
+        /* The folder the chat works in (0.7.6): the engines run there, and the prompt area says so. */
+        projectId: session.projectId ?? null,
+        projectRoot: session.projectRoot ?? null,
         ...(session.attention === null || session.attention === undefined
           ? {}
           : { attention: session.attention }),
       })),
     })),
+  };
+}
+
+/**
+ * Records `project.list` - the folders this host has opened (0.7.6).
+ *
+ * A state patch rather than a stream of events, for the same reason `withWorkspace` is one: the list is
+ * a *read's* result. The alternative was a new `ProjectAdded` event in the catalogue, and a folder is not
+ * something that *happens* to a chat the way a turn does - it is where the chat is. A window that reloads
+ * asks again, and a second window sees the change on its next ask, which is the same contract
+ * `session.list` has had since 0.6.1.
+ *
+ * Replacing rather than merging, because the daemon's rows are the authority: a folder the daemon does
+ * not have is a folder this window must stop offering.
+ */
+export function withProjects(state: AppState, projects: readonly ProjectRecord[]): AppState {
+  return {
+    ...state,
+    projects: projects.map(
+      (project): ProjectView => ({
+        id: project.projectId,
+        hostId: project.hostId,
+        root: project.root,
+        name: project.name,
+        chats: project.chats,
+      }),
+    ),
   };
 }
 

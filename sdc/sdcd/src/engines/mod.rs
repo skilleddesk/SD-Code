@@ -16,6 +16,7 @@
 //! objects on stdout, a child to kill. Their differences - the program, the structured-stream flag
 //! and which JSON field carries the text - are constructor arguments.
 
+pub mod body;
 pub mod claude_code;
 pub mod cli;
 pub mod codex;
@@ -24,10 +25,11 @@ pub mod native_api;
 pub mod ollama;
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use serde_json::Value;
+use tokio::sync::mpsc::UnboundedReceiver;
 
 /// What a turn asks an engine to do.
 #[derive(Debug, Clone)]
@@ -55,6 +57,15 @@ pub struct Prompt {
     pub provider: Option<String>,
     /// The conversation so far, oldest first - the Session Bridge's payload (spec section 16.5).
     pub history: Vec<String>,
+    /// The folder this chat works in, or `None` for a chat that has no project (0.7.6).
+    ///
+    /// `cli.rs` starts the child process **in** this directory, which is the difference between an engine
+    /// that edits your project and one that edits whatever folder the daemon happened to be started in.
+    /// The two HTTP adapters (`native_api`, `ollama`) have no working directory of their own - a provider
+    /// answers over the network - so for them the field travels and is unused. It is on the `Prompt`
+    /// rather than in the CLI adapters because it is a fact about the session, like the model: the engine
+    /// cannot guess it, and guessing it wrong is a turn that edits the wrong files.
+    pub project_root: Option<String>,
 }
 
 /// One item of an engine's stream. The checkpoint is *not* here: the daemon writes that itself,
@@ -67,7 +78,108 @@ pub enum EngineEvent {
     ToolOutput { call_id: String, level: String, text: String },
     ToolCompleted { call_id: String, status: String, meta: String },
     Failed(String),
-    Done { summary: String, meta: String, pass: Option<bool> },
+    Done {
+        summary: String,
+        meta: String,
+        pass: Option<bool>,
+    },
+}
+
+impl EngineEvent {
+    /// True for the two events that end a turn. `cli.rs` stops emitting after one of them, and the
+    /// daemon's turn loop does not care - it just forwards.
+    pub fn is_terminal(&self) -> bool {
+        matches!(self, Self::Done { .. } | Self::Failed(_))
+    }
+}
+
+/// Where an adapter's events go **while the turn is still running**.
+///
+/// This type is the answer to the report *"claude code/cline e jemon thinking ki korse sob kisu live
+/// dakha jai, aitare tamon kisu hosse nah - akbare answare disse"*. `Engine::start` used to answer with
+/// a `Vec<EngineEvent>`, i.e. it returned only once the engine had finished, so the daemon forwarded
+/// a whole turn at the end: the transcript appeared in one piece and the window looked like it had
+/// done nothing for the length of the run. The engine had streamed perfectly well - the daemon was
+/// holding a closed hand.
+///
+/// A sink is cheap to clone (an `Arc` around one closure) and has no transport knowledge in it: the
+/// daemon hands in a channel, a test hands in a `Recorder`, and neither the adapters nor their
+/// parsers change shape because of it.
+#[derive(Clone)]
+pub struct EventSink {
+    emit: Arc<dyn Fn(EngineEvent) + Send + Sync>,
+}
+
+impl EventSink {
+    /// A sink over one closure.
+    pub fn new(emit: impl Fn(EngineEvent) + Send + Sync + 'static) -> Self {
+        Self { emit: Arc::new(emit) }
+    }
+
+    /// A sink nobody listens to - for a probe, or for a caller that wants only the side effect.
+    pub fn discarding() -> Self {
+        Self::new(|_| {})
+    }
+
+    /// The pair a turn uses: the engine writes, the daemon reads.
+    ///
+    /// `recv` answers `None` once the engine's future has ended and the sink with it, which is what
+    /// ends the daemon's loop - there is no separate "the turn is over" signal to lose.
+    pub fn channel() -> (Self, UnboundedReceiver<EngineEvent>) {
+        let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
+
+        (
+            Self::new(move |event| {
+                /* A receive error means the daemon's side is gone (the window closed mid-turn). The
+                   turn is already over for the reader; the engine keeps its own course. */
+                let _ = sender.send(event);
+            }),
+            receiver,
+        )
+    }
+
+    /// One event, now.
+    pub fn send(&self, event: EngineEvent) {
+        (self.emit)(event);
+    }
+
+    /// A whole parser answer - `parse_stream_line` returns zero or more events for one line.
+    pub fn extend(&self, events: impl IntoIterator<Item = EngineEvent>) {
+        for event in events {
+            self.send(event);
+        }
+    }
+}
+
+/// A sink backed by a `Vec`, for tests and fixtures: `Recorder::new().sink()` writes, `events()`
+/// reads. The recording counterpart of `sdcp::notifications::RecordingNotifier`.
+#[derive(Clone, Default)]
+pub struct Recorder {
+    events: Arc<Mutex<Vec<EngineEvent>>>,
+}
+
+impl Recorder {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn sink(&self) -> EventSink {
+        let events = self.events.clone();
+
+        EventSink::new(move |event| {
+            if let Ok(mut held) = events.lock() {
+                held.push(event);
+            }
+        })
+    }
+
+    /// Everything the sink was given, in arrival order.
+    pub fn events(&self) -> Vec<EngineEvent> {
+        self.events
+            .lock()
+            .map(|events| events.clone())
+            .unwrap_or_default()
+    }
 }
 
 /// How an engine is doing: what `engine.status` reports and what the amber "stuck" state of spec
@@ -97,15 +209,34 @@ impl EngineStatus {
     }
 }
 
-/// The contract. `start` returns the whole stream as a vector; the daemon's turn task forwards each
-/// item as a notification, which keeps every adapter free of transport knowledge.
+/// The contract. `start` **pushes each item to `sink` as it arrives** - the daemon's turn task
+/// forwards every one of them as a notification while the engine is still talking, which is what
+/// makes the app's turn stream live and keeps every adapter free of transport knowledge.
+///
+/// An adapter that answers with a `Vec` it built along the way would still compile, and would be the
+/// bug this signature exists to prevent: the answer, the thinking and the tool calls of a two-minute
+/// turn would all land in the window at the end of it.
 #[async_trait]
 pub trait Engine: Send + Sync {
     /// `claude_code`, `codex`, `gemini`, `native_api`, `ollama` - the id in `engine.start`.
     fn id(&self) -> &'static str;
-    async fn start(&self, prompt: Prompt) -> Vec<EngineEvent>;
+
+    /// Runs one turn to its end, emitting as it goes. The turn is over when this future resolves;
+    /// a stream that ends without `Done` or `Failed` is the adapter's job to explain.
+    async fn start(&self, prompt: Prompt, sink: &EventSink);
+
     async fn cancel(&self, turn_id: &str) -> bool;
     fn status(&self, turn_id: &str) -> EngineStatus;
+}
+
+/// Runs one turn and collects what it emitted - the shape `start` used to have, for a test or a
+/// fixture that wants the whole stream in one piece.
+pub async fn start_recording(engine: &dyn Engine, prompt: Prompt) -> Vec<EngineEvent> {
+    let recorder = Recorder::new();
+
+    engine.start(prompt, &recorder.sink()).await;
+
+    recorder.events()
 }
 
 /// The registry: `engine.start` looks an engine up here.
@@ -200,11 +331,15 @@ pub fn parse_stream_line(line: &str) -> Vec<EngineEvent> {
         "error" => vec![EngineEvent::Failed(error_message(&value))],
 
         /* The prototype's own vocabulary. Kept because the fixtures of spec section 11.6 are written
-           in it, and harmless because a shape a CLI does not send is never reached. */
-        "text" | "assistant_text" | "content_block_delta" => {
-            text_of(&value).map(EngineEvent::Delta).into_iter().collect()
-        }
-        "thinking" | "reasoning" => text_of(&value).map(EngineEvent::Thinking).into_iter().collect(),
+        in it, and harmless because a shape a CLI does not send is never reached. */
+        "text" | "assistant_text" | "content_block_delta" => text_of(&value)
+            .map(EngineEvent::Delta)
+            .into_iter()
+            .collect(),
+        "thinking" | "reasoning" => text_of(&value)
+            .map(EngineEvent::Thinking)
+            .into_iter()
+            .collect(),
         "tool_use" | "tool_call" => vec![EngineEvent::ToolStarted {
             call_id: string_of(&value, "id", "call"),
             tool: string_of(&value, "tool", "run").to_lowercase(),
@@ -436,16 +571,27 @@ fn target_of(input: &Value) -> String {
     String::new()
 }
 
+/// The sentence a stream that stopped talking ends with, when the CLI itself said nothing.
+///
+/// `collect_stream` appends it and `explain_failure` replaces it with the CLI's own words when there
+/// are any - one sentence, one constant, so the buffered and the streaming path cannot drift.
+pub const GENERIC_ENDING: &str = "the engine's stream ended without a result";
+
 /// Turns one adapter's raw stdout lines into events, ending the stream at `result`/`error`.
 ///
 /// Every adapter's `start` is this function plus a `Command`; keeping the loop here means the
 /// "what ends a turn" rule is written once.
+///
+/// The live path does not go through here any more - `CliAdapter::run` parses each line as it arrives
+/// and pushes it, because a `Vec` is only complete once the turn is over. This stays because the rule
+/// it states is the fixture contract of spec section 11.6, and because it is the shape a replay of a
+/// finished stream wants.
 pub fn collect_stream<I: IntoIterator<Item = String>>(lines: I) -> Vec<EngineEvent> {
     let mut events = Vec::new();
 
     for line in lines {
         for event in parse_stream_line(&line) {
-            let terminal = matches!(event, EngineEvent::Done { .. } | EngineEvent::Failed(_));
+            let terminal = event.is_terminal();
 
             events.push(event);
 
@@ -456,9 +602,12 @@ pub fn collect_stream<I: IntoIterator<Item = String>>(lines: I) -> Vec<EngineEve
     }
 
     /* A stream that ended without a `result` line is a turn that stopped talking. Saying so is the
-       honest thing; silence would look like success (principle P4). */
-    if !matches!(events.last(), Some(EngineEvent::Done { .. } | EngineEvent::Failed(_))) {
-        events.push(EngineEvent::Failed("the engine's stream ended without a result".to_string()));
+    honest thing; silence would look like success (principle P4). */
+    if !matches!(
+        events.last(),
+        Some(EngineEvent::Done { .. } | EngineEvent::Failed(_))
+    ) {
+        events.push(EngineEvent::Failed(GENERIC_ENDING.to_string()));
     }
 
     events

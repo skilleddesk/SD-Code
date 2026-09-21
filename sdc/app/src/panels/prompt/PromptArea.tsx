@@ -8,9 +8,11 @@ import {
 import { useRef, useState, type KeyboardEvent } from 'react';
 
 import { strings } from '../../strings';
+import { pickFiles, type PickKind, type PickedFile } from '../../lib/picker';
 import { sendPrompt } from '../../store/intents';
 import { toast } from '../../store/toast';
 import { IconButton } from '../ui/IconButton';
+import { FolderChip } from './FolderChip';
 import { ModelSelector } from './ModelSelector';
 import { QueuedChips } from './QueuedChips';
 
@@ -33,6 +35,10 @@ import { QueuedChips } from './QueuedChips';
  * list that do not exist. Two faint rows of decoration in the place a person types is noise, and the
  * instruction was to take it out of every box. What is left is what works.
  *
+ * **The two toolbar buttons became real in 0.7.5.** The report was *"GUI file-picker nai"*, and it was
+ * exact: the paperclip and the image button called `toast(...)` and opened nothing. They now open the
+ * native dialog (`lib/picker.ts`) and put what was picked into the prompt as `@<path>`.
+ *
  * The textarea grows with its content up to 200px and then scrolls. That is done by hand
  * (`height: auto`, then `scrollHeight`) rather than with a dependency: `field-sizing: content` would
  * be the modern answer, but WebView2 and WKWebView do not both have it yet.
@@ -52,13 +58,47 @@ export function PromptArea() {
 
   /*
    * What this prompt will carry besides the text - and it starts at nothing, because that is the
-   * truth for a window that has attached nothing. `attached` is filled by a picker that does not
-   * exist yet (the `@` button and the paperclip toast instead of pretending), and `tokens` is the
-   * context the daemon reports for the last turn of this chat, which a fresh install has not run.
-   * Both chips are therefore absent on first run: no decoration, no invented `12.4k`.
+   * truth for a window that has attached nothing. `attached` is filled by the paperclip and the image
+   * button (`lib/picker.ts`, a real dialog), and `tokens` is the context the daemon reports for the
+   * last turn of this chat, which a fresh window has not run. Both chips are therefore absent on first
+   * run: no decoration, no invented `12.4k`.
    */
-  const [attached] = useState<readonly string[]>([]);
+  const [attached, setAttached] = useState<readonly PickedFile[]>([]);
   const context = { files: attached.length, tokens: null as number | null };
+
+  /**
+   * The two toolbar buttons, which used to be toasts (`Attach a file`, `Paste image`) and are now the
+   * dialog itself (`lib/picker.ts`).
+   *
+   * A picked file goes into the prompt as `@<path>`, not into a chip of its own, and that is a fact
+   * about the protocol rather than a preference: `engine.start` carries the prompt and nothing else, so
+   * a path *inside the prompt* is a reference the engine can open today, while an attachment chip would
+   * be decoration until attachments travel with the turn. The `1 file` chip beside the model selector
+   * counts what was picked, so the button's work is visible even before Send.
+   */
+  const attach = (kind: PickKind): void => {
+    void pickFiles(kind)
+      .then((picked) => {
+        const textarea = textareaRef.current;
+
+        if (picked.length === 0 || textarea === null) {
+          return;
+        }
+
+        const references = picked.map((file) => `@${file.path}`).join(' ');
+        const present = textarea.value.trimEnd();
+
+        textarea.value = present === '' ? `${references} ` : `${present} ${references} `;
+        textarea.focus();
+        grow();
+        setAttached((current) => [...current, ...picked]);
+      })
+      .catch((error: unknown) => {
+        /* A dialog that cannot open is a real failure (a missing capability, a broken plugin) and must
+           not look like a user who changed their mind. */
+        toast(error instanceof Error ? error.message : strings.prompt.pickFailed);
+      });
+  };
 
   /** Grow the box to fit its content, up to the 200px ceiling the spec sets. */
   const grow = (): void => {
@@ -94,6 +134,9 @@ export function PromptArea() {
 
     textarea.value = '';
     textarea.style.height = 'auto';
+    /* The picked paths travelled *inside* `prompt`, so the count is about the next turn and starts
+       again at nothing. */
+    setAttached([]);
 
     void sendPrompt(prompt).then((turnId) => {
       if (turnId === null) {
@@ -123,6 +166,9 @@ export function PromptArea() {
       <div className="prompt-inner mx-auto max-w-[780px]">
         <div className="prompt-toolbar mb-[8px] flex flex-wrap items-center gap-[6px]">
           <ModelSelector />
+
+          {/* Which folder this chat works in (0.7.6) - and the way to change it. */}
+          <FolderChip />
 
           {/*
             The two context chips, and the reason they are conditional.
@@ -166,13 +212,13 @@ export function PromptArea() {
                 icon={Paperclip}
                 label={strings.prompt.toolbar.attach}
                 iconSize={14}
-                onClick={() => toast(strings.prompt.toolbar.attach)}
+                onClick={() => attach('file')}
               />
               <IconButton
                 icon={ImageIcon}
                 label={strings.prompt.toolbar.image}
                 iconSize={14}
-                onClick={() => toast(strings.prompt.toolbar.image)}
+                onClick={() => attach('image')}
               />
             </div>
 

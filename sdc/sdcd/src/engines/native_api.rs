@@ -4,14 +4,21 @@
 //!
 //! 1. **`build_request`** turns a turn into an HTTP request: URL, headers (the key comes from the
 //!    keychain, never from disk) and JSON body. Pure, so a test can assert it.
-//! 2. **`parse_sse`** turns a Server-Sent-Events stream into `EngineEvent`s. Pure, so the VCR
-//!    fixtures of spec section 11.6 can hold both dialects to one contract.
-//! 3. **`post_stream`** moves the bytes: `https://` through `ureq` (rustls + webpki roots), `http://`
-//!    through a socket this file opens itself, which is enough for a local OpenAI-compatible endpoint
-//!    (LM Studio, vLLM, llama.cpp). TLS used to be absent, and the adapter said so - "a TLS client is
-//!    not linked in this build" - which was honest and also the whole problem: an API key could not
-//!    reach `api.anthropic.com` at all. A provider that rejects a key now reports the provider's own
-//!    sentence (`invalid x-api-key (401)`) instead of a code with nothing behind it.
+//! 2. **`parse_sse`** turns a Server-Sent-Events stream into `EngineEvent`s - one line at a time
+//!    (`parse_sse_line`), so the live path and the VCR fixtures of spec section 11.6 go through the
+//!    same rule. Pure, so the fixtures can hold both dialects to one contract.
+//! 3. **`post_stream`** moves the bytes and pushes what they carried **as they arrive**:
+//!    `https://` through `ureq` (rustls + webpki roots), `http://` through a socket this file opens
+//!    itself, which is enough for a local OpenAI-compatible endpoint (LM Studio, vLLM, llama.cpp) and
+//!    is the path the streaming test in `tests/streaming.rs` measures. TLS used to be absent, and the
+//!    adapter said so - "a TLS client is not linked in this build" - which was honest and also the
+//!    whole problem: an API key could not reach `api.anthropic.com` at all. A provider that rejects a
+//!    key now reports the provider's own sentence (`invalid x-api-key (401)`) instead of a code with
+//!    nothing behind it.
+//!
+//! Until 0.7.4 this adapter read the whole body and *then* parsed it, so a DeepSeek or Anthropic answer
+//! reached the window in one piece the moment the stream ended (*"akbare answare disse"*). The
+//! provider was streaming perfectly well; this file was collecting it.
 
 use std::io::{Read, Write};
 use std::net::TcpStream;
@@ -19,7 +26,8 @@ use std::net::TcpStream;
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
-use crate::engines::{Engine, EngineEvent, EngineStatus, Prompt};
+use crate::engines::body::{body_lines, read_head};
+use crate::engines::{Engine, EngineEvent, EngineStatus, EventSink, Prompt};
 
 /// Which provider a model id belongs to, and where its endpoint is.
 ///
@@ -93,7 +101,12 @@ pub fn endpoint_for(model: &str, provider: Option<&str>) -> Endpoint {
             continue;
         }
 
-        let named = |wanted: &str| block.models.iter().any(|entry| entry["id"].as_str() == Some(wanted));
+        let named = |wanted: &str| {
+            block
+                .models
+                .iter()
+                .any(|entry| entry["id"].as_str() == Some(wanted))
+        };
         let is_this_provider = block.id == head || block.id.trim_end_matches("-api") == head;
 
         if !(named(name) || (is_this_provider && named(model))) {
@@ -196,53 +209,115 @@ pub fn build_request(
 
 /// Parses an SSE stream. Each `data:` line is one JSON object; `data: [DONE]` ends it. A comment or
 /// `event:` line is skipped, because both providers send them and neither is an event.
+///
+/// This is the *collected* form, kept for a fixture or a replay of a finished stream. The live path
+/// pushes each line as it arrives (`push_sse_line`), and the two share `parse_sse_line`, which is
+/// what keeps "what a line means" in one place.
 pub fn parse_sse(lines: &[String]) -> Vec<EngineEvent> {
     let mut events = Vec::new();
 
     for line in lines {
-        let Some(payload) = line.strip_prefix("data:") else {
-            continue;
-        };
+        let parsed = parse_sse_line(line);
+        let terminal = parsed.iter().any(EngineEvent::is_terminal);
 
-        let payload = payload.trim();
+        events.extend(parsed);
 
-        if payload.is_empty() {
-            continue;
-        }
-
-        if payload == "[DONE]" {
-            events.push(EngineEvent::Done {
-                summary: "Done".to_string(),
-                meta: String::new(),
-                pass: None,
-            });
+        if terminal {
             break;
-        }
-
-        let value: Value = match serde_json::from_str(payload) {
-            Ok(value) => value,
-            Err(_) => continue,
-        };
-
-        if let Some(delta) = value.pointer("/delta/text").and_then(Value::as_str) {
-            events.push(EngineEvent::Delta(delta.to_string()));
-            continue;
-        }
-
-        if let Some(choice) = value.pointer("/choices/0/delta/content").and_then(Value::as_str) {
-            events.push(EngineEvent::Delta(choice.to_string()));
-            continue;
-        }
-
-        if let Some(reasoning) = value.pointer("/delta/thinking").and_then(Value::as_str) {
-            events.push(EngineEvent::Thinking(reasoning.to_string()));
         }
     }
 
     events
 }
 
-/// Posts the request and returns the response's body lines.
+/// One `data:` line, as events. Pure: no socket, no state, which is what lets a fixture hold the
+/// contract for both dialects.
+///
+/// Four things a provider puts in a stream, and each one has a reason to be here:
+///
+/// * **text**, at `/delta/text` (Anthropic's `messages`) or `/choices/0/delta/content` (every
+///   `chat/completions` provider - OpenAI, DeepSeek, Groq, OpenRouter, LM Studio);
+/// * **reasoning**, which is the *thinking* block of spec section 7.5. DeepSeek's reasoner streams it
+///   at `/choices/0/delta/reasoning_content`, Anthropic at `/delta/thinking` (`thinking_delta`), and
+///   some OpenAI-compatible servers at `/choices/0/delta/reasoning` - all three are read, because a
+///   provider whose reasoning is dropped looks like a model that does not think;
+/// * **`[DONE]`**, the end of the turn for every dialect;
+/// * **an error**, which both providers can send mid-stream (`{"type":"error","error":{…}}`). It used
+///   to be skipped, so a turn that the provider aborted ended as a silence rather than as its own
+///   sentence.
+pub fn parse_sse_line(line: &str) -> Vec<EngineEvent> {
+    let Some(payload) = line.strip_prefix("data:") else {
+        return Vec::new();
+    };
+
+    let payload = payload.trim();
+
+    if payload.is_empty() {
+        return Vec::new();
+    }
+
+    if payload == "[DONE]" {
+        return vec![EngineEvent::Done {
+            summary: "Done".to_string(),
+            meta: String::new(),
+            pass: None,
+        }];
+    }
+
+    let Ok(value) = serde_json::from_str::<Value>(payload) else {
+        return Vec::new();
+    };
+
+    if let Some(message) = value.pointer("/error/message").and_then(Value::as_str) {
+        return vec![EngineEvent::Failed(message.to_string())];
+    }
+
+    if let Some(delta) = value.pointer("/delta/text").and_then(Value::as_str) {
+        return vec![EngineEvent::Delta(delta.to_string())];
+    }
+
+    if let Some(choice) = value
+        .pointer("/choices/0/delta/content")
+        .and_then(Value::as_str)
+    {
+        return vec![EngineEvent::Delta(choice.to_string())];
+    }
+
+    for pointer in [
+        "/delta/thinking",
+        "/choices/0/delta/reasoning_content",
+        "/delta/reasoning_content",
+        "/choices/0/delta/reasoning",
+    ] {
+        if let Some(reasoning) = value.pointer(pointer).and_then(Value::as_str) {
+            return vec![EngineEvent::Thinking(reasoning.to_string())];
+        }
+    }
+
+    Vec::new()
+}
+
+/// One line of a streamed body, on its way to the window: parse it, push what it carried, and latch
+/// when it ended the turn.
+///
+/// The SSE counterpart of `cli::push_stream_line`, and a function for the same reason: the live path
+/// and `parse_sse` have to agree, and `tests/vcr.rs` holds them to it over every fixture.
+pub fn push_sse_line(line: &str, ended: &mut bool, sink: &EventSink) {
+    if *ended {
+        return;
+    }
+
+    for event in parse_sse_line(line) {
+        *ended = event.is_terminal();
+        sink.send(event);
+
+        if *ended {
+            break;
+        }
+    }
+}
+
+/// Posts the request and **pushes the events of the response as the bytes arrive**.
 ///
 /// Two transports, one function, and the split is deliberate:
 ///
@@ -253,18 +328,28 @@ pub fn parse_sse(lines: &[String]) -> Vec<EngineEvent> {
 ///                build" - an honest sentence, and a wall between the user and the feature the
 ///                sentence was about.
 ///   `http://`    the loopback path, kept because it is what LM Studio, vLLM and llama.cpp speak, and
-///                because it is the one transport a test can exercise without a network.
+///                because it is the one transport a test can exercise without a network
+///                (`tests/streaming.rs` measures exactly this call with a chunked answer).
 ///
-/// Blocking, like the rest of this adapter: the daemon's engine calls run on a multi-threaded
-/// runtime, and a turn is one long-lived call either way.
-pub fn post_stream(url: &str, headers: &[(String, String)], body: &str) -> Result<Vec<String>, String> {
+/// Blocking, like the rest of this adapter: `NativeApi::start` hands it to `spawn_blocking`, so the
+/// waiting happens on the blocking pool rather than on a runtime worker - and the *streaming* comes
+/// from the sink, not from the return value.
+///
+/// An `Err` here is a turn that never started (a refused socket, a rejected key, a URL nobody speaks).
+/// A failure that arrives *inside* the stream goes to the sink like any other event.
+pub fn post_stream(
+    url: &str,
+    headers: &[(String, String)],
+    body: &str,
+    sink: &EventSink,
+) -> Result<(), String> {
     if url.starts_with("https://") {
-        return post_https(url, headers, body);
+        return post_https(url, headers, body, sink);
     }
 
-    let rest = url.strip_prefix("http://").ok_or_else(|| {
-        format!("{url}: only http:// and https:// endpoints are supported")
-    })?;
+    let rest = url
+        .strip_prefix("http://")
+        .ok_or_else(|| format!("{url}: only http:// and https:// endpoints are supported"))?;
     let (authority, path) = match rest.split_once('/') {
         Some((authority, path)) => (authority, format!("/{path}")),
         None => (rest, "/".to_string()),
@@ -286,13 +371,66 @@ pub fn post_stream(url: &str, headers: &[(String, String)], body: &str) -> Resul
 
     socket.write_all(request.as_bytes()).map_err(|error| error.to_string())?;
 
-    let mut response = String::new();
+    /* The head is read the moment it arrives, and then the body line by line - which is the whole
+    difference between this and `read_to_string`: a local server that streams (`"stream": true` is
+    what `build_request` asks for) is drawn as it writes instead of after it closes. The framing is
+    handled here rather than by a client, because this path *is* the client. */
+    let mut reader = std::io::BufReader::new(socket);
+    let head = read_head(&mut reader).map_err(|error| error.to_string())?;
 
-    socket.read_to_string(&mut response).map_err(|error| error.to_string())?;
+    if head.status != 0 && !(200..300).contains(&head.status) {
+        /* A failure is one JSON sentence, not a stream: it is read whole so the provider's own words
+        can be handed back. */
+        return Err(rejection(head.status, &read_all(reader)));
+    }
 
-    /* `Connection: close` keeps this simple on purpose: the loopback path is for a local server that
-       always answers in one body. The https path gets chunked decoding from the client. */
-    Ok(response.split("\r\n\r\n").nth(1).unwrap_or("").lines().map(str::to_string).collect())
+    drain_sse(body_lines(reader, head.chunked), sink);
+
+    Ok(())
+}
+
+/// Reads an SSE body to its end, pushing every event as the line it came on arrives.
+///
+/// A body that ends without `[DONE]` is still a finished answer: the OpenAI-compatible providers close
+/// the stream instead of writing the sentinel, and the alternative to saying `Done` here is a turn
+/// that stays `running` in the app for ever. A body that ends without a word in it is a failure with a
+/// sentence, because silence would look like an empty answer (principle P4).
+fn drain_sse(mut lines: impl std::io::BufRead, sink: &EventSink) {
+    let mut ended = false;
+    let mut spoken = false;
+    let mut line = String::new();
+
+    loop {
+        line.clear();
+
+        match lines.read_line(&mut line) {
+            Ok(0) => break,
+            Ok(_) => {
+                spoken = spoken || !parse_sse_line(&line).is_empty();
+
+                push_sse_line(&line, &mut ended, sink);
+            }
+            /* A read error mid-stream is the connection dying: the answer stops here, and what
+               arrived so far stays on screen. */
+            Err(_) => break,
+        }
+    }
+
+    if ended {
+        return;
+    }
+
+    if spoken {
+        sink.send(EngineEvent::Done {
+            summary: "Done".to_string(),
+            meta: String::new(),
+            pass: None,
+        });
+
+        return;
+    }
+
+    sink.send(EngineEvent::Failed("the provider's stream ended without a single event".to_string()));
 }
 
 /// The HTTP agent every request goes through, and the two numbers that matter.
@@ -307,8 +445,15 @@ fn agent() -> ureq::Agent {
         .build()
 }
 
-/// The `https://` path: `ureq` does the TLS, the chunked decoding and the redirects.
-fn post_https(url: &str, headers: &[(String, String)], body: &str) -> Result<Vec<String>, String> {
+/// The `https://` path: `ureq` does the TLS, the chunked decoding and the redirects, and its body
+/// reader is a stream - `into_reader` hands the bytes over as they arrive, which is why this path
+/// needs neither `read_head` nor `BodyReader` (the framing is already decoded).
+fn post_https(
+    url: &str,
+    headers: &[(String, String)],
+    body: &str,
+    sink: &EventSink,
+) -> Result<(), String> {
     let mut request = agent().post(url);
 
     for (name, value) in headers {
@@ -316,7 +461,11 @@ fn post_https(url: &str, headers: &[(String, String)], body: &str) -> Result<Vec
     }
 
     match request.send_string(body) {
-        Ok(response) => read_lines(response.into_reader()),
+        Ok(response) => {
+            drain_sse(body_lines(response.into_reader(), false), sink);
+
+            Ok(())
+        }
 
         /*
          * A key the provider rejected is the common failure by far, and the reason for it is in the
@@ -324,7 +473,9 @@ fn post_https(url: &str, headers: &[(String, String)], body: &str) -> Result<Vec
          * than throwing the sentence away, so the user reads the provider's own words - "invalid
          * x-api-key (401)" - in the transcript instead of a status code with nothing behind it.
          */
-        Err(ureq::Error::Status(status, response)) => Err(rejection(status, &read_all(response.into_reader()))),
+        Err(ureq::Error::Status(status, response)) => {
+            Err(rejection(status, &read_all(response.into_reader())))
+        }
 
         Err(ureq::Error::Transport(transport)) => Err(format!("{url}: {transport}")),
     }
@@ -348,16 +499,21 @@ pub fn get_json(url: &str, headers: &[(String, String)]) -> Result<(u16, String)
             Ok((status, read_all(response.into_reader())))
         }
         /* A 4xx is not a transport failure: it *is* the answer, and the body explains it. */
-        Err(ureq::Error::Status(status, response)) => Ok((status, read_all(response.into_reader()))),
+        Err(ureq::Error::Status(status, response)) => {
+            Ok((status, read_all(response.into_reader())))
+        }
         Err(ureq::Error::Transport(transport)) => Err(transport.to_string()),
     }
 }
 
 /// The sentence a provider rejected a request with, from its own error body when it has one.
 pub fn rejection(status: u16, body: &str) -> String {
-    let message = serde_json::from_str::<Value>(body)
-        .ok()
-        .and_then(|value| value.pointer("/error/message").and_then(Value::as_str).map(str::to_string));
+    let message = serde_json::from_str::<Value>(body).ok().and_then(|value| {
+        value
+            .pointer("/error/message")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+    });
 
     match message {
         Some(message) => format!("{message} ({status})"),
@@ -372,19 +528,6 @@ fn read_all(mut reader: impl Read) -> String {
     let _ = reader.read_to_string(&mut text);
 
     text
-}
-
-/// The response body, line by line - the shape `parse_sse` takes.
-fn read_lines(reader: impl Read) -> Result<Vec<String>, String> {
-    use std::io::BufRead;
-
-    let mut lines = Vec::new();
-
-    for line in std::io::BufReader::new(reader).lines() {
-        lines.push(line.map_err(|error| error.to_string())?);
-    }
-
-    Ok(lines)
 }
 
 pub struct NativeApi;
@@ -407,7 +550,7 @@ impl Engine for NativeApi {
         "native_api"
     }
 
-    async fn start(&self, prompt: Prompt) -> Vec<EngineEvent> {
+    async fn start(&self, prompt: Prompt, sink: &EventSink) {
         /* The session's own model, not a guess from the prompt's text: `endpoint_for` used to be
            handed `&prompt.text`, so an API turn went to whichever endpoint the first word of the
            prompt happened to match - and to the loopback one otherwise. */
@@ -415,18 +558,27 @@ impl Engine for NativeApi {
         let key = crate::auth::keychain::get(&endpoint.key_ref).unwrap_or_default();
 
         if key.is_empty() {
-            return vec![EngineEvent::Failed(format!(
+            sink.send(EngineEvent::Failed(format!(
                 "No API key for {}. Connect it in the Provider Hub; the key is stored in the OS keychain.",
                 endpoint.provider
-            ))];
+            )));
+
+            return;
         }
 
         let (url, headers, body) = build_request(&endpoint, &key, &prompt.model, &prompt);
+        let sink = sink.clone();
 
-        match post_stream(&url, &headers, &body) {
-            Ok(lines) => parse_sse(&lines),
-            Err(reason) => vec![EngineEvent::Failed(reason)],
-        }
+        /* The request blocks (TLS handshake, then a socket read per token), so it runs on the
+        blocking pool rather than on a runtime worker - and the streaming has to come through the
+        sink, because `spawn_blocking` can only be joined once the whole body has been read. That is
+        the shape of a live turn: the future stays pending while the events land one by one. */
+        let _ = tokio::task::spawn_blocking(move || {
+            if let Err(reason) = post_stream(&url, &headers, &body, &sink) {
+                sink.send(EngineEvent::Failed(reason));
+            }
+        })
+        .await;
     }
 
     async fn cancel(&self, _turn_id: &str) -> bool {
@@ -443,6 +595,7 @@ impl Engine for NativeApi {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engines::Recorder;
 
     fn prompt(text: &str, history: Vec<String>) -> Prompt {
         Prompt {
@@ -453,6 +606,9 @@ mod tests {
             model: "anthropic/claude-sonnet-4-5".into(),
             provider: None,
             history,
+            /* A provider answers over the network, so this adapter has no working directory - the field is
+               on the `Prompt` because it is a fact about the session, and only `cli.rs` uses it. */
+            project_root: None,
         }
     }
 
@@ -583,7 +739,13 @@ mod tests {
          * *socket* error, which proves the TLS client is linked and a real https request was
          * attempted, and not the old "a TLS client is not linked in this build".
          */
-        let error = post_stream("https://127.0.0.1:1/v1/messages", &[], "{}").unwrap_err();
+        let error = post_stream(
+            "https://127.0.0.1:1/v1/messages",
+            &[],
+            "{}",
+            &EventSink::discarding(),
+        )
+        .unwrap_err();
 
         assert!(!error.contains("not linked"), "{error}");
         assert!(error.contains("127.0.0.1:1"), "{error}");
@@ -610,5 +772,82 @@ mod tests {
     #[test]
     fn the_unknown_provider_falls_back_to_the_custom_endpoint() {
         assert_eq!(endpoint_for("ollama/llama3", None).provider, "custom");
+    }
+
+    /// The reasoning channel, which is the *thinking* block of spec section 7.5.
+    ///
+    /// DeepSeek's reasoner streams it at `reasoning_content`, Anthropic at `thinking`, and some
+    /// OpenAI-compatible servers at `reasoning`. All three are the same fact, and a provider whose
+    /// reasoning is dropped looks like a model that does not think - which is what the report
+    /// *"claude code/cline e jemon thinking ki korse sob kisu live dakha jai"* asks for.
+    #[test]
+    fn reasoning_arrives_as_thinking_in_every_shape_the_providers_use() {
+        for name in ["reasoning_content", "reasoning"] {
+            let line = format!(r#"data: {{"choices":[{{"delta":{{"{name}":"weighing it"}}}}]}}"#);
+
+            assert_eq!(
+                parse_sse_line(&line),
+                vec![EngineEvent::Thinking("weighing it".into())],
+                "{name}"
+            );
+        }
+
+        assert_eq!(
+            parse_sse_line(r#"data: {"delta":{"thinking":"why"}}"#),
+            vec![EngineEvent::Thinking("why".into())]
+        );
+
+        /* And text stays text: the two channels are not confused with each other. */
+        assert_eq!(
+            parse_sse_line(r#"data: {"choices":[{"delta":{"content":"Hi"}}]}"#),
+            vec![EngineEvent::Delta("Hi".into())]
+        );
+    }
+
+    /// A provider that aborts mid-stream says so *in* the stream. It used to be skipped, so the turn
+    /// ended with nothing on screen rather than with the provider's own sentence.
+    #[test]
+    fn an_error_inside_the_stream_is_a_failure_with_its_own_sentence() {
+        assert_eq!(
+            parse_sse_line(
+                r#"data: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"#
+            ),
+            vec![EngineEvent::Failed("Overloaded".into())]
+        );
+    }
+
+    /// A body that closes without `[DONE]` is a finished answer, not a turn that hangs; a body with
+    /// nothing usable in it is a failure with a sentence.
+    ///
+    /// This is the rule the live path needed once it stopped collecting: `parse_sse` was only ever
+    /// asked about a body that had already ended, so nothing had to decide what "the socket closed"
+    /// means.
+    #[test]
+    fn a_drained_body_always_ends_the_turn() {
+        let closed = Recorder::new();
+
+        drain_sse(
+            std::io::BufReader::new(&b"data: {\"delta\":{\"text\":\"hi\"}}\n"[..]),
+            &closed.sink(),
+        );
+
+        assert!(
+            matches!(
+                closed.events().as_slice(),
+                [EngineEvent::Delta(text), EngineEvent::Done { .. }] if text == "hi"
+            ),
+            "{:?}",
+            closed.events()
+        );
+
+        let empty = Recorder::new();
+
+        drain_sse(std::io::BufReader::new(&b""[..]), &empty.sink());
+
+        assert!(
+            matches!(empty.events().as_slice(), [EngineEvent::Failed(_)]),
+            "{:?}",
+            empty.events()
+        );
     }
 }

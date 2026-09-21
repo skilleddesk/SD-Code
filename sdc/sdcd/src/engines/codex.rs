@@ -7,7 +7,7 @@
 use async_trait::async_trait;
 
 use crate::engines::cli::{CliAdapter, CliSpec, PromptPlacement};
-use crate::engines::{Engine, EngineEvent, EngineStatus, Prompt};
+use crate::engines::{Engine, EngineStatus, EventSink, Prompt};
 
 /// `codex exec --json -` is the non-interactive form, measured against the installed CLI.
 ///
@@ -58,8 +58,8 @@ impl Engine for Codex {
         "codex"
     }
 
-    async fn start(&self, prompt: Prompt) -> Vec<EngineEvent> {
-        self.cli.run(&prompt).await
+    async fn start(&self, prompt: Prompt, sink: &EventSink) {
+        self.cli.run(&prompt, sink).await
     }
 
     async fn cancel(&self, turn_id: &str) -> bool {

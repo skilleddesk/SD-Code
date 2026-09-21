@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { SdcpEvent } from '../../../protocol/types';
-import { applyEvent, applyEvents, createInitialState, EMPTY_STATE, withProviders, withWorkspace } from './reducer';
+import { applyEvent, applyEvents, createInitialState, EMPTY_STATE, withProjects, withProviders, withWorkspace } from './reducer';
 import type { AppEvent, AppState } from './types';
 
 /**
@@ -405,6 +405,41 @@ describe('the two host facts that were missing', () => {
     expect(state.hosts[1]?.sessions[0]).toMatchObject({ id: 'n7', title: 'Fix it', minutesAgo: 14, unread: 2 });
   });
 
+  it('keeps the platform a list without that column would blank', () => {
+    /*
+     * `session.list` reads the `hosts` table, which has no `platform` column - so the replace below
+     * dropped the `windows · x86_64` that `host.status` had reported, and About's `This host` row read
+     * `Local · ` with a separator pointing at nothing (measured on the 0.7.5 build, in the same dialog
+     * as the version rows). `sdcd` already survived the same replace; now both do.
+     */
+    const connected = fold(EMPTY_STATE, {
+      type: 'HostStatus',
+      hostId: 'local',
+      name: 'Local',
+      hostType: 'local',
+      status: 'connected',
+      sdcd: '0.7.5',
+      platform: 'windows · x86_64',
+    });
+
+    const listed = withWorkspace(connected, [
+      {
+        hostId: 'local',
+        name: 'Local',
+        hostType: 'local',
+        status: 'connected',
+        platform: null,
+        target: null,
+        sessions: [],
+      },
+    ]);
+
+    expect(listed.hosts[0]).toMatchObject({
+      sdcd: '0.7.5',
+      platform: 'windows · x86_64',
+    });
+  });
+
   it('does not open the same chat twice when the daemon replays it', () => {
     /*
      * The duplicate-row report: one click on `New chat` drew two rows, and the count pill, the tab
@@ -490,3 +525,160 @@ describe('the two host facts that were missing', () => {
 });
 
 });
+
+/**
+ * The folder a chat works in (0.7.6) - *"chat kono folder e kaj kore na"*.
+ *
+ * Until this release a chat had no working directory at all: `projects` and `sessions.project_id` were in
+ * the daemon's schema from the first migration with nothing writing them, `engine.start` ran the CLI
+ * wherever the daemon had been started, and `checkpoint_create` took a `projectRoot` the app never sent -
+ * so a checkpoint hashed no files and a rewind restored only the conversation.
+ *
+ * The four assertions below are the window's half of the fix: the folder arrives with the chat (one
+ * render, no second round trip), it can be changed on an existing chat, it survives the `session.list`
+ * replace a reload does, and `project.list` is folded rather than dropped on the floor.
+ */
+describe('the folder a chat works in', () => {
+  it('arrives with the chat, so the chip is right on the first render', () => {
+    const state = fold(EMPTY_STATE, {
+      type: 'HostStatus',
+      hostId: 'local',
+      name: 'Local',
+      hostType: 'local',
+      status: 'connected',
+      sdcd: '0.7.6',
+    });
+
+    const opened = fold(state, {
+      type: 'SessionOpened',
+      sessionId: 'n1',
+      hostId: 'local',
+      title: 'SDC',
+      prompt: 'Describe what you want to build…',
+      projectId: 'pr1',
+      projectRoot: 'H:\\SDC',
+    });
+
+    expect(opened.hosts[0]?.sessions[0]).toMatchObject({ id: 'n1', projectId: 'pr1', projectRoot: 'H:\\SDC' });
+  });
+
+  it('is null for a chat that has none, rather than an empty string', () => {
+    const state = fold(EMPTY_STATE, {
+      type: 'HostStatus',
+      hostId: 'local',
+      name: 'Local',
+      hostType: 'local',
+      status: 'connected',
+    });
+
+    const opened = fold(state, {
+      type: 'SessionOpened',
+      sessionId: 'n1',
+      hostId: 'local',
+      title: 'New chat',
+      prompt: '',
+    });
+
+    expect(opened.hosts[0]?.sessions[0]?.projectRoot).toBeNull();
+  });
+
+  it('moves when `Open folder` re-points a chat that already exists', () => {
+    const connected = fold(EMPTY_STATE, {
+      type: 'HostStatus',
+      hostId: 'local',
+      name: 'Local',
+      hostType: 'local',
+      status: 'connected',
+    });
+    const opened = fold(connected, {
+      type: 'SessionOpened',
+      sessionId: 'n1',
+      hostId: 'local',
+      title: 'New chat',
+      prompt: '',
+      projectId: 'pr1',
+      projectRoot: 'H:\\one',
+    });
+
+    const moved = fold(opened, {
+      type: 'SessionUpdated',
+      sessionId: 'n1',
+      projectId: 'pr2',
+      projectRoot: 'H:\\two',
+    });
+
+    expect(moved.hosts[0]?.sessions[0]).toMatchObject({ projectId: 'pr2', projectRoot: 'H:\\two' });
+  });
+
+  it('leaves an unrelated update alone: a rename must not clear the folder', () => {
+    const connected = fold(EMPTY_STATE, {
+      type: 'HostStatus',
+      hostId: 'local',
+      name: 'Local',
+      hostType: 'local',
+      status: 'connected',
+    });
+    const opened = fold(connected, {
+      type: 'SessionOpened',
+      sessionId: 'n1',
+      hostId: 'local',
+      title: 'New chat',
+      prompt: '',
+      projectId: 'pr1',
+      projectRoot: 'H:\\one',
+    });
+
+    const renamed = fold(opened, { type: 'SessionUpdated', sessionId: 'n1', title: 'Login bug' });
+
+    expect(renamed.hosts[0]?.sessions[0]).toMatchObject({
+      title: 'Login bug',
+      projectId: 'pr1',
+      projectRoot: 'H:\\one',
+    });
+  });
+
+  it('survives the `session.list` replace a reload does', () => {
+    const listed = withWorkspace(EMPTY_STATE, [
+      {
+        hostId: 'local',
+        name: 'Local',
+        hostType: 'local',
+        status: 'connected',
+        platform: null,
+        target: null,
+        sessions: [
+          {
+            sessionId: 'n1',
+            hostId: 'local',
+            title: 'SDC',
+            prompt: '',
+            state: 'idle',
+            unread: 0,
+            minutesAgo: 3,
+            projectId: 'pr1',
+            projectRoot: 'H:\\SDC',
+          },
+        ],
+      },
+    ]);
+
+    expect(listed.hosts[0]?.sessions[0]).toMatchObject({ projectId: 'pr1', projectRoot: 'H:\\SDC' });
+  });
+
+  it('folds `project.list` into the store, replacing what was there', () => {
+    const first = withProjects(EMPTY_STATE, [
+      { projectId: 'pr1', hostId: 'local', root: 'H:\\SDC', name: 'SDC', chats: 2 },
+    ]);
+
+    expect(first.projects).toEqual([{ id: 'pr1', hostId: 'local', root: 'H:\\SDC', name: 'SDC', chats: 2 }]);
+
+    /* The daemon's rows are the authority: a folder it no longer has is a folder this window stops
+       offering, which is why this replaces instead of merging. */
+    const second = withProjects(first, [
+      { projectId: 'pr2', hostId: 'local', root: 'H:\\work', name: 'work', chats: 0 },
+    ]);
+
+    expect(second.projects.map((project) => project.id)).toEqual(['pr2']);
+  });
+});
+
