@@ -96,7 +96,12 @@ impl Daemon {
             "git.worktree" => self.git_worktree(envelope),
             "pty.open" => self.pty_open(envelope),
             "pty.write" => self.pty_write(envelope),
-            "pty.resize" => Ok(json!({})),
+            /* `pty.resize` answers `unsupported` (0.7.10): this build's "pty" is a pipe runner with no window to
+               resize, and answering `{}` was a promise it did not keep. The empty `result` is that decision, said
+               in the schema rather than discovered by a caller. */
+            "pty.resize" => Err(crate::sdcp::envelope::ErrorObject::unsupported(
+                "this build does not resize a pty: the pane re-reads `pty.output` instead",
+            )),
             "pty.close" => self.pty_close(envelope),
             "pty.output" => self.pty_output(envelope),
             "shell.run" => self.shell_run(envelope, &*out),
@@ -187,6 +192,10 @@ impl Daemon {
             "events": self.store().event_count().unwrap_or(0),
             "sessions": self.store().session_count().unwrap_or(0),
             "keychain": crate::auth::keychain::backend(),
+            /* How the fallback file is protected, when the fallback is what is in use: `acl` on Windows since
+               0.7.10, `mode` on unix, `os` when the OS store answered. "file" alone hid the difference between a
+               0600 file and one every account in `Users` could read. */
+            "keyProtection": crate::auth::keychain::protection(),
             "engines": self.state.engines.ids(),
             "pty": self.state.pty.running(),
             "console": self.state.console.attached_count(),

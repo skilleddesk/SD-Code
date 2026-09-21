@@ -65,7 +65,7 @@ export function TimeMachineTab() {
               }}
             >
               {current ? (
-                <span className="absolute -top-[7px] right-[12px] rounded-full bg-accent px-[6px] py-[1px] text-[9px] font-bold tracking-[.08em] text-text-on-accent">
+                <span className="absolute -top-[7px] right-[12px] rounded-full bg-accent-fill px-[6px] py-[1px] text-[9px] font-bold tracking-[.08em] text-text-on-accent">
                   {strings.rightPanel.timeMachine.current}
                 </span>
               ) : null}

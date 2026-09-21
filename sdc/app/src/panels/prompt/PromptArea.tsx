@@ -224,7 +224,7 @@ export function PromptArea() {
 
             <button
               type="button"
-              className="send-btn ml-auto flex items-center gap-[6px] rounded-md bg-accent px-[13px] py-[6px] text-[12px] font-semibold text-text-on-accent transition-all duration-fast ease-ease hover:bg-accent-hover hover:shadow-[0_3px_12px_var(--accent-glow)] active:scale-[.97]"
+              className="send-btn ml-auto flex items-center gap-[6px] rounded-md bg-accent-fill px-[13px] py-[6px] text-[12px] font-semibold text-text-on-accent transition-all duration-fast ease-ease hover:bg-accent-hover hover:shadow-[0_3px_12px_var(--accent-glow)] active:scale-[.97]"
               onClick={send}
             >
               {strings.prompt.send}

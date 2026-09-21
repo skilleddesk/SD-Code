@@ -284,12 +284,16 @@ it is reached.
   come from the app's WebView (`checkpoints::screenshot::record`), so a thumbnail appears when the
   preview writes one. The rewind does not depend on it: files are restored from the shadow
   repository, which is real today.
-* **The OS keychain is behind a feature that is off by default.** `keychain` compiles
-  (`cargo check --features keychain`, `keyring` v3) and would put a key in DPAPI / Keychain / Secret
-  Service, but a headless box or a CI container has no such store, so the default is the documented
-  file fallback under `<data>/keys/` (0600 on unix; Windows has no ACL applied yet). Turning the
-  feature on for desktop builds is on the next-step list, and `host.status` reports which store was
-  used either way.
+* **The OS keychain is used where the platform has one, and the fallback is protected where it is not.**
+  Since 0.7.10 the packaged daemon is built with `keychain` on Windows (DPAPI) and macOS (Keychain);
+  `backend()` is a *runtime* answer, because `keyring` v3 compiles with no backend at all and even a
+  compiled-in store can be unreachable - a locked Keychain or a service account falls back to the file, and the
+  reported store and the used store cannot disagree. Linux keeps the file fallback on purpose: the Secret
+  Service needs `dbus` headers and a running session bus, and a daemon that cannot start on a headless box is
+  worse than one that says which store it used. On Windows that file now gets an ACL
+  (`icacls /inheritance:r /grant:r <account>:F`) instead of inheriting `%APPDATA%` - until 0.7.10 a key was
+  readable by every account in `Users`. `host.status` reports both: `keychain` (`os`/`file`) and
+  `keyProtection` (`os`/`acl`/`mode`).
 * **`provider.test` distinguishes "accepted" from "verified".** A key's shape is checked locally and
   the answer carries `verified: false` plus a `detail` that says the provider was not contacted,
   because this build cannot reach an `https://` endpoint. Only the local Ollama daemon (and an
@@ -301,11 +305,16 @@ it is reached.
   window, and both the app and its daemon are gone after quitting. macOS and Linux artifacts are built
   and published but have not been opened on their own hosts from here, and signing needs certificates
   this repository does not hold.
-* **An axe-core pass and a screen-reader sweep.** The accessibility work is in the markup (roles,
-  `aria-current`, focus traps, `Escape` handling, the keymap reference), but the automated audit has
-  not been run in CI yet.
-* **`protocol/` is not an npm package yet.** `types.ts` is real and imported by the app; it joins the
-  workspace when a generator (schema → types) exists, so the two cannot drift.
+* **An axe-core pass runs in CI; the screen-reader sweep is still a person's job.** Since 0.7.10
+  `app/scripts/a11y-bundle.mjs` audits the built window over WCAG 2.0/2.1 A + AA with `serious`/`critical`
+  failures failing the build, and it reports **0 violations** on the screen the app opens on. What no automated
+  pass covers is the rest of the window - the palette, the Permission modal, the Time Machine tab - and what a
+  screen reader actually *says*; that sweep is still on the list below.
+* **`protocol/` is not an npm package yet, and it no longer drifts silently.** `protocol/check.mjs` (0.7.10)
+  compares the schema's method names, shapes and event types with `protocol/types.ts` **and with the daemon's
+  dispatch table**, and it runs in CI - which is what the missing generator was for. Turning the folder into a
+  workspace package is still open, and it is now a packaging question rather than a safety one: the check is
+  what makes the two unable to disagree, and a package would only change who imports what.
 * **Federated/remote hosts beyond one SSH target.** `host.add` records an SSH host, says out loud
   whether this machine can `ssh` to it, and `host.remove` takes it back off the list along with its
   chats; the app's switcher works. A second daemon on the far side of a tunnel is reached with
@@ -326,12 +335,10 @@ it is reached.
 1. `native_api`'s HTTPS transport: `rustls` + `hyper`, so a remote Anthropic/OpenAI key streams
    instead of reporting the missing client — and so `provider.test` can answer `verified: true` for a
    saved key.
-2. Turn the `keychain` feature on for desktop builds (DPAPI / Keychain / Secret Service), with the
-   file fallback kept for a box that has no store, and an ACL on the Windows fallback until then.
-3. The provider OAuth token exchange, wired to `provider.oauth.callback`.
-4. An axe-core run in CI, and a screen-reader pass over the palette, the Permission modal and the
-   Time Machine tab.
-5. The `schema → protocol/types.ts` drift check, and `protocol/` as a workspace package.
-6. A provisioned remote host: `host.add` records an `ssh` target and the app can `ssh` to it, but a second
+2. The provider OAuth token exchange, wired to `provider.oauth.callback`.
+3. A screen-reader pass over the palette, the Permission modal and the Time Machine tab - the automated
+   audit covers the screen the app opens on, and this is the part that needs a person.
+4. `protocol/` as a workspace package, now that `protocol/check.mjs` is what keeps it honest.
+5. A provisioned remote host: `host.add` records an `ssh` target and the app can `ssh` to it, but a second
    `sdcd` on the far side of a tunnel is still reached by hand (`VITE_SDCP_URL`).
-7. Code signing for the installers, which needs certificates this repository does not hold.
+6. Code signing for the installers, which needs certificates this repository does not hold.

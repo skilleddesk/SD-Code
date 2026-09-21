@@ -49,9 +49,19 @@ function cargo(args) {
 const triple = process.env.SDC_TARGET_TRIPLE?.trim() || hostTriple();
 const cross = process.env.SDC_TARGET_TRIPLE?.trim() ? ['--target', triple] : [];
 
-console.log(`sdcd: building release for ${triple}`);
+/* 0.7.10: the shipped daemon gets the OS keychain where there is one. `keyring` v3 enables no backend by
+   default, so the feature alone would compile everywhere and store nothing - Cargo.toml picks
+   `windows-native` (DPAPI) and `apple-native` (Keychain) per platform, and the packaged daemon is built
+   with the feature on those two. Linux stays on the documented file fallback: the Secret Service needs
+   `dbus` headers and a session bus, and a daemon that cannot start on a headless box is worse than one
+   that reports `file`. A store that is compiled in but unreachable (a locked keychain, a service account)
+   is still handled at runtime - `keychain::backend()` probes it and falls back. */
+const keychain = process.platform === 'win32' || process.platform === 'darwin';
+const features = keychain ? ['--features', 'keychain'] : [];
 
-cargo(['build', '--release', ...cross]);
+console.log(`sdcd: building release for ${triple} (key store: ${keychain ? 'os' : 'file'})`);
+
+cargo(['build', '--release', ...cross, ...features]);
 
 const built = cross.length > 0
   ? join(daemon, 'target', triple, 'release', binary)

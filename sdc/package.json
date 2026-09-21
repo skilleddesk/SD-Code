@@ -1,6 +1,6 @@
 {
   "name": "sdc",
-  "version": "0.7.9",
+  "version": "0.7.10",
   "private": true,
   "description": "SDC (Skilleddesk Code) - pnpm workspace root: Tauri 2 desktop app in app/, host daemon (Rust) in sdcd/.",
   "packageManager": "pnpm@10.34.5",
@@ -16,6 +16,8 @@
     "lint": "pnpm --filter @sdc/app lint",
     "typecheck": "pnpm --filter @sdc/app typecheck",
     "test": "pnpm --filter @sdc/app test",
+    "protocol:check": "node protocol/check.mjs",
+    "smoke:a11y": "pnpm --filter @sdc/app smoke:a11y",
     "sdcd:run": "cargo run --manifest-path sdcd/Cargo.toml",
     "sdcd:check": "cargo check --manifest-path sdcd/Cargo.toml",
     "sdcd:test": "cargo test --manifest-path sdcd/Cargo.toml",
