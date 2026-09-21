@@ -122,7 +122,18 @@ export function RightPanel() {
         onPointerDown={startResize}
       />
 
-      <div className="panel-tabs flex shrink-0 items-center gap-[2px] overflow-x-auto border-b border-border-subtle bg-bg-base px-[8px] py-[6px] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+      {/*
+        The tabs, as a real `tablist` (0.7.10). They were six plain buttons carrying `aria-selected`, which axe
+        reports as a *critical* `aria-allowed-attr`: `aria-selected` is not allowed on a bare button, so a
+        screen reader got a tab whose state it was not permitted to announce. `role="tab"` is what makes the
+        attribute legal, `aria-controls` names the panel it switches, and the panels below carry
+        `role="tabpanel"` + `aria-labelledby` back to the tab.
+      */}
+      <div
+        className="panel-tabs flex shrink-0 items-center gap-[2px] overflow-x-auto border-b border-border-subtle bg-bg-base px-[8px] py-[6px] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        role="tablist"
+        aria-label={strings.rightPanel.tabsLabel}
+      >
         {tabs.map((tab) => {
           const Icon = TAB_ICON[tab.icon];
           const selected = tab.id === current;
@@ -131,8 +142,12 @@ export function RightPanel() {
             <button
               key={tab.id}
               type="button"
+              id={`panel-tab-${tab.id}`}
+              role="tab"
               data-panel={tab.id}
               aria-selected={selected}
+              aria-controls={`panel-view-${tab.id}`}
+              tabIndex={selected ? 0 : -1}
               className={
                 'panel-tab relative flex items-center gap-[5px] whitespace-nowrap rounded-md px-[9px] py-[6px] text-[11.5px] transition-all duration-fast ease-ease ' +
                 (selected
@@ -164,6 +179,9 @@ export function RightPanel() {
           return (
             <div
               key={tab.id}
+              id={`panel-view-${tab.id}`}
+              role="tabpanel"
+              aria-labelledby={`panel-tab-${tab.id}`}
               data-panel-view={tab.id}
               className={
                 'panel-view absolute inset-0 flex-col overflow-y-auto ' +

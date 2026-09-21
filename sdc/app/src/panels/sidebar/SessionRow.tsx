@@ -43,7 +43,7 @@ export function SessionRow({ session, active }: SessionRowProps) {
   const showBadge = unread || blocked || session.state === 'waiting' || session.state === 'error';
   const badgeTone = unread ? 'unread' : session.state === 'error' ? 'error' : 'waiting';
   const badgeClass = {
-    unread: 'bg-accent text-text-on-accent',
+    unread: 'bg-accent-fill text-text-on-accent',
     waiting: 'bg-orange-subtle text-state-waiting',
     error: 'bg-red-subtle text-state-error',
   }[badgeTone];

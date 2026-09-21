@@ -46,7 +46,7 @@ import { engineIcon, tierIcon } from './modelIcons';
 const CHIP = 'mdd-icon grid h-[22px] w-[22px] shrink-0 place-items-center rounded-sm';
 const CHIP_IDLE = CHIP + ' border border-border-subtle bg-bg-raised text-text-muted';
 const CHIP_ON =
-  CHIP + ' border border-accent bg-accent text-text-on-accent shadow-[0_0_10px_var(--accent-glow)]';
+  CHIP + ' border border-accent-fill bg-accent-fill text-text-on-accent shadow-[0_0_10px_var(--accent-glow)]';
 
 const ROW =
   'mdd-item flex cursor-pointer items-center gap-[10px] rounded-md px-[10px] py-[8px] text-[12.5px] transition-colors duration-fast ease-ease';

@@ -1,6 +1,6 @@
 [package]
 name = "sdcd"
-version = "0.7.9"
+version = "0.7.10"
 description = "SDC host daemon - session, engine, file, PTY, git and event-log service (spec section 3.1)"
 authors = ["Skilleddesk"]
 edition = "2021"
@@ -33,8 +33,15 @@ tempfile = "3"
 
 # The OS keychain is behind a feature: `keyring` needs a platform store (DPAPI / Keychain / Secret
 # Service) that a CI container or a headless box does not have, and a daemon that refuses to start
-# without one would be worse than one that says so. Off by default; the fallback is documented in
-# src/auth/keychain.rs and never writes a key into the SQLite file.
+# without one would be worse than one that says so. The fallback is documented in src/auth/keychain.rs
+# and never writes a key into the SQLite file.
+#
+# 0.7.10: the *backends* are chosen per platform, because `keyring` v3 enables **none** by default -
+# without one of these it compiles everywhere and stores nothing, which is worse than the fallback
+# because `backend()` would say `os` while every save failed. Windows gets DPAPI and macOS the Keychain
+# (both pure-Rust bindings, no system headers); Linux keeps the file fallback on purpose, because the
+# Secret Service needs `dbus` headers and a running session bus, and a daemon that cannot start on a
+# headless box is worse than one that says which store it used.
 [features]
 default = []
 keychain = ["dep:keyring"]
@@ -42,6 +49,16 @@ keychain = ["dep:keyring"]
 [dependencies.keyring]
 version = "3"
 optional = true
+
+[target.'cfg(windows)'.dependencies.keyring]
+version = "3"
+optional = true
+features = ["windows-native"]
+
+[target.'cfg(target_os = "macos")'.dependencies.keyring]
+version = "3"
+optional = true
+features = ["apple-native"]
 
 [profile.release]
 codegen-units = 1

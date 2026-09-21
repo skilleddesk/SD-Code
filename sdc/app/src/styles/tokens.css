@@ -39,13 +39,25 @@
 
   --text-primary: #E9EEF5;
   --text-secondary: #96A1B3;
-  --text-muted: #5C677A;
+  --text-muted: #737F94;
   --text-faint: #3A4354;
 
   --accent: #5B9CFF;
   --accent-hover: #7CB0FF;
   --accent-subtle: rgba(91,156,255,.10);
   --accent-glow: rgba(91,156,255,.35);
+  /*
+   * The accent as a *fill*, for white text on it (0.7.10).
+   *
+   * `--accent` is a light blue that reads well as *text* on the dark surfaces, and #FFFFFF on it measures
+   * 2.74:1 - which the accessibility audit reports as a serious colour-contrast failure on the New chat
+   * button, the send button, the selected model chip and the unread badge. One token cannot be both a good
+   * text colour on a dark background and a good background for white text, so the fill gets its own value
+   * (4.96:1 with white) and every white-on-accent surface uses it. `--accent` keeps its old value for text,
+   * borders and glows, which is what it was chosen for.
+   */
+  --accent-fill: #2E6CD6;
+  --accent-fill-hover: #3B78DF;
 
   --purple: #A78BFA;
   --purple-subtle: rgba(167,139,250,.12);
@@ -83,7 +95,7 @@
    *   --grad-thumb          attachment / checkpoint preview        (spec 7.5, 7.9)
    *   --grad-preview        the Preview tab's placeholder page     (spec 7.7)
    *   --grad-preview-glow   the two soft corners inside that frame (spec 7.7)
-   *   --text-on-accent      text on --accent or --purple           (spec 7.1, 7.3, 7.6)
+   *   --text-on-accent      text on --accent-fill or --purple       (spec 7.1, 7.3, 7.6)
    *
    * Only --grad-preview differs by theme; the light value is in the block below. */
   --grad-brand: linear-gradient(135deg, #5B9CFF, #7B5CFF);
@@ -149,6 +161,9 @@
   --accent-hover: #1B6CE8;
   --accent-subtle: rgba(44,123,255,.08);
   --accent-glow: rgba(44,123,255,.25);
+  /* The fill for white text: #FFFFFF on #2C7BFF is 3.90:1, on #1B63D6 it is 5.52:1 (0.7.10). */
+  --accent-fill: #1B63D6;
+  --accent-fill-hover: #175CCB;
 
   --purple: #7C3AED;
   --purple-subtle: rgba(124,58,237,.08);

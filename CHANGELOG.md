@@ -14,6 +14,85 @@ This file describes what changed, not what is planned. Anything still open is na
 release - the newest - and deletes the others when it publishes (`release.yml`, "Keep only this
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
+## [0.7.10] — the OS key store, a protocol that cannot drift silently, and the audit that was promised
+
+Three of the items on this README's next-step list, and one of them found more than it went looking for.
+
+### Added — the OS keychain is used by the shipped daemon, and the fallback is protected
+
+`keychain` compiled for months behind a feature that was off, and `README` said why. Turning it on was not a
+one-line change, and the reasons are the interesting part:
+
+* **`keyring` v3 enables no backend at all by default.** The feature alone compiles everywhere and stores
+  nothing - which is worse than the file fallback, because `backend()` would answer `"os"` while every save
+  failed. The backends are now chosen per platform: `windows-native` (DPAPI) and `apple-native` (Keychain).
+  Linux keeps the documented file fallback, because the Secret Service needs `dbus` headers and a running
+  session bus, and a daemon that cannot start on a headless box is worse than one that says which store it
+  used;
+* **a compiled-in store can still be unreachable** (a locked Keychain, a Windows service account). `backend()`
+  is a *runtime* answer now: the store is probed once, and when it says no the file fallback is what
+  `set`/`get`/`delete` use - so the reported store and the used store cannot disagree;
+* **the Windows fallback had no protection at all.** "0600 on unix" was in the README next to "Windows has no
+  ACL applied yet", and a key written into `%APPDATA%` inherited that folder's permissions - every account in
+  `Users` on a shared machine. `restrict_to_owner` now applies `icacls /inheritance:r /grant:r
+  <account>:F` to the file (and the directory, so new files inherit it). The first version passed `(OI)(CI)F`
+  on a *file* as well, which marks an ACE as "for children only" and left the file with **no effective
+  permission at all** - the owner could not read the key it had just written. The round-trip test caught it;
+* `host.status` reports `keyProtection` next to `keychain`, because "the fallback" is not one thing: `acl`,
+  `mode` or `os`.
+
+### Added — `protocol/check.mjs`, and what parsing the schema for the first time revealed
+
+`protocol/types.ts` is what every line of the app imports; `sdcp.schema.json` is what the daemon and the spec
+are written against; nothing had ever compared them, and - it turns out - **nothing had ever parsed the
+schema either**. The check does, and on its first run:
+
+* **`sdcp.schema.json` was not valid JSON.** Three entries wrote an optional array as `["string"]?`, which no
+  JSON parser accepts. Fixed (a type expression, `"string[]?"`, like the enums the file already uses);
+* **nine methods were named with no `params`/`result` shape** (`session.list`, `session.fork`, `fs.stat`,
+  `git.status`, `git.worktree`, `pty.write`, `pty.resize`, `pty.close`, `event.append`). All nine now describe
+  what the daemon actually answers;
+* and **`pty.resize` answered `{}`** - a promise to resize a pty in a build whose "pty" is a pipe runner with
+  no window to resize. It answers `unsupported` with that sentence now.
+
+The check compares the schema's names, shapes and event types against `SdcpMethod`, `SdcpMethodMap`,
+`SdcpEvent` **and the daemon's dispatch table**, so a method declared in one place and missing in another is a
+red build rather than a `Property 'x' does not exist` in some later change. It is now part of the CI gate.
+It is a checker rather than a generator on purpose: `types.ts` carries the prose that explains each method,
+and a generator would write that prose away.
+
+### Added — an axe-core audit, in CI, and the three findings it made
+
+The README has said since 0.6 that "the automated audit has not been run in CI yet". `app/scripts/a11y-bundle.mjs`
+runs it the way `smoke-bundle.mjs` runs the window: serve the built `dist`, load `axe-core` **into the app's own
+frame** (colour-contrast needs the real computed styles), wait for the shell to mount, and write the verdict into
+the page for `--dump-dom` to print - no CDP, so it runs in CI. `serious` and `critical` violations fail the build;
+`moderate`/`minor` are printed with their counts so "we know" is in the log.
+
+It found three things on its first run, all fixed:
+
+* **`aria-selected` on six plain `button`s** (critical). A tab's state on an element that is not allowed to
+  carry it: the right panel's tabs are a real `role="tablist"` with `role="tab"`, `aria-controls` and
+  `role="tabpanel"` + `aria-labelledby` back now;
+* **white on the accent at 2.74:1 and 2.30:1** (serious) - the New chat button, the send button, the selected
+  model chip, the unread badge and the `⌘N` chip. One token cannot be both a readable *text* colour on a dark
+  surface and a readable *background* for white, so the fill gets its own token (`--accent-fill`, 4.96:1 with
+  white; 5.52:1 in the light theme) and `--accent` keeps the value it was chosen for;
+* **`--text-muted` at 3.27:1** (serious) on the surfaces it is used on. Raised to `#737F94`: 4.63-4.81:1,
+  still clearly below `--text-secondary`'s 7.17:1, so the hierarchy survives.
+
+### Verified
+
+* `sdcd`: 166 tests, including the Windows ACL test (`icacls` output has the owner and no `Users`/`Everyone`
+  entry) and the four keychain tests both with and without the feature. Clippy clean with **and** without
+  `--features keychain`.
+* `app`: 73 vitest cases, typecheck and lint clean, `pnpm smoke` green (the token changes did not disturb the
+  painted-controls check), and `pnpm smoke:a11y` reports **0 violations** over WCAG 2.0/2.1 A + AA.
+* `sdc`'s CI gate is now: typecheck, lint, vitest, `node protocol/check.mjs`, `cargo test` - then the built
+  window renders, then the same window is audited.
+
+
+
 ## [0.7.9] — editing: Save (with a checkpoint first) and the diff of what changed
 
 0.7.7 made the folder *visible*; three methods stayed unreachable from the window - `fs.write`, `git.status`

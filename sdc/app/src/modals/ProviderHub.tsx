@@ -265,7 +265,7 @@ function ProviderCards({ providers, onConnect }: ProviderCardsProps) {
             'inline-flex h-[24px] items-center rounded-md border px-[9px] text-[10.5px] font-medium ' +
             (provider.status === 'connected'
               ? 'border-border-default bg-bg-raised text-text-primary'
-              : 'border-accent bg-accent text-text-on-accent')
+              : 'border-accent-fill bg-accent-fill text-text-on-accent')
           }
         >
           {provider.status === 'connected' ? strings.hub.manage : strings.hub.connect}

@@ -58,6 +58,10 @@ const config: Config = {
           hover: 'var(--accent-hover)',
           subtle: 'var(--accent-subtle)',
           glow: 'var(--accent-glow)',
+          /* The fill a white label sits on (0.7.10): `bg-accent` is a good *text* colour on the dark surfaces
+             and only reaches 2.74:1 behind white text, which the accessibility audit fails. */
+          fill: 'var(--accent-fill)',
+          'fill-hover': 'var(--accent-fill-hover)',
         },
         purple: {
           DEFAULT: 'var(--purple)',

@@ -395,6 +395,8 @@ export const strings = {
       analytics: 'Analytics',
     },
     resize: 'Resize panel',
+    /** The tab strip's own name, for the `tablist` role (0.7.10). */
+    tabsLabel: 'Panel',
     preview: {
       back: 'Back',
       forward: 'Forward',

@@ -95,10 +95,14 @@ jobs:
         working-directory: sdc
         # The same gate a developer runs, so a release cannot be published from a tree that would not
         # pass review. Kept short on purpose: the installers are the point of this workflow.
+        # Since 0.7.10 it also parses `protocol/sdcp.schema.json` and compares it with `protocol/types.ts`
+        # and with the daemon's dispatch table - the file had never been read by anything, which is why it
+        # still held invalid JSON (`["string"]?`) and nine methods with no `params`/`result` shape.
         run: |
           pnpm typecheck
           pnpm lint
           pnpm test
+          node protocol/check.mjs
           cargo test --manifest-path sdcd/Cargo.toml
 
       - name: The built window renders
@@ -108,9 +112,14 @@ jobs:
         # React loop until it unmounted the tree), so the release now opens the built frontend in the
         # runner's browser before an installer is allowed to carry it. See
         # `app/scripts/smoke-bundle.mjs` and the 0.4.4 section of CHANGELOG.md.
+        #
+        # The same built frontend is then audited by axe-core (`app/scripts/a11y-bundle.mjs`), which 0.7.10
+        # wired in: it found an `aria-selected` on six plain buttons (critical), white-on-accent text at
+        # 2.3-2.7:1 (serious) and a muted label at 3.27:1 (serious) on the very first run.
         run: |
           pnpm build
           pnpm --filter @sdc/app smoke
+          pnpm --filter @sdc/app smoke:a11y
 
       - name: Build and publish
         uses: tauri-apps/tauri-action@v0
