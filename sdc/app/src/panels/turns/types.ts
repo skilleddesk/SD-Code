@@ -81,6 +81,12 @@ export interface ThinkingData {
   live: boolean;
 }
 
+/** One step of the agent's plan card. */
+export interface PlanStepData {
+  text: string;
+  status: 'pending' | 'in_progress' | 'done';
+}
+
 /** A checkpoint a turn wrote before it changed something - one dot on the stream's rail. */
 export interface TurnCheckpointData {
   id: string;
@@ -154,6 +160,10 @@ export interface Turn {
   tools: ToolCardData[];
   /** The checkpoints this turn wrote, oldest first - the rail's dots and the way back. */
   checkpoints: TurnCheckpointData[];
+  /** The agent's checklist (v4); empty when the engine did not make one. */
+  plan: PlanStepData[];
+  /** Still running - the plan card's current step spins only while it is. */
+  running: boolean;
   error?: ErrorCardData;
   footer: TurnFooterData;
 }

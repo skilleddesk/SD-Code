@@ -112,7 +112,7 @@
           "TurnStarted", "TurnDelta", "TurnCompleted", "ToolCallStarted", "ToolCallOutput",
           "ToolCallCompleted", "ThinkingDelta", "ErrorRaised", "PermissionRequested",
           "PermissionResolved", "CheckpointSaved", "RewindApplied", "Toast", "ToastDismissed",
-          "StuckDetected", "ConsoleError", "DuelStarted", "DuelResolved", "SessionBridged"
+          "StuckDetected", "ConsoleError", "DuelStarted", "DuelResolved", "SessionBridged", "PlanUpdated"
         ]
       }
     },
@@ -170,9 +170,9 @@
         "project.add": { "params": { "hostId": "string?", "root": "string", "name": "string?" }, "result": { "projectId": "string", "hostId": "string", "root": "string", "name": "string" } },
         "project.list": { "params": {}, "result": { "projects": [{ "projectId": "string", "hostId": "string", "root": "string", "name": "string", "chats": "integer" }] } },
         "project.remove": { "params": { "projectId": "string" }, "result": { "removed": "boolean", "chats": "integer" } },
-        "engine.start": { "params": { "sessionId": "string", "prompt": "string", "engine": "string", "model": "string", "tier": "Fast|Balanced|Deep", "provider": "string?" }, "result": { "turnId": "string" } },
-        "engine.cancel": { "params": { "turnId": "string" }, "result": {} },
-        "engine.kill": { "params": { "turnId": "string" }, "result": {} },
+        "engine.start": { "params": { "sessionId": "string", "prompt": "string", "engine": "string", "model": "string", "tier": "Fast|Balanced|Deep", "provider": "string?", "agent": "boolean?", "autonomy": "ask|pro|auto?", "maxSteps": "integer?" }, "result": { "turnId": "string" } },
+        "engine.cancel": { "params": { "turnId": "string" }, "result": { "state": "string", "engine": "string", "stopped": "boolean" } },
+        "engine.kill": { "params": { "turnId": "string" }, "result": { "state": "string", "engine": "string", "stopped": "boolean" } },
         "engine.status": { "params": { "turnId": "string" }, "result": { "state": "idle|running|awaiting|stuck|done|failed|killed", "engine": "string", "model": "string" } },
         "engine.switch": { "params": { "turnId": "string", "engine": "string", "model": "string", "reason": "string?" }, "result": { "turnId": "string", "bridgedFrom": "string" } },
         "fs.read": { "params": { "path": "string", "hostId": "string?" }, "result": { "path": "string", "text": "string", "sha256": "string", "bytes": "integer", "truncated": "boolean" } },
@@ -218,7 +218,7 @@
         "duel.keep": { "params": { "duelId": "string", "keep": "string" }, "result": {} },
         "duel.discard": { "params": { "duelId": "string" }, "result": {} },
         "permission.request": { "params": { "sessionId": "string", "turnId": "string", "action": "string", "target": "string", "risk": "SAFE|MUTATING|DANGEROUS" }, "result": { "permissionId": "string" } },
-        "permission.resolve": { "params": { "permissionId": "string", "decision": "allow_once|always_allow|deny|show_me", "scope": "string?" }, "result": {} },
+        "permission.resolve": { "params": { "permissionId": "string", "decision": "allow_once|always_allow|deny|show_me", "scope": "string?" }, "result": { "decision": "string", "delivered": "boolean" } },
         "console.attach": { "params": { "sessionId": "string", "url": "string" }, "result": { "attached": "boolean" } },
         "console.detach": { "params": { "sessionId": "string" }, "result": { "detached": "boolean" } }
       }

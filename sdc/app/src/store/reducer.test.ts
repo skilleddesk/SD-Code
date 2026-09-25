@@ -847,3 +847,31 @@ describe('thinking time and checkpoint ownership', () => {
     expect(state.checkpoints.find((entry) => entry.id === 'cp-b')?.turnId).toBeNull();
   });
 });
+
+describe('the agent plan', () => {
+  it('keeps the newest checklist for the turn, whole', () => {
+    let state = fold(EMPTY_STATE, {
+      type: 'TurnStarted',
+      turnId: 't1',
+      sessionId: 's1',
+      engine: 'native_api',
+      model: 'claude-opus-5-5',
+      tier: 'Deep',
+      prompt: 'fix the 500',
+    });
+
+    state = fold(state, { type: 'PlanUpdated', turnId: 't1', steps: [{ text: 'Reproduce', status: 'in_progress' }, { text: 'Fix', status: 'pending' }] });
+    state = fold(state, { type: 'PlanUpdated', turnId: 't1', steps: [{ text: 'Reproduce', status: 'done' }, { text: 'Fix', status: 'in_progress' }] });
+
+    expect(state.turns[0]?.plan).toEqual([
+      { text: 'Reproduce', status: 'done' },
+      { text: 'Fix', status: 'in_progress' },
+    ]);
+  });
+
+  it('ignores a plan for a turn it has not seen', () => {
+    const state = fold(EMPTY_STATE, { type: 'PlanUpdated', turnId: 'nobody', steps: [{ text: 'x', status: 'done' }] });
+
+    expect(state.turns).toEqual([]);
+  });
+});

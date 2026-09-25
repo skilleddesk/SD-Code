@@ -534,7 +534,14 @@ export interface ModelState {
   dropdownOpen: boolean;
   /** Steering prompts queued behind the running turn (spec section 9.7). */
   queued: string[];
+  /**
+   * Chat or Agent (v4). Agent runs an API or local model inside the daemon's agent loop - it reads,
+   * edits and runs commands until the task is done; the three CLIs are agents either way.
+   */
+  compose: ComposeMode;
 }
+
+export type ComposeMode = 'chat' | 'agent';
 
 export interface ModelActions {
   /** Pick a tier; the model follows (spec section 9.3). */
@@ -555,6 +562,7 @@ export interface ModelActions {
   cycleEngine: () => void;
   /** Queue a steering prompt; ignored once three are waiting. */
   enqueue: (prompt: string) => void;
+  setCompose: (compose: ComposeMode) => void;
   dequeue: (prompt: string) => void;
   clearQueue: () => void;
 }
@@ -568,6 +576,8 @@ const initialModelState: ModelState = {
   catalog: [],
   dropdownOpen: false,
   queued: [...strings.prompt.queued.seed],
+  /* Agent by default: the product's promise is "describe it and it gets built". */
+  compose: 'agent',
 };
 
 export const useModelStore = create<ModelState & ModelActions>()((set, get) => ({
@@ -638,6 +648,12 @@ export const useModelStore = create<ModelState & ModelActions>()((set, get) => (
   cycleTier: () => get().setTier(nextTier(get().tier)),
 
   cycleEngine: () => get().setEngine(nextEngine(get().engine)),
+
+  setCompose: (compose) => {
+    if (get().compose !== compose) {
+      set({ compose });
+    }
+  },
 
   enqueue: (prompt) => {
     const { queued } = get();

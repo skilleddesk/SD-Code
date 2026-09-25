@@ -80,12 +80,29 @@ export const GROUP_ORDER: readonly CommandGroup[] = [
   'actions',
 ];
 
-/** The helper the session commands act on: the newest turn in the log, if any. */
+/**
+ * The turn Esc and Ctrl+Shift+Esc act on: the **open chat's** turn that is still running.
+ *
+ * It used to be the newest turn in the whole log - another chat's, or one that had finished long ago -
+ * so Esc could interrupt a conversation nobody was looking at, or "interrupt" one that was already done.
+ */
 function latestTurn(): { turnId: string; sessionId: string } | null {
   const state = useAppStore.getState();
-  const turn = state.turns.at(-1);
+  const sessionId = usePrefsStore.getState().activeTab;
+  const turn = [...state.turns].reverse().find((candidate) => candidate.sessionId === sessionId);
 
-  return turn === undefined ? null : { turnId: turn.id, sessionId: turn.sessionId };
+  if (turn === undefined || (turn.status !== 'running' && turn.status !== 'stuck')) {
+    return null;
+  }
+
+  return { turnId: turn.id, sessionId: turn.sessionId };
+}
+
+/** The open chat's newest checkpoint - what Ctrl+Z rewinds to (it used to be any chat's). */
+function latestCheckpoint(): { turn: number } | null {
+  const sessionId = usePrefsStore.getState().activeTab;
+
+  return useAppStore.getState().checkpoints.find((checkpoint) => checkpoint.sessionId === sessionId) ?? null;
 }
 
 function mainSession(): string {
@@ -195,9 +212,9 @@ export const COMMANDS: readonly Command[] = [
   { id: 'overlay.close', label: 'Close overlay', hint: 'Esc', icon: 'x', group: 'global', keys: ['escape'], inInput: true, palette: false, when: () => useAppStore.getState().permission === null, run: () => useOverlayStore.getState().closeAll() },
 
   /* ---------------------------------------------------------------- Session (6) */
-  { id: 'turn.interrupt', label: 'Interrupt', hint: 'Esc', icon: 'ban', group: 'session', keys: ['escape'], inInput: true, run: () => { const turn = latestTurn(); if (turn) { void interruptTurn(turn.turnId); } else { toast(strings.prompt.interrupt); } } },
+  { id: 'turn.interrupt', label: 'Interrupt', hint: 'Esc', icon: 'ban', group: 'session', keys: ['escape'], inInput: true, run: () => { const turn = latestTurn(); if (turn) { void interruptTurn(turn.turnId); } } },
   { id: 'turn.kill', label: 'Force kill', hint: 'Ctrl Shift Esc', icon: 'ban', group: 'session', keys: ['ctrl+shift+escape', 'meta+shift+escape'], inInput: true, run: () => { const turn = latestTurn(); if (turn) { void forceKillTurn(turn.turnId); } } },
-  { id: 'turn.rewind', label: 'Rewind last turn', hint: 'Ctrl Z', icon: 'clock', group: 'session', keys: ['ctrl+z', 'meta+z'], run: () => { const checkpoint = useAppStore.getState().checkpoints[0]; if (checkpoint) { void rewindTo(mainSession(), `turn-${checkpoint.turn}`); } } },
+  { id: 'turn.rewind', label: 'Rewind last turn', hint: 'Ctrl Z', icon: 'clock', group: 'session', keys: ['ctrl+z', 'meta+z'], run: () => { const checkpoint = latestCheckpoint(); if (checkpoint) { void rewindTo(mainSession(), `turn-${checkpoint.turn}`); } } },
   { id: 'turn.redo', label: 'Redo', hint: 'Ctrl Shift Z', icon: 'clock', group: 'session', keys: ['ctrl+shift+z', 'meta+shift+z'], run: () => void redoRewind(mainSession()) },
   { id: 'timemachine.open', label: 'Time Machine', hint: 'Ctrl E', icon: 'clock', group: 'session', keys: ['ctrl+e', 'meta+e'], run: () => useLayoutStore.getState().showRight() },
   { id: 'verify.run', label: 'Run verify', hint: 'Ctrl Enter', icon: 'check', group: 'session', keys: ['ctrl+enter', 'meta+enter'], inInput: true, run: () => toast(strings.rightPanel.verify.result) },

@@ -58,6 +58,8 @@ export function toTurns(
           ? undefined
           : { text: turn.text, streaming: turn.status === 'running' },
       tools: turn.tools.map(toToolCard),
+      plan: turn.plan.map((step) => ({ text: step.text, status: step.status })),
+      running: turn.status === 'running' || turn.status === 'stuck',
       checkpoints: checkpoints
         .filter((checkpoint) => checkpoint.turnId === turn.id)
         .sort((left, right) => left.turn - right.turn)

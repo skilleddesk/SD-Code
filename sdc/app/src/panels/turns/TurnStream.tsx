@@ -5,6 +5,7 @@ import { toast } from '../../store/toast';
 import { ErrorCard } from './ErrorCard';
 import { AnswerBlock } from './AnswerBlock';
 import { CheckpointRail } from './CheckpointRail';
+import { PlanCard } from './PlanCard';
 import { ThinkingBlock } from './ThinkingBlock';
 import { ToolCard } from './ToolCard';
 import { TurnFooter } from './TurnFooter';
@@ -89,6 +90,9 @@ function TurnBlock({ turn, sessionId }: { turn: Turn; sessionId: string }) {
           </span>
         )}
       </div>
+
+      {/* The plan first: it is the map of everything below it. */}
+      <PlanCard steps={turn.plan} running={turn.running} />
 
       {turn.thinking ? <ThinkingBlock thinking={turn.thinking} /> : null}
 

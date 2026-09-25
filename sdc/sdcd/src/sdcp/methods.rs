@@ -989,6 +989,29 @@ impl Daemon {
                 self.state.engines.ids().join(", ")
             ))
         })?;
+        /*
+         * Agent mode (v4). The three CLIs are agents already - a turn on `claude_code` reads, edits and
+         * runs by itself - so for them the switch changes nothing. An API model or a local one is a chat
+         * unless the daemon runs the loop for it: that is `agent::SdcAgent`, built per turn with the
+         * autonomy level the person chose, on the same turn pipeline (events, checkpoint, Stop).
+         */
+        let agent_mode = envelope.params.get("agent").and_then(Value::as_bool).unwrap_or(false);
+        let backend = match engine_id.as_str() {
+            "native_api" => Some(crate::agent::Backend::Api),
+            "ollama" => Some(crate::agent::Backend::Ollama),
+            _ => None,
+        };
+        let engine: Arc<dyn crate::engines::Engine> = match backend.filter(|_| agent_mode) {
+            Some(backend) => Arc::new(crate::agent::SdcAgent::new(
+                backend,
+                crate::agent::gate::Autonomy::parse(&envelope.opt_str("autonomy").unwrap_or_default()),
+                envelope
+                    .opt_i64("maxSteps")
+                    .map(|steps| steps.max(1) as usize)
+                    .unwrap_or(crate::agent::DEFAULT_STEPS),
+            )),
+            None => engine,
+        };
 
         let history = session_bridge::history_for(self.store(), &session_id)?;
 
@@ -1050,9 +1073,36 @@ impl Daemon {
         let killed = envelope.method == "engine.kill";
         let summary = if killed { "Force killed" } else { "Interrupted" };
 
+        /*
+         * Stop the turn for real. This method used to push the `TurnCompleted` below and nothing else: the
+         * engine was never told, so the model kept answering (and billing) behind a turn the window
+         * already called interrupted - and its next delta flipped the turn back to `running`.
+         *
+         * The mark comes first, so the turn loop drops whatever the engine still emits; then the engine
+         * that is running the turn is asked to stop (a CLI's process group is killed, here or on the
+         * host), on a task of its own because a remote kill is an `ssh` round trip.
+         */
+        crate::engines::cancel::request(&turn_id);
+
+        let engine = self
+            .store()
+            .turn_engine(&turn_id)
+            .ok()
+            .flatten()
+            .and_then(|engine_id| self.state.engines.get(&engine_id));
+        let stopped = engine.is_some();
+
+        if let Some(engine) = engine {
+            let turn = turn_id.clone();
+
+            tokio::spawn(async move {
+                engine.cancel(&turn).await;
+            });
+        }
+
         out.push(event::turn_completed(&turn_id, summary, "", Some(false)), None, Some(turn_id.clone()));
 
-        Ok(json!({ "state": "killed", "engine": if killed { "kill" } else { "cancel" } }))
+        Ok(json!({ "state": "killed", "engine": if killed { "kill" } else { "cancel" }, "stopped": stopped }))
     }
 
     fn engine_status(&self, envelope: &Envelope) -> Result<Value, ErrorObject> {
@@ -1894,10 +1944,12 @@ impl Daemon {
     fn permission_resolve(&self, envelope: &Envelope, out: &dyn Notifier) -> Result<Value, ErrorObject> {
         let permission_id = envelope.require_str("permissionId")?;
         let decision = envelope.opt_str("decision").unwrap_or_else(|| "deny".into());
+        /* An agent may be blocked on this question (agent::gate); the answer is what lets it go on. */
+        let delivered = crate::agent::gate::resolve(&permission_id, &decision);
 
         out.push(event::permission_resolved(&permission_id, &decision), None, None);
 
-        Ok(json!({ "decision": decision }))
+        Ok(json!({ "decision": decision, "delivered": delivered }))
     }
 
     fn checkpoint_create(&self, envelope: &Envelope, out: &dyn Notifier) -> Result<Value, ErrorObject> {
@@ -2184,6 +2236,13 @@ async fn run_turn(
     });
 
     while let Some(event) = stream.recv().await {
+        /* A stopped turn is over as far as the window is concerned: `engine.cancel` already pushed its
+           `TurnCompleted`, and anything the engine still says would reopen it. The stream is still
+           drained, so the engine task can finish and be joined below. */
+        if crate::engines::cancel::requested(&plan.turn_id) {
+            continue;
+        }
+
         match event {
             crate::engines::EngineEvent::Delta(delta) => {
                 answer.push_str(&delta);
@@ -2193,7 +2252,7 @@ async fn run_turn(
                 out.push(event::thinking_delta(&plan.turn_id, &text), session.clone(), turn.clone());
             }
             crate::engines::EngineEvent::ToolStarted { call_id, tool, name, target } => {
-                if !checkpoint_written && ["edit", "write", "delete"].contains(&tool.as_str()) {
+                if !checkpoint_written && ["edit", "write", "delete", "run"].contains(&tool.as_str()) {
                     let ordinal = state.events.seq();
                     /* The chat's own folder, so a checkpoint written before a mutating tool hashes the
                        files that tool is about to touch. Until 0.7.6 this passed `None`, which meant the
@@ -2236,12 +2295,34 @@ async fn run_turn(
                     turn.clone(),
                 );
             }
-            crate::engines::EngineEvent::ToolCompleted { call_id, status, meta } => {
+            crate::engines::EngineEvent::ToolCompleted { call_id, status, meta, diff } => {
                 out.push(
-                    event::tool_call_completed(&plan.turn_id, &call_id, &status, &meta, None),
+                    event::tool_call_completed(&plan.turn_id, &call_id, &status, &meta, diff),
                     session.clone(),
                     turn.clone(),
                 );
+            }
+            crate::engines::EngineEvent::Permission { permission_id, title, sub, action, target, risk, explain } => {
+                /* The agent is blocked on this question until `permission.resolve` answers it (agent::gate). */
+                out.push(
+                    event::permission_requested(json!({
+                        "permissionId": permission_id,
+                        "sessionId": plan.session_id,
+                        "turnId": plan.turn_id,
+                        "title": title,
+                        "sub": sub,
+                        "action": action,
+                        "target": target,
+                        "risk": risk,
+                        "explain": explain,
+                        "checkpointId": Value::Null,
+                    })),
+                    session.clone(),
+                    turn.clone(),
+                );
+            }
+            crate::engines::EngineEvent::Plan(steps) => {
+                out.push(event::plan_updated(&plan.turn_id, steps), session.clone(), turn.clone());
             }
             crate::engines::EngineEvent::Failed(reason) => {
                 /* Every failure goes through the translator, so the card always has a sentence -
@@ -2275,10 +2356,14 @@ async fn run_turn(
     engine's last event was pushed would be a stored answer that is missing its tail. */
     let _ = running.await;
 
+    let interrupted = crate::engines::cancel::requested(&plan.turn_id);
     let failed = answer.is_empty();
-    let state_name = if failed { "error" } else { "success" };
+    let state_name = if interrupted { "idle" } else if failed { "error" } else { "success" };
+    let summary = if interrupted { "Interrupted" } else { "Done" };
 
-    let _ = state.store.finish_turn(&plan.turn_id, &answer, "Done", state_name);
+    crate::engines::cancel::clear(&plan.turn_id);
+
+    let _ = state.store.finish_turn(&plan.turn_id, &answer, summary, state_name);
     let _ = state.store.update_session(&plan.session_id, None, Some(state_name), None, Some(0), None);
 
     out.push(

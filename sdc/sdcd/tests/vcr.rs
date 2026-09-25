@@ -47,6 +47,8 @@ fn kind_of(event: &EngineEvent) -> &'static str {
         EngineEvent::ToolCompleted { .. } => "ToolCompleted",
         EngineEvent::Failed(_) => "Failed",
         EngineEvent::Done { .. } => "Done",
+        EngineEvent::Permission { .. } => "Permission",
+        EngineEvent::Plan(_) => "Plan",
     }
 }
 

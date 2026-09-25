@@ -219,6 +219,12 @@ export const strings = {
       expand: 'Show the reasoning',
       collapse: 'Hide the reasoning',
     },
+    /** The agent's plan card (v4). */
+    plan: {
+      title: 'Plan',
+      progress: (done: number, total: number): string => `${done} of ${total} done`,
+      status: { pending: 'to do', in_progress: 'in progress', done: 'done' } as const,
+    },
     /** The checkpoint rail beside a turn (v4). */
     checkpoint: {
       label: 'Checkpoint',
@@ -362,6 +368,19 @@ export const strings = {
       command: '/ command',
     },
     send: 'Send',
+    /** The Stop button that replaces Send while this chat's turn runs. */
+    stop: 'Stop',
+    stopHint: 'Stop this turn (Esc)',
+    /** Chat | Agent (v4). */
+    compose: {
+      label: 'How to answer',
+      chat: 'Chat',
+      agent: 'Agent',
+      hint: {
+        chat: 'Chat: a question and an answer. Nothing in the folder is changed.',
+        agent: 'Agent: reads, edits and runs commands in this chat’s folder until the task is done. Simple asks before every change; Pro asks before commands; Auto asks only before dangerous ones.',
+      },
+    },
     /** The picker itself failed to open (a missing capability, a broken plugin) - not a cancel. */
     pickFailed: 'Could not open the file picker',
     tip: {

@@ -24,6 +24,7 @@ function turn(overrides: Partial<TurnView> = {}): TurnView {
     thinking: '',
     thinkingMs: 0,
     thinkingSince: null,
+    plan: [],
     status: 'running',
     stuckForMs: 0,
     tools: [],

@@ -7,6 +7,7 @@ export { TurnStream } from './TurnStream';
 export { UserMessage } from './UserMessage';
 export { ThinkingBlock } from './ThinkingBlock';
 export { CheckpointRail } from './CheckpointRail';
+export { PlanCard } from './PlanCard';
 export { ToolCard } from './ToolCard';
 export { ErrorCard } from './ErrorCard';
 export { TurnFooter } from './TurnFooter';

@@ -17,6 +17,7 @@
 //! and which JSON field carries the text - are constructor arguments.
 
 pub mod body;
+pub mod cancel;
 pub mod claude_code;
 pub mod cli;
 pub mod codex;
@@ -125,7 +126,20 @@ pub enum EngineEvent {
     Thinking(String),
     ToolStarted { call_id: String, tool: String, name: String, target: String },
     ToolOutput { call_id: String, level: String, text: String },
-    ToolCompleted { call_id: String, status: String, meta: String },
+    /// `diff` is the Edit card's rows (`[{lineNumber, text, change}]`) when the adapter knows them.
+    ToolCompleted { call_id: String, status: String, meta: String, diff: Option<Value> },
+    /// The agent is waiting for the person to allow an action (the daemon pushes `PermissionRequested`).
+    Permission {
+        permission_id: String,
+        title: String,
+        sub: String,
+        action: String,
+        target: String,
+        risk: String,
+        explain: String,
+    },
+    /// The agent's checklist, as it stands now: `[{text, status}]` (the plan card, v4).
+    Plan(Value),
     Failed(String),
     Done {
         summary: String,
@@ -401,6 +415,7 @@ pub fn parse_stream_line(line: &str) -> Vec<EngineEvent> {
             text: string_of(&value, "text", ""),
         }],
         "tool_done" => vec![EngineEvent::ToolCompleted {
+            diff: None,
             call_id: string_of(&value, "id", "call"),
             status: if value.get("ok").and_then(Value::as_bool).unwrap_or(true) {
                 "done"

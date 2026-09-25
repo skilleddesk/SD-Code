@@ -157,6 +157,8 @@ export interface TurnView {
   thinkingMs: number;
   /** The `ts` of the stretch of thinking still going on, or `null` when the engine is not thinking. */
   thinkingSince: string | null;
+  /** The agent's checklist (`PlanUpdated`, v4), newest version; empty for a turn without one. */
+  plan: PlanStepView[];
   status: 'running' | 'stuck' | 'done' | 'failed';
   /** Milliseconds without output, set by `StuckDetected` (spec section 12.9). */
   stuckForMs: number;
@@ -170,6 +172,12 @@ export interface TurnView {
 /* ------------------------------------------------------------------------------------------------
  * The five differentiators' view state (spec sections 2.5, 14-16)
  * ---------------------------------------------------------------------------------------------- */
+
+/** One step of an agent's plan card. */
+export interface PlanStepView {
+  text: string;
+  status: 'pending' | 'in_progress' | 'done';
+}
 
 /** One row of the Time Machine tab: a checkpoint the rewind machinery can restore. */
 export interface CheckpointView {
