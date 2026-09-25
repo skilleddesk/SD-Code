@@ -8,7 +8,7 @@ import {
   ScanSearch,
   Wand2,
 } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import type { VerifyCheck, VerifyIssue } from '../../../../protocol/types';
 import { baseName, inFolder } from '../../lib/paths';
@@ -173,6 +173,13 @@ function StatusIcon({ status }: { status: VerifyCheck['status'] }) {
 function CheckRow({ check }: { check: VerifyCheck }) {
   const [open, setOpen] = useState(check.status === 'fail');
   const hasTail = check.tail.length > 0 && check.status === 'fail';
+
+  /* A row mounts as `pending` and fails later: the failure's output opens when it arrives. */
+  useEffect(() => {
+    if (check.status === 'fail') {
+      setOpen(true);
+    }
+  }, [check.status]);
 
   return (
     <div className="verify-row overflow-hidden rounded-md border border-border-subtle bg-bg-raised" data-status={check.status}>
