@@ -1,6 +1,7 @@
 import { Sparkles } from 'lucide-react';
 
 import { strings } from '../../strings';
+import { Markdown } from './Markdown';
 import type { AnswerData } from './types';
 
 /**
@@ -42,9 +43,9 @@ export function AnswerBlock({ answer }: AnswerBlockProps) {
         {answer.streaming ? <span className="font-normal normal-case tracking-normal">{strings.turns.answer.streaming}</span> : null}
       </div>
 
-      <div className="answer-body whitespace-pre-wrap text-[13px] leading-[1.6] text-text-primary">
-        {answer.text}
-        {answer.streaming ? <span className="answer-caret ml-[1px] animate-pulse text-accent">▍</span> : null}
+      <div className="answer-body">
+        <Markdown text={answer.text} />
+        {answer.streaming ? <span className="answer-caret ml-[1px] animate-pulse text-accent motion-reduce:animate-none">▍</span> : null}
       </div>
     </div>
   );

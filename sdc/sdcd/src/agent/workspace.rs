@@ -167,6 +167,8 @@ impl Workspace {
 
         let lines = entries
             .iter()
+            /* The repository's own machinery is not the project; `git_diff` is the way to ask git. */
+            .filter(|entry| entry["name"].as_str() != Some(".git"))
             .map(|entry| {
                 let name = entry["name"].as_str().unwrap_or_default();
 

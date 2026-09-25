@@ -27,6 +27,7 @@ import {
   loadDirectory,
   loadGitStatus,
   openDiff,
+  refreshAfterTurn,
   openFile,
   refreshDirectory,
   renamePath,
@@ -36,6 +37,7 @@ import {
 } from '../../store/intents';
 import { useOverlayStore } from '../../store/overlays';
 import { findSession, useSessionsStore } from '../../store/sessions';
+import { useAppStore } from '../../store/store';
 
 /**
  * The Files section of the sidebar (0.7.7) - the folder the chat works in, and since v4 the place to
@@ -92,6 +94,10 @@ export function FilesSection() {
   const openRemoteFolder = useOverlayStore((state) => state.openRemoteFolder);
 
   const { root: storedRoot, directories, expanded, loading, error, git } = useFilesStore();
+  /* How many of this chat's turns have ended - a number, so the effect below runs once per ended turn. */
+  const ended = useAppStore(
+    (state) => state.turns.filter((turn) => turn.sessionId === activeTab && turn.status !== 'running' && turn.status !== 'stuck').length,
+  );
   const [renaming, setRenaming] = useState<string | null>(null);
   const [creating, setCreating] = useState<Editing['creating']>(null);
   const [armed, setArmed] = useState<string | null>(null);
@@ -121,6 +127,13 @@ export function FilesSection() {
     /* The branch and the changed-file count come with the folder (0.7.9). */
     void loadGitStatus();
   }, [root]);
+
+  /* A turn ended: show what it changed (the tree, the badge, the open files). */
+  useEffect(() => {
+    if (ended > 0 && root !== null) {
+      void refreshAfterTurn();
+    }
+  }, [ended, root]);
 
   if (root === null) {
     return (
@@ -240,7 +253,8 @@ function Rows({ path, state, depth = 0 }: { path: string; state: TreeState; dept
     );
   }
 
-  const ordered = [...listing.entries].sort((left, right) =>
+  /* `.git` is the repository's machinery, not the project's files - the badge above stands for it. */
+  const ordered = listing.entries.filter((entry) => entry.name !== '.git').sort((left, right) =>
     left.dir === right.dir ? left.name.localeCompare(right.name) : left.dir ? -1 : 1,
   );
 

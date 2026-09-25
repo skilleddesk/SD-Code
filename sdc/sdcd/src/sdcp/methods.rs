@@ -1005,17 +1005,16 @@ impl Daemon {
             "ollama" => Some(crate::agent::Backend::Ollama),
             _ => None,
         };
-        let engine: Arc<dyn crate::engines::Engine> = match backend.filter(|_| agent_mode) {
-            Some(backend) => Arc::new(crate::agent::SdcAgent::new(
+        let agent = backend.filter(|_| agent_mode).map(|backend| {
+            crate::agent::SdcAgent::new(
                 backend,
                 crate::agent::gate::Autonomy::parse(&envelope.opt_str("autonomy").unwrap_or_default()),
                 envelope
                     .opt_i64("maxSteps")
                     .map(|steps| steps.max(1) as usize)
                     .unwrap_or(crate::agent::DEFAULT_STEPS),
-            )),
-            None => engine,
-        };
+            )
+        });
 
         let history = session_bridge::history_for(self.store(), &session_id)?;
 
@@ -1049,6 +1048,48 @@ impl Daemon {
            over `ssh` in that folder rather than locally (see `engines::cli::remote_command`). */
         let remote = self.remote_for(envelope)?;
 
+        /*
+         * An agent takes its own checkpoint, synchronously, before its first change (agent::tools::Checkpointer):
+         * a checkpoint written when the turn loop *received* the agent's ToolStarted was written after the file,
+         * because the agent does not wait for the loop. The closure owns what it needs - the store, the
+         * notifier, which chat, which turn, and where the folder is.
+         */
+        let self_checkpointing = agent.is_some();
+        let engine: Arc<dyn crate::engines::Engine> = match agent {
+            Some(agent) => {
+                let store = self.state.store.clone();
+                let notifier = out.clone();
+                let (session, turn) = (session_id.clone(), turn_id.clone());
+                let (root, ssh) = (project_root.clone(), remote.clone());
+                let events = self.state.events.clone();
+                let checkpoint: crate::agent::tools::Checkpointer = Arc::new(move |title: &str| {
+                    let snapshot = match (&ssh, root.as_deref()) {
+                        (Some(ssh), Some(root)) => crate::checkpoints::Snapshot::Remote(ssh, root),
+                        (None, Some(root)) => crate::checkpoints::Snapshot::Local(std::path::Path::new(root)),
+                        _ => crate::checkpoints::Snapshot::Unbound,
+                    };
+
+                    if let Ok(fresh) = crate::checkpoints::create(
+                        &store,
+                        &session,
+                        events.seq(),
+                        title,
+                        snapshot,
+                        crate::checkpoints::screenshot::capture(),
+                    ) {
+                        notifier.push(
+                            event::checkpoint_saved(&session, fresh.to_event_payload()),
+                            Some(session.clone()),
+                            Some(turn.clone()),
+                        );
+                    }
+                });
+
+                Arc::new(agent.with_checkpoint(checkpoint))
+            }
+            None => engine,
+        };
+
         /* The turn runs on its own task, so the response can go back before the first token does. */
         let state = self.state.clone();
         let notifier = out.clone();
@@ -1063,6 +1104,7 @@ impl Daemon {
             history,
             project_root,
             remote,
+            self_checkpointing,
         };
 
         tokio::spawn(async move {
@@ -2359,6 +2401,9 @@ struct RunPlan {
     /// The host that folder is on, when it is not this machine (0.7.13). It travels the same way and for
     /// the same reason: `cli.rs` uses it to run the CLI there instead of here.
     remote: Option<crate::ssh::Ssh>,
+    /// The engine takes its own checkpoint before its first change (the SDC Agent), so the loop below
+    /// must not take a second, late one when it sees the ToolStarted.
+    self_checkpointing: bool,
 }
 
 /// Runs one turn and pushes its events - including the checkpoint that must exist *before* a mutating
@@ -2423,7 +2468,7 @@ async fn run_turn(
                 out.push(event::thinking_delta(&plan.turn_id, &text), session.clone(), turn.clone());
             }
             crate::engines::EngineEvent::ToolStarted { call_id, tool, name, target } => {
-                if !checkpoint_written && ["edit", "write", "delete", "run"].contains(&tool.as_str()) {
+                if !plan.self_checkpointing && !checkpoint_written && ["edit", "write", "delete", "run"].contains(&tool.as_str()) {
                     let ordinal = state.events.seq();
                     /* The chat's own folder, so a checkpoint written before a mutating tool hashes the
                        files that tool is about to touch. Until 0.7.6 this passed `None`, which meant the
@@ -2439,7 +2484,7 @@ async fn run_turn(
                         &state.store,
                         &plan.session_id,
                         ordinal,
-                        &format!("Before {name}"),
+                        &format!("Before {name} {target}"),
                         snapshot,
                         crate::checkpoints::screenshot::capture(),
                     ) {
@@ -2963,6 +3008,7 @@ mod tests {
             history: Vec::new(),
             project_root: None,
             remote: None,
+            self_checkpointing: false,
         };
         let engine: Arc<dyn crate::engines::Engine> = Arc::new(Halfway {
             release: std::sync::Mutex::new(Some(gated)),

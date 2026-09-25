@@ -83,7 +83,7 @@ export function Permission() {
         </div>
 
         <div className="dialog-explain mt-[12px] text-[12.5px] leading-[1.65] text-text-secondary">
-          <strong className="text-text-primary">{strings.permission.explainStrong}</strong>{' '}
+          <strong className="text-text-primary">{strings.permission.explainStrong(permission.action)}</strong>{' '}
           {permission.explain}
         </div>
 
@@ -111,7 +111,7 @@ export function Permission() {
           data-permission-action="show_me"
           onClick={() => decide('show_me')}
         >
-          {strings.permission.showMe}
+          {strings.permission.showMe(permission.action)}
         </button>
 
         {permission.risk === 'MUTATING' ? (

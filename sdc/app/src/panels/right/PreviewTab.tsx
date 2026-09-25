@@ -1,6 +1,7 @@
 import { ExternalLink, Globe, RotateCw, X } from 'lucide-react';
 import { useState, type FormEvent } from 'react';
 
+import { openOutside } from '../../lib/external';
 import { previewAddress } from '../../lib/url';
 import { strings } from '../../strings';
 import { useFilesStore } from '../../store/files';
@@ -33,17 +34,6 @@ const DEVICE_WIDTH: Record<Device, number | null> = {
 };
 
 const DEVICES: readonly Device[] = ['mobile', 'tablet', 'desktop'];
-
-/** Opens a URL in the person's own browser - through Tauri's shell in the app, a new tab in dev. */
-async function openOutside(url: string): Promise<void> {
-  try {
-    const { open } = await import('@tauri-apps/plugin-shell');
-
-    await open(url);
-  } catch {
-    window.open(url, '_blank', 'noopener');
-  }
-}
 
 export function PreviewTab() {
   const [device, setDevice] = useState<Device>('desktop');

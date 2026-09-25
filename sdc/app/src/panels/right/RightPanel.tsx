@@ -154,8 +154,10 @@ export function RightPanel() {
               aria-selected={selected}
               aria-controls={`panel-view-${tab.id}`}
               tabIndex={selected ? 0 : -1}
+              title={strings.rightPanel.tabs[tab.id]}
+              aria-label={strings.rightPanel.tabs[tab.id]}
               className={
-                'panel-tab relative flex items-center gap-[5px] whitespace-nowrap rounded-md px-[9px] py-[6px] text-[11.5px] transition-all duration-fast ease-ease ' +
+                'panel-tab relative flex shrink-0 items-center gap-[5px] whitespace-nowrap rounded-md px-[8px] py-[6px] text-[11.5px] transition-all duration-fast ease-ease ' +
                 (selected
                   ? 'active bg-bg-raised text-text-primary shadow-[inset_0_0_0_1px_var(--border-subtle)]'
                   : 'text-text-secondary hover:bg-bg-hover hover:text-text-primary')
@@ -166,8 +168,11 @@ export function RightPanel() {
                 showRight();
               }}
             >
-              <Icon size={12} aria-hidden="true" />
-              {strings.rightPanel.tabs[tab.id]}
+              <Icon size={13} aria-hidden="true" />
+              {/* Seven tabs do not fit a 320-400px panel with their names, and a strip that scrolled with a
+                  hidden scrollbar hid Duel, Verify and Analytics entirely. Every tab keeps its icon, tooltip
+                  and accessible name; the selected one also shows its name. */}
+              {selected ? <span>{strings.rightPanel.tabs[tab.id]}</span> : null}
               {tab.id === 'console' && errorCount > 0 ? (
                 <span className="badge h-[15px] min-w-[15px] rounded-full bg-state-error px-[5px] text-center text-[9.5px] font-bold leading-[15px] text-text-on-accent">
                   {errorCount}

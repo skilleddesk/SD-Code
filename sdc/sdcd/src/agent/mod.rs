@@ -53,11 +53,18 @@ pub struct SdcAgent {
     backend: Backend,
     autonomy: Autonomy,
     max_steps: usize,
+    checkpoint: Option<tools::Checkpointer>,
 }
 
 impl SdcAgent {
     pub fn new(backend: Backend, autonomy: Autonomy, max_steps: usize) -> Self {
-        Self { backend, autonomy, max_steps: max_steps.clamp(1, MAX_STEPS) }
+        Self { backend, autonomy, max_steps: max_steps.clamp(1, MAX_STEPS), checkpoint: None }
+    }
+
+    /// The daemon's checkpoint for this turn, taken by the agent itself before its first change.
+    pub fn with_checkpoint(mut self, checkpoint: tools::Checkpointer) -> Self {
+        self.checkpoint = Some(checkpoint);
+        self
     }
 }
 
@@ -70,10 +77,11 @@ impl crate::engines::Engine for SdcAgent {
     async fn start(&self, prompt: Prompt, sink: &EventSink) {
         let sink = sink.clone();
         let (backend, autonomy, max_steps) = (self.backend, self.autonomy, self.max_steps);
+        let checkpoint = self.checkpoint.clone();
 
         /* Every step blocks - a streaming HTTP read, a file read over ssh, a command - so the whole loop
            runs on the blocking pool, and its events travel through the sink while it does. */
-        let _ = tokio::task::spawn_blocking(move || run(backend, autonomy, max_steps, &prompt, &sink)).await;
+        let _ = tokio::task::spawn_blocking(move || run(backend, autonomy, max_steps, checkpoint, &prompt, &sink)).await;
     }
 
     async fn cancel(&self, turn_id: &str) -> bool {
@@ -189,7 +197,12 @@ fn meta(steps: usize, input: u64, output: u64, price: Option<(f64, f64)>) -> Str
     if let Some((per_in, per_out)) = price {
         let cost = input as f64 / 1_000_000.0 * per_in + output as f64 / 1_000_000.0 * per_out;
 
-        meta.push_str(&format!(" · ≈${cost:.2}"));
+        /* Two decimals said "≈$0.00" for a real, small bill; below a cent the digits that matter are shown. */
+        if cost >= 0.01 {
+            meta.push_str(&format!(" · ≈${cost:.2}"));
+        } else {
+            meta.push_str(&format!(" · ≈${cost:.4}"));
+        }
     }
 
     meta
@@ -205,7 +218,7 @@ fn system_prompt(workspace: &Workspace) -> String {
          \n\
          How to work:\n\
          - Understand before changing: list the folder and read the files that matter first.\n\
-         - For anything with more than two steps, call update_plan first, then keep it current as steps finish.\n\
+         - For anything with more than two steps, call update_plan first. The person watches that checklist: call update_plan again each time a step starts or finishes, and mark every step done before your final answer.\n\
          - Change files with edit_file (exact text replacement); use write_file for new files or full rewrites.\n\
          - Verify your work: build it, run the tests or run the program with run_command, read the output, and fix what fails.\n\
          - Never start a command that does not exit on its own (a dev server, a watcher). Say how to start it instead.\n\
@@ -242,7 +255,14 @@ fn step_sink(sink: &EventSink, separate: bool) -> EventSink {
 }
 
 /// The loop.
-pub fn run(backend: Backend, autonomy: Autonomy, max_steps: usize, prompt: &Prompt, sink: &EventSink) {
+pub fn run(
+    backend: Backend,
+    autonomy: Autonomy,
+    max_steps: usize,
+    checkpoint: Option<tools::Checkpointer>,
+    prompt: &Prompt,
+    sink: &EventSink,
+) {
     let Some(root) = prompt.project_root.as_deref().filter(|root| !root.trim().is_empty()) else {
         sink.send(EngineEvent::Failed(
             "Agent mode works inside a folder, and this chat has none. Open a folder for it (Files → Open folder), or switch to Chat."
@@ -262,17 +282,19 @@ pub fn run(backend: Backend, autonomy: Autonomy, max_steps: usize, prompt: &Prom
         }
     };
 
-    drive(backend, &target, &workspace, autonomy, max_steps, prompt, sink);
+    drive(backend, &target, &workspace, autonomy, max_steps, checkpoint, prompt, sink);
 }
 
 /// The loop over a resolved endpoint - separate from `run` so a test can point it at a loopback
 /// server and watch a whole turn: files written, commands run, the answer, the footer.
+#[allow(clippy::too_many_arguments)]
 fn drive(
     backend: Backend,
     target: &Target,
     workspace: &Workspace,
     autonomy: Autonomy,
     max_steps: usize,
+    checkpoint: Option<tools::Checkpointer>,
     prompt: &Prompt,
     sink: &EventSink,
 ) {
@@ -298,6 +320,8 @@ fn drive(
         autonomy,
         always: HashSet::new(),
         calls: 0,
+        checkpoint,
+        checkpointed: false,
     };
     let (mut input_tokens, mut output_tokens) = (0u64, 0u64);
     let mut said_something = false;
@@ -410,6 +434,7 @@ mod tests {
     fn the_footer_says_what_the_turn_used_and_what_it_cost() {
         assert_eq!(meta(1, 900, 40, None), "1 step · 900 in · 40 out");
         assert_eq!(meta(7, 12_400, 3_100, Some((4.0, 20.0))), "7 steps · 12.4k in · 3.1k out · ≈$0.11");
+        assert_eq!(meta(8, 17_500, 886, Some((0.14, 0.28))), "8 steps · 17.5k in · 886 out · ≈$0.0027");
     }
 
     #[test]
@@ -426,7 +451,7 @@ mod tests {
             remote: None,
         };
 
-        run(Backend::Ollama, Autonomy::Ask, 5, &prompt, &recorder.sink());
+        run(Backend::Ollama, Autonomy::Ask, 5, None, &prompt, &recorder.sink());
 
         assert!(matches!(&recorder.events()[..], [EngineEvent::Failed(reason)] if reason.contains("Open a folder")));
     }
@@ -546,7 +571,21 @@ mod end_to_end {
         };
         let recorder = crate::engines::Recorder::new();
 
-        drive(Backend::Api, &target, &workspace, Autonomy::Auto, 10, &prompt, &recorder.sink());
+        /* The checkpoint must see the folder as it was before the write - the race this test pins. */
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::<(String, bool)>::new()));
+        let probe = seen.clone();
+        let file = root.join("hello.txt");
+        let checkpoint: tools::Checkpointer = std::sync::Arc::new(move |title: &str| {
+            probe.lock().unwrap().push((title.to_string(), file.exists()));
+        });
+
+        drive(Backend::Api, &target, &workspace, Autonomy::Auto, 10, Some(checkpoint), &prompt, &recorder.sink());
+
+        assert_eq!(
+            *seen.lock().unwrap(),
+            vec![("Before Create hello.txt".to_string(), false)],
+            "one checkpoint, taken before the file existed"
+        );
 
         let bodies = server.join().unwrap();
         let events = recorder.events();
@@ -609,7 +648,7 @@ mod end_to_end {
         };
         let recorder = crate::engines::Recorder::new();
 
-        drive(Backend::Api, &target, &workspace, Autonomy::Ask, 2, &prompt, &recorder.sink());
+        drive(Backend::Api, &target, &workspace, Autonomy::Ask, 2, None, &prompt, &recorder.sink());
         server.join().unwrap();
 
         assert!(matches!(recorder.events().last(), Some(EngineEvent::Done { summary, .. }) if summary == "Paused at the step limit"));
