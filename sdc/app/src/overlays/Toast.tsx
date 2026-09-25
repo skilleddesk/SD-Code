@@ -1,9 +1,14 @@
 import { X } from 'lucide-react';
 import { useEffect, useRef } from 'react';
 
+import { redoRewind } from '../store/intents';
+import { usePrefsStore } from '../store/prefs';
 import { useAppStore } from '../store/store';
 import { useToastStore } from '../store/toast';
 import { strings } from '../strings';
+
+/** The action the daemon's rewind toast carries (`rewind.apply`). */
+const UNDO_REWIND = 'Undo this';
 
 /**
  * `#toastWrap` - the one toast stack (spec section 9.14).
@@ -113,8 +118,18 @@ export function Toast() {
             <button
               type="button"
               className="toast-action ml-auto whitespace-nowrap px-[4px] font-semibold text-accent hover:text-accent-hover"
-              title={strings.toast.dismiss}
-              onClick={() => dismiss(toast.id)}
+              title={toast.action === UNDO_REWIND ? strings.rightPanel.timeMachine.redo : strings.toast.dismiss}
+              onClick={() => {
+                /* The rewind's toast says "Undo this", and until v4 the button only closed the toast. It is
+                   the Time Machine's Redo now, for the chat on screen. */
+                const sessionId = usePrefsStore.getState().activeTab;
+
+                if (toast.action === UNDO_REWIND && sessionId !== null) {
+                  void redoRewind(sessionId);
+                }
+
+                dismiss(toast.id);
+              }}
             >
               {toast.action}
             </button>

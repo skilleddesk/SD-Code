@@ -373,17 +373,20 @@ function reduce(state: AppState, entry: AppEvent): AppState {
         };
       }
 
+      /*
+       * The checkpoint rewound to and every later one leave the list (v4: the chosen one is included - it
+       * is the state the folder is now in). The conversation stays: `event.turn` is a checkpoint's ordinal,
+       * not a turn number, and the filter that compared the two never matched anything. Keeping the turns
+       * on screen is also the honest picture - they happened, and their changes are what was undone.
+       */
       const dropped = state.checkpoints.filter(
-        (checkpoint) => checkpoint.sessionId === event.sessionId && checkpoint.turn > event.turn,
+        (checkpoint) => checkpoint.sessionId === event.sessionId && checkpoint.turn >= event.turn,
       );
 
       return {
         ...state,
         checkpoints: state.checkpoints.filter((checkpoint) => !dropped.includes(checkpoint)),
         rewindStack: [...dropped, ...state.rewindStack],
-        turns: state.turns.filter(
-          (turn) => !(turn.sessionId === event.sessionId && turn.turnNumber > event.turn),
-        ),
       };
     }
 

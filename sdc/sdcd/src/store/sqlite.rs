@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use anyhow::Result;
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::Value;
 
 use crate::sdcp::events::StoredEvent;
@@ -90,6 +90,15 @@ CREATE TABLE IF NOT EXISTS settings (
         r#"
 ALTER TABLE hosts ADD COLUMN port INTEGER;
 ALTER TABLE hosts ADD COLUMN host_key TEXT;
+"#,
+    ),
+    (
+        /* v4: one rewind is one frame - the checkpoint rows it hid (whole, so a redo puts them back as they
+         * were rather than as `'restored'` rows with no hash) and the shadow commit of the folder just
+         * before the rewind, which is what a redo restores. */
+        "0004-rewind-frames",
+        r#"
+ALTER TABLE rewind_stack ADD COLUMN frame TEXT;
 "#,
     ),
 ];
@@ -306,65 +315,74 @@ impl Store {
         }
     }
 
-    /// The checkpoints a rewind to `turn` would step over, oldest first.
-    pub fn checkpoints_after(&self, session_id: &str, turn: i64) -> Result<Vec<Value>> {
-        let mut dropped: Vec<Value> = self
+    /// A checkpoint and every one after it, oldest first - what a rewind **to** that checkpoint hides.
+    pub fn checkpoints_from(&self, session_id: &str, turn: i64) -> Result<Vec<Value>> {
+        let mut rows: Vec<Value> = self
             .checkpoints(session_id)?
             .into_iter()
-            .filter(|row| row["turn"].as_i64().unwrap_or(0) > turn)
+            .filter(|row| row["turn"].as_i64().unwrap_or(0) >= turn)
             .collect();
 
-        dropped.reverse();
+        rows.reverse();
 
-        Ok(dropped)
+        Ok(rows)
     }
 
-    /// Pushes the dropped checkpoints onto the rewind stack and takes them out of the visible list -
-    /// which is what makes the Time Machine tab show the state you rewound *to*.
-    pub fn push_rewind_stack(&self, session_id: &str, dropped: &[Value]) -> Result<()> {
+    /// Records one rewind: the frame (what a redo needs), and the hidden checkpoints taken out of the list.
+    pub fn push_rewind_frame(&self, session_id: &str, turn: i64, target_id: &str, frame: &Value, hidden: &[String]) -> Result<()> {
         let now = chrono::Utc::now().to_rfc3339();
         let connection = self.connection.lock().unwrap();
 
-        for row in dropped {
-            let id = row["id"].as_str().unwrap_or_default();
+        connection.execute(
+            "INSERT INTO rewind_stack (session_id, checkpoint_id, turn, pushed_at, frame) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![session_id, target_id, turn, now, frame.to_string()],
+        )?;
 
-            connection.execute(
-                "INSERT INTO rewind_stack (session_id, checkpoint_id, turn, pushed_at) VALUES (?1, ?2, ?3, ?4)",
-                params![session_id, id, row["turn"].as_i64().unwrap_or(0), now],
-            )?;
+        for id in hidden {
             connection.execute("DELETE FROM checkpoints WHERE id = ?1", params![id])?;
         }
 
         Ok(())
     }
 
-    /// Pops the newest frame, moving it back into the visible list. `redo`'s whole job.
-    pub fn pop_rewind_stack(&self, session_id: &str) -> Result<Option<Value>> {
-        let now = chrono::Utc::now().to_rfc3339();
+    /// Takes the newest rewind off the stack and puts its checkpoints back exactly as they were. Returns the
+    /// frame, or `None` when there is nothing to redo. A frame written before v4 has no `frame` and comes
+    /// back as `{}` - its rows were already lost to the old format.
+    pub fn pop_rewind_frame(&self, session_id: &str) -> Result<Option<(i64, Value)>> {
         let connection = self.connection.lock().unwrap();
-        let mut statement = connection.prepare(
-            "SELECT rowid, checkpoint_id, turn FROM rewind_stack WHERE session_id = ?1 ORDER BY turn ASC LIMIT 1",
-        )?;
-        let mut rows = statement.query_map(params![session_id], |row| {
-            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, i64>(2)?))
-        })?;
+        let found: Option<(i64, i64, Option<String>)> = connection
+            .query_row(
+                "SELECT id, turn, frame FROM rewind_stack WHERE session_id = ?1 ORDER BY id DESC LIMIT 1",
+                params![session_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()?;
 
-        let Some(frame) = rows.next() else {
+        let Some((row_id, turn, frame)) = found else {
             return Ok(None);
         };
-        let (row_id, checkpoint_id, turn) = frame?;
 
-        drop(rows);
-        drop(statement);
+        connection.execute("DELETE FROM rewind_stack WHERE id = ?1", params![row_id])?;
 
-        connection.execute("DELETE FROM rewind_stack WHERE rowid = ?1", params![row_id])?;
-        connection.execute(
-            "INSERT OR REPLACE INTO checkpoints (id, session_id, turn, title, thumbnail, files_hash, created_at)
-             VALUES (?1, ?2, ?3, 'restored', NULL, 'restored', ?4)",
-            params![checkpoint_id, session_id, turn, now],
-        )?;
+        let frame: Value = frame.and_then(|text| serde_json::from_str(&text).ok()).unwrap_or_else(|| serde_json::json!({}));
 
-        Ok(Some(serde_json::json!({ "id": checkpoint_id, "turn": turn })))
+        for row in frame["rows"].as_array().cloned().unwrap_or_default() {
+            connection.execute(
+                "INSERT OR REPLACE INTO checkpoints (id, session_id, turn, title, thumbnail, files_hash, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![
+                    row["id"].as_str().unwrap_or_default(),
+                    session_id,
+                    row["turn"].as_i64().unwrap_or(0),
+                    row["title"].as_str().unwrap_or_default(),
+                    row["thumbnail"].as_str(),
+                    row["filesHash"].as_str().unwrap_or_default(),
+                    row["ts"].as_str().unwrap_or_default(),
+                ],
+            )?;
+        }
+
+        Ok(Some((turn, frame)))
     }
 
     /// How many frames are stacked - the "N undoable" the Time Machine tab can show.

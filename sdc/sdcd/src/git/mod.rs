@@ -151,6 +151,22 @@ pub fn diff(project_root: &Path, since: Option<&str>) -> Result<String, ErrorObj
     }
 }
 
+/// Makes the folder **exactly** what a shadow commit recorded (v4): changed files go back, deleted
+/// files come back, and files created after it are removed.
+///
+/// The rewind used to run `checkout <sha> -- .` with the *shadow repository* as the work tree - so it
+/// looked for the shadow of the shadow, failed, and the error was discarded: a local rewind never
+/// restored a single file while it answered `restoredFiles: 1`. `add -A` first, so the index knows every
+/// file that exists now; `read-tree -u --reset` then moves the index and the folder to the commit,
+/// removing what the commit does not have. Ignored files (`node_modules`) are not in the index and are
+/// left alone; the project's own `.git` is never touched.
+pub fn restore(project_root: &Path, sha: &str) -> Result<(), ErrorObject> {
+    run(project_root, &["add", "-A"])?;
+    run(project_root, &["read-tree", "-u", "--reset", sha])?;
+
+    Ok(())
+}
+
 /// What changed in the folder since a shadow commit, new files included (see `ssh::ops::shadow_changes`,
 /// the same rule on a host). Only the shadow's index is written; the project's own repository is not.
 pub fn changes_since(project_root: &Path, sha: &str) -> Result<String, ErrorObject> {

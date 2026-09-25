@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 
 import type { FsEntry } from '../../../protocol/types';
+import { samePath } from '../lib/paths';
 
 /**
  * The file tree's view state - which folders are open, what was read, and the file on screen (0.7.7).
@@ -160,15 +161,15 @@ export const useFilesStore = create<FilesState & FilesActions>()((set, get) => (
         return state.open === null ? { ...state, opening: null, diff: null } : { ...closed(state, state.open.path), diff: null };
       }
 
-      const known = state.tabs.some((tab) => tab.path === file.path);
-      const tabs = known ? state.tabs.map((tab) => (tab.path === file.path ? file : tab)) : [...state.tabs, file];
+      const known = state.tabs.some((tab) => samePath(tab.path, file.path));
+      const tabs = known ? state.tabs.map((tab) => (samePath(tab.path, file.path) ? file : tab)) : [...state.tabs, file];
 
       return { ...state, tabs, open: file, opening: null, diff: null };
     }),
 
   activate: (path) =>
     set((state) => {
-      const tab = state.tabs.find((candidate) => candidate.path === path);
+      const tab = state.tabs.find((candidate) => samePath(candidate.path, path));
 
       return tab === undefined ? state : { ...state, open: tab, diff: null };
     }),
@@ -198,15 +199,16 @@ export const useFilesStore = create<FilesState & FilesActions>()((set, get) => (
  * left (or the new first one) brought forward, the way every editor with tabs behaves.
  */
 function closed(state: FilesState, path: string): FilesState {
-  const index = state.tabs.findIndex((tab) => tab.path === path);
+  const index = state.tabs.findIndex((tab) => samePath(tab.path, path));
 
   if (index < 0) {
     return state;
   }
 
-  const tabs = state.tabs.filter((tab) => tab.path !== path);
-  const drafts = without(state.drafts, path);
-  const open = state.open?.path === path ? (tabs[Math.max(0, index - 1)] ?? null) : state.open;
+  const own = state.tabs[index]?.path ?? path;
+  const tabs = state.tabs.filter((tab) => !samePath(tab.path, path));
+  const drafts = without(state.drafts, own);
+  const open = state.open !== null && samePath(state.open.path, path) ? (tabs[Math.max(0, index - 1)] ?? null) : state.open;
 
   return { ...state, tabs, drafts, open, opening: null };
 }

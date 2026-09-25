@@ -549,7 +549,11 @@ export const strings = {
       ],
     },
     timeMachine: {
-      current: 'CURRENT',
+      hint: 'Each checkpoint is the folder before a change. Pick one to put the files back as they were then; Redo undoes the rewind.',
+      choose: (title: string): string => `Rewind to: ${title}`,
+      confirm: (title: string): string => `Click again to restore the files to: ${title}`,
+      clickAgain: 'Click again to restore these files',
+      redo: 'Redo the last rewind',
       /** When a checkpoint was taken: `3 min ago`, `14:02`, or `25 Sep, 14:02` - never a raw stamp. */
       when: (stamp: string): string => {
         const time = Date.parse(stamp);

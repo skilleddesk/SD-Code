@@ -2205,7 +2205,7 @@ impl Daemon {
         );
         out.push(
             event::toast(
-                &format!("Rewound to turn {turn}"),
+                "Rewound: the folder is back as it was at that checkpoint",
                 Some("Undo this"),
                 Some(10_000),
             ),
@@ -2219,7 +2219,10 @@ impl Daemon {
     fn rewind_redo(&self, envelope: &Envelope, out: &dyn Notifier) -> Result<Value, ErrorObject> {
         let session_id = envelope.opt_str("sessionId").unwrap_or_else(|| "s1".into());
 
-        match crate::rewind::redo(self.store(), &session_id)? {
+        /* The folder, so a redo puts the files back as well as the list (it only moved rows until v4). */
+        let subject = self.subject(envelope)?;
+
+        match crate::rewind::redo(self.store(), &session_id, subject.snapshot())? {
             Some(applied) => {
                 out.push(applied.to_event_payload(&session_id), Some(session_id), None);
 
