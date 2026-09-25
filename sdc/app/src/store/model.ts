@@ -144,57 +144,268 @@ export interface CatalogGroup {
   providerId: string;
   providerLabel: string;
   engine: EngineId;
-  /** Whether the card behind this provider says `connected` - i.e. whether its models can run. */
-  connected: boolean;
+  /** The newest versions of each family - what the menu shows without being asked. */
   models: CatalogModel[];
+  /** Every other version the provider still lists, behind `Older versions…`. */
+  older: CatalogModel[];
+}
+
+/** The menu's answer: the connected providers, and how many are not. */
+export interface ConnectedCatalog {
+  groups: CatalogGroup[];
+  /** Providers the catalogue has rows for whose card does not say `connected`. */
+  disconnected: number;
 }
 
 /**
- * The catalogue, grouped by provider, connected first.
+ * How many versions of one model family the menu shows before `Older versions…`.
  *
- * This is the answer to "the model thing above the chat box is dummy": the rows come from the daemon's
- * own `models.list`, which for a signed-in CLI is the plan's own models and for a keyed provider is
- * that provider's live list. Nothing is invented here - the only thing this function adds is the
- * ordering and the *engine* each group runs on, both of which are facts about the provider.
+ * The owner's words were "each one's latest 2 or 3 versions, not all of them". Two keeps a provider
+ * that lists three families (Opus, Sonnet, Haiku) at six rows, which fits the dropdown without a
+ * scroll; the rest are one click away rather than gone, because hiding a model is not the same as it
+ * not existing.
+ */
+export const VERSIONS_PER_FAMILY = 2;
+
+/**
+ * Ids a provider lists that are not chat models.
  *
- * A provider whose card does **not** say `connected` still has a group, and the dropdown draws its rows
- * with `Connect` beside them: hiding a provider that the user has never signed into would hide the thing
- * they have to do, and showing its models as if they were usable would be the same lie in the other
- * direction.
+ * OpenAI's `/v1/models` answers with embeddings, speech, image and moderation models next to the chat
+ * ones, and a turn sent to `text-embedding-3-small` fails in a way nobody can read. None of these can
+ * run a coding turn, so they are left out of the menu rather than labelled.
+ */
+const NOT_A_CHAT_MODEL =
+  /(embed|tts|whisper|dall-e|davinci|babbage|moderation|image|audio|realtime|transcribe|search|speech|vision-preview|guard)/i;
+
+/** A model id taken apart: the family it belongs to, and where it sits in that family. */
+export interface ModelVersion {
+  /** The id with its version numbers and dates removed: `claude-sonnet-4-5-20250929` -> `claude-sonnet`. */
+  family: string;
+  /** The version numbers in order: `claude-3-5-sonnet` -> `[3, 5]`, `llama3.2:3b` -> `[3, 2]`. */
+  version: number[];
+  /** A dated snapshot (`-20250929`, `-2024-08-06`, `-001`) rather than the moving alias. */
+  dated: boolean;
+  /** A preview or experimental build. */
+  preview: boolean;
+}
+
+/**
+ * Where a model id sits in its family - a spelling rule, not a catalogue.
+ *
+ * Providers name versions in a handful of shapes, and every one of them is covered by a test:
+ *
+ *   claude-sonnet-4-5 / claude-3-5-sonnet-20240620   numbers anywhere, a date at the end
+ *   gpt-5-mini / gpt-4o / o4-mini                   a number glued to a letter
+ *   llama3.2:3b / llama-3.3-70b-versatile           a size (`3b`, `70b`) is part of the family
+ *   gemini-2.5-pro-preview-05-06                    a preview with a date behind it
+ *
+ * An id with no numbers at all (`sonnet`, `default`) is its own family with an empty version, so it
+ * is always shown: that is what a CLI's aliases look like, and they always mean "the current one".
+ */
+export function parseModelId(id: string): ModelVersion {
+  const base = (id.split('/').pop() ?? id).toLowerCase();
+  const tokens = base.split(/[-_:]/).filter((token) => token !== '');
+  const family: string[] = [];
+  const version: number[] = [];
+  let dated = false;
+  let preview = false;
+  let inDate = false;
+
+  for (const token of tokens) {
+    if (/^\d{8}$/.test(token) || /^20\d{2}$/.test(token) || /^0\d{2}$/.test(token)) {
+      dated = true;
+      inDate = true;
+      continue;
+    }
+
+    /* The two-digit month and day after a year, or after `preview`, belong to the date. */
+    if (inDate && /^\d{2}$/.test(token)) {
+      continue;
+    }
+
+    inDate = false;
+
+    if (token === 'latest') {
+      continue;
+    }
+
+    if (token === 'preview' || token === 'exp' || token === 'experimental') {
+      preview = true;
+      inDate = true;
+      continue;
+    }
+
+    const match = /^([a-z]*)(\d+(?:\.\d+)*)([a-z]*)$/.exec(token);
+
+    if (match === null) {
+      family.push(token);
+      continue;
+    }
+
+    const [, prefix = '', number = '', suffix = ''] = match;
+
+    /* `70b`, `8b`, `500m`: a parameter count names a different model, not a newer one. */
+    if (prefix === '' && /^[bmk]$/.test(suffix)) {
+      family.push(token);
+      continue;
+    }
+
+    if (prefix !== '' && prefix !== 'v') {
+      family.push(prefix);
+    }
+
+    version.push(...number.split('.').map(Number));
+
+    if (suffix !== '') {
+      family.push(suffix);
+    }
+  }
+
+  return { family: family.join('-'), version, dated, preview };
+}
+
+/** Newer first: `[4, 5]` before `[4, 1]` before `[4]`. */
+function compareVersions(left: readonly number[], right: readonly number[]): number {
+  const length = Math.max(left.length, right.length);
+
+  for (let index = 0; index < length; index += 1) {
+    const difference = (right[index] ?? -1) - (left[index] ?? -1);
+
+    if (difference !== 0) {
+      return difference;
+    }
+  }
+
+  return 0;
+}
+
+/**
+ * One provider's rows, split into the newest versions of each family and the rest.
+ *
+ * Within a version, the moving alias wins over a dated snapshot and a release over a preview - so
+ * `claude-sonnet-4-5` is shown and `claude-sonnet-4-5-20250929` goes behind `Older versions…`, where
+ * a person who needs to pin the snapshot can still find it.
+ */
+export function latestVersions(
+  models: readonly CatalogModel[],
+  perFamily: number = VERSIONS_PER_FAMILY,
+): { current: CatalogModel[]; older: CatalogModel[] } {
+  const families = new Map<string, { model: CatalogModel; parsed: ModelVersion }[]>();
+
+  for (const model of models) {
+    const parsed = parseModelId(model.id);
+    const members = families.get(parsed.family) ?? [];
+
+    members.push({ model, parsed });
+    families.set(parsed.family, members);
+  }
+
+  const current: CatalogModel[] = [];
+  const older: CatalogModel[] = [];
+
+  for (const members of families.values()) {
+    members.sort(
+      (left, right) =>
+        compareVersions(left.parsed.version, right.parsed.version) ||
+        Number(left.parsed.preview) - Number(right.parsed.preview) ||
+        Number(left.parsed.dated) - Number(right.parsed.dated) ||
+        left.model.id.localeCompare(right.model.id),
+    );
+
+    const shown: number[][] = [];
+
+    for (const { model, parsed } of members) {
+      const sameVersionShown = shown.some((version) => compareVersions(version, parsed.version) === 0);
+
+      if (!sameVersionShown && shown.length < perFamily) {
+        shown.push(parsed.version);
+        current.push(model);
+      } else {
+        older.push(model);
+      }
+    }
+  }
+
+  return { current, older };
+}
+
+/**
+ * The catalogue the menu draws: **connected providers only**, newest versions first.
+ *
+ * The owner's rule: "above the chat, only the models and agents that are connected - not the rest".
+ * It is also P4 - a model row that fails the moment it is picked is the menu lying. So a provider whose
+ * card does not say `connected` has no group at all; the menu counts them in one line instead
+ * (`2 providers not connected · Manage…`), which keeps the way to connect them one click away without
+ * dressing their models up as choices.
+ *
+ * The rows themselves are the daemon's own `models.list` - live where the provider answered, cached or
+ * bundled where it did not - and nothing is invented here. What this function adds is the connected
+ * filter, the version split, and the *engine* each group runs on, all facts about the provider.
  */
 export function groupCatalog(
   catalog: readonly CatalogModel[],
   providers: readonly { id: string; name: string; status: string }[],
-): CatalogGroup[] {
+): ConnectedCatalog {
   const connected = new Set(
     providers.filter((provider) => provider.status === 'connected').map((provider) => provider.id),
   );
-  const groups = new Map<string, CatalogGroup>();
+  const rows = new Map<string, { label: string; models: CatalogModel[] }>();
 
   for (const row of catalog) {
-    const group = groups.get(row.providerId) ?? {
-      providerId: row.providerId,
-      providerLabel: row.providerLabel === '' ? row.providerId : row.providerLabel,
-      engine: engineForProvider(row.providerId),
-      connected: connected.has(row.providerId),
+    if (NOT_A_CHAT_MODEL.test(row.id)) {
+      continue;
+    }
+
+    const entry = rows.get(row.providerId) ?? {
+      label: row.providerLabel === '' ? row.providerId : row.providerLabel,
       models: [],
     };
 
-    group.models.push(row);
-    groups.set(row.providerId, group);
+    entry.models.push(row);
+    rows.set(row.providerId, entry);
   }
 
-  for (const group of groups.values()) {
-    group.models.sort((left, right) => TIER_ORDER[left.tier] - TIER_ORDER[right.tier] || left.name.localeCompare(right.name));
-  }
+  const groups: CatalogGroup[] = [];
+  let disconnected = 0;
 
-  return [...groups.values()].sort((left, right) => {
-    if (left.connected !== right.connected) {
-      return left.connected ? -1 : 1;
+  for (const [providerId, entry] of rows) {
+    if (!connected.has(providerId)) {
+      disconnected += 1;
+      continue;
     }
 
-    return left.providerLabel.localeCompare(right.providerLabel);
+    const { current, older } = latestVersions(entry.models);
+    const byTier = (left: CatalogModel, right: CatalogModel): number =>
+      TIER_ORDER[right.tier] - TIER_ORDER[left.tier] || left.name.localeCompare(right.name);
+
+    groups.push({
+      providerId,
+      providerLabel: entry.label,
+      engine: engineForProvider(providerId),
+      models: current.sort(byTier),
+      older: older.sort(byTier),
+    });
+  }
+
+  /* Subscriptions first - they are paid for already - then keyed and local providers by name. */
+  groups.sort((left, right) => {
+    const leftCli = left.engine === 'native_api' ? 1 : 0;
+    const rightCli = right.engine === 'native_api' ? 1 : 0;
+
+    return leftCli - rightCli || left.providerLabel.localeCompare(right.providerLabel);
   });
+
+  return { groups, disconnected };
+}
+
+/** Whether an engine has at least one connected provider behind it - the Alt+E cycle skips the rest. */
+export function engineConnected(
+  engine: EngineId,
+  providers: readonly { id: string; status: string }[],
+): boolean {
+  return providers.some(
+    (provider) => provider.status === 'connected' && engineForProvider(provider.id) === engine,
+  );
 }
 
 /** Fast, Balanced, Deep - the order the tier group is written in, reused for the model rows. */
@@ -285,9 +496,23 @@ export function nextTier(tier: Tier): Tier {
   return TIERS[(index + 1) % TIERS.length]?.id ?? 'balanced';
 }
 
-/** Alt+E (spec section 9.1): Claude Code -> Codex -> Gemini -> Native API -> Claude Code. */
-export function nextEngine(engine: EngineId): EngineId {
+/**
+ * Alt+E (spec section 9.1): Claude Code -> Codex -> Gemini -> Native API -> Claude Code.
+ *
+ * Given `usable`, the cycle skips an engine nothing is connected behind - the same rule the menu
+ * follows. When nothing at all is usable the plain order is kept, so the key still does something a
+ * person can see, and the turn that follows says what to connect.
+ */
+export function nextEngine(engine: EngineId, usable?: (engine: EngineId) => boolean): EngineId {
   const index = ENGINES.findIndex((candidate) => candidate.id === engine);
+
+  for (let step = 1; step <= ENGINES.length; step += 1) {
+    const candidate = ENGINES[(index + step) % ENGINES.length]?.id ?? 'claude_code';
+
+    if (usable === undefined || usable(candidate)) {
+      return candidate;
+    }
+  }
 
   return ENGINES[(index + 1) % ENGINES.length]?.id ?? 'claude_code';
 }

@@ -2,7 +2,7 @@ import { ensureSplitSecondary, usePrefsStore } from '../store/prefs';
 import { sessionActions } from '../store/sessions';
 import { useAppStore } from '../store/store';
 import { useLayoutStore } from '../store/layout';
-import { nextEngine, nextTier, useModelStore } from '../store/model';
+import { engineConnected, nextEngine, nextTier, useModelStore } from '../store/model';
 import { useOverlayStore } from '../store/overlays';
 import {
   changeFolder,
@@ -93,6 +93,14 @@ function mainSession(): string {
 }
 
 /** Resolves the open approval dialog with one of spec section 9.13's four decisions. */
+/** Alt+E: the next engine that has a connected provider behind it (the menu's own rule). */
+function cycleConnectedEngine(): void {
+  const providers = useAppStore.getState().providers;
+  const { engine, setEngine } = useModelStore.getState();
+
+  setEngine(nextEngine(engine, (candidate) => engineConnected(candidate, providers)));
+}
+
 function decide(decision: 'allow_once' | 'always_allow' | 'deny' | 'show_me'): void {
   const permission = useAppStore.getState().permission;
 
@@ -196,7 +204,7 @@ export const COMMANDS: readonly Command[] = [
 
   /* ---------------------------------------------------------------- Model (2) */
   { id: 'tier.cycle', label: 'Cycle tier', hint: 'Alt M', icon: 'brain', group: 'model', keys: ['alt+m'], run: () => useModelStore.getState().setTier(nextTier(useModelStore.getState().tier)) },
-  { id: 'engine.cycle', label: 'Cycle engine', hint: 'Alt E', icon: 'zap', group: 'model', keys: ['alt+e'], run: () => useModelStore.getState().setEngine(nextEngine(useModelStore.getState().engine)) },
+  { id: 'engine.cycle', label: 'Cycle engine', hint: 'Alt E', icon: 'zap', group: 'model', keys: ['alt+e'], run: () => cycleConnectedEngine() },
 
   /* ---------------------------------------------------------------- Approval (6) */
   { id: 'permission.default', label: 'Default action', hint: 'Enter', icon: 'check', group: 'approval', keys: ['enter'], inInput: true, palette: false, when: () => useAppStore.getState().permission !== null, run: () => decide(useAppStore.getState().permission?.risk === 'DANGEROUS' ? 'deny' : 'allow_once') },

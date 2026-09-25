@@ -44,9 +44,9 @@ pub const CATALOG: &[(&str, &str, &str, &str, &str, &str)] = &[
 
 /// The twelve models of the registry: `(id, provider, tier, ctx, cost)`.
 pub const MODELS: &[(&str, &str, &str, i64, &str)] = &[
-    ("anthropic/claude-sonnet-4-5", "anthropic-api", "balanced", 200_000, "$3 / $15"),
-    ("anthropic/claude-opus-4", "anthropic-api", "deep", 200_000, "$15 / $75"),
-    ("anthropic/claude-haiku-4", "anthropic-api", "fast", 200_000, "$0.80 / $4"),
+    ("anthropic/claude-sonnet-5", "anthropic-api", "balanced", 1_000_000, "$2 / $10"),
+    ("anthropic/claude-opus-5-5", "anthropic-api", "deep", 1_000_000, "$4 / $20"),
+    ("anthropic/claude-haiku-4-5", "anthropic-api", "fast", 200_000, "$1 / $5"),
     ("openai/gpt-5", "openai-api", "deep", 400_000, "$10 / $30"),
     ("openai/gpt-5-mini", "openai-api", "fast", 400_000, "$0.25 / $2"),
     ("google/gemini-2.5-pro", "gemini", "deep", 2_000_000, "$1.25 / $5"),

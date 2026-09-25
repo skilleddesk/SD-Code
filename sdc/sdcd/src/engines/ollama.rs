@@ -279,10 +279,20 @@ impl Engine for Ollama {
         } else {
             crate::engines::native_api::api_model(&prompt.model).to_string()
         };
+        /* The conversation so far, then the new prompt. Only the prompt used to be sent, so every turn
+           of an Ollama chat started from nothing - the second question had no first one to refer to. */
+        let mut messages: Vec<serde_json::Value> = prompt
+            .history
+            .iter()
+            .map(|message| serde_json::json!({ "role": message.role.as_str(), "content": message.text }))
+            .collect();
+
+        messages.push(serde_json::json!({ "role": "user", "content": prompt.text }));
+
         let body = serde_json::json!({
             "model": model,
             "stream": true,
-            "messages": [{ "role": "user", "content": prompt.text }],
+            "messages": messages,
         })
         .to_string();
         let sink = sink.clone();

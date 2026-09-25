@@ -118,6 +118,20 @@ pub fn endpoint_for(model: &str, provider: Option<&str>) -> Endpoint {
         }
     }
 
+    /* 3. the provider the id's own prefix names. `anthropic/claude-opus-5-5` belongs to the Anthropic
+       block whether or not this build's bundle has heard of that model yet - a model released after the
+       build is exactly what a live list contains - and without this it reached the fallback row, whose
+       provider is spelled `anthropic`, not the `anthropic-api` the Hub and the keychain know. */
+    if model.contains('/') {
+        let owner = blocks.iter().find(|block| {
+            block.protocol != "ollama" && (block.id == head || block.id.trim_end_matches("-api") == head)
+        });
+
+        if let Some(endpoint) = owner.and_then(endpoint_from) {
+            return endpoint;
+        }
+    }
+
     let row = FALLBACKS
         .iter()
         .find(|(provider, _key, _url, _dialect)| *provider == head)
@@ -180,31 +194,79 @@ pub fn build_request(
 ) -> (String, Vec<(String, String)>, String) {
     let mut messages = Vec::new();
 
+    /* Each message keeps its own role. Every one of them used to go out as `user`, so the model read
+       its own earlier answers as things the person had said. */
     for message in &prompt.history {
-        messages.push(json!({ "role": "user", "content": message }));
+        messages.push(json!({ "role": message.role.as_str(), "content": message.text }));
     }
 
     messages.push(json!({ "role": "user", "content": prompt.text }));
 
+    let name = api_model(model);
     let body = if endpoint.dialect == "anthropic" {
-        json!({ "model": api_model(model), "max_tokens": 4096, "stream": true, "messages": messages })
+        let mut body = json!({
+            "model": name,
+            /* Streaming, so a large ceiling costs nothing until it is used; 4096 cut long answers off
+               mid-sentence, and with thinking on it is shared with the reasoning as well. */
+            "max_tokens": 32000,
+            "stream": true,
+            "messages": messages,
+        });
+
+        if adaptive_thinking(name) {
+            /* `summarized`, because the default on current models is `omitted`: the thinking block
+               streams with empty text and the window shows a long pause instead of the reasoning. */
+            body["thinking"] = json!({ "type": "adaptive", "display": "summarized" });
+        }
+
+        body
     } else {
-        json!({ "model": api_model(model), "stream": true, "messages": messages })
+        json!({ "model": name, "stream": true, "messages": messages })
     };
 
-    let (auth_name, auth_value) = if endpoint.dialect == "anthropic" {
-        ("x-api-key", key.to_string())
-    } else {
-        ("authorization", format!("Bearer {key}"))
-    };
-
-    let headers = vec![
+    let mut headers = vec![
         ("content-type".to_string(), "application/json".to_string()),
         ("accept".to_string(), "text/event-stream".to_string()),
-        (auth_name.to_string(), auth_value),
     ];
 
+    if endpoint.dialect == "anthropic" {
+        headers.push(("x-api-key".to_string(), key.to_string()));
+        /* Required on every request to the Messages API; without it the answer is a 400 and no turn on
+           an Anthropic key could ever have streamed. `provider.test` sent it and this did not, which is
+           why a key could test green and still never answer a chat. */
+        headers.push(("anthropic-version".to_string(), "2023-06-01".to_string()));
+    } else {
+        headers.push(("authorization".to_string(), format!("Bearer {key}")));
+    }
+
     (endpoint.url.clone(), headers, body.to_string())
+}
+
+/// Whether an Anthropic model takes `thinking: {type: "adaptive"}`.
+///
+/// Opus and Sonnet from 4.6 on, every 5.x, and Fable/Mythos do; Haiku 4.5 and older models still use
+/// a fixed `budget_tokens` and reject `adaptive`, so they are sent no `thinking` field at all - an
+/// answer without visible reasoning is better than a turn that fails with a 400.
+pub fn adaptive_thinking(model: &str) -> bool {
+    let id = model.rsplit('/').next().unwrap_or(model);
+
+    if id.starts_with("claude-fable") || id.starts_with("claude-mythos") {
+        return true;
+    }
+
+    let rest = id
+        .strip_prefix("claude-opus-")
+        .or_else(|| id.strip_prefix("claude-sonnet-"));
+    let Some(rest) = rest else {
+        return false;
+    };
+
+    let mut numbers = rest.split('-').map(|part| part.parse::<u32>().ok());
+    let major = numbers.next().flatten().unwrap_or(0);
+    /* A date suffix (`-20250929`) is not a minor version. */
+    let minor = numbers.next().flatten().filter(|minor| *minor < 100).unwrap_or(0);
+
+    major >= 5 || (major == 4 && minor >= 6)
 }
 
 /// Parses an SSE stream. Each `data:` line is one JSON object; `data: [DONE]` ends it. A comment or
@@ -597,7 +659,7 @@ mod tests {
     use super::*;
     use crate::engines::Recorder;
 
-    fn prompt(text: &str, history: Vec<String>) -> Prompt {
+    fn prompt(text: &str, history: Vec<crate::engines::Message>) -> Prompt {
         Prompt {
             session_id: "s1".into(),
             turn_id: "t1".into(),
@@ -705,13 +767,74 @@ mod tests {
         assert!(body.contains("\"stream\":true"));
     }
 
+    /// The Messages API answers 400 without `anthropic-version`, and this request did not send it
+    /// (only `provider.test` did) - so a key could test green and never stream a single chat turn.
+    #[test]
+    fn anthropic_sends_the_version_header_every_turn_needs() {
+        let (_url, headers, _body) = build_request(
+            &endpoint_for("anthropic/claude-sonnet-5", None),
+            "sk-ant-1",
+            "anthropic/claude-sonnet-5",
+            &prompt("hi", vec![]),
+        );
+
+        assert!(headers.iter().any(|(name, value)| name == "anthropic-version" && value == "2023-06-01"));
+        assert!(!headers.iter().any(|(name, _)| name == "authorization"), "the key goes in x-api-key only");
+    }
+
+    /// The model is handed its own earlier answers as `assistant`, not as things the person typed.
+    #[test]
+    fn history_keeps_who_said_each_message() {
+        use crate::engines::Message;
+
+        let (_url, _headers, body) = build_request(
+            &endpoint_for("anthropic/claude-sonnet-5", None),
+            "sk-ant-1",
+            "anthropic/claude-sonnet-5",
+            &prompt("and now?", vec![Message::user("add a limiter"), Message::assistant("Added it.")]),
+        );
+        let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+        let roles: Vec<&str> = parsed["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|message| message["role"].as_str().unwrap())
+            .collect();
+
+        assert_eq!(roles, ["user", "assistant", "user"]);
+    }
+
+    /// Current models get adaptive thinking with a readable summary; Haiku 4.5 and older models, which
+    /// reject `adaptive`, get no thinking field at all.
+    #[test]
+    fn thinking_is_asked_for_only_where_the_model_accepts_it() {
+        for model in ["claude-opus-5-5", "claude-sonnet-5", "claude-opus-4-6", "claude-fable-5-1", "claude-sonnet-4-6"] {
+            assert!(adaptive_thinking(model), "{model}");
+        }
+
+        for model in ["claude-haiku-4-5", "claude-sonnet-4-5", "claude-opus-4-1", "claude-sonnet-4-5-20250929", "sonnet"] {
+            assert!(!adaptive_thinking(model), "{model}");
+        }
+
+        let (_url, _headers, body) = build_request(
+            &endpoint_for("anthropic/claude-opus-5-5", None),
+            "sk-ant-1",
+            "anthropic/claude-opus-5-5",
+            &prompt("hi", vec![]),
+        );
+
+        let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+
+        assert_eq!(parsed["thinking"], serde_json::json!({ "type": "adaptive", "display": "summarized" }));
+    }
+
     #[test]
     fn openai_uses_a_bearer_token_and_replays_the_history() {
         let (_url, headers, body) = build_request(
             &endpoint_for("openai/gpt-5", None),
             "sk-1",
             "gpt-5",
-            &prompt("hi", vec!["earlier".into()]),
+            &prompt("hi", vec![crate::engines::Message::user("earlier")]),
         );
 
         assert!(headers.iter().any(|(name, value)| name == "authorization" && value == "Bearer sk-1"));

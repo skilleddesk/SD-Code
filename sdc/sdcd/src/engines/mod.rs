@@ -56,7 +56,11 @@ pub struct Prompt {
     /// the session, and a wrong guess here is a failed turn, not a wrong label.
     pub provider: Option<String>,
     /// The conversation so far, oldest first - the Session Bridge's payload (spec section 16.5).
-    pub history: Vec<String>,
+    ///
+    /// Each message keeps **who said it**. It used to be a list of strings, and `native_api` sent every
+    /// one of them as `role: "user"` - so an API model was handed its own earlier answers as if the
+    /// person had typed them, and Ollama was handed nothing at all.
+    pub history: Vec<Message>,
     /// The folder this chat works in, or `None` for a chat that has no project (0.7.6).
     ///
     /// `cli.rs` starts the child process **in** this directory, which is the difference between an engine
@@ -77,6 +81,40 @@ pub struct Prompt {
     /// network call from this daemon, not a process on a folder. A provider that answered text is not a
     /// provider whose tools ran anywhere.
     pub remote: Option<crate::ssh::Ssh>,
+}
+
+/// Who said a message of the conversation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Role {
+    User,
+    Assistant,
+}
+
+impl Role {
+    /// The spelling both API dialects (and Ollama) use for the role.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Role::User => "user",
+            Role::Assistant => "assistant",
+        }
+    }
+}
+
+/// One message of the conversation so far.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Message {
+    pub role: Role,
+    pub text: String,
+}
+
+impl Message {
+    pub fn user(text: impl Into<String>) -> Self {
+        Self { role: Role::User, text: text.into() }
+    }
+
+    pub fn assistant(text: impl Into<String>) -> Self {
+        Self { role: Role::Assistant, text: text.into() }
+    }
 }
 
 /// One item of an engine's stream. The checkpoint is *not* here: the daemon writes that itself,

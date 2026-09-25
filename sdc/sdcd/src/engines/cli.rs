@@ -189,7 +189,7 @@ impl CliAdapter {
         let mut body = String::new();
 
         for message in &prompt.history {
-            body.push_str(message);
+            body.push_str(&message.text);
             body.push('\n');
         }
 
