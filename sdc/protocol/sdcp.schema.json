@@ -85,7 +85,7 @@
           "host.status", "host.doctor", "host.add", "host.trust", "host.key", "host.remove", "host.shutdown", "ssh.key",
           "session.open", "session.close", "session.list", "session.update", "session.fork",
           "project.add", "project.list", "project.remove",
-          "engine.start", "engine.cancel", "engine.kill", "engine.status", "engine.switch",
+          "engine.start", "engine.cancel", "engine.kill", "engine.status", "engine.switch", "verify.run",
           "fs.read", "fs.write", "fs.list", "fs.stat", "fs.search",
           "git.status", "git.diff", "git.checkpoint", "git.worktree",
           "pty.open", "pty.write", "pty.resize", "pty.close", "pty.output", "shell.run",
@@ -112,7 +112,7 @@
           "TurnStarted", "TurnDelta", "TurnCompleted", "ToolCallStarted", "ToolCallOutput",
           "ToolCallCompleted", "ThinkingDelta", "ErrorRaised", "PermissionRequested",
           "PermissionResolved", "CheckpointSaved", "RewindApplied", "Toast", "ToastDismissed",
-          "StuckDetected", "ConsoleError", "DuelStarted", "DuelResolved", "SessionBridged", "PlanUpdated"
+          "StuckDetected", "ConsoleError", "DuelStarted", "DuelResolved", "SessionBridged", "PlanUpdated", "VerifyUpdated"
         ]
       }
     },
@@ -171,6 +171,7 @@
         "project.list": { "params": {}, "result": { "projects": [{ "projectId": "string", "hostId": "string", "root": "string", "name": "string", "chats": "integer" }] } },
         "project.remove": { "params": { "projectId": "string" }, "result": { "removed": "boolean", "chats": "integer" } },
         "engine.start": { "params": { "sessionId": "string", "prompt": "string", "engine": "string", "model": "string", "tier": "Fast|Balanced|Deep", "provider": "string?", "agent": "boolean?", "autonomy": "ask|pro|auto?", "maxSteps": "integer?" }, "result": { "turnId": "string" } },
+        "verify.run": { "params": { "sessionId": "string", "turnId": "string?", "since": "string?", "task": "string?", "reviewer": "object?", "reviewFailing": "boolean?", "hostId": "string?" }, "result": { "verifyId": "string" } },
         "engine.cancel": { "params": { "turnId": "string" }, "result": { "state": "string", "engine": "string", "stopped": "boolean" } },
         "engine.kill": { "params": { "turnId": "string" }, "result": { "state": "string", "engine": "string", "stopped": "boolean" } },
         "engine.status": { "params": { "turnId": "string" }, "result": { "state": "idle|running|awaiting|stuck|done|failed|killed", "engine": "string", "model": "string" } },

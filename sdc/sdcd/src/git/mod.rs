@@ -151,6 +151,13 @@ pub fn diff(project_root: &Path, since: Option<&str>) -> Result<String, ErrorObj
     }
 }
 
+/// What changed in the folder since a shadow commit, new files included (see `ssh::ops::shadow_changes`,
+/// the same rule on a host). Only the shadow's index is written; the project's own repository is not.
+pub fn changes_since(project_root: &Path, sha: &str) -> Result<String, ErrorObject> {
+    run(project_root, &["add", "-N", "--", ":/"])?;
+    run(project_root, &["diff", sha])
+}
+
 /// A per-session worktree, so two chats on the same project cannot see each other's half-finished
 /// edits (spec section 5.5: "worktree per session").
 pub fn worktree(project_root: &Path, session_id: &str) -> Result<PathBuf, ErrorObject> {

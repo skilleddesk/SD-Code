@@ -875,3 +875,27 @@ describe('the agent plan', () => {
     expect(state.turns).toEqual([]);
   });
 });
+
+describe('verify runs', () => {
+  const snapshot = (state: 'running' | 'done', pass: boolean | null): SdcpEvent => ({
+    type: 'VerifyUpdated',
+    verifyId: 'verify-1',
+    sessionId: 's1',
+    turnId: 't1',
+    state,
+    pass,
+    checks: [{ name: 'test', command: 'npm run test', status: state === 'done' ? 'pass' : 'running', ms: null, tail: [] }],
+    review: null,
+    note: '',
+  });
+
+  it('keeps one entry per run, the newest snapshot of it', () => {
+    let state = fold(EMPTY_STATE, snapshot('running', null));
+
+    state = fold(state, snapshot('done', true));
+
+    expect(state.verifies).toHaveLength(1);
+    expect(state.verifies[0]).toMatchObject({ verifyId: 'verify-1', state: 'done', pass: true, turnId: 't1' });
+    expect(state.verifies[0]?.checks[0]?.status).toBe('pass');
+  });
+});

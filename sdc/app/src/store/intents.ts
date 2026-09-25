@@ -6,7 +6,7 @@ import { strings } from '../strings';
 import { useDaemonStore } from './daemon';
 import { useFilesStore } from './files';
 import { useLayoutStore } from './layout';
-import { useModelStore, engineForProvider, tierName, tierFromName } from './model';
+import { groupCatalog, useModelStore, engineForProvider, tierName, tierFromName } from './model';
 import { useOverlayStore } from './overlays';
 import { usePrefsStore } from './prefs';
 import { withProjects, withProviders, withWorkspace } from './reducer';
@@ -1477,6 +1477,100 @@ export async function bridgeEngine(
     await sdcpCall('engine.switch', { turnId, engine, model, ...(reason === undefined ? {} : { reason }) });
   } catch (error) {
     reportFailure(error, 'Engine switch failed');
+  }
+}
+
+/* ------------------------------------------------------------------------------------------------
+ * Verify (v4): the folder's checks, then a review by another engine
+ * ---------------------------------------------------------------------------------------------- */
+
+/** An engine that can review a change: one connected provider's strongest current model. */
+export interface ReviewerOption {
+  engine: string;
+  model: string;
+  provider: string;
+  label: string;
+}
+
+/**
+ * Every connected provider as a possible reviewer, the strongest model of each first in its group.
+ *
+ * The list is the model menu's own (`groupCatalog`: connected only, newest versions), so a reviewer that
+ * would fail the moment it is asked is never offered.
+ */
+export function reviewerOptions(): ReviewerOption[] {
+  const { catalog } = useModelStore.getState();
+  const { groups } = groupCatalog(catalog, useAppStore.getState().providers);
+
+  return groups.flatMap((group) => {
+    const model = group.models[0];
+
+    return model === undefined
+      ? []
+      : [{ engine: group.engine, model: model.id, provider: group.providerId, label: `${group.providerLabel} · ${model.name === '' ? model.id : model.name}` }];
+  });
+}
+
+/**
+ * The reviewer to use when the person has not picked one: **a different engine** than the one that wrote
+ * the change, because a model reviewing its own work shares its own blind spots. The same engine with a
+ * different model is the second choice; the same model is offered last, and only when nothing else is
+ * connected.
+ */
+export function defaultReviewer(author: { engine: string; model: string } | null): ReviewerOption | null {
+  const options = reviewerOptions();
+
+  if (author === null) {
+    return options[0] ?? null;
+  }
+
+  return (
+    options.find((option) => option.engine !== author.engine) ??
+    options.find((option) => option.model !== author.model) ??
+    options[0] ??
+    null
+  );
+}
+
+/**
+ * Runs Verify for a chat - for one turn when `turnId` is given (its own checkpoint and prompt travel
+ * with the request), otherwise for the chat's newest turn.
+ */
+export async function runVerify(input: {
+  sessionId: string;
+  turnId?: string;
+  reviewer: ReviewerOption | null;
+  reviewFailing?: boolean;
+}): Promise<string | null> {
+  const state = useAppStore.getState();
+  const turns = state.turns.filter((turn) => turn.sessionId === input.sessionId);
+  const turn = input.turnId === undefined ? turns.at(-1) : turns.find((candidate) => candidate.id === input.turnId);
+  /* The turn's first checkpoint: the review reads everything that changed after it. */
+  const checkpoint =
+    turn === undefined
+      ? undefined
+      : [...state.checkpoints].filter((entry) => entry.turnId === turn.id).sort((left, right) => left.turn - right.turn)[0];
+
+  useLayoutStore.getState().showRight();
+  useRightPanelStore.getState().setActiveTab('verify', input.sessionId);
+
+  try {
+    const { verifyId } = await sdcpCall('verify.run', {
+      sessionId: input.sessionId,
+      ...(turn === undefined ? {} : { turnId: turn.id, task: turn.prompt }),
+      ...(checkpoint === undefined ? {} : { since: checkpoint.filesHash }),
+      ...(input.reviewer === null
+        ? {}
+        : { reviewer: { engine: input.reviewer.engine, model: input.reviewer.model, provider: input.reviewer.provider } }),
+      ...(input.reviewFailing === true ? { reviewFailing: true } : {}),
+      hostId: hostIdOf(input.sessionId),
+    });
+
+    return verifyId;
+  } catch (error) {
+    reportFailure(error, strings.rightPanel.verify.failed);
+
+    return null;
   }
 }
 

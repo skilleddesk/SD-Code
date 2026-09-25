@@ -4,9 +4,11 @@ import { useAppStore } from '../store/store';
 import { useLayoutStore } from '../store/layout';
 import { engineConnected, nextEngine, nextTier, useModelStore } from '../store/model';
 import { useOverlayStore } from '../store/overlays';
+import { useRightPanelStore } from '../store/rightPanel';
 import {
   changeFolder,
   closeFolder,
+  defaultReviewer,
   forceKillTurn,
   interruptTurn,
   openFolder,
@@ -14,6 +16,7 @@ import {
   resolvePermission,
   redoRewind,
   rewindTo,
+  runVerify,
   startTurn,
 } from '../store/intents';
 import { nameOf } from '../lib/picker';
@@ -110,6 +113,21 @@ function mainSession(): string {
 }
 
 /** Resolves the open approval dialog with one of spec section 9.13's four decisions. */
+/** Ctrl+Enter: Verify the open chat's newest turn, reviewed by another engine when one is connected. */
+function runVerifyForActiveChat(): void {
+  const sessionId = usePrefsStore.getState().activeTab;
+
+  if (sessionId === null) {
+    toast(strings.rightPanel.verify.noFolder);
+
+    return;
+  }
+
+  const author = [...useAppStore.getState().turns].reverse().find((turn) => turn.sessionId === sessionId);
+
+  void runVerify({ sessionId, reviewer: defaultReviewer(author === undefined ? null : author) });
+}
+
 /** Alt+E: the next engine that has a connected provider behind it (the menu's own rule). */
 function cycleConnectedEngine(): void {
   const providers = useAppStore.getState().providers;
@@ -216,8 +234,8 @@ export const COMMANDS: readonly Command[] = [
   { id: 'turn.kill', label: 'Force kill', hint: 'Ctrl Shift Esc', icon: 'ban', group: 'session', keys: ['ctrl+shift+escape', 'meta+shift+escape'], inInput: true, run: () => { const turn = latestTurn(); if (turn) { void forceKillTurn(turn.turnId); } } },
   { id: 'turn.rewind', label: 'Rewind last turn', hint: 'Ctrl Z', icon: 'clock', group: 'session', keys: ['ctrl+z', 'meta+z'], run: () => { const checkpoint = latestCheckpoint(); if (checkpoint) { void rewindTo(mainSession(), `turn-${checkpoint.turn}`); } } },
   { id: 'turn.redo', label: 'Redo', hint: 'Ctrl Shift Z', icon: 'clock', group: 'session', keys: ['ctrl+shift+z', 'meta+shift+z'], run: () => void redoRewind(mainSession()) },
-  { id: 'timemachine.open', label: 'Time Machine', hint: 'Ctrl E', icon: 'clock', group: 'session', keys: ['ctrl+e', 'meta+e'], run: () => useLayoutStore.getState().showRight() },
-  { id: 'verify.run', label: 'Run verify', hint: 'Ctrl Enter', icon: 'check', group: 'session', keys: ['ctrl+enter', 'meta+enter'], inInput: true, run: () => toast(strings.rightPanel.verify.result) },
+  { id: 'timemachine.open', label: 'Time Machine', hint: 'Ctrl E', icon: 'clock', group: 'session', keys: ['ctrl+e', 'meta+e'], run: () => { useLayoutStore.getState().showRight(); useRightPanelStore.getState().setActiveTab('timemachine', usePrefsStore.getState().activeTab); } },
+  { id: 'verify.run', label: 'Run verify', hint: 'Ctrl Enter', icon: 'check', group: 'session', keys: ['ctrl+enter', 'meta+enter'], inInput: true, run: () => runVerifyForActiveChat() },
 
   /* ---------------------------------------------------------------- Model (2) */
   { id: 'tier.cycle', label: 'Cycle tier', hint: 'Alt M', icon: 'brain', group: 'model', keys: ['alt+m'], run: () => useModelStore.getState().setTier(nextTier(useModelStore.getState().tier)) },

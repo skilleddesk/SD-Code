@@ -210,6 +210,14 @@ impl Workspace {
         }
     }
 
+    /// What changed since a checkpoint's shadow commit, new files included.
+    pub fn changes_since(&self, sha: &str) -> Result<String, ErrorObject> {
+        match &self.remote {
+            Some(ssh) => crate::ssh::ops::shadow_changes(ssh, &self.root, sha),
+            None => crate::git::changes_since(Path::new(&self.root), sha),
+        }
+    }
+
     /// Runs one command line in the folder, with the deny list first.
     pub fn run(&self, line: &str, timeout: Duration) -> Result<CommandReport, ErrorObject> {
         if let Some(reason) = crate::pty::denied_reason_line(line) {

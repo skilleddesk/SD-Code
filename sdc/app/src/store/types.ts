@@ -7,8 +7,7 @@ import type {
   ProviderLifecycle,
   RegistryModel,
   SdcpEvent,
-  TierName,
-} from '../../../protocol/types';
+  TierName, VerifyUpdatedEvent } from '../../../protocol/types';
 
 /**
  * The reducer's state shape and the UI's view types (master spec sections 3.3, 5.4).
@@ -313,7 +312,13 @@ export interface AppState {
 
   /** Spec section 9.10's environment doctor, newest run per host. */
   doctor: Record<string, DoctorCheckView[]>;
+
+  /** Verify runs (v4), newest last - each the latest `VerifyUpdated` snapshot of its run. */
+  verifies: VerifyView[];
 }
+
+/** A verify run as the Verify tab and the turn footer draw it: `VerifyUpdated` without its `type`. */
+export type VerifyView = Omit<VerifyUpdatedEvent, 'type'>;
 
 /* ------------------------------------------------------------------------------------------------
  * The notification envelope the reducer folds
