@@ -2434,6 +2434,8 @@ async fn run_turn(
     };
     let mut answer = String::new();
     let mut checkpoint_written = false;
+    /* What the turn did with its tools, one line per call - kept with the answer for the next turn. */
+    let mut tools: Vec<(String, String)> = Vec::new();
 
     /* The engine runs on its own task and writes into a channel; this loop reads it and pushes each
       event out while the engine is still talking.
@@ -2501,6 +2503,8 @@ async fn run_turn(
                     checkpoint_written = true;
                 }
 
+                tools.push((call_id.clone(), format!("{name} {target}")));
+
                 out.push(
                     event::tool_call_started(&plan.turn_id, &call_id, &tool, &name, &target),
                     session.clone(),
@@ -2515,6 +2519,10 @@ async fn run_turn(
                 );
             }
             crate::engines::EngineEvent::ToolCompleted { call_id, status, meta, diff } => {
+                if let Some(line) = tools.iter_mut().find(|(id, _)| *id == call_id) {
+                    line.1 = format!("{} - {}", line.1, if meta.is_empty() { status.clone() } else { meta.clone() });
+                }
+
                 out.push(
                     event::tool_call_completed(&plan.turn_id, &call_id, &status, &meta, diff),
                     session.clone(),
@@ -2582,7 +2590,22 @@ async fn run_turn(
 
     crate::engines::cancel::clear(&plan.turn_id);
 
-    let _ = state.store.finish_turn(&plan.turn_id, &answer, summary, state_name);
+    /*
+     * The stored answer is what the *next* turn is told this one said (session_bridge::history_for), and
+     * a turn is more than its last paragraph: without its tool calls the next turn read "I ran the tests,
+     * 5 passed" with no trace of a test run, and a model decided it had invented the result and apologised
+     * for work it had really done. The window draws the turn from its events, so this record is for the
+     * conversation, not for the screen.
+     */
+    let recorded = if tools.is_empty() {
+        answer.clone()
+    } else {
+        let lines: Vec<String> = tools.iter().map(|(_, line)| format!("- {line}")).collect();
+
+        format!("{answer}\n\n[Tool calls in this turn, as SDC recorded them:\n{}]", lines.join("\n"))
+    };
+
+    let _ = state.store.finish_turn(&plan.turn_id, &recorded, summary, state_name);
     let _ = state.store.update_session(&plan.session_id, None, Some(state_name), None, Some(0), None);
 
     out.push(
@@ -3032,5 +3055,70 @@ mod tests {
             notifier.kinds(),
             vec!["TurnDelta", "TurnDelta", "TurnCompleted", "SessionUpdated"]
         );
+    }
+
+    /// The answer stored for the next turn carries the tool calls: without them a model read its own
+    /// "I ran the tests" with no run in sight and apologised for inventing work it had really done.
+    #[tokio::test]
+    async fn the_stored_answer_remembers_the_turns_tool_calls() {
+        struct Worker;
+
+        #[async_trait::async_trait]
+        impl crate::engines::Engine for Worker {
+            fn id(&self) -> &'static str {
+                "worker"
+            }
+
+            async fn start(&self, _prompt: Prompt, sink: &EventSink) {
+                use crate::engines::EngineEvent;
+
+                sink.send(EngineEvent::ToolStarted { call_id: "c1".into(), tool: "run".into(), name: "Run".into(), target: "npm test".into() });
+                sink.send(EngineEvent::ToolCompleted { call_id: "c1".into(), status: "done".into(), meta: "exit 0 · 400ms".into(), diff: None });
+                sink.send(EngineEvent::Delta("All five tests pass.".into()));
+                sink.send(EngineEvent::Done { summary: "Done".into(), meta: String::new(), pass: None });
+            }
+
+            async fn cancel(&self, _turn_id: &str) -> bool {
+                false
+            }
+
+            fn status(&self, _turn_id: &str) -> EngineStatus {
+                EngineStatus::Idle
+            }
+        }
+
+        struct Quiet;
+
+        impl Notifier for Quiet {
+            fn push(&self, _event: Value, _session: Option<String>, _turn: Option<String>) -> Option<i64> {
+                None
+            }
+        }
+
+        let state = DaemonState::bootstrap(Some(std::path::PathBuf::from(":memory:"))).expect("a daemon for the test");
+
+        state.store.ensure_session("s1").unwrap();
+        state.store.start_turn("turn-7", "s1", 1, "worker", "m", "Balanced", "run the tests").unwrap();
+
+        let plan = RunPlan {
+            session_id: "s1".to_string(),
+            turn_id: "turn-7".to_string(),
+            engine_id: "worker".to_string(),
+            prompt_text: "run the tests".to_string(),
+            model: "m".to_string(),
+            provider: None,
+            history: Vec::new(),
+            project_root: None,
+            remote: None,
+            self_checkpointing: false,
+        };
+
+        run_turn(state.clone(), Arc::new(Worker), plan, Arc::new(Quiet)).await;
+
+        let history = session_bridge::history_for(&state.store, "s1").unwrap();
+        let said = &history.last().unwrap().text;
+
+        assert!(said.starts_with("All five tests pass."), "{said}");
+        assert!(said.contains("- Run npm test - exit 0 · 400ms"), "{said}");
     }
 }
