@@ -472,9 +472,11 @@ function NameInput({ depth, kind, renaming }: { depth: number; kind: 'file' | 'f
       ) : (
         <FileIcon size={11} aria-hidden="true" className="shrink-0 text-text-muted" />
       )}
+      {/* The wrapper paints the box: a control itself stays transparent (the smoke gate's rule). */}
+      <span className="flex h-[20px] min-w-0 flex-1 rounded-sm border border-border-focus bg-bg-input">
       <input
         ref={input}
-        className="h-[20px] min-w-0 flex-1 rounded-sm border border-border-focus bg-bg-input px-[5px] font-mono text-[11px] text-text-primary"
+        className="h-full min-w-0 flex-1 bg-transparent px-[5px] font-mono text-[11px] text-text-primary"
         value={value}
         placeholder={strings.files.namePlaceholder}
         aria-label={renaming === undefined ? (kind === 'file' ? strings.files.newFile : strings.files.newFolder) : strings.files.rename}
@@ -494,6 +496,7 @@ function NameInput({ depth, kind, renaming }: { depth: number; kind: 'file' | 'f
           }
         }}
       />
+      </span>
     </form>
   );
 }

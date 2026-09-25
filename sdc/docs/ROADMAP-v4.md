@@ -80,7 +80,7 @@ token খরচ নয়।
 ### সিদ্ধান্ত ৪ — Editor-এর জন্য CodeMirror 6, Monaco নয়
 
 **প্রমাণ:** Monaco = VS Code-এর editor — ~৫ MB, আর আপনি স্পষ্ট বলেছেন "VS Code-এর মতো চাই না"।
-CodeMirror 6 modular (~৩০০ KB ব্যবহৃত অংশে), tree-shakeable, touch-friendly; SDC-র দরকার
+CodeMirror 6 modular, tree-shakeable, touch-friendly (0.8.0-এ মাপা: আটটা ভাষা সহ ২৬৩ KB gzip, আলাদা chunk-এ — file খুললে তবেই load হয়); SDC-র দরকার
 preview + edit + highlight — LSP/debugger নয় (§2.2: SDC IDE নয়)। CM6 ঠিক ততটুকুই।
 
 ### সিদ্ধান্ত ৫ — Terminal tab-এ xterm.js + `ssh -tt`
