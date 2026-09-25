@@ -532,8 +532,11 @@ export interface ModelState {
   catalog: CatalogModel[];
   /** The dropdown's own open flag, so an outside click can close it from anywhere. */
   dropdownOpen: boolean;
-  /** Steering prompts queued behind the running turn (spec section 9.7). */
-  queued: string[];
+  /**
+   * Prompts waiting behind a chat's running turn (spec section 9.7), oldest first. Each belongs to the
+   * chat it was typed in, and the next one is sent when that chat's turn ends (`PromptArea`).
+   */
+  queued: QueuedPrompt[];
   /**
    * Chat or Agent (v4). Agent runs an API or local model inside the daemon's agent loop - it reads,
    * edits and runs commands until the task is done; the three CLIs are agents either way.
@@ -547,6 +550,11 @@ export interface ModelState {
 }
 
 export type ComposeMode = 'chat' | 'agent';
+
+export interface QueuedPrompt {
+  sessionId: string;
+  prompt: string;
+}
 
 export interface ModelActions {
   /** Pick a tier; the model follows (spec section 9.3). */
@@ -565,11 +573,13 @@ export interface ModelActions {
   cycleTier: () => void;
   /** Alt+E. */
   cycleEngine: () => void;
-  /** Queue a steering prompt; ignored once three are waiting. */
-  enqueue: (prompt: string) => void;
+  /** Queue a prompt behind a chat's running turn; `false` once three are waiting for that chat. */
+  enqueue: (sessionId: string, prompt: string) => boolean;
   setCompose: (compose: ComposeMode) => void;
   setDraft: (draft: string | null) => void;
-  dequeue: (prompt: string) => void;
+  dequeue: (sessionId: string, prompt: string) => void;
+  /** The next prompt waiting for a chat, taken off the queue - or `null`. */
+  takeNext: (sessionId: string) => string | null;
   clearQueue: () => void;
 }
 
@@ -581,7 +591,7 @@ const initialModelState: ModelState = {
   providerId: 'claude',
   catalog: [],
   dropdownOpen: false,
-  queued: [...strings.prompt.queued.seed],
+  queued: [],
   /* Agent by default: the product's promise is "describe it and it gets built". */
   compose: 'agent',
   draft: null,
@@ -664,15 +674,32 @@ export const useModelStore = create<ModelState & ModelActions>()((set, get) => (
     }
   },
 
-  enqueue: (prompt) => {
+  enqueue: (sessionId, prompt) => {
     const { queued } = get();
 
-    if (queued.length < MAX_QUEUED_PROMPTS) {
-      set({ queued: [...queued, prompt] });
+    if (queued.filter((item) => item.sessionId === sessionId).length >= MAX_QUEUED_PROMPTS) {
+      return false;
     }
+
+    set({ queued: [...queued, { sessionId, prompt }] });
+
+    return true;
   },
 
-  dequeue: (prompt) => set((state) => ({ queued: state.queued.filter((item) => item !== prompt) })),
+  dequeue: (sessionId, prompt) =>
+    set((state) => ({ queued: state.queued.filter((item) => !(item.sessionId === sessionId && item.prompt === prompt)) })),
+
+  takeNext: (sessionId) => {
+    const next = get().queued.find((item) => item.sessionId === sessionId);
+
+    if (next === undefined) {
+      return null;
+    }
+
+    set((state) => ({ queued: state.queued.filter((item) => item !== next) }));
+
+    return next.prompt;
+  },
 
   clearQueue: () => {
     if (get().queued.length > 0) {

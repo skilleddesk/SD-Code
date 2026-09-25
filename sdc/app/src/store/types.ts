@@ -158,6 +158,8 @@ export interface TurnView {
   thinkingSince: string | null;
   /** The agent's checklist (`PlanUpdated`, v4), newest version; empty for a turn without one. */
   plan: PlanStepView[];
+  /** The daemon's stamp of `TurnStarted` - what the Analytics tab groups by day. */
+  startedAt: string;
   status: 'running' | 'stuck' | 'done' | 'failed';
   /** Milliseconds without output, set by `StuckDetected` (spec section 12.9). */
   stuckForMs: number;

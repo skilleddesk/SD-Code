@@ -14,9 +14,10 @@ import { useModelStore } from '../../store/model';
  * The store caps the list at `MAX_QUEUED_PROMPTS`, so this component only ever renders what the
  * store allowed in.
  */
-export function QueuedChips() {
-  const queued = useModelStore((state) => state.queued);
+export function QueuedChips({ sessionId }: { sessionId?: string }) {
+  const all = useModelStore((state) => state.queued);
   const dequeue = useModelStore((state) => state.dequeue);
+  const queued = all.filter((item) => item.sessionId === sessionId).map((item) => item.prompt);
 
   if (queued.length === 0) {
     return null;
@@ -35,7 +36,11 @@ export function QueuedChips() {
             className="grid h-[14px] w-[14px] place-items-center rounded-sm text-accent hover:bg-[rgba(91,156,255,.2)] hover:text-accent-hover"
             title={strings.prompt.queued.remove}
             aria-label={strings.prompt.queued.remove}
-            onClick={() => dequeue(prompt)}
+            onClick={() => {
+              if (sessionId !== undefined) {
+                dequeue(sessionId, prompt);
+              }
+            }}
           >
             <X size={10} aria-hidden="true" />
           </button>

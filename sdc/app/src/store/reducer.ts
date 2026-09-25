@@ -402,6 +402,7 @@ function reduce(state: AppState, entry: AppEvent): AppState {
         thinkingMs: 0,
         thinkingSince: null,
         plan: [],
+        startedAt: entry.ts,
         status: 'running',
         stuckForMs: 0,
         tools: [],
