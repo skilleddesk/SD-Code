@@ -899,3 +899,33 @@ describe('verify runs', () => {
     expect(state.verifies[0]?.checks[0]?.status).toBe('pass');
   });
 });
+
+describe('a question ends with its turn', () => {
+  it('closes the permission a stopped turn was asking', () => {
+    let state = fold(EMPTY_STATE, {
+      type: 'TurnStarted',
+      turnId: 't1',
+      sessionId: 's1',
+      engine: 'native_api',
+      model: 'deepseek-chat',
+      tier: 'Balanced',
+      prompt: 'review everything',
+    });
+
+    state = fold(state, {
+      type: 'PermissionRequested',
+      permissionId: 'perm-t1-3',
+      sessionId: 's1',
+      turnId: 't1',
+      title: 'Run a command',
+      sub: '',
+      action: 'run',
+      target: 'npm test',
+      risk: 'MUTATING',
+    });
+    expect(state.permission?.id).toBe('perm-t1-3');
+
+    state = fold(state, { type: 'TurnCompleted', turnId: 't1', summary: 'Interrupted', meta: '', pass: false });
+    expect(state.permission).toBeNull();
+  });
+});

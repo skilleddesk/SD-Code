@@ -498,14 +498,19 @@ function reduce(state: AppState, entry: AppEvent): AppState {
         plan: event.steps.map((step) => ({ text: step.text, status: step.status })),
       }));
 
-    case 'TurnCompleted':
-      return patchTurn(state, event.turnId, (turn) => ({
+    case 'TurnCompleted': {
+      const next = patchTurn(state, event.turnId, (turn) => ({
         ...endThinking(turn, entry.ts),
         status: turn.status === 'failed' ? 'failed' : 'done',
         summary: event.summary,
         meta: event.meta,
         pass: event.pass ?? turn.pass,
       }));
+
+      /* A question the turn was still asking ends with it: a stopped agent is no longer waiting, and a
+         dialog left open would ask the person to approve something nothing will do. */
+      return next.permission !== null && next.permission.turnId === event.turnId ? { ...next, permission: null } : next;
+    }
 
     case 'StuckDetected':
       return patchTurn(state, event.turnId, (turn) => ({
