@@ -14,6 +14,98 @@ This file describes what changed, not what is planned. Anything still open is na
 release - the newest - and deletes the others when it publishes (`release.yml`, "Keep only this
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
+
+## [0.8.0] — an agent that finishes the job, a second AI that checks it, and a Time Machine that restores
+
+The v4 direction (`sdc/docs/ROADMAP-v4.md`): describe the task, and the window gets it built, run and
+checked - with every change one Rewind away. Verified in the desktop window against an isolated daemon,
+a real DeepSeek agent turn (file edited, `npm test` run, 5 of 5 passing, ≈$0.0047) and a real Claude Code
+review of its diff.
+
+### Added — SDC Agent: the daemon's own agent loop
+
+* **An API or local model now does the work, not only the talking.** With **Agent** chosen in the
+  composer, a native-API or Ollama model runs inside `sdcd/src/agent`: it reads, edits and runs commands in
+  the chat's folder until the task is done - on this machine **or on the host** the chat is on, because the
+  tools sit on the daemon's existing `fs.*` / `shell.run` / `git.*` paths. The three CLIs are agents
+  already, so the switch changes nothing for them.
+* **Eight tools** (`read_file`, `list_dir`, `search`, `git_diff`, `write_file`, `edit_file`,
+  `run_command`, `update_plan`), both tool dialects (Anthropic content blocks with thinking and its
+  signature kept; OpenAI-compatible `tool_calls` by index, which covers DeepSeek, Groq, OpenRouter and
+  Ollama's `/v1`), paths confined to the folder, the deny list and the file guard underneath.
+* **A permission gate that waits.** Simple asks before every change, Pro before commands, Auto only before
+  a dangerous-looking one (`rm -rf`, `git push`, `curl … | sh`, `sudo` …). The dialog opens by itself and
+  closing it is Deny. **Show me first** asks the agent to show the change and wait.
+* **Bounds.** 25 model calls per turn (then it says how to continue), a footer with steps, tokens and the
+  cost the catalogue implies (`≈$0.0047`), and a Stop that drops the connection mid-answer.
+* **The plan card** (`update_plan` → `PlanUpdated`), and the **checkpoint rail**: the checkpoint a turn wrote,
+  where it wrote it, with a two-click Rewind here.
+
+### Added — Verify: the folder's own checks, then a review by another AI
+
+* `verify.run` reads the manifests and runs what the project says "working" means - its own
+  `typecheck` / `lint` / `test` / `build` scripts with its own package manager, `cargo check` / `cargo test`,
+  `go vet` / `go test`, `pytest` - with `CI=true`, here or on the host.
+* Then **a different engine than the author** reviews the diff since the turn's checkpoint (new files
+  included) and answers with a verdict and issues pinned to `file:line`; an issue opens its file on its line,
+  and **Fix with a prompt** puts the fix request in the prompt box. A failing check skips the review unless
+  asked. The turn footer gets **Verify with…** and the outcome; Ctrl+Enter runs it.
+
+### Added — the workbench
+
+* **A real editor** (CodeMirror 6, lazy-loaded, themed from the tokens): highlighting for TS/JS, Python,
+  Rust, HTML, CSS, JSON and Markdown, search, undo, line wrapping, Ctrl+S; **tabs** with an unsaved dot and a
+  two-click discard.
+* **The tree changes things**: New file, New folder, Rename in place, a two-click Delete, and **Search in
+  folder** - each through the daemon (`fs.rename` / `fs.delete` / `fs.mkdir`, new), confined to the chat's
+  folder, with a checkpoint first. The tree, the git badge and open tabs refresh after a turn or a rewind.
+* **A live Preview**: type a dev server's address and the frame loads it; Reload and Open in browser work.
+* **Answers render Markdown** as React elements (never HTML): code blocks with a Copy button, lists, bold,
+  links that open in the browser.
+* **The model menu shows only what is connected**, with how (`✓ CLI · signed in`, `✓ API key · verified`),
+  the newest two versions of each family (the rest behind **Older versions**), non-chat models left out, and
+  one line for the rest (`6 providers not connected · Manage in Provider Hub`). Alt+E skips engines with
+  nothing connected. Current Anthropic models in the bundle.
+* **Live thinking**: open and streaming while the model thinks, with a clock measured from the log, folded to
+  `Thought for 6.2s` after.
+* **Analytics from the log**: turns, reported cost and tokens, a seven-day chart, the share by engine.
+* **A prompt queue that sends**: Send during a running turn queues (three per chat) and sends when it ends.
+
+### Fixed — things that looked like they worked
+
+* **Rewind never restored a file.** It ran `checkout` with the shadow repository as its own work tree,
+  discarded the error and answered `restoredFiles: 1`. It now makes the folder exactly what the checkpoint
+  recorded (changed files back, deleted ones returned, later files removed), goes **to** the checkpoint that
+  was chosen (it restored the newest, and the newest could never be chosen), and **Redo** restores the files
+  too (it only moved rows, and put them back titled `'restored'` with no hash). The window had never heard of
+  a rewind: `RewindApplied` was pushed without its `type`.
+* **The agent's checkpoint was taken after its change** - the turn loop checkpointed on receiving the
+  tool event, but the agent had already written the file. The agent now checkpoints synchronously first.
+* **Stop did not stop**: `engine.cancel` marked the turn interrupted and never told the engine. It now kills
+  a CLI's process group and drops an HTTP stream between reads, and nothing the engine still says reopens
+  the turn.
+* **No Anthropic API turn could ever stream**: the request lacked `anthropic-version`. History also went out
+  with every message as `user`, and Ollama got none.
+* **After a reload every chat looked empty** (the bridge replays only past its own last `seq`): the page now
+  asks for the whole log itself, and de-duplicates against the daemon's sequence rather than the log's.
+* **A turn's history lost its tool calls**, so a model decided its own verified result was invented and
+  apologised; the stored answer now records them.
+* **Demo data and toasts where features should be**: the Verify tab's fixed rows and "3 pass, 1 fail",
+  Analytics' "$4.12" and "Claude Max ~60%", the queued "also add a test for this", the permission card for
+  `src/database.js`, Preview's Back/Forward/Attach, the Time Machine's "Compare two points", the toast's
+  "Undo this" that only closed the toast, Esc that only toasted, and Ctrl+Enter's fake verdict.
+* **Smaller**: a VPS save now takes the host's checkpoint (the toast already claimed it); the right panel's
+  seven tabs no longer hide three behind a hidden scrollbar; `text-state-warning` existed nowhere (five
+  components); `turn 14 Â· now` mojibake; the Time Machine listed every chat's checkpoints; Esc and Ctrl+Z
+  could act on another chat; Windows paths spelled two ways broke rename.
+
+### Not done here, and why
+
+* **The VPS end to end on the owner's server** needs its password once (Install key); every host path above
+  is the same code as local and is covered by tests, but it was not driven against that machine from here.
+* **A terminal emulator** (`xterm.js` + a PTY) for full-screen programs, **provider OAuth**, **signing**, and
+  a **screen-reader pass** remain on the list in `sdc/README.md`.
+
 ### Added — `Install SDC's key`: the step that finished a host whose pin was already in place
 
 The report *"VPS connect hosse nah kono vabai"* was, on the machine it came from, **not** a broken

@@ -1,8 +1,23 @@
 # SDC v4 দিকনির্দেশ — "prompt দিলেই project শেষ"
 
 তারিখ: ২৫ সেপ্টেম্বর ২০২৬ · ভিত্তি: `MASTER_SPEC.md` v3.0 (0.7.13 পর্যন্ত বাস্তবায়িত)
-অবস্থা: **প্রস্তাব — approval-এর অপেক্ষায়।** Approve হলে প্রতিটা Phase আলাদা release হিসেবে নামবে,
-প্রতিটার শেষে test সবুজ + CHANGELOG entry — এই repo-র এখনকার নিয়মেই।
+অবস্থা: **0.8.0-এ বাস্তবায়িত** (branch `v4`)। নিচের টেবিলে প্রতিটা Phase-এর অবস্থা; বিস্তারিত
+`CHANGELOG.md`-এর `[0.8.0]` অংশে।
+
+## বাস্তবায়নের অবস্থা (২৫ সেপ্টেম্বর ২০২৬)
+
+| Phase | অবস্থা | যা plan থেকে বদলেছে, এবং কেন |
+|---|---|---|
+| 0 — ভিত প্রমাণ | ⚠️ আংশিক | commit ✓; paid API দিয়ে streaming agent turn ✓ (DeepSeek, আসল কাজ + `npm test`)। **VPS end-to-end বাকি** — Install key-এর জন্য password একবার লাগবে; host-এর সব কোড পথ test-এ ঢাকা |
+| 1 — connected-only dropdown + live thinking | ✅ | নতুন `models.connected` method লাগেনি: `provider.list` আগে থেকেই প্রতিটা provider-এর `connected` অবস্থা দেয়, তাই দ্বিতীয় উৎস বানানো হয়নি। শেষ ২টা version (৩ নয়) — এক provider-এর তিন family-তে ৬ লাইন, scroll ছাড়া ধরে |
+| 2 — SDC Agent | ✅ | ৮টা tool, দুই dialect, gate, budget, plan card, checkpoint rail। যোগ হয়েছে: agent-এর **নিজের synchronous checkpoint** (live test-এ race ধরা পড়ার পর) আর turn-এর tool log history-তে |
+| 3 — Verify pipeline | ✅ | যেমন plan — mechanical checks, তারপর অন্য engine-এর diff review। live-এ Claude Code দিয়ে DeepSeek-এর কাজ review হয়েছে |
+| 4 — Workbench | ⚠️ প্রায় | CodeMirror 6 editor + tabs ✓, tree-তে new/rename/delete/search ✓, live Preview ✓, Markdown answer ✓। **xterm.js terminal বাকি** |
+| 5 — 1.0-এর পথ | ⏳ | Onboarding wizard আলাদা বানানো হয়নি — খালি window-এর চারটা বোতাম (Open folder / New chat / Connect a model / Add a VPS) সেই কাজ করে। OAuth, screen-reader pass, signing — README-র Next step-এ |
+
+Live test-এ ধরা পড়া আসল ত্রুটি, যা শুধু test file দিয়ে ধরা যেত না: **Rewind কখনো file ফেরাত না**,
+Stop engine থামাত না, Anthropic API-র কোনো turn চলতে পারত না (`anthropic-version` নেই), reload-এর পরে
+সব chat খালি দেখাত, agent-এর checkpoint পরিবর্তনের পরে নেওয়া হত। সবগুলো ঠিক করা ও test-এ বাঁধা।
 
 UI প্রস্তাবের ছবি: [`design/ui-proposal-v4.html`](../design/ui-proposal-v4.html) — এই ডকুমেন্টের §৩-এর
 ৭টা পরিবর্তন ওখানে আঁকা আছে, প্রতিটা নম্বর-করা।
