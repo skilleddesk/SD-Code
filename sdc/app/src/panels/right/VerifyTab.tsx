@@ -79,9 +79,12 @@ export function VerifyTab() {
       <div className="verify-footer flex flex-col gap-[8px] border-t border-border-subtle p-[12px]">
         <label className="flex flex-col gap-[4px] text-[10px] font-semibold uppercase tracking-[.1em] text-text-muted" htmlFor="verify-reviewer">
           {strings.rightPanel.verify.reviewer}
+          {/* The wrapper paints the box; the select stays transparent (the smoke gate's rule). Its options
+              are drawn by the platform, so they take the token too. */}
+          <span className="flex h-[30px] rounded-md border border-border-default bg-bg-input focus-within:border-border-focus">
           <select
             id="verify-reviewer"
-            className="h-[30px] rounded-md border border-border-default bg-bg-input px-[8px] text-[12px] font-normal normal-case tracking-normal text-text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-border-focus"
+            className="h-full w-full bg-transparent px-[8px] text-[12px] font-normal normal-case tracking-normal text-text-primary outline-none [&>option]:bg-bg-overlay"
             value={reviewer === null ? '' : key(reviewer)}
             disabled={options.length === 0}
             onChange={(event) => setChosen(event.target.value)}
@@ -94,6 +97,7 @@ export function VerifyTab() {
               </option>
             ))}
           </select>
+          </span>
         </label>
 
         <button

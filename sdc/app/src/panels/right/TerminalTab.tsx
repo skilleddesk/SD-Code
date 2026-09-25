@@ -176,15 +176,19 @@ export function TerminalTab() {
       <div className="border-t border-border-subtle p-[10px]">
         <div className="flex items-center gap-[6px]">
           <span className="font-mono text-[11.5px] text-text-muted">$</span>
-          <input
-            className="h-[28px] min-w-0 flex-1 rounded-md border border-border-default bg-bg-base px-[8px] font-mono text-[11.5px] text-text-primary outline-none focus:border-accent-fill disabled:opacity-40"
-            value={line}
-            placeholder={strings.terminal.placeholder}
-            aria-label={strings.terminal.placeholder}
-            disabled={busy}
-            onChange={(event) => setLine(event.target.value)}
-            onKeyDown={onKeyDown}
-          />
+          {/* The wrapper paints the box and the ring; the input stays transparent (the smoke gate's rule -
+              this one painted itself and failed the gate from 0.7.13 on, mounted and hidden in its tab). */}
+          <span className="flex h-[28px] min-w-0 flex-1 rounded-md border border-border-default bg-bg-base focus-within:border-accent-fill">
+            <input
+              className="h-full min-w-0 flex-1 bg-transparent px-[8px] font-mono text-[11.5px] text-text-primary outline-none disabled:opacity-40"
+              value={line}
+              placeholder={strings.terminal.placeholder}
+              aria-label={strings.terminal.placeholder}
+              disabled={busy}
+              onChange={(event) => setLine(event.target.value)}
+              onKeyDown={onKeyDown}
+            />
+          </span>
 
           <button
             type="button"
