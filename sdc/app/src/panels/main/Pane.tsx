@@ -133,7 +133,7 @@ export function Pane({ session, host, showHeader }: PaneProps) {
         </div>
       </div>
 
-      <PromptArea />
+      <PromptArea sessionId={session.id} />
     </div>
   );
 }

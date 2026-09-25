@@ -295,6 +295,11 @@ pub mod event {
         base("DuelResolved", json!({ "duelId": duel_id, "kept": kept }))
     }
 
+    /// The agent's checklist (v4): every step with its status, replacing the last one sent for the turn.
+    pub fn plan_updated(turn_id: &str, steps: Value) -> Value {
+        base("PlanUpdated", json!({ "turnId": turn_id, "steps": steps }))
+    }
+
     pub fn permission_requested(fields: Value) -> Value {
         base("PermissionRequested", fields)
     }

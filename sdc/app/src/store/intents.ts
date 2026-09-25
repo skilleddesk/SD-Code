@@ -1370,6 +1370,14 @@ export interface TurnSeed {
    * daemon cannot derive, so it travels with the turn.
    */
   provider?: string;
+  /** Agent mode, and how much the agent may do without asking (v4). */
+  agent?: boolean;
+  autonomy?: 'ask' | 'pro' | 'auto';
+}
+
+/** The app's mode as the agent's autonomy: Simple asks for everything, Pro for commands, Auto for danger. */
+export function autonomyFor(mode: 'simple' | 'pro' | 'auto'): 'ask' | 'pro' | 'auto' {
+  return mode === 'simple' ? 'ask' : mode;
 }
 
 /**
@@ -1389,10 +1397,11 @@ export interface TurnSeed {
  * An engine that is not installed is not an error here: the daemon raises `ErrorRaised` with the
  * translator's plain sentence for it, which lands in the turn stream like any other event.
  */
-export async function sendPrompt(prompt: string): Promise<string | null> {
-  const { tier, engine, model, providerId } = useModelStore.getState();
+export async function sendPrompt(prompt: string, target?: string): Promise<string | null> {
+  const { tier, engine, model, providerId, compose } = useModelStore.getState();
 
-  let sessionId = selectActiveSession()?.session.id ?? null;
+  /* The pane's own chat when it says which (split view has two boxes), else the active one. */
+  let sessionId = target ?? selectActiveSession()?.session.id ?? null;
 
   if (sessionId === null) {
     sessionId = await newChatOnHost(usePrefsStore.getState().activeHostId);
@@ -1409,6 +1418,8 @@ export async function sendPrompt(prompt: string): Promise<string | null> {
     model,
     tier: tierName(tier),
     ...(providerId === null ? {} : { provider: providerId }),
+    agent: compose === 'agent',
+    autonomy: autonomyFor(useLayoutStore.getState().mode),
   });
 
   if (turnId !== null) {

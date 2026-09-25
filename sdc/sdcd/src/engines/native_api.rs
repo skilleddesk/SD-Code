@@ -405,8 +405,38 @@ pub fn post_stream(
     body: &str,
     sink: &EventSink,
 ) -> Result<(), String> {
+    post_stream_until(url, headers, body, sink, &|| false)
+}
+
+/// `post_stream`, stopping as soon as `stop` says so - the turn was cancelled. The connection is
+/// dropped on the spot rather than read to its end, which is what stops a provider from billing for
+/// the rest of an answer nobody will see.
+pub fn post_stream_until(
+    url: &str,
+    headers: &[(String, String)],
+    body: &str,
+    sink: &EventSink,
+    stop: &dyn Fn() -> bool,
+) -> Result<(), String> {
+    let lines = open_stream(url, headers, body)?;
+
+    drain_sse(lines, sink, stop);
+
+    Ok(())
+}
+
+/// The response body of a streaming POST, as lines, once the provider has accepted the request.
+///
+/// Shared by the chat path (`post_stream`) and the agent (`agent::dialect`), which reads the same
+/// SSE lines but assembles tool calls out of them. An `Err` is a request that was refused before a
+/// single event: the socket, the TLS handshake, or the provider's own sentence for a 4xx.
+pub fn open_stream(
+    url: &str,
+    headers: &[(String, String)],
+    body: &str,
+) -> Result<Box<dyn std::io::BufRead + Send>, String> {
     if url.starts_with("https://") {
-        return post_https(url, headers, body, sink);
+        return post_https(url, headers, body);
     }
 
     let rest = url
@@ -446,9 +476,7 @@ pub fn post_stream(
         return Err(rejection(head.status, &read_all(reader)));
     }
 
-    drain_sse(body_lines(reader, head.chunked), sink);
-
-    Ok(())
+    Ok(Box::new(body_lines(reader, head.chunked)))
 }
 
 /// Reads an SSE body to its end, pushing every event as the line it came on arrives.
@@ -457,12 +485,18 @@ pub fn post_stream(
 /// the stream instead of writing the sentinel, and the alternative to saying `Done` here is a turn
 /// that stays `running` in the app for ever. A body that ends without a word in it is a failure with a
 /// sentence, because silence would look like an empty answer (principle P4).
-fn drain_sse(mut lines: impl std::io::BufRead, sink: &EventSink) {
+fn drain_sse(mut lines: impl std::io::BufRead, sink: &EventSink, stop: &dyn Fn() -> bool) {
     let mut ended = false;
     let mut spoken = false;
     let mut line = String::new();
 
     loop {
+        if stop() {
+            /* Cancelled: the reader is dropped with the connection, and the turn loop has already said
+               `Interrupted`, so nothing more is sent. */
+            return;
+        }
+
         line.clear();
 
         match lines.read_line(&mut line) {
@@ -514,8 +548,7 @@ fn post_https(
     url: &str,
     headers: &[(String, String)],
     body: &str,
-    sink: &EventSink,
-) -> Result<(), String> {
+) -> Result<Box<dyn std::io::BufRead + Send>, String> {
     let mut request = agent().post(url);
 
     for (name, value) in headers {
@@ -523,11 +556,7 @@ fn post_https(
     }
 
     match request.send_string(body) {
-        Ok(response) => {
-            drain_sse(body_lines(response.into_reader(), false), sink);
-
-            Ok(())
-        }
+        Ok(response) => Ok(Box::new(body_lines(response.into_reader(), false))),
 
         /*
          * A key the provider rejected is the common failure by far, and the reason for it is in the
@@ -630,13 +659,17 @@ impl Engine for NativeApi {
 
         let (url, headers, body) = build_request(&endpoint, &key, &prompt.model, &prompt);
         let sink = sink.clone();
+        let turn_id = prompt.turn_id.clone();
 
         /* The request blocks (TLS handshake, then a socket read per token), so it runs on the
         blocking pool rather than on a runtime worker - and the streaming has to come through the
         sink, because `spawn_blocking` can only be joined once the whole body has been read. That is
         the shape of a live turn: the future stays pending while the events land one by one. */
         let _ = tokio::task::spawn_blocking(move || {
-            if let Err(reason) = post_stream(&url, &headers, &body, &sink) {
+            let turn_id = turn_id;
+            let stop = move || crate::engines::cancel::requested(&turn_id);
+
+            if let Err(reason) = post_stream_until(&url, &headers, &body, &sink, &stop) {
                 sink.send(EngineEvent::Failed(reason));
             }
         })
@@ -955,6 +988,7 @@ mod tests {
         drain_sse(
             std::io::BufReader::new(&b"data: {\"delta\":{\"text\":\"hi\"}}\n"[..]),
             &closed.sink(),
+            &|| false,
         );
 
         assert!(
@@ -968,7 +1002,7 @@ mod tests {
 
         let empty = Recorder::new();
 
-        drain_sse(std::io::BufReader::new(&b""[..]), &empty.sink());
+        drain_sse(std::io::BufReader::new(&b""[..]), &empty.sink(), &|| false);
 
         assert!(
             matches!(empty.events().as_slice(), [EngineEvent::Failed(_)]),

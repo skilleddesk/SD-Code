@@ -20,7 +20,7 @@ const sdcpCall = vi.hoisted(() => vi.fn());
 
 vi.mock('../lib/sdcp', () => ({ sdcpCall }));
 
-const { chooseModel, closeDiff, closeFolder, forkSession, loadCliRecipe, loadGitStatus, saveFile, emptySessionOn, newChatOnHost, openDiff, openFolderIn, loadDirectory, toggleDirectory, openFile, closeFile, addHost, hostKey, trustHost, listRemoteDirectory, runDoctor, runCommand, runInBackground, pollBackground, stopBackground, openTerminalForHost, installHostKey } = await import('./intents');
+const { autonomyFor, sendPrompt, interruptTurn, chooseModel, closeDiff, closeFolder, forkSession, loadCliRecipe, loadGitStatus, saveFile, emptySessionOn, newChatOnHost, openDiff, openFolderIn, loadDirectory, toggleDirectory, openFile, closeFile, addHost, hostKey, trustHost, listRemoteDirectory, runDoctor, runCommand, runInBackground, pollBackground, stopBackground, openTerminalForHost, installHostKey } = await import('./intents');
 const { useTerminalStore } = await import('./terminal');
 const { tabForSession } = await import('./rightPanel');
 const { engineForProvider, useModelStore } = await import('./model');
@@ -310,6 +310,7 @@ describe('openFolderIn', () => {
           thinking: '',
           thinkingMs: 0,
           thinkingSince: null,
+          plan: [],
           status: 'done',
           stuckForMs: 0,
           tools: [],
@@ -1159,3 +1160,55 @@ describe('the terminal', () => {
   });
 });
 
+
+/*
+ * v4: Agent mode travels with the turn, and the app's mode decides how much the agent may do alone.
+ * Stop is a real `engine.cancel`.
+ */
+describe('sendPrompt in agent mode', () => {
+  beforeEach(() => {
+    sdcpCall.mockReset();
+    sdcpCall.mockResolvedValue({ turnId: 'turn-9' });
+    useModelStore.setState({ tier: 'deep', engine: 'native_api', model: 'claude-opus-5-5', providerId: 'anthropic-api', compose: 'agent' });
+  });
+
+  it('asks for the agent loop, with the autonomy of the current mode, for the pane that sent it', async () => {
+    useLayoutStore.setState({ mode: 'simple' });
+
+    await expect(sendPrompt('build the login page', 's7')).resolves.toBe('turn-9');
+
+    expect(sdcpCall).toHaveBeenCalledWith('engine.start', {
+      sessionId: 's7',
+      prompt: 'build the login page',
+      engine: 'native_api',
+      model: 'claude-opus-5-5',
+      tier: 'Deep',
+      provider: 'anthropic-api',
+      agent: true,
+      autonomy: 'ask',
+    });
+  });
+
+  it('sends a plain chat turn when Chat is chosen', async () => {
+    useModelStore.setState({ compose: 'chat' });
+    useLayoutStore.setState({ mode: 'auto' });
+
+    await sendPrompt('what does this do?', 's7');
+
+    expect(sdcpCall.mock.calls[0]?.[1]).toMatchObject({ agent: false, autonomy: 'auto' });
+  });
+
+  it('maps the three modes to the three autonomy levels', () => {
+    expect(autonomyFor('simple')).toBe('ask');
+    expect(autonomyFor('pro')).toBe('pro');
+    expect(autonomyFor('auto')).toBe('auto');
+  });
+
+  it('stops a turn through the daemon', async () => {
+    sdcpCall.mockResolvedValue({ state: 'killed', engine: 'cancel', stopped: true });
+
+    await interruptTurn('turn-9');
+
+    expect(sdcpCall).toHaveBeenCalledWith('engine.cancel', { turnId: 'turn-9' });
+  });
+});

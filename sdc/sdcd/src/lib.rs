@@ -40,6 +40,7 @@
 //! daemon owns the path, not the pixels. Both are documented in their modules and both are what the
 //! acceptance list of this step expects.
 
+pub mod agent;
 pub mod auth;
 pub mod checkpoints;
 pub mod console;

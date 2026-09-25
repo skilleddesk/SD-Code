@@ -510,6 +510,13 @@ export interface ToolCallCompletedEvent {
   diff?: { lineNumber: string; text: string; change: 'add' | 'rem' }[];
 }
 
+/** The agent's checklist for a turn (v4), whole each time: the newest one replaces the last. */
+export interface PlanUpdatedEvent {
+  type: 'PlanUpdated';
+  turnId: string;
+  steps: { text: string; status: 'pending' | 'in_progress' | 'done' }[];
+}
+
 export interface ThinkingDeltaEvent {
   type: 'ThinkingDelta';
   turnId: string;
@@ -670,7 +677,8 @@ export type SdcpEvent =
   | ConsoleErrorEvent
   | DuelStartedEvent
   | DuelResolvedEvent
-  | SessionBridgedEvent;
+  | SessionBridgedEvent
+  | PlanUpdatedEvent;
 
 /** The `type` literals, in catalogue order — used by tests and by the reducer's exhaustiveness. */
 export const SDCP_EVENT_TYPES = [
@@ -700,6 +708,7 @@ export const SDCP_EVENT_TYPES = [
   'DuelStarted',
   'DuelResolved',
   'SessionBridged',
+  'PlanUpdated',
 ] as const satisfies readonly SdcpEvent['type'][];
 
 /** Every event as a `Record` keyed by `type`, handy for a switch's exhaustiveness check. */
@@ -826,11 +835,22 @@ export interface SdcpMethodMap {
        * to. The turn then fails with `No API key for custom` for a provider that is connected.
        */
       provider?: string;
+      /**
+       * Agent mode (v4). An API or Ollama model runs inside the daemon's own agent loop - it reads,
+       * edits and runs commands in the chat's folder until the task is done. The three CLIs are agents
+       * already, so for them the flag changes nothing.
+       */
+      agent?: boolean;
+      /** Which actions wait for the person: `ask` (every change), `pro` (commands), `auto` (only dangerous ones). */
+      autonomy?: 'ask' | 'pro' | 'auto';
+      /** Model calls one agent turn may make before it pauses (default 25). */
+      maxSteps?: number;
     };
     result: { turnId: string };
   };
-  'engine.cancel': { params: { turnId: string }; result: Record<string, never> };
-  'engine.kill': { params: { turnId: string }; result: Record<string, never> };
+  /** `stopped`: whether an engine was found for the turn and told to stop, not only marked. */
+  'engine.cancel': { params: { turnId: string }; result: { state: string; engine: string; stopped: boolean } };
+  'engine.kill': { params: { turnId: string }; result: { state: string; engine: string; stopped: boolean } };
   'engine.status': {
     params: { turnId: string };
     result: { state: EngineStatusValue; engine: string; model: string };
@@ -1145,7 +1165,8 @@ export interface SdcpMethodMap {
   };
   'permission.resolve': {
     params: { permissionId: string; decision: PermissionDecision; scope?: string };
-    result: Record<string, never>;
+    /** `delivered`: an agent was waiting on this question and has been given the answer. */
+    result: { decision: string; delivered: boolean };
   };
 
   'console.attach': { params: { sessionId: string; url: string }; result: { attached: boolean } };

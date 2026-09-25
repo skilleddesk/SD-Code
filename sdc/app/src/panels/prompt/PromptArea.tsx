@@ -1,5 +1,6 @@
 import {
   CornerDownLeft,
+  Square,
   Database,
   Hash,
   Image as ImageIcon,
@@ -9,9 +10,11 @@ import { useRef, useState, type KeyboardEvent } from 'react';
 
 import { strings } from '../../strings';
 import { pickFiles, type PickKind, type PickedFile } from '../../lib/picker';
-import { sendPrompt } from '../../store/intents';
+import { interruptTurn, sendPrompt } from '../../store/intents';
+import { useAppStore } from '../../store/store';
 import { toast } from '../../store/toast';
 import { IconButton } from '../ui/IconButton';
+import { ComposeSwitch } from './ComposeSwitch';
 import { FolderChip } from './FolderChip';
 import { ModelSelector } from './ModelSelector';
 import { QueuedChips } from './QueuedChips';
@@ -53,8 +56,25 @@ import { QueuedChips } from './QueuedChips';
 const CHIP =
   'chip inline-flex h-[28px] items-center gap-[5px] rounded-md border border-border-subtle bg-bg-raised px-[8px] py-[3px] font-mono text-[11px] text-text-secondary';
 
-export function PromptArea() {
+export interface PromptAreaProps {
+  /** The chat this box sends to - in split view there are two, and each pane's box is its own chat's. */
+  sessionId?: string;
+}
+
+export function PromptArea({ sessionId }: PromptAreaProps = {}) {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  /* This chat's turn that is still running, if any: while there is one, Send becomes Stop. */
+  const running = useAppStore((state) => {
+    for (let index = state.turns.length - 1; index >= 0; index -= 1) {
+      const turn = state.turns[index];
+
+      if (turn !== undefined && turn.sessionId === sessionId) {
+        return turn.status === 'running' || turn.status === 'stuck' ? turn.id : null;
+      }
+    }
+
+    return null;
+  });
 
   /*
    * What this prompt will carry besides the text - and it starts at nothing, because that is the
@@ -138,7 +158,7 @@ export function PromptArea() {
        again at nothing. */
     setAttached([]);
 
-    void sendPrompt(prompt).then((turnId) => {
+    void sendPrompt(prompt, sessionId).then((turnId) => {
       if (turnId === null) {
         /* Nothing was accepted, so the words go back: a send that quietly ate the prompt would be the
            same lie as a Send button that only toasts. */
@@ -155,16 +175,16 @@ export function PromptArea() {
       return;
     }
 
-    if (event.key === 'Escape') {
-      event.preventDefault();
-      toast(strings.prompt.interrupt);
-    }
+    /* Escape is the global `turn.interrupt` command (commands/registry.ts), which stops this chat's
+       running turn for real; this box used to catch it first and only toast "Interrupted". */
   };
 
   return (
     <div className="prompt-area shrink-0 border-t border-border-subtle bg-bg-base px-[24px] pb-[12px] pt-[10px] max-600:px-[14px]">
       <div className="prompt-inner mx-auto max-w-[780px]">
         <div className="prompt-toolbar mb-[8px] flex flex-wrap items-center gap-[6px]">
+          <ComposeSwitch />
+
           <ModelSelector />
 
           {/* Which folder this chat works in (0.7.6) - and the way to change it. */}
@@ -222,14 +242,26 @@ export function PromptArea() {
               />
             </div>
 
-            <button
-              type="button"
-              className="send-btn ml-auto flex items-center gap-[6px] rounded-md bg-accent-fill px-[13px] py-[6px] text-[12px] font-semibold text-text-on-accent transition-all duration-fast ease-ease hover:bg-accent-hover hover:shadow-[0_3px_12px_var(--accent-glow)] active:scale-[.97]"
-              onClick={send}
-            >
-              {strings.prompt.send}
-              <CornerDownLeft size={12} aria-hidden="true" />
-            </button>
+            {running === null ? (
+              <button
+                type="button"
+                className="send-btn ml-auto flex items-center gap-[6px] rounded-md bg-accent-fill px-[13px] py-[6px] text-[12px] font-semibold text-text-on-accent transition-all duration-fast ease-ease hover:bg-accent-hover hover:shadow-[0_3px_12px_var(--accent-glow)] active:scale-[.97]"
+                onClick={send}
+              >
+                {strings.prompt.send}
+                <CornerDownLeft size={12} aria-hidden="true" />
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="stop-btn ml-auto flex items-center gap-[6px] rounded-md border border-state-error bg-red-subtle px-[13px] py-[6px] text-[12px] font-semibold text-state-error transition-all duration-fast ease-ease hover:bg-state-error hover:text-text-on-accent active:scale-[.97]"
+                title={strings.prompt.stopHint}
+                onClick={() => void interruptTurn(running)}
+              >
+                <Square size={11} aria-hidden="true" fill="currentColor" />
+                {strings.prompt.stop}
+              </button>
+            )}
           </div>
         </div>
       </div>

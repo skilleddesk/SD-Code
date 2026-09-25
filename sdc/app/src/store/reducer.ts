@@ -399,6 +399,7 @@ function reduce(state: AppState, entry: AppEvent): AppState {
         thinking: '',
         thinkingMs: 0,
         thinkingSince: null,
+        plan: [],
         status: 'running',
         stuckForMs: 0,
         tools: [],
@@ -465,6 +466,13 @@ function reduce(state: AppState, entry: AppEvent): AppState {
             ? { ...tool, status: event.status, meta: event.meta, diff: event.diff ?? tool.diff }
             : tool,
         ),
+      }));
+
+    case 'PlanUpdated':
+      /* Whole each time: the newest checklist replaces the last, so a step that finished is ticked. */
+      return patchTurn(state, event.turnId, (turn) => ({
+        ...turn,
+        plan: event.steps.map((step) => ({ text: step.text, status: step.status })),
       }));
 
     case 'TurnCompleted':

@@ -1027,6 +1027,18 @@ impl Store {
         Ok(())
     }
 
+    /// The engine a turn was started on, or `None` for a turn this store has never seen.
+    pub fn turn_engine(&self, id: &str) -> Result<Option<String>> {
+        let connection = self.connection.lock().unwrap();
+        let mut statement = connection.prepare("SELECT engine FROM turns WHERE id = ?1")?;
+        let mut rows = statement.query(params![id])?;
+
+        Ok(match rows.next()? {
+            Some(row) => Some(row.get::<_, String>(0)?),
+            None => None,
+        })
+    }
+
     pub fn turns(&self, session_id: &str) -> Result<Vec<Value>> {
         let connection = self.connection.lock().unwrap();
         let mut statement = connection.prepare(
