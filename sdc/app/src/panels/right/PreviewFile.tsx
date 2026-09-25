@@ -1,5 +1,5 @@
-import { X } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { LoaderCircle, RotateCcw, Save, X } from 'lucide-react';
+import { lazy, Suspense, useState } from 'react';
 
 import { strings } from '../../strings';
 import { useFilesStore } from '../../store/files';
@@ -7,58 +7,61 @@ import { closeFile, saveFile } from '../../store/intents';
 import { BTN_PRIMARY, BTN_SECONDARY, BTN_SM } from '../ui/button';
 import { IconButton } from '../ui/IconButton';
 
+/* The editor is loaded the first time a file is opened, not with the window (see `CodeEditor`). */
+const CodeEditor = lazy(() => import('./CodeEditor'));
+
 /**
- * The file the tree opened, inside the Preview tab (0.7.7), and the two gestures 0.7.9 added: **Edit** and
- * **Save**.
+ * The open files (v4): a tab per file, and an editor for the one in front.
  *
- * A header with the file's name and its whole path, one meta line (`2.4 KB · 128 lines`, the `sha256`'s
- * first eight characters - the same hash a checkpoint stores, so "is this the version the engine wrote?" is
- * answerable), and the text itself in a `<pre>`.
+ * The file view used to be one file at a time, read-only until `Edit` turned the text into a textarea.
+ * Now every open file has a tab, the front one is a real editor (highlighting, search with Ctrl+F,
+ * undo, bracket matching), and the tab says when it has unsaved changes. `Save` - or Ctrl+S in the
+ * editor - writes through `fs.write`, which takes a checkpoint first, here or on the host (P5).
  *
- * Editing is deliberately small: a `<textarea>` holding the file's text and a Save button, and **the daemon
- * takes the checkpoint** (`fs.write` with the chat's id - principle P5). There is no syntax highlighting, no
- * multi-file tab set and no auto-save: each of those is a feature with its own questions (which file is
- * "current" when two are open, what a half-typed line means), and none is needed to make Save honest. Cancel
- * puts the read text back.
- *
- * Three honest details in the read view, each of which could have been a lie:
- *
- *   * **the whole path is in the header** and again in the row's `title`. A tree shows a name; a person
- *     editing `src/routes/login.tsx` needs to know *which* `login.tsx` this is.
- *   * **`truncated` is shown, not swallowed** - and such a file **cannot be edited**, because saving the
- *     visible megabyte over the whole file would silently delete the rest of it.
- *   * **no syntax highlighting.** There is no highlighter in this build, and a hand-rolled approximation
- *     would colour the wrong tokens: the text is what the file says, in the app's mono type.
+ * A file the daemon cut at a megabyte opens read-only: saving the first megabyte of a larger file would
+ * cut the file itself.
  */
 export function PreviewFile() {
   const file = useFilesStore((state) => state.open);
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState('');
+  const tabs = useFilesStore((state) => state.tabs);
+  const drafts = useFilesStore((state) => state.drafts);
+  const reveal = useFilesStore((state) => state.reveal);
   const [busy, setBusy] = useState(false);
-
-  /* A different file ends the edit: a draft belongs to the file it was typed into. */
-  useEffect(() => {
-    setEditing(false);
-    setBusy(false);
-  }, [file?.path]);
+  /* A dirty tab asks once before it closes: the first click arms, the second discards. */
+  const [armed, setArmed] = useState<string | null>(null);
 
   if (file === null) {
     return null;
   }
 
-  const shown = editing ? draft : file.text;
+  const draft = drafts[file.path];
+  const shown = draft ?? file.text;
+  const changed = draft !== undefined && draft !== file.text;
   const lines = shown === '' ? 0 : shown.split('\n').length;
-  const changed = editing && draft !== file.text;
 
   const save = (): void => {
-    setBusy(true);
-    void saveFile(file.path, draft).then((ok) => {
-      setBusy(false);
+    if (!changed || busy || file.truncated) {
+      return;
+    }
 
-      if (ok) {
-        setEditing(false);
-      }
-    });
+    setBusy(true);
+    void saveFile(file.path, shown).finally(() => setBusy(false));
+  };
+
+  const close = (path: string): void => {
+    if (drafts[path] !== undefined && armed !== path) {
+      setArmed(path);
+
+      return;
+    }
+
+    setArmed(null);
+
+    if (path === file.path) {
+      closeFile();
+    } else {
+      useFilesStore.getState().closeTab(path);
+    }
   };
 
   return (
@@ -66,94 +69,111 @@ export function PreviewFile() {
       className="preview-file flex min-h-0 flex-1 flex-col overflow-hidden"
       id="previewFile"
       data-file-path={file.path}
-      data-file-editing={editing ? 'true' : 'false'}
+      data-file-dirty={changed ? 'true' : 'false'}
     >
-      <div className="preview-file-head flex items-center gap-[6px] border-b border-border-subtle px-[10px] py-[8px]">
-        <div className="min-w-0 flex-1">
-          <div className="truncate text-[12px] font-medium text-text-primary" title={file.path}>
-            {file.name}
-          </div>
-          <div className="truncate font-mono text-[10.5px] text-text-muted" title={file.path}>
-            {file.path}
-          </div>
+      <div className="file-tabs flex shrink-0 overflow-x-auto border-b border-border-subtle bg-bg-raised" role="tablist" aria-label={strings.files.tabs}>
+        {tabs.map((tab) => {
+          const active = tab.path === file.path;
+          const dirty = drafts[tab.path] !== undefined;
+
+          return (
+            <div
+              key={tab.path}
+              className={
+                'file-tab group flex max-w-[180px] shrink-0 items-center gap-[6px] border-r border-border-subtle pl-[10px] pr-[4px] text-[11.5px] ' +
+                (active ? 'bg-bg-base text-text-primary shadow-[inset_0_-2px_0_var(--accent)]' : 'text-text-muted hover:bg-bg-hover hover:text-text-secondary')
+              }
+              title={tab.path}
+            >
+              <button
+                type="button"
+                role="tab"
+                aria-selected={active}
+                className="min-w-0 truncate py-[7px] text-left"
+                onClick={() => useFilesStore.getState().activate(tab.path)}
+              >
+                {tab.name}
+              </button>
+              <button
+                type="button"
+                className={
+                  'grid h-[18px] w-[18px] shrink-0 place-items-center rounded-sm ' +
+                  (armed === tab.path ? 'bg-red-subtle text-state-error' : 'text-text-muted hover:bg-bg-active hover:text-text-primary')
+                }
+                aria-label={armed === tab.path ? strings.files.discard(tab.name) : strings.files.closeTab(tab.name)}
+                title={armed === tab.path ? strings.files.discard(tab.name) : strings.files.closeTab(tab.name)}
+                onClick={() => close(tab.path)}
+                onBlur={() => setArmed((current) => (current === tab.path ? null : current))}
+              >
+                {dirty && armed !== tab.path ? (
+                  <span className="h-[7px] w-[7px] rounded-full bg-state-waiting group-hover:hidden" aria-hidden="true" />
+                ) : null}
+                <X size={11} aria-hidden="true" className={dirty && armed !== tab.path ? 'hidden group-hover:block' : ''} />
+              </button>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="preview-file-head flex items-center gap-[6px] border-b border-border-subtle px-[10px] py-[6px]">
+        <div className="min-w-0 flex-1 truncate font-mono text-[10.5px] text-text-muted" title={file.path}>
+          {file.path}
         </div>
 
-        {file.truncated ? null : editing ? (
-          <>
-            <button
-              type="button"
-              id="previewFileSave"
-              className={BTN_SM + ' ' + BTN_PRIMARY}
-              disabled={busy || !changed}
-              onClick={save}
-            >
-              {busy ? strings.files.saving : strings.files.save}
-            </button>
-            <button
-              type="button"
-              id="previewFileCancel"
-              className={BTN_SM + ' ' + BTN_SECONDARY}
-              onClick={() => {
-                setDraft(file.text);
-                setEditing(false);
-              }}
-            >
-              {strings.files.cancel}
-            </button>
-          </>
-        ) : (
+        {changed ? (
           <button
             type="button"
-            id="previewFileEdit"
             className={BTN_SM + ' ' + BTN_SECONDARY}
-            onClick={() => {
-              setDraft(file.text);
-              setEditing(true);
-            }}
+            title={strings.files.revert}
+            onClick={() => useFilesStore.getState().setDraft(file.path, null)}
           >
-            {strings.files.edit}
+            <RotateCcw size={11} aria-hidden="true" />
+            {strings.files.cancel}
+          </button>
+        ) : null}
+
+        {file.truncated ? null : (
+          <button
+            type="button"
+            id="previewFileSave"
+            className={BTN_SM + ' ' + BTN_PRIMARY}
+            disabled={busy || !changed}
+            title={strings.files.saveHint}
+            onClick={save}
+          >
+            {busy ? <LoaderCircle size={11} className="animate-spin" aria-hidden="true" /> : <Save size={11} aria-hidden="true" />}
+            {busy ? strings.files.saving : strings.files.save}
           </button>
         )}
 
-        <IconButton
-          icon={X}
-          label={strings.files.close}
-          iconSize={14}
-          onClick={() => {
-            setEditing(false);
-            closeFile();
-          }}
-        />
+        <IconButton icon={X} label={strings.files.close} iconSize={14} onClick={() => close(file.path)} />
       </div>
 
-      <div className="preview-file-meta flex items-center gap-[8px] px-[10px] py-[6px] font-mono text-[10.5px] text-text-muted">
+      <div className="preview-file-meta flex items-center gap-[8px] border-b border-border-subtle px-[10px] py-[4px] font-mono text-[10.5px] text-text-muted">
         <span>{strings.files.fileMeta(file.bytes, lines)}</span>
-
-        {file.truncated ? (
-          <span className="text-state-waiting">{strings.files.truncated(file.bytes)}</span>
-        ) : null}
-
+        {file.truncated ? <span className="text-state-waiting">{strings.files.truncated(file.bytes)}</span> : null}
         {changed ? <span className="text-state-waiting">{strings.files.unsaved}</span> : null}
-
         <span className="ml-auto shrink-0 opacity-70" title={file.sha256}>
           {file.sha256.slice(0, 8)}
         </span>
       </div>
 
-      {editing ? (
-        <textarea
-          id="previewFileDraft"
-          className="min-h-0 flex-1 resize-none overflow-auto border-0 bg-bg-input px-[10px] pb-[12px] font-mono text-[11.5px] leading-[1.55] text-text-primary outline-none"
-          value={draft}
-          spellCheck={false}
-          onChange={(event) => setDraft(event.target.value)}
+      <Suspense
+        fallback={
+          <pre className="min-h-0 flex-1 overflow-auto whitespace-pre px-[10px] py-[8px] font-mono text-[11.5px] leading-[1.6] text-text-secondary">
+            {shown}
+          </pre>
+        }
+      >
+        <CodeEditor
+          path={file.path}
+          value={shown}
+          readOnly={file.truncated}
+          line={reveal !== null && reveal.path === file.path ? reveal.line : null}
+          onChange={(text) => useFilesStore.getState().setDraft(file.path, text === file.text ? null : text)}
+          onSave={save}
         />
-      ) : (
-        <pre className="preview-file-text min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-words px-[10px] pb-[12px] font-mono text-[11.5px] leading-[1.55] text-text-secondary">
-          {file.text}
-        </pre>
-      )}
+      </Suspense>
     </div>
   );
 }
-

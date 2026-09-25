@@ -676,8 +676,21 @@ export async function loadDirectory(path: string | null): Promise<void> {
  * did nothing. The `truncated` flag travels with the text, so a megabyte of a larger file is never
  * mistaken for the whole of it.
  */
-export async function openFile(path: string, name: string): Promise<void> {
-  useFilesStore.getState().startOpening(path);
+export async function openFile(path: string, name: string, line?: number): Promise<void> {
+  const files = useFilesStore.getState();
+  const already = files.tabs.find((tab) => tab.path === path);
+
+  /* An open tab is brought forward rather than re-read: it may hold unsaved text. */
+  if (already !== undefined) {
+    files.activate(path);
+    files.setReveal(line === undefined ? null : { path, line });
+    useLayoutStore.getState().showRight();
+    useRightPanelStore.getState().setActiveTab('preview', usePrefsStore.getState().activeTab);
+
+    return;
+  }
+
+  files.startOpening(path);
 
   try {
     const answer = await sdcpCall('fs.read', {
@@ -693,6 +706,7 @@ export async function openFile(path: string, name: string): Promise<void> {
       bytes: answer.bytes,
       truncated: answer.truncated,
     });
+    useFilesStore.getState().setReveal(line === undefined ? null : { path: answer.path, line });
 
     useLayoutStore.getState().showRight();
     useRightPanelStore.getState().setActiveTab('preview', usePrefsStore.getState().activeTab);
@@ -740,11 +754,18 @@ export async function saveFile(path: string, text: string): Promise<boolean> {
       hostId,
     });
 
-    useFilesStore.getState().setOpen(
-      open === null || open.path !== path
-        ? open
-        : { ...open, text, sha256: answer.sha256, bytes: answer.bytes, truncated: false },
-    );
+    const saved = useFilesStore.getState().tabs.find((tab) => tab.path === path) ?? (open?.path === path ? open : null);
+
+    if (saved !== null) {
+      /* The tab takes what was written, and its draft is gone: the disk and the editor agree again. The
+         active tab stays the active one - saving a background tab must not bring it forward. */
+      useFilesStore.setState((state) => ({
+        tabs: state.tabs.map((tab) => (tab.path === path ? { ...saved, text, sha256: answer.sha256, bytes: answer.bytes, truncated: false } : tab)),
+        open: state.open?.path === path ? { ...saved, text, sha256: answer.sha256, bytes: answer.bytes, truncated: false } : state.open,
+      }));
+    }
+
+    useFilesStore.getState().setDraft(path, null);
 
     /* A save on a host takes no checkpoint, and the sentence says which of the two happened: the shadow
        repository is on the machine `sdcd` runs on, and the file is not (docs/REMOTE.md §5). */
@@ -1667,6 +1688,9 @@ export async function fixWithAgent(input: {
     /* The same fact the Send path sends: whoever runs this turn, the daemon needs to know which
        provider the model came from to find its endpoint and its key. */
     ...(providerId === null ? {} : { provider: providerId }),
+    /* A fix is work, not a question: it always runs as an agent, at the window's autonomy. */
+    agent: true,
+    autonomy: autonomyFor(useLayoutStore.getState().mode),
   });
 }
 

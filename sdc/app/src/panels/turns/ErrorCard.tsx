@@ -1,7 +1,7 @@
 import { TriangleAlert, WandSparkles } from 'lucide-react';
 
 import { strings } from '../../strings';
-import { askPermission, fixWithAgent } from '../../store/intents';
+import { fixWithAgent } from '../../store/intents';
 import { tierName, useModelStore } from '../../store/model';
 import { useSessionsStore } from '../../store/sessions';
 import { toast } from '../../store/toast';
@@ -29,12 +29,16 @@ export function ErrorCard({ error }: ErrorCardProps) {
   const model = useModelStore();
 
   /**
-   * Spec section 14.9: `Fix this` seeds a turn with the failure's own context and then asks for
-   * permission to write the file it is about - which is the order the daemon enforces anyway
-   * (principle P5: the checkpoint lands before the mutation).
+   * Spec section 14.9: `Fix this` seeds an agent turn with the failure's own context. The agent asks
+   * before it changes anything (its permission gate) and the daemon checkpoints first (P5), so this no
+   * longer raises a second, fixed "src/database.js" question of its own.
    */
   const fix = (): void => {
-    const sessionId = activeTab ?? 's1';
+    if (activeTab === null) {
+      return;
+    }
+
+    const sessionId = activeTab;
 
     void fixWithAgent({
       sessionId,
@@ -44,7 +48,7 @@ export function ErrorCard({ error }: ErrorCardProps) {
       title: error.title,
       explanation: error.explanation,
       source: error.title,
-    }).then(() => askPermission({ sessionId, target: strings.permission.target }));
+    });
   };
 
   return (

@@ -11,6 +11,7 @@ import {
 import { useMemo, useState } from 'react';
 
 import type { VerifyCheck, VerifyIssue } from '../../../../protocol/types';
+import { baseName, inFolder } from '../../lib/paths';
 import { strings } from '../../strings';
 import { defaultReviewer, openFile, reviewerOptions, runVerify, type ReviewerOption } from '../../store/intents';
 import { useFilesStore } from '../../store/files';
@@ -275,10 +276,7 @@ function IssueRow({ issue }: { issue: VerifyIssue }) {
       return;
     }
 
-    const separator = root.includes('\\') ? '\\' : '/';
-    const path = /^([a-zA-Z]:[\\/]|\/)/.test(issue.file) ? issue.file : `${root}${separator}${issue.file.replace(/[\\/]/g, separator)}`;
-
-    void openFile(path, issue.file.split(/[\\/]/).pop() ?? issue.file);
+    void openFile(inFolder(root, issue.file), baseName(issue.file), issue.line ?? undefined);
   };
 
   return (

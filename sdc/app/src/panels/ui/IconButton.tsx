@@ -34,6 +34,8 @@ export interface IconButtonProps {
   /** `id` from the spec's element inventory, so the DOM can be diffed against the prototype. */
   id?: string;
   className?: string;
+  /** Greyed out and not clickable - for an action that has nothing to act on yet. */
+  disabled?: boolean;
 }
 
 export function IconButton({
@@ -46,6 +48,7 @@ export function IconButton({
   iconSize = 16,
   id,
   className,
+  disabled = false,
 }: IconButtonProps) {
   const classes = [
     'icon-btn',
@@ -53,7 +56,7 @@ export function IconButton({
     active
       ? 'bg-accent-subtle text-accent'
       : 'text-text-secondary hover:bg-bg-hover hover:text-text-primary',
-    'active:scale-[.94]',
+    'active:scale-[.94] disabled:pointer-events-none disabled:opacity-40',
     hasDot ? 'has-dot' : '',
     className ?? '',
   ]
@@ -68,6 +71,7 @@ export function IconButton({
       style={{ width: size, height: size }}
       title={label}
       aria-label={label}
+      disabled={disabled}
       onClick={onClick}
     >
       <Icon size={iconSize} aria-hidden="true" />

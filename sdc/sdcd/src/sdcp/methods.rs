@@ -1335,10 +1335,9 @@ impl Daemon {
     /// checkpoint *against*; with one, the checkpoint is taken first and pushed as `CheckpointSaved` before a
     /// single byte is written - a checkpoint taken afterwards would be a photograph of the damage.
     ///
-    /// **On a host there is no checkpoint**, and that is named rather than hidden: the shadow repository is
-    /// this machine's (`docs/REMOTE.md` §5), so a remote save writes the file and says nothing about a
-    /// checkpoint it did not take. The window's own toast says it (the app knows which host the chat is on),
-    /// and the daemon's doc for this method is the other half of that honesty.
+    /// **On a host the checkpoint is the host's**: its shadow repository at `$HOME/.sdc/git/<hash>` there
+    /// (0.7.13), so a remote save is rewound the same way a local one is. Until v4 this branch skipped the
+    /// checkpoint while the window's toast said one had been taken.
     fn fs_write(&self, envelope: &Envelope, out: &dyn Notifier) -> Result<Value, ErrorObject> {
         let raw = envelope.require_str("path")?;
         let text = envelope.opt_str("text").unwrap_or_default();
@@ -1346,6 +1345,29 @@ impl Daemon {
         let turn_id = envelope.opt_str("turnId");
 
         if let Some(ssh) = self.remote_for(envelope)? {
+            /* The checkpoint first, on the host's own shadow repository (0.7.13 made one). This branch used
+               to write straight away, while the window's toast said "a checkpoint was taken on that host" -
+               so a Save on a VPS was the one change Rewind could not undo. */
+            if let Some(session) = session_id.as_deref() {
+                let subject = self.subject(envelope)?;
+                let name = raw.rsplit('/').next().unwrap_or("a file").to_string();
+
+                if let Ok(fresh) = crate::checkpoints::create(
+                    self.store(),
+                    session,
+                    self.state.events.seq(),
+                    &format!("Before editing {name}"),
+                    subject.snapshot(),
+                    crate::checkpoints::screenshot::capture(),
+                ) {
+                    out.push(
+                        event::checkpoint_saved(session, fresh.to_event_payload()),
+                        Some(session.to_string()),
+                        turn_id.clone(),
+                    );
+                }
+            }
+
             let sha256 = crate::ssh::ops::write(&ssh, &raw, &text)?;
 
             return Ok(json!({ "path": raw, "sha256": sha256, "bytes": text.len() }));
@@ -1971,12 +1993,14 @@ impl Daemon {
                 "permissionId": permission_id,
                 "sessionId": session_id,
                 "turnId": envelope.opt_str("turnId"),
-                "title": "Delete a file",
-                "sub": "Claude wants to perform a mutating action",
-                "action": envelope.opt_str("action").unwrap_or_else(|| "delete".into()),
-                "target": envelope.opt_str("target").unwrap_or_else(|| "src/database.js".into()),
+                /* The caller's own words. This used to answer every request with a fixed "Delete a file /
+                   src/database.js / your database connection settings" card, whatever was being asked. */
+                "title": envelope.opt_str("title").unwrap_or_else(|| "Allow this action?".into()),
+                "sub": envelope.opt_str("sub").unwrap_or_default(),
+                "action": envelope.opt_str("action").unwrap_or_else(|| "edit".into()),
+                "target": envelope.opt_str("target").unwrap_or_default(),
                 "risk": envelope.opt_str("risk").unwrap_or_else(|| "MUTATING".into()),
-                "explain": "Your database connection settings. If this is deleted, your app will stop loading data.",
+                "explain": envelope.opt_str("explain").unwrap_or_default(),
                 "checkpointId": Value::Null,
             })),
             Some(session_id),

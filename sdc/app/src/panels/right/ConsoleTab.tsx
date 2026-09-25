@@ -5,8 +5,9 @@ import { tierName, useModelStore } from '../../store/model';
 import type { ConsoleEntry, ConsoleLevel } from '../../store/rightPanel';
 import { useAppStore } from '../../store/store';
 import { useSessionsStore } from '../../store/sessions';
-import { fixWithAgent, askPermission } from '../../store/intents';
-import { toast } from '../../store/toast';
+import { fixWithAgent, openFile } from '../../store/intents';
+import { useFilesStore } from '../../store/files';
+import { baseName, inFolder } from '../../lib/paths';
 import { BTN, BTN_BLOCK, BTN_PRIMARY } from '../ui/button';
 
 /**
@@ -44,6 +45,17 @@ const ICON_TONE: Record<ConsoleLevel, string> = {
   info: 'text-accent',
 };
 
+/** Opens the file a console line points at, on its line - in the chat's folder. */
+function jump(entry: ConsoleEntry): void {
+  const root = useFilesStore.getState().root;
+
+  if (root === null || entry.file === '') {
+    return;
+  }
+
+  void openFile(inFolder(root, entry.file), baseName(entry.file), entry.line);
+}
+
 function ConsoleRow({ entry }: { entry: ConsoleEntry }) {
   const Icon = ICON[entry.level];
 
@@ -55,10 +67,10 @@ function ConsoleRow({ entry }: { entry: ConsoleEntry }) {
       }
       role="button"
       tabIndex={0}
-      onClick={() => toast(strings.rightPanel.console.jumped(entry.file, entry.line))}
+      onClick={() => jump(entry)}
       onKeyDown={(event) => {
         if (event.key === 'Enter') {
-          toast(strings.rightPanel.console.jumped(entry.file, entry.line));
+          jump(entry);
         }
       }}
     >
@@ -99,8 +111,14 @@ export function ConsoleTab() {
 
   /** Spec sections 15.5 and 14.9: the console's failure becomes the next turn, then a write ask. */
   const fix = (entry: ConsoleEntry): void => {
-    const sessionId = activeTab ?? 's1';
+    if (activeTab === null) {
+      return;
+    }
 
+    const sessionId = activeTab;
+
+    /* The agent asks before it edits (its own permission gate), so no second question is raised here -
+       this used to open a fixed "Delete a file · src/database.js" dialog after every fix. */
     void fixWithAgent({
       sessionId,
       engine: model.engine,
@@ -110,9 +128,7 @@ export function ConsoleTab() {
       explanation: strings.rightPanel.console.fixPrompt,
       file: entry.file,
       line: entry.line,
-    }).then(() =>
-      askPermission({ sessionId, action: 'edit', target: `${entry.file}:${entry.line}` }),
-    );
+    });
   };
 
   return (
