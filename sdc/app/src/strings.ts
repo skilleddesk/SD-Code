@@ -296,6 +296,12 @@ export const strings = {
     edit: 'Edit this file',
     save: 'Save',
     saving: 'Saving…',
+    /** The open-files strip (v4). */
+    tabs: 'Open files',
+    closeTab: (name: string): string => `Close ${name}`,
+    discard: (name: string): string => `Discard the unsaved changes to ${name}`,
+    revert: 'Throw away the unsaved changes',
+    saveHint: 'Save (Ctrl+S) · a checkpoint is taken first',
     cancel: 'Cancel',
     saved: (name: string): string => `Saved ${name} · a checkpoint was taken first`,
     /**
@@ -469,7 +475,7 @@ export const strings = {
       back: 'Back',
       forward: 'Forward',
       reload: 'Reload',
-      popOut: 'Pop out',
+      popOut: 'Open in browser',
       url: 'http://localhost:5173/login',
       devices: {
         mobile: 'Mobile 390',
@@ -480,13 +486,16 @@ export const strings = {
       deviceToast: (width: number | null): string =>
         width === null ? 'Preview: full width' : `Preview: ${width}px`,
       page: { name: 'Login', path: 'src/routes/login.tsx' },
-      /** The empty frame: no URL is attached, so the panel says so rather than drawing a mock page. */
+      /** The empty frame: no URL yet, so the panel says what to do rather than drawing a mock page. */
       noUrl: 'no URL attached',
       emptyTitle: 'Nothing is being previewed',
       emptyBody:
-        'Attach a running dev server’s URL and this frame shows it. Until then there is no page to draw.',
-      attach: 'Attach screenshot',
-      attached: 'Screenshot attached',
+        'Start your dev server (or ask the agent how to), then type its address above - for example localhost:5173 - and press Enter.',
+      address: 'Page address',
+      placeholder: 'localhost:5173',
+      clear: 'Stop previewing this page',
+      badUrl: 'That is not an http or https address',
+      frameTitle: (url: string): string => `Preview of ${url}`,
     },
     console: {
       fixWithAgent: 'Fix with agent',

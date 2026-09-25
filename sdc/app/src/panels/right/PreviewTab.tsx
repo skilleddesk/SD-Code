@@ -1,29 +1,27 @@
-import { Camera, ChevronLeft, ChevronRight, ExternalLink, RotateCw } from 'lucide-react';
-import { useState } from 'react';
+import { ExternalLink, Globe, RotateCw, X } from 'lucide-react';
+import { useState, type FormEvent } from 'react';
 
+import { previewAddress } from '../../lib/url';
 import { strings } from '../../strings';
 import { useFilesStore } from '../../store/files';
+import { useRightPanelStore } from '../../store/rightPanel';
+import { useSessionsStore } from '../../store/sessions';
 import { toast } from '../../store/toast';
-import { BTN, BTN_BLOCK, BTN_SECONDARY } from '../ui/button';
 import { IconButton } from '../ui/IconButton';
 import { PreviewDiff } from './PreviewDiff';
 import { PreviewFile } from './PreviewFile';
 
 /**
- * The Preview tab - spec section 7.7.
+ * The Preview tab - spec section 7.7, and v4's live page.
  *
- * A browser toolbar (back, forward, reload, a mono URL, pop out), three device presets, the framed
- * page, and a full-width `Attach screenshot` footer.
+ * It shows, in this order: a diff (what the turn changed), the open files, or **the page the project
+ * serves**. That last one used to be a placeholder with Back / Forward / Reload / Pop out buttons that
+ * only toasted their own names, and an "Attach screenshot" that attached nothing. Now the address bar
+ * takes a dev server's URL (`localhost:5173`, or a port on the chat's host), the frame loads it for
+ * real, Reload reloads it, Open in browser opens it outside, and the device presets size the frame.
  *
- * The frame is a 16:10 placeholder rather than a real web view: it is a two-stop gradient with two
- * radial glows over it, the page's name in large type and its path in mono underneath. The gradient
- * is a token (`--grad-preview`) because it is the one surface in the app that has a light-theme
- * value of its own.
- *
- * Tablet 768 is the default preset, and the preset actually resizes the frame - the spec's
- * `Mobile 390 / Tablet 768 / Desktop` would be decoration otherwise. In a 400px panel "Tablet" is
- * simply full width, which is what the prototype shows; drag the panel open and it becomes a real
- * constraint.
+ * Back and Forward are gone rather than faked: the frame is another origin, and a page on another
+ * origin does not let its parent walk its history.
  */
 
 type Device = 'mobile' | 'tablet' | 'desktop';
@@ -36,16 +34,26 @@ const DEVICE_WIDTH: Record<Device, number | null> = {
 
 const DEVICES: readonly Device[] = ['mobile', 'tablet', 'desktop'];
 
+/** Opens a URL in the person's own browser - through Tauri's shell in the app, a new tab in dev. */
+async function openOutside(url: string): Promise<void> {
+  try {
+    const { open } = await import('@tauri-apps/plugin-shell');
+
+    await open(url);
+  } catch {
+    window.open(url, '_blank', 'noopener');
+  }
+}
+
 export function PreviewTab() {
-  const [device, setDevice] = useState<Device>('tablet');
+  const [device, setDevice] = useState<Device>('desktop');
+  const [reloads, setReloads] = useState(0);
   const diff = useFilesStore((state) => state.diff);
   const open = useFilesStore((state) => state.open);
+  const { activeTab: sessionId } = useSessionsStore();
+  const url = useRightPanelStore((state) => (sessionId === null ? '' : (state.previewUrls[sessionId] ?? '')));
+  const [typed, setTyped] = useState<string | null>(null);
 
-  /*
-   * The tab shows, in this order: a diff (0.7.9, what the turn changed), a file (0.7.7, what is in the
-   * folder), or the web preview below - which SDCP 0.1 cannot fill until a URL is attached
-   * (`console.attach`), so it says so rather than drawing a page nobody started.
-   */
   if (diff !== null) {
     return <PreviewDiff />;
   }
@@ -55,47 +63,79 @@ export function PreviewTab() {
   }
 
   const width = DEVICE_WIDTH[device];
+  const field = typed ?? url;
+
+  const go = (event: FormEvent): void => {
+    event.preventDefault();
+
+    if (sessionId === null) {
+      return;
+    }
+
+    const address = previewAddress(field);
+
+    if (address === null && field.trim() !== '') {
+      toast(strings.rightPanel.preview.badUrl);
+
+      return;
+    }
+
+    useRightPanelStore.getState().setPreviewUrl(sessionId, address ?? '');
+    setTyped(null);
+    setReloads((count) => count + 1);
+  };
 
   return (
-    <>
-      <div className="preview-toolbar flex items-center gap-[4px] border-b border-border-subtle px-[10px] py-[8px]">
-        <IconButton
-          icon={ChevronLeft}
-          label={strings.rightPanel.preview.back}
-          iconSize={14}
-          onClick={() => toast(strings.rightPanel.preview.back)}
-        />
-        <IconButton
-          icon={ChevronRight}
-          label={strings.rightPanel.preview.forward}
-          iconSize={14}
-          onClick={() => toast(strings.rightPanel.preview.forward)}
-        />
+    <div className="preview flex min-h-0 flex-1 flex-col">
+      <form className="preview-toolbar flex items-center gap-[4px] border-b border-border-subtle px-[10px] py-[8px]" onSubmit={go}>
         <IconButton
           icon={RotateCw}
           label={strings.rightPanel.preview.reload}
           iconSize={14}
-          onClick={() => toast(strings.rightPanel.preview.reload)}
+          disabled={url === ''}
+          onClick={() => setReloads((count) => count + 1)}
         />
 
-        <div className="preview-url mx-[6px] min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap rounded-md border border-border-subtle bg-bg-input px-[10px] py-[5px] font-mono text-[10.5px] text-text-muted">
-          {/*
-            No URL, and it says so. SDCP 0.1 has no event that carries an attached page (`console.attach`
-            hands the daemon a URL and the daemon answers with the checks it ran), so the box shows the
-            `noUrl` sentence rather than a hardcoded `localhost:5173/login` - which read as a working
-            preview of a dev server this window had never started. A file opened from the tree replaces
-            this whole tab; see `PreviewFile`.
-          */}
-          {strings.rightPanel.preview.noUrl}
+        <label className="sr-only" htmlFor="previewUrl">
+          {strings.rightPanel.preview.address}
+        </label>
+        <div className="preview-url mx-[4px] flex min-w-0 flex-1 items-center gap-[6px] rounded-md border border-border-subtle bg-bg-input px-[8px] focus-within:border-border-focus">
+          <Globe size={11} className="shrink-0 text-text-muted" aria-hidden="true" />
+          <input
+            id="previewUrl"
+            className="h-[26px] min-w-0 flex-1 bg-transparent font-mono text-[11px] text-text-primary placeholder:text-text-muted"
+            placeholder={strings.rightPanel.preview.placeholder}
+            value={field}
+            spellCheck={false}
+            autoComplete="off"
+            disabled={sessionId === null}
+            onChange={(event) => setTyped(event.target.value)}
+          />
+          {url === '' ? null : (
+            <button
+              type="button"
+              className="grid h-[18px] w-[18px] place-items-center rounded-sm text-text-muted hover:bg-bg-hover hover:text-text-primary"
+              aria-label={strings.rightPanel.preview.clear}
+              onClick={() => {
+                if (sessionId !== null) {
+                  useRightPanelStore.getState().setPreviewUrl(sessionId, '');
+                  setTyped(null);
+                }
+              }}
+            >
+              <X size={10} aria-hidden="true" />
+            </button>
+          )}
         </div>
 
         <IconButton
           icon={ExternalLink}
           label={strings.rightPanel.preview.popOut}
           iconSize={14}
-          onClick={() => toast(strings.rightPanel.preview.popOut)}
+          disabled={url === ''}
+          onClick={() => void openOutside(url)}
         />
-      </div>
+      </form>
 
       <div className="device-presets flex gap-[4px] px-[10px] pt-[8px]">
         {DEVICES.map((candidate) => (
@@ -105,50 +145,43 @@ export function PreviewTab() {
             className={
               'device-preset rounded-sm border px-[8px] py-[3px] font-mono text-[10px] transition-all duration-fast ' +
               (candidate === device
-                ? 'active border-[rgba(91,156,255,.3)] bg-accent-subtle text-accent'
+                ? 'active border-border-focus bg-accent-subtle text-accent'
                 : 'border-border-subtle bg-bg-raised text-text-secondary hover:border-border-default hover:text-text-primary')
             }
-            onClick={() => {
-              setDevice(candidate);
-              toast(strings.rightPanel.preview.deviceToast(DEVICE_WIDTH[candidate]));
-            }}
+            aria-pressed={candidate === device}
+            onClick={() => setDevice(candidate)}
           >
             {strings.rightPanel.preview.devices[candidate]}
           </button>
         ))}
       </div>
 
-      {/*
-        The frame, and what it is allowed to draw.
-        It used to be a `Login / src/routes/login.tsx` mock - a gradient with two glows and a page
-        name - which read as a working preview of a project the window had never opened. Until a URL
-        is actually attached (`console.attach`, spec section 15.4), an empty panel is the truth.
-      */}
-      <div
-        className="preview-frame relative mx-auto my-[12px] grid aspect-[16/10] w-[calc(100%-24px)] place-items-center overflow-hidden rounded-md border border-border-subtle bg-bg-base"
-        style={width === null ? undefined : { maxWidth: width }}
-        id="previewEmpty"
-      >
-        <div className="p-[20px] text-center">
-          <div className="mb-[6px] text-[13px] font-medium text-text-secondary">
-            {strings.rightPanel.preview.emptyTitle}
+      <div className="min-h-0 flex-1 overflow-auto px-[10px] py-[10px]">
+        {url === '' ? (
+          <div
+            className="preview-frame mx-auto grid min-h-[220px] w-full place-items-center rounded-md border border-dashed border-border-default bg-bg-base"
+            id="previewEmpty"
+          >
+            <div className="p-[20px] text-center">
+              <div className="mb-[6px] text-[13px] font-medium text-text-secondary">{strings.rightPanel.preview.emptyTitle}</div>
+              <div className="mx-auto max-w-[300px] text-[11.5px] leading-[1.55] text-text-muted">{strings.rightPanel.preview.emptyBody}</div>
+            </div>
           </div>
-          <div className="mx-auto max-w-[280px] text-[11.5px] text-text-muted">
-            {strings.rightPanel.preview.emptyBody}
+        ) : (
+          <div
+            className="preview-frame mx-auto h-full min-h-[320px] w-full overflow-hidden rounded-md border border-border-default bg-white"
+            style={width === null ? undefined : { maxWidth: width }}
+          >
+            <iframe
+              key={`${url}#${reloads}`}
+              src={url}
+              title={strings.rightPanel.preview.frameTitle(url)}
+              className="h-full min-h-[320px] w-full border-0"
+              sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
+            />
           </div>
-        </div>
+        )}
       </div>
-
-      <div className="px-[12px] pb-[12px]">
-        <button
-          type="button"
-          className={BTN + ' ' + BTN_SECONDARY + ' ' + BTN_BLOCK}
-          onClick={() => toast(strings.rightPanel.preview.attached)}
-        >
-          <Camera size={12} aria-hidden="true" />
-          {strings.rightPanel.preview.attach}
-        </button>
-      </div>
-    </>
+    </div>
   );
 }

@@ -1,4 +1,5 @@
 import { ShieldCheck, TriangleAlert } from 'lucide-react';
+import { useState } from 'react';
 
 import { strings } from '../strings';
 import { resolvePermission } from '../store/intents';
@@ -23,23 +24,33 @@ import { Modal } from './Modal';
  * `D` and `Esc` do here exactly what the F1 reference says.
  */
 export function Permission() {
-  const open = useOverlayStore((state) => state.permissionOpen);
   const close = useOverlayStore((state) => state.closePermission);
   const permission = useAppStore((state) => state.permission);
+  /* The question just answered, hidden until the daemon's `PermissionResolved` clears it for good. */
+  const [answered, setAnswered] = useState<string | null>(null);
 
   if (permission === null) {
     return null;
   }
 
+  /*
+   * Open whenever a question is waiting. It used to open only when `askPermission` in this window called
+   * `openPermission()` - so a question the daemon asked on its own (an agent about to edit a file) was
+   * folded into the state and never shown, and the agent waited for an answer behind a closed dialog.
+   */
+  const open = answered !== permission.id;
   const dangerous = permission.risk === 'DANGEROUS';
 
   const decide = (decision: 'allow_once' | 'always_allow' | 'deny' | 'show_me'): void => {
+    setAnswered(permission.id);
     close();
     void resolvePermission(permission.id, decision, permission.target);
   };
 
   return (
-    <Modal open={open} label={permission.title} onClose={close} center className="permission-dlg">
+    /* Closing without choosing is `Deny` - the safe answer - so nothing is left waiting on a dialog that
+       is no longer on screen. */
+    <Modal open={open} label={permission.title} onClose={() => decide('deny')} center className="permission-dlg">
       <div className="flex items-start gap-[12px] border-b border-border-subtle px-[18px] py-[16px]">
         <div
           className={

@@ -57,8 +57,14 @@ export interface FilesState {
   expanded: string[];
   /** The daemon's own words, when a read failed. */
   error: string | null;
-  /** The file on screen, or `null`. */
+  /** The file on screen, or `null` - always the active one of `tabs`. */
   open: OpenFileView | null;
+  /** Every open file (v4), in the order they were opened. */
+  tabs: OpenFileView[];
+  /** Unsaved text, by path. A tab with an entry here has changes that are not on disk. */
+  drafts: Record<string, string>;
+  /** A line to show in a file - set by a review issue or a search hit, read once by the editor. */
+  reveal: { path: string; line: number } | null;
   /** The path being opened, so the row that was clicked can show a spinner. */
   opening: string | null;
   /** The folder's git state (0.7.9), or `null` for a folder with no git - which is not a failure. */
@@ -76,8 +82,15 @@ export interface FilesActions {
   fail: (message: string) => void;
   setExpanded: (path: string, open: boolean) => void;
   startOpening: (path: string) => void;
-  /** The file arrived - or `null`, when one was closed. */
+  /** The file arrived (opened, or re-read) - or `null` to close the active one. */
   setOpen: (file: OpenFileView | null) => void;
+  /** Bring an open file's tab to the front. */
+  activate: (path: string) => void;
+  /** Close one tab, and forget its unsaved text. */
+  closeTab: (path: string) => void;
+  /** Record unsaved text for a file - or `null` when it matches the disk again. */
+  setDraft: (path: string, text: string | null) => void;
+  setReveal: (reveal: { path: string; line: number } | null) => void;
   /** The folder's git state - or `null` when there is none to show. */
   setGit: (git: GitView | null) => void;
   /** The working tree's diff - or `null` when the diff was closed. */
@@ -93,6 +106,9 @@ const initialFilesState: FilesState = {
   expanded: [],
   error: null,
   open: null,
+  tabs: [],
+  drafts: {},
+  reveal: null,
   opening: null,
   git: null,
   diff: null,
@@ -138,7 +154,35 @@ export const useFilesStore = create<FilesState & FilesActions>()((set, get) => (
 
   startOpening: (path) => set((state) => ({ ...state, opening: path, error: null })),
 
-  setOpen: (file) => set((state) => ({ ...state, open: file, opening: null, diff: null })),
+  setOpen: (file) =>
+    set((state) => {
+      if (file === null) {
+        return state.open === null ? { ...state, opening: null, diff: null } : { ...closed(state, state.open.path), diff: null };
+      }
+
+      const known = state.tabs.some((tab) => tab.path === file.path);
+      const tabs = known ? state.tabs.map((tab) => (tab.path === file.path ? file : tab)) : [...state.tabs, file];
+
+      return { ...state, tabs, open: file, opening: null, diff: null };
+    }),
+
+  activate: (path) =>
+    set((state) => {
+      const tab = state.tabs.find((candidate) => candidate.path === path);
+
+      return tab === undefined ? state : { ...state, open: tab, diff: null };
+    }),
+
+  closeTab: (path) => set((state) => closed(state, path)),
+
+  setReveal: (reveal) => set({ reveal }),
+
+  setDraft: (path, text) =>
+    set((state) => {
+      const rest = without(state.drafts, path);
+
+      return { ...state, drafts: text === null ? rest : { ...rest, [path]: text } };
+    }),
 
   setGit: (git) => set((state) => ({ ...state, git })),
 
@@ -148,6 +192,33 @@ export const useFilesStore = create<FilesState & FilesActions>()((set, get) => (
 
   reset: () => set({ ...initialFilesState }),
 }));
+
+/**
+ * The state with one tab closed: its draft forgotten, and - when it was the active one - the tab to its
+ * left (or the new first one) brought forward, the way every editor with tabs behaves.
+ */
+function closed(state: FilesState, path: string): FilesState {
+  const index = state.tabs.findIndex((tab) => tab.path === path);
+
+  if (index < 0) {
+    return state;
+  }
+
+  const tabs = state.tabs.filter((tab) => tab.path !== path);
+  const drafts = without(state.drafts, path);
+  const open = state.open?.path === path ? (tabs[Math.max(0, index - 1)] ?? null) : state.open;
+
+  return { ...state, tabs, drafts, open, opening: null };
+}
+
+/** A record without one key. */
+function without<T>(record: Record<string, T>, key: string): Record<string, T> {
+  const copy = { ...record };
+
+  delete copy[key];
+
+  return copy;
+}
 
 /** Is this folder's row open? */
 export function isExpanded(state: FilesState, path: string): boolean {

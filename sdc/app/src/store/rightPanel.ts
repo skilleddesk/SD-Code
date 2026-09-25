@@ -84,6 +84,8 @@ export interface RightPanelState {
   tabBySession: Record<string, PanelTabId>;
   /** Panel width in pixels, between PANEL_MIN_WIDTH and PANEL_MAX_WIDTH. */
   width: number;
+  /** The page each chat previews (v4) - a dev server's URL, by session id. */
+  previewUrls: Record<string, string>;
 }
 
 export interface RightPanelActions {
@@ -94,12 +96,15 @@ export interface RightPanelActions {
   setActiveTab: (tab: PanelTabId, sessionId?: string | null) => void;
   /** The left-edge drag handle (spec section 7.2: minimum 320px). */
   setWidth: (width: number) => void;
+  /** Point a chat's preview at a URL, or clear it with an empty string. */
+  setPreviewUrl: (sessionId: string, url: string) => void;
 }
 
 const initialRightPanelState: RightPanelState = {
   activeTab: 'preview',
   tabBySession: {},
   width: 400,
+  previewUrls: {},
 };
 
 export const useRightPanelStore = create<RightPanelState & RightPanelActions>()((set, get) => ({
@@ -113,6 +118,9 @@ export const useRightPanelStore = create<RightPanelState & RightPanelActions>()(
           ? state.tabBySession
           : { ...state.tabBySession, [sessionId]: tab },
     })),
+
+  setPreviewUrl: (sessionId, url) =>
+    set((state) => ({ previewUrls: { ...state.previewUrls, [sessionId]: url } })),
 
   setWidth: (width) => {
     const clamped = Math.min(PANEL_MAX_WIDTH, Math.max(PANEL_MIN_WIDTH, Math.round(width)));
