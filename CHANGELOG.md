@@ -90,6 +90,9 @@ review of its diff.
   asks for the whole log itself, and de-duplicates against the daemon's sequence rather than the log's.
 * **A turn's history lost its tool calls**, so a model decided its own verified result was invented and
   apologised; the stored answer now records them.
+* **Claude Code's tool cards spun for ever**: the CLI reports a finished tool as a `user` message of
+  `tool_result` blocks, which the parser ignored. It reads them now (`done · 10 ln`, or `failed`), and a
+  card an engine never finished stops when its turn ends.
 * **Demo data and toasts where features should be**: the Verify tab's fixed rows and "3 pass, 1 fail",
   Analytics' "$4.12" and "Claude Max ~60%", the queued "also add a test for this", the permission card for
   `src/database.js`, Preview's Back/Forward/Attach, the Time Machine's "Compare two points", the toast's
