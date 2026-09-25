@@ -929,3 +929,22 @@ describe('a question ends with its turn', () => {
     expect(state.permission).toBeNull();
   });
 });
+
+describe('a tool card ends with its turn', () => {
+  it('stops a card the engine never finished', () => {
+    let state = fold(EMPTY_STATE, {
+      type: 'TurnStarted',
+      turnId: 't1',
+      sessionId: 's1',
+      engine: 'claude_code',
+      model: 'sonnet',
+      tier: 'Balanced',
+      prompt: 'look',
+    });
+
+    state = fold(state, { type: 'ToolCallStarted', turnId: 't1', callId: 'c1', tool: 'read', name: 'Grep', target: '' });
+    state = fold(state, { type: 'TurnCompleted', turnId: 't1', summary: 'Done', meta: '' });
+
+    expect(state.turns[0]?.tools[0]).toMatchObject({ status: 'done', meta: 'ended with the turn' });
+  });
+});

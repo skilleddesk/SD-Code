@@ -505,6 +505,11 @@ function reduce(state: AppState, entry: AppEvent): AppState {
         summary: event.summary,
         meta: event.meta,
         pass: event.pass ?? turn.pass,
+        /* A tool cannot still be running when its turn has ended. An engine that never reported the
+           result (older Claude Code logs) left the card spinning for ever; it now says it ended. */
+        tools: turn.tools.map((tool) =>
+          tool.status === 'running' ? { ...tool, status: 'done', meta: tool.meta === '' ? 'ended with the turn' : tool.meta } : tool,
+        ),
       }));
 
       /* A question the turn was still asking ends with it: a stopped agent is no longer waiting, and a

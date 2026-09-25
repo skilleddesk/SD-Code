@@ -374,6 +374,10 @@ pub fn parse_stream_line(line: &str) -> Vec<EngineEvent> {
            deliberate: emitting both prints every answer twice. */
         "assistant" => Vec::new(),
 
+        /* Claude's tool results travel back as a `user` message of `tool_result` blocks, once the tool
+           has run. This line was ignored, so every CLI tool card kept spinning after the turn was done. */
+        "user" => claude_tool_results(&value),
+
         /* Codex: one item per thing that happened, plus four words about the turn itself. */
         "item.completed" | "item.started" | "item.updated" => {
             value.get("item").map(parse_codex_item).unwrap_or_default()
@@ -447,6 +451,41 @@ fn text_of(value: &Value) -> Option<String> {
         .and_then(|delta| delta.get("text"))
         .and_then(Value::as_str)
         .map(str::to_string)
+}
+
+/// The `tool_result` blocks of a Claude Code `user` message, as finished tool cards.
+fn claude_tool_results(value: &Value) -> Vec<EngineEvent> {
+    let blocks = value
+        .pointer("/message/content")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+
+    blocks
+        .iter()
+        .filter(|block| block.get("type").and_then(Value::as_str) == Some("tool_result"))
+        .map(|block| {
+            let failed = block.get("is_error").and_then(Value::as_bool).unwrap_or(false);
+            /* The result is a string or a list of text blocks; its size is what the card can say. */
+            let text = match block.get("content") {
+                Some(Value::String(text)) => text.clone(),
+                Some(Value::Array(parts)) => parts
+                    .iter()
+                    .filter_map(|part| part.get("text").and_then(Value::as_str))
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+                _ => String::new(),
+            };
+            let lines = text.lines().count();
+
+            EngineEvent::ToolCompleted {
+                call_id: block.get("tool_use_id").and_then(Value::as_str).unwrap_or("call").to_string(),
+                status: if failed { "failed" } else { "done" }.to_string(),
+                meta: if failed { "failed".to_string() } else { format!("done · {lines} ln") },
+                diff: None,
+            }
+        })
+        .collect()
 }
 
 /// One inner event of Claude Code's `stream_event` wrapper.
@@ -871,5 +910,21 @@ mod tests {
         );
 
         assert_eq!(events, vec![EngineEvent::Failed("Credit balance is too low".into())]);
+    }
+
+    /// Claude Code reports a finished tool as a `user` message; the card ends with it.
+    #[test]
+    fn a_claude_tool_result_finishes_its_card() {
+        let events = parse_stream_line(
+            r#"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"line one\nline two","is_error":false},{"type":"tool_result","tool_use_id":"toolu_2","content":[{"type":"text","text":"boom"}],"is_error":true}]}}"#,
+        );
+
+        assert_eq!(
+            events,
+            vec![
+                EngineEvent::ToolCompleted { call_id: "toolu_1".into(), status: "done".into(), meta: "done · 2 ln".into(), diff: None },
+                EngineEvent::ToolCompleted { call_id: "toolu_2".into(), status: "failed".into(), meta: "failed".into(), diff: None },
+            ]
+        );
     }
 }
