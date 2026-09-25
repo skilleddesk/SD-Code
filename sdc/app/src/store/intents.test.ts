@@ -311,6 +311,7 @@ describe('openFolderIn', () => {
           thinkingMs: 0,
           thinkingSince: null,
           plan: [],
+          startedAt: '2026-09-25T10:00:00Z',
           status: 'done',
           stuckForMs: 0,
           tools: [],
@@ -1228,7 +1229,7 @@ describe('verify', () => {
     useAppStore.setState({
       providers: [connected('claude', 'Claude'), connected('gemini', 'Gemini')] as never,
       turns: [
-        { id: 't1', sessionId: 's1', turnNumber: 1, engine: 'claude_code', model: 'sonnet', tier: 'Balanced', prompt: 'fix the 500', text: 'done', thinking: '', thinkingMs: 0, thinkingSince: null, plan: [], status: 'done', stuckForMs: 0, tools: [], summary: '', meta: '', pass: null },
+        { id: 't1', sessionId: 's1', turnNumber: 1, engine: 'claude_code', model: 'sonnet', tier: 'Balanced', prompt: 'fix the 500', text: 'done', thinking: '', thinkingMs: 0, thinkingSince: null, plan: [], startedAt: '2026-09-25T10:00:00Z', status: 'done', stuckForMs: 0, tools: [], summary: '', meta: '', pass: null },
       ],
       checkpoints: [
         { id: 'cp-late', sessionId: 's1', turnId: 't1', turn: 9, when: 'now', title: 'Before Run', thumbnail: null, filesHash: 'b'.repeat(40) },

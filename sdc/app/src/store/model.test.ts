@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  MAX_QUEUED_PROMPTS,
+  useModelStore,
   engineConnected,
   groupCatalog,
   latestVersions,
@@ -139,5 +141,31 @@ describe('nextEngine', () => {
   it('keeps the plain order when nothing is connected', () => {
     expect(nextEngine('claude_code', () => false)).toBe('codex');
     expect(nextEngine('claude_code')).toBe('codex');
+  });
+});
+
+describe('the prompt queue', () => {
+  it('keeps each chat’s prompts apart, oldest first, and at most three per chat', () => {
+    useModelStore.setState({ queued: [] });
+
+    const { enqueue, takeNext } = useModelStore.getState();
+
+    expect(enqueue('s1', 'first')).toBe(true);
+    expect(enqueue('s2', 'other chat')).toBe(true);
+    expect(enqueue('s1', 'second')).toBe(true);
+    expect(enqueue('s1', 'third')).toBe(true);
+    expect(enqueue('s1', 'fourth')).toBe(false);
+    expect(MAX_QUEUED_PROMPTS).toBe(3);
+
+    expect(takeNext('s1')).toBe('first');
+    expect(takeNext('s1')).toBe('second');
+    expect(takeNext('s2')).toBe('other chat');
+    expect(takeNext('s2')).toBeNull();
+  });
+
+  it('starts empty - a fresh window has nothing waiting that nobody typed', () => {
+    useModelStore.setState({ queued: [] });
+
+    expect(useModelStore.getState().queued).toEqual([]);
   });
 });

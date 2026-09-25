@@ -383,8 +383,9 @@ export const strings = {
     contextChip: (tokens: number): string => `${tokens >= 1000 ? `${(tokens / 1000).toFixed(1)}k` : String(tokens)} ctx`,
     queued: {
       remove: 'Remove queued prompt',
-      /** Seeded so the queue is visible; the spec caps it at three (section 9.7). */
-      seed: ['also add a test for this'],
+      /** The toast when Send is pressed while this chat's turn is still running. */
+      queuedToast: 'Queued · it is sent when the running turn ends',
+      full: 'Three prompts are already waiting; remove one or wait for the turn to end',
     },
     toolbar: {
       attach: 'Attach a file',
@@ -629,23 +630,23 @@ export const strings = {
         pass ? `✓ Verified · ${engine}` : issues > 0 ? `Review · ${engine} · ${issues} issue${issues === 1 ? '' : 's'}` : `✗ Needs work`,
     },
     analytics: {
-      spending: 'Spending',
-      range: '7d',
-      totalTitle: 'Total this week',
-      total: '$4.12',
+      empty: 'No turns yet. Once a chat has run, this shows what it used - from what the engines reported.',
+      turnsTitle: 'Turns',
+      costTitle: 'Cost',
+      tokensTitle: 'Tokens',
+      day: 'Day',
+      failedNote: (failed: number): string => (failed === 0 ? 'none failed' : `${failed} failed`),
+      costNote: (priced: number, total: number): string =>
+        priced === 0 ? 'no engine reported a cost' : priced === total ? 'as the engines reported it' : `reported by ${priced} of ${total} turns`,
+      tokensNote: (input: string, output: string): string => `${input} in · ${output} out`,
+      chartTitle: (byCost: boolean): string => (byCost ? 'Cost · last 7 days' : 'Turns · last 7 days'),
+      chartLabel: (byCost: boolean): string => (byCost ? 'Reported cost per day, last seven days' : 'Turns per day, last seven days'),
+      dayLine: (turns: number, cost: string | null): string =>
+        `${turns} turn${turns === 1 ? '' : 's'}${cost === null ? '' : ` · ${cost}`}`,
       byEngineTitle: 'By engine',
-      limitsTitle: 'Limits',
-      /** Seven bars, each a percentage of the chart's height (spec section 7.12). */
-      spendBars: [33, 48, 40, 58, 45, 32, 25],
-      byEngine: [
-        { label: 'claude_code', percent: 68 },
-        { label: 'codex', percent: 22 },
-        { label: 'gemini', percent: 10 },
-      ],
-      limits: [
-        { name: 'Claude Max', value: '~60%', estimate: '(est)' },
-        { name: 'resets in', value: '2h 14m', estimate: null },
-      ],
+      engineShare: (turns: number, percent: number): string => `${turns} · ${percent}%`,
+      source:
+        'From the turns in this window’s log. A subscription CLI reports what the same tokens would cost on the API; plan limits are not visible to SDC.',
     },
   },
 

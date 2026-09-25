@@ -87,6 +87,19 @@ export function PromptArea({ sessionId }: PromptAreaProps = {}) {
   const [attached, setAttached] = useState<readonly PickedFile[]>([]);
   const draft = useModelStore((state) => state.draft);
 
+  /* The chat's turn ended: the next queued prompt for it goes out now. */
+  useEffect(() => {
+    if (running !== null || sessionId === undefined) {
+      return;
+    }
+
+    const next = useModelStore.getState().takeNext(sessionId);
+
+    if (next !== null) {
+      void sendPrompt(next, sessionId);
+    }
+  }, [running, sessionId]);
+
   /* A prompt handed over from elsewhere ("Fix with a prompt"): into the box, focused, ready to edit. */
   useEffect(() => {
     const textarea = textareaRef.current;
@@ -170,6 +183,21 @@ export function PromptArea({ sessionId }: PromptAreaProps = {}) {
      */
     const prompt = text;
 
+    /* This chat's turn is still running: the prompt waits its turn instead of racing it. */
+    if (running !== null && sessionId !== undefined) {
+      if (!useModelStore.getState().enqueue(sessionId, prompt)) {
+        toast(strings.prompt.queued.full);
+
+        return;
+      }
+
+      textarea.value = '';
+      textarea.style.height = 'auto';
+      toast(strings.prompt.queued.queuedToast);
+
+      return;
+    }
+
     textarea.value = '';
     textarea.style.height = 'auto';
     /* The picked paths travelled *inside* `prompt`, so the count is about the next turn and starts
@@ -231,7 +259,7 @@ export function PromptArea({ sessionId }: PromptAreaProps = {}) {
           )}
         </div>
 
-        <QueuedChips />
+        <QueuedChips sessionId={sessionId} />
 
         <div className="prompt-box flex flex-col gap-[8px] rounded-lg border border-border-default bg-bg-input px-[13px] py-[11px] transition-all duration-base ease-ease focus-within:border-border-strong">
           <textarea
