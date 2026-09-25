@@ -607,8 +607,11 @@ mod tests {
             provider: None,
             history,
             /* A provider answers over the network, so this adapter has no working directory - the field is
-               on the `Prompt` because it is a fact about the session, and only `cli.rs` uses it. */
+               on the `Prompt` because it is a fact about the session, and only `cli.rs` uses it. The same
+               goes for `remote`: `native_api` contacts an endpoint from *this* daemon, so a chat whose
+               folder is on a host is still answered from here (0.7.13). */
             project_root: None,
+            remote: None,
         }
     }
 

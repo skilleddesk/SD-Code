@@ -42,20 +42,38 @@ impl Fresh {
     }
 }
 
+/// What a checkpoint hashes - and this is a **parameter rather than an implicit lookup** (0.7.13).
+///
+/// A checkpoint is "the files as they are, before this changes them", and where those files are is the
+/// one thing the caller knows and this module does not: a chat whose folder is on a VPS has its history
+/// in a shadow repository **on that machine** (`ssh::ops::shadow_checkpoint`), and hashing the local
+/// path of a remote folder would produce a 64-character hash of nothing. Making the caller say which of
+/// the three it is means the compiler asks the question at every call site instead of a review doing it.
+pub enum Snapshot<'a> {
+    /// No project: the hash is of the title, and there is nothing to restore (spec section 14).
+    Unbound,
+    /// A folder on the machine `sdcd` runs on.
+    Local(&'a std::path::Path),
+    /// A folder on a host: the ssh connection and the folder's path **there**.
+    Remote(&'a crate::ssh::Ssh, &'a str),
+}
+
 /// Records a checkpoint: the shadow git commit, the row, and the same fact returned as a payload for
-/// the event. `project_root` is `None` when the session has no project yet, in which case the hash is
-/// of the title - a checkpoint with nothing to restore is still a point in the conversation.
+/// the event.
 pub fn create(
     store: &Arc<Store>,
     session_id: &str,
     turn: i64,
     title: &str,
-    project_root: Option<&std::path::Path>,
+    snapshot: Snapshot<'_>,
     thumbnail: Option<String>,
 ) -> Result<Fresh, ErrorObject> {
-    let files_hash = match project_root {
-        Some(root) => crate::git::checkpoint(root, &format!("sdcd: turn {turn} — {title}"))?,
-        None => crate::fs::hash(title.as_bytes()),
+    let files_hash = match snapshot {
+        Snapshot::Local(root) => crate::git::checkpoint(root, &format!("sdcd: turn {turn} — {title}"))?,
+        Snapshot::Remote(ssh, root) => {
+            crate::ssh::ops::shadow_checkpoint(ssh, root, &format!("sdcd: turn {turn} — {title}"))?
+        }
+        Snapshot::Unbound => crate::fs::hash(title.as_bytes()),
     };
     let id = format!("cp-{session_id}-{turn}");
 
@@ -88,7 +106,7 @@ mod tests {
         store.upsert_host("local", "Local", "local", None, "connected", None).unwrap();
         store.insert_session("s1", "local", "Add rate limiting", "add", None).unwrap();
 
-        let fresh = create(&store, "s1", 3, "Added validation", None, None).unwrap();
+        let fresh = create(&store, "s1", 3, "Added validation", Snapshot::Unbound, None).unwrap();
 
         assert_eq!(fresh.id, "cp-s1-3");
         assert_eq!(fresh.files_hash.len(), 64);
@@ -108,8 +126,8 @@ mod tests {
         store.upsert_host("local", "Local", "local", None, "connected", None).unwrap();
         store.insert_session("s1", "local", "Add rate limiting", "add", None).unwrap();
 
-        create(&store, "s1", 4, "first", None, None).unwrap();
-        create(&store, "s1", 4, "second", None, None).unwrap();
+        create(&store, "s1", 4, "first", Snapshot::Unbound, None).unwrap();
+        create(&store, "s1", 4, "second", Snapshot::Unbound, None).unwrap();
 
         let listed = list(&store, "s1").unwrap();
 

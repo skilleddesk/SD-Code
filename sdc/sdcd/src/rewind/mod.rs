@@ -40,26 +40,35 @@ impl Applied {
 
 /// Rewinds a session to a turn: files first, then the stack.
 ///
-/// `project_root` is optional because a session may have no project; the conversation half still
-/// works, which is what makes "rewind" meaningful in a chat that only ever talked.
+/// `snapshot` says where the files are - the same three cases a checkpoint has (`checkpoints::Snapshot`),
+/// because the two halves have to agree: a checkpoint committed into a shadow repository **on a host**
+/// is restored from that repository, and a rewind that looked for it locally would quietly restore
+/// nothing (the sha would not be a commit in the local shadow, and the local module skips a sha that is
+/// not one).
 pub fn apply(
     store: &Arc<Store>,
     session_id: &str,
     turn: i64,
-    project_root: Option<&std::path::Path>,
+    snapshot: crate::checkpoints::Snapshot<'_>,
 ) -> Result<Applied, ErrorObject> {
     let dropped = store.checkpoints_after(session_id, turn).map_err(ErrorObject::internal)?;
 
-    if let Some(root) = project_root {
-        if let Some(latest) = dropped.last() {
-            let sha = latest.get("filesHash").and_then(Value::as_str).unwrap_or_default();
+    if let Some(latest) = dropped.last() {
+        let sha = latest.get("filesHash").and_then(Value::as_str).unwrap_or_default();
 
-            /* The shadow repository is the restore source; a sha that is not a commit (the hash of a
-               title, for a session with no project) is skipped rather than guessed at. */
-            if sha.len() == 40 {
-                let shadow = crate::git::ensure_repository(root)?;
+        /* A sha that is not a commit (the hash of a title, for a session with no project) is skipped
+           rather than guessed at. */
+        if sha.len() == 40 {
+            match snapshot {
+                crate::checkpoints::Snapshot::Local(root) => {
+                    let shadow = crate::git::ensure_repository(root)?;
 
-                let _ = crate::git::run(&shadow, &["checkout", sha, "--", "."]);
+                    let _ = crate::git::run(&shadow, &["checkout", sha, "--", "."]);
+                }
+                crate::checkpoints::Snapshot::Remote(ssh, root) => {
+                    crate::ssh::ops::shadow_restore(ssh, root, sha)?;
+                }
+                crate::checkpoints::Snapshot::Unbound => {}
             }
         }
     }
@@ -111,7 +120,7 @@ mod tests {
     fn rewinds_and_redoes_a_turn() {
         let store = store_with_three_checkpoints();
 
-        let applied = apply(&store, "s1", 13, None).unwrap();
+        let applied = apply(&store, "s1", 13, crate::checkpoints::Snapshot::Unbound).unwrap();
 
         assert_eq!(applied.direction, "back");
         assert_eq!(applied.turns, 1);
@@ -128,7 +137,7 @@ mod tests {
     #[test]
     fn a_rewind_with_nothing_to_drop_is_a_no_op() {
         let store = store_with_three_checkpoints();
-        let applied = apply(&store, "s1", 99, None).unwrap();
+        let applied = apply(&store, "s1", 99, crate::checkpoints::Snapshot::Unbound).unwrap();
 
         assert_eq!(applied.turns, 0);
         assert_eq!(store.checkpoints("s1").unwrap().len(), 3);

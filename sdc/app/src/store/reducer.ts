@@ -108,6 +108,13 @@ function reduce(state: AppState, entry: AppEvent): AppState {
         status: event.status,
         sdcd: event.sdcd ?? existing?.sdcd ?? '',
         platform: event.platform ?? existing?.platform ?? '',
+        /* The sentence and the fingerprint travel with the status (0.7.13): `untrusted` is a *question*
+           and the answer needs the exact string `host.trust` takes, so it is a field rather than
+           something a card would have to read out of a paragraph. */
+        detail: event.detail ?? existing?.detail ?? '',
+        hostKey: event.hostKey ?? existing?.hostKey ?? '',
+        pinned: existing?.pinned ?? '',
+        address: existing?.address ?? '',
         sessions: existing?.sessions ?? [],
       };
 
@@ -785,28 +792,46 @@ export function withProviders(state: AppState, providers: readonly ProviderRecor
 export function withWorkspace(state: AppState, hosts: readonly HostRecord[]): AppState {
   return {
     ...state,
-    hosts: hosts.map((host) => ({
-      id: host.hostId,
-      name: host.name,
-      type: host.hostType,
-      status: host.status,
-      sdcd: state.hosts.find((known) => known.id === host.hostId)?.sdcd ?? '',
-      platform: host.platform ?? state.hosts.find((known) => known.id === host.hostId)?.platform ?? '',
-      sessions: host.sessions.map((session) => ({
-        id: session.sessionId,
-        title: session.title,
-        prompt: session.prompt,
-        state: session.state,
-        minutesAgo: session.minutesAgo,
-        unread: session.unread,
-        /* The folder the chat works in (0.7.6): the engines run there, and the prompt area says so. */
-        projectId: session.projectId ?? null,
-        projectRoot: session.projectRoot ?? null,
-        ...(session.attention === null || session.attention === undefined
-          ? {}
-          : { attention: session.attention }),
-      })),
-    })),
+    hosts: hosts.map((host) => {
+      const known = state.hosts.find((candidate) => candidate.id === host.hostId);
+
+      return {
+        id: host.hostId,
+        name: host.name,
+        type: host.hostType,
+        status: host.status,
+        sdcd: known?.sdcd ?? '',
+        platform: host.platform ?? known?.platform ?? '',
+        /* The row does not carry the sentence or the fingerprint - those arrive with a `HostStatus` -
+           so the last thing the log said about this host is kept rather than blanked on every read.
+           (This is the same rule `sdcd` and `platform` already followed.) */
+        detail: known?.detail ?? '',
+        hostKey: known?.hostKey ?? '',
+        /* The row's own copy of the decision: a window that never saw the `host.trust` event still knows
+           which key this host is (0.7.13). */
+        pinned: host.hostKey ?? known?.pinned ?? '',
+        /* The address comes from the row, and the port is the fact 0.7.0 dropped: `user@host:8443`. */
+        address: host.target === null || host.target === undefined
+          ? ''
+          : host.port === null || host.port === undefined
+            ? host.target
+            : `${host.target}:${host.port}`,
+        sessions: host.sessions.map((session) => ({
+          id: session.sessionId,
+          title: session.title,
+          prompt: session.prompt,
+          state: session.state,
+          minutesAgo: session.minutesAgo,
+          unread: session.unread,
+          /* The folder the chat works in (0.7.6): the engines run there, and the prompt area says so. */
+          projectId: session.projectId ?? null,
+          projectRoot: session.projectRoot ?? null,
+          ...(session.attention === null || session.attention === undefined
+            ? {}
+            : { attention: session.attention }),
+        })),
+      };
+    }),
   };
 }
 

@@ -501,6 +501,27 @@ svg{flex-shrink:0}
 .console-src{margin-top:5px;font-size:10.5px;color:var(--text-muted);font-family:var(--font-mono)}
 .console-count{font-size:9.5px;padding:1px 6px;background:var(--bg-base);border-radius:99px;
   color:var(--text-muted);font-family:var(--font-mono);align-self:flex-start;font-weight:600}
+/* ---- Terminal tab (0.7.13): the command surface. Mono, hairline rows, one tone per outcome. ---- */
+.term-where{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--border-subtle)}
+.term-path{font-family:var(--font-mono);font-size:10.5px;color:var(--text-muted);word-break:break-all}
+.term-list{flex:1;overflow-y:auto;padding:10px}
+.term-row{margin-bottom:6px;padding:8px 10px;background:var(--bg-raised);border-radius:6px;border-left:2px solid var(--border-subtle)}
+.term-row.refused{border-left-color:var(--state-error)}
+.term-row.running{border-left-color:var(--accent)}
+.term-line{display:flex;align-items:flex-start;gap:6px;font-family:var(--font-mono);font-size:11px;color:var(--text-primary)}
+.term-prompt{color:var(--text-muted);flex-shrink:0}
+.term-cmd{flex:1;min-width:0;word-break:break-word}
+.term-outcome{flex-shrink:0;font-family:var(--font-mono);font-size:10.5px;color:var(--accent)}
+.term-outcome.ok{color:var(--text-muted)}
+.term-outcome.bad{color:var(--state-error)}
+.term-meta{margin-top:3px;font-family:var(--font-mono);font-size:10.5px;color:var(--text-muted)}
+.term-out,.term-reason{margin-top:6px;font-family:var(--font-mono);font-size:11px;line-height:1.5;white-space:pre-wrap;word-break:break-word;color:var(--text-secondary)}
+.term-reason{color:var(--state-error)}
+.term-input-row{display:flex;align-items:center;gap:6px;padding:10px;border-top:1px solid var(--border-subtle)}
+.term-input{flex:1;min-width:0;height:28px;padding:0 8px;border:1px solid var(--border-default);border-radius:6px;
+  background:var(--bg-base);color:var(--text-primary);font-family:var(--font-mono);font-size:11.5px;outline:none}
+.term-input:focus{border-color:var(--accent-fill)}
+.term-hint{display:flex;align-items:center;gap:6px;padding:0 10px 10px;font-size:10.5px;color:var(--text-muted)}
 .tm-list{padding:12px}
 .tm-entry{display:flex;gap:10px;padding:10px;margin-bottom:8px;background:var(--bg-raised);
   border:1px solid var(--border-subtle);border-radius:var(--r-md);cursor:pointer;transition:all var(--base);position:relative}
@@ -949,6 +970,12 @@ svg{flex-shrink:0}
       <div class="panel-tabs">
         <button class="panel-tab active" data-panel="preview"><i data-lucide="eye" style="width:12px;height:12px"></i>Preview</button>
         <button class="panel-tab" data-panel="console"><i data-lucide="terminal-square" style="width:12px;height:12px"></i>Console<span class="badge">1</span></button>
+        <!--
+          Terminal (0.7.13). The seventh tab: a command surface that runs in the active chat's folder on
+          the active chat's machine. Drawn from the panel's own primitives - the strip above, mono type,
+          a `.term-row` per run, and the `.term-reason` slot where a refusal goes.
+        -->
+        <button class="panel-tab" data-panel="terminal"><i data-lucide="square-chevron-right" style="width:12px;height:12px"></i>Terminal</button>
         <button class="panel-tab" data-panel="timemachine"><i data-lucide="clock" style="width:12px;height:12px"></i>Time Machine</button>
         <button class="panel-tab" data-panel="duel"><i data-lucide="swords" style="width:12px;height:12px"></i>Duel</button>
         <button class="panel-tab" data-panel="verify"><i data-lucide="check-circle-2" style="width:12px;height:12px"></i>Verify</button>
@@ -999,6 +1026,40 @@ svg{flex-shrink:0}
             <button class="btn primary" style="width:100%;justify-content:center" onclick="openPermission()">
               <i data-lucide="wand-2" style="width:12px;height:12px"></i>Fix with agent
             </button>
+          </div>
+        </div>
+
+        <div class="panel-view" data-panel-view="terminal">
+          <div class="term-where"><span class="term-path">~/app/landing on prod-1</span><button class="btn sm" style="margin-left:auto" onclick="toast('Cleared')"><i data-lucide="trash-2" style="width:10px;height:10px"></i>Clear</button></div>
+          <div class="term-list">
+            <div class="term-row">
+              <div class="term-line"><span class="term-prompt">$</span><span class="term-cmd">pnpm test -- --run</span>
+                <span class="term-outcome ok">exit 0</span></div>
+              <div class="term-meta">~/app/landing on prod-1 · 4120 ms</div>
+              <div class="term-out">Tests  12 passed (12)</div>
+            </div>
+            <div class="term-row refused">
+              <div class="term-line"><span class="term-prompt">$</span><span class="term-cmd">git push --force origin main</span>
+                <span class="term-outcome bad">Refused</span></div>
+              <div class="term-meta">~/app/landing on prod-1</div>
+              <div class="term-reason">`git push --force` was refused because it rewrites published history</div>
+            </div>
+            <div class="term-row running">
+              <div class="term-line"><span class="term-prompt">$</span><span class="term-cmd">pnpm dev</span>
+                <button class="btn sm" onclick="toast('Stopped')"><i data-lucide="square" style="width:10px;height:10px"></i>Stop</button>
+                <span class="term-outcome">running…</span></div>
+              <div class="term-meta">~/app/landing on prod-1</div>
+              <div class="term-out">ready in 300 ms<br>Local: http://localhost:5173/</div>
+            </div>
+          </div>
+          <div class="term-input-row">
+            <span class="term-prompt">$</span>
+            <input class="term-input" placeholder="command…" aria-label="command">
+            <button class="btn primary" onclick="toast('Ran in ~/app/landing on prod-1')"><i data-lucide="play" style="width:11px;height:11px"></i>Run</button>
+          </div>
+          <div class="term-hint">
+            <button class="btn sm" onclick="toast('Started in the background')">Run in background</button>
+            <span>A checkpoint is taken first, and the run lands in this chat’s turn stream.</span>
           </div>
         </div>
 

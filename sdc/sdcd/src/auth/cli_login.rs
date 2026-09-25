@@ -282,7 +282,7 @@ impl LoginManager {
         };
         let args = args.unwrap_or(recipe_args);
         let pump = pump.unwrap_or(recipe_pump);
-        let opened = self.pty.open(&program, &args, None).map_err(|error| {
+        let opened = self.pty.open(&program, &args, None, None, None).map_err(|error| {
             /* A CLI that is not installed is the common case, and it deserves the doctor's wording
                rather than "internal". */
             if error.message.contains("could not be started") {

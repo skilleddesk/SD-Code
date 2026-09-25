@@ -9,13 +9,14 @@ import { Connect } from './modals/Connect';
 import { HostSwitcherPopover } from './modals/HostSwitcherPopover';
 import { Permission } from './modals/Permission';
 import { ProviderHub } from './modals/ProviderHub';
+import { RemoteFolder } from './modals/RemoteFolder';
 import { Settings } from './modals/Settings';
 import { KeymapReference } from './overlays/KeymapReference';
 import { NewChatPopover } from './overlays/NewChatPopover';
 import { Palette } from './overlays/Palette';
 import { SearchOverlay } from './overlays/SearchOverlay';
 import { Toast } from './overlays/Toast';
-import { connectDaemon, watchDaemon } from './store/intents';
+import { connectDaemon, watchBackground, watchDaemon } from './store/intents';
 import { useLayoutStore, workspaceClassName } from './store/layout';
 import { usePrefixHint } from './store/prefs';
 import { useRightPanelStore } from './store/rightPanel';
@@ -73,6 +74,14 @@ export function App() {
    */
   useEffect(() => watchDaemon(), []);
 
+  /*
+   * The Terminal's background tail (0.7.13). It is a second timer rather than a hook in the tab, and
+   * deliberately: a process keeps printing while you look at the Preview or another chat, so its output
+   * has to keep filling in - a tail that only advances while it is on screen is a tail that lies about
+   * what it collected. The poll reads nothing and returns immediately when there is no process.
+   */
+  useEffect(() => watchBackground(), []);
+
   const layout = useLayoutStore();
   const rightPanelWidth = useRightPanelStore((state) => state.width);
 
@@ -102,6 +111,7 @@ export function App() {
       <ProviderHub />
       <Settings />
       <AddHost />
+      <RemoteFolder />
       <Permission />
       <Connect />
 

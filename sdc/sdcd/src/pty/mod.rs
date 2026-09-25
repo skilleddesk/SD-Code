@@ -105,6 +105,69 @@ fn shell_payload(args: &[String]) -> Option<&str> {
     args.get(flag + 1).map(String::as_str)
 }
 
+/// A command **line** for the platform's own shell: `sh -c <line>` here, `cmd /C <line>` on Windows.
+///
+/// It is the program-and-arguments pair a line turns into, so `shell.run`'s `line` parameter can travel
+/// the same path as its `command` parameter - the same deny list, the same capture, the same tool-call
+/// pair, and on a host the same `sh -c` on the far side (0.7.13).
+pub fn shell_for_line(line: &str) -> (String, Vec<String>) {
+    if cfg!(windows) {
+        ("cmd".to_string(), vec!["/C".to_string(), line.to_string()])
+    } else {
+        ("sh".to_string(), vec!["-c".to_string(), line.to_string()])
+    }
+}
+
+/// Why a whole command **line** is refused, or `None` when it is allowed through (0.7.13).
+///
+/// `denied_reason` checks a program and its arguments, which is right for an engine's `run` step. A
+/// terminal line is not that shape: `echo hi && shutdown /s` is one line whose *second* statement is
+/// the thing to refuse, and a check anchored at position zero would wave it through.
+///
+/// So the line is split into statements on the shell's own separators - `;`, `&&`, `||`, `|`, `&`, a
+/// newline - and each statement is checked where a program would be (its start), collapsed like the
+/// other check. A statement that is a shell handed a payload gets one level of unwrapping, the same
+/// single level `denied_reason` does.
+///
+/// It is still not a sandbox, and the comment on `denied_reason` says why: quoting can hide a word
+/// (`'shu'tdown`), a second shell level can escape, and anything compiled and run is out of reach. The
+/// real protection is the permission gate, the checkpoint taken before the run, and the fact that the
+/// command runs as the **user** - which is why the deny list stays a speed bump with a reason attached.
+pub fn denied_reason_line(line: &str) -> Option<String> {
+    if let Some(hit) = matches_denied(&collapse(line)) {
+        return Some(hit);
+    }
+
+    for statement in line.split([';', '|', '&', '\n']) {
+        if let Some(hit) = matches_denied(&collapse(statement)) {
+            return Some(hit);
+        }
+
+        let words: Vec<String> = statement.split_whitespace().map(str::to_string).collect();
+
+        if let Some((program, rest)) = words.split_first() {
+            if is_shell(program) {
+                /* The payload of a *line* is everything after the flag, not one argument: `sh -c 'rm -rf /'`
+                   arrived as five words here, and the quotes around it are the line's, not the shell's. */
+                let flag = rest.iter().position(|arg| {
+                    matches!(arg.to_lowercase().as_str(), "-c" | "/c" | "-command" | "-commandwithargs")
+                });
+
+                if let Some(flag) = flag {
+                    let payload = rest[flag + 1..].join(" ");
+                    let payload = payload.trim().trim_matches(['\'', '"']);
+
+                    if let Some(hit) = matches_denied(&collapse(payload)) {
+                        return Some(format!("{hit} (inside `{program}`)"));
+                    }
+                }
+            }
+        }
+    }
+
+    None
+}
+
 /// How much of a stream is kept. A command that prints a gigabyte must not become a gigabyte in the
 /// event log; the rest is still drained (so the child never blocks) and then reported as truncated.
 const CAPTURE_LIMIT: usize = 256 * 1024;
@@ -120,16 +183,26 @@ pub const OUTPUT_LINES: usize = 400;
 /// its stdin, and says when it is done.
 #[derive(Debug, Clone)]
 pub struct Session {
+    /// The program that was started (`claude`, `npm`, `ssh`).
     pub program: String,
+    /// What this process is *for*, when the caller knows: `claude --resume`, or `deploy.sh on prod-1`.
+    ///
+    /// A remote process is an `ssh`, and a UI told that it is running `ssh` has been told nothing
+    /// (0.7.13). The label is what a person sees.
+    pub label: String,
+    /// The host this process runs on, and the pid file that stops it, when it is not this machine.
+    pub remote: Option<(crate::ssh::Ssh, String)>,
     pub lines: Vec<String>,
     pub state: String,
     pub started: Instant,
 }
 
 impl Session {
-    fn new(program: &str) -> Self {
+    fn new(program: &str, label: Option<&str>, remote: Option<(crate::ssh::Ssh, String)>) -> Self {
         Self {
             program: program.to_string(),
+            label: label.unwrap_or(program).to_string(),
+            remote,
             lines: Vec::new(),
             state: "running".to_string(),
             started: Instant::now(),
@@ -262,7 +335,17 @@ impl PtyManager {
     /// the module doc. Its output arrives through `pty.output`, which keeps the last `OUTPUT_LINES`
     /// lines; a process that is never read is a process that blocks on a full pipe once it has said
     /// enough, and a login URL is exactly the thing that would be stuck in it.
-    pub fn open(&self, command: &str, args: &[String], cwd: Option<&str>) -> Result<Value, ErrorObject> {
+    /// `label` is what a UI shows as "what is running" - the caller's own words, because a remote
+    /// process's program is `ssh` (0.7.13). `remote` is the host it runs on and the pid file that stops
+    /// it, when `close` has to kill a process on the far side rather than only this child.
+    pub fn open(
+        &self,
+        command: &str,
+        args: &[String],
+        cwd: Option<&str>,
+        label: Option<&str>,
+        remote: Option<(crate::ssh::Ssh, String)>,
+    ) -> Result<Value, ErrorObject> {
         /* The same resolution the engine uses: a CLI installed by npm on Windows is a `.cmd` shim, and
            `pty.open` is how the daemon drives that CLI's own login (`cli.login`). */
         let mut process = match crate::host::program::launch(command) {
@@ -294,7 +377,7 @@ impl PtyManager {
         };
 
         if let Ok(mut sessions) = self.sessions.lock() {
-            sessions.insert(id.clone(), Session::new(command));
+            sessions.insert(id.clone(), Session::new(command, label, remote));
         }
 
         let mut readers: Vec<Box<dyn BufRead + Send>> = Vec::new();
@@ -357,7 +440,7 @@ impl PtyManager {
 
         Ok(json!({
             "ptyId": id,
-            "command": session.program,
+            "command": session.label,
             "state": state,
             "lines": session.lines,
             "lineCount": session.lines.len(),
@@ -400,7 +483,26 @@ impl PtyManager {
 
     /// Kills one process. `false` when the id was already gone, which is not an error - a client that
     /// closes twice is not a client that is wrong.
+    ///
+    /// A process on a **host** takes one more step (0.7.13): dropping the local `ssh` closes the
+    /// connection, and the remote process may keep running - so the pid file `ssh::ops::process_line`
+    /// wrote is used to signal its **process group** there, on a detached thread so a Stop button does
+    /// not wait on a slow link (the same rule `engines::cli::kill` follows for a turn).
     pub fn close(&self, id: &str) -> bool {
+        let remote = self
+            .sessions
+            .lock()
+            .ok()
+            .and_then(|sessions| sessions.get(id).and_then(|session| session.remote.clone()));
+
+        if let Some((ssh, pid_file)) = remote {
+            std::thread::spawn(move || {
+                let line = crate::ssh::ops::kill_line(&pid_file);
+
+                let _ = ssh.run(&line, Duration::from_secs(15));
+            });
+        }
+
         let Ok(mut children) = self.children.lock() else {
             return false;
         };
@@ -508,7 +610,7 @@ mod tests {
     #[test]
     fn reports_a_missing_program_without_panicking() {
         let manager = PtyManager::new();
-        let error = manager.open("definitely-not-a-program-sdcd", &[], None).unwrap_err();
+        let error = manager.open("definitely-not-a-program-sdcd", &[], None, None, None).unwrap_err();
 
         assert_eq!(error.code, "internal");
         assert_eq!(manager.running(), 0);
@@ -523,7 +625,7 @@ mod tests {
     fn opens_writes_and_closes_a_real_process() {
         let (program, args) = shell("exit 0");
         let manager = PtyManager::new();
-        let opened = manager.open(&program, &args, None).unwrap();
+        let opened = manager.open(&program, &args, None, None, None).unwrap();
         let id = opened["ptyId"].as_str().unwrap().to_string();
 
         assert_eq!(opened["tty"], json!(false));
@@ -617,6 +719,53 @@ mod tests {
         assert!(inside.contains("inside `sh`"));
         assert!(denied_reason("cmd", &["/C".to_string(), "shutdown /s".to_string()]).is_some());
         assert!(denied_reason("bash", &["-c".to_string(), "ls -la".to_string()]).is_none());
+    }
+
+    /// A **line** is checked statement by statement, which is what a terminal needs (0.7.13).
+    ///
+    /// The case that matters is the refused program that is not the first word: anchored-at-zero would
+    /// wave `git status && shutdown /s` straight through, and a terminal is where somebody types that.
+    #[test]
+    fn refuses_a_denied_program_anywhere_in_a_line() {
+        for line in [
+            "shutdown /s",
+            "git status && shutdown /s",
+            "echo hi ; rm -rf /",
+            "cat notes.txt | reboot",
+            "sleep 1 & dd if=/dev/zero of=/dev/sda",
+            "sh -c 'rm -rf /'",
+            "ls\nshutdown -h now",
+        ] {
+            assert!(denied_reason_line(line).is_some(), "{line} should be refused");
+        }
+
+        for line in [
+            "git status -s",
+            "pnpm test -- --run",
+            "echo \"rm -rf /tmp/scratch\"",
+            "grep -rn 'shutdown' ./src",
+            "docker compose logs --tail=50 api",
+        ] {
+            assert!(denied_reason_line(line).is_none(), "{line} should be allowed: {:?}", denied_reason_line(line));
+        }
+
+        /* Printing a dangerous-looking string is still not running it - the same rule `denied_reason`
+           follows, one statement at a time. */
+        assert!(denied_reason_line("printf '%s' 'shutdown -h now'").is_none());
+    }
+
+    /// A line becomes a program and arguments for the platform's own shell - one behaviour per platform.
+    #[test]
+    fn a_line_becomes_the_platform_shell() {
+        let (program, args) = shell_for_line("git status -s");
+        let expected = if cfg!(windows) { "cmd" } else { "sh" };
+
+        assert_eq!(program, expected);
+        assert_eq!(args.len(), 2);
+        assert!(args[0].eq_ignore_ascii_case("-c") || args[0].eq_ignore_ascii_case("/c"));
+        assert_eq!(args[1], "git status -s", "the line is handed over whole, not split");
+        /* The pair is a legal shell call, so the guard can look inside it - and it does. */
+        assert!(denied_reason(&program, &shell_for_line("shutdown /s").1).is_some());
     }
 
     /// A command that never finishes is stopped, and says so - rather than hanging a turn for ever.

@@ -1,4 +1,4 @@
-import { Check, Plus } from 'lucide-react';
+import { Check, Plus, ShieldCheck } from 'lucide-react';
 
 import { strings } from '../strings';
 import { useOverlayStore } from '../store/overlays';
@@ -27,6 +27,7 @@ import {
 export function HostSwitcherPopover() {
   const anchor = useOverlayStore((state) => state.hostSwitcher);
   const close = useOverlayStore((state) => state.closeHostSwitcher);
+  const openAddHost = useOverlayStore((state) => state.openAddHost);
   const { hosts, activeHostId, openSession, setActiveHost, newChatOnHost } = useSessionsStore();
 
   const chooseHost = (hostId: string, firstSessionId: string | undefined): void => {
@@ -64,7 +65,34 @@ export function HostSwitcherPopover() {
                 HOST_STATUS_LABEL[host.status],
               )}
             </div>
+            {/* The address a host was added with (0.7.13): `user@host:8443` - the port is the fact 0.7.0
+                threw away, and this is where a person checks that the row says what they meant. */}
+            {host.address === '' ? null : (
+              <div className="pop-address truncate font-mono text-[10.5px] text-text-muted" title={host.address}>
+                {host.address}
+              </div>
+            )}
           </div>
+
+          {/*
+            The way back to a host's key and its own environment (0.7.13) - the surface that answers
+            *"host key changed — needs re-pin"* long after the dialog that added the host has closed.
+            Every host gets it, because every host has a key; a `local` host's card simply has nothing
+            to pin, and the dialog says so by having no fingerprint to show.
+          */}
+          <button
+            type="button"
+            className="pop-keys grid h-[20px] w-[20px] place-items-center rounded-sm text-text-muted transition-all duration-fast ease-ease hover:bg-bg-active hover:text-text-primary"
+            title={strings.popover.keysAndDoctor}
+            aria-label={strings.popover.keysAndDoctor}
+            onClick={(event) => {
+              event.stopPropagation();
+              close();
+              openAddHost(host.id);
+            }}
+          >
+            <ShieldCheck size={12} aria-hidden="true" />
+          </button>
 
           <button
             type="button"

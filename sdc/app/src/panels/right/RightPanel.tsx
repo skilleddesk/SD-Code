@@ -3,6 +3,7 @@ import {
   CircleCheckBig,
   Clock,
   Eye,
+  SquareChevronRight,
   SquareTerminal,
   Swords,
   type LucideIcon,
@@ -26,6 +27,7 @@ import { ConsoleTab } from './ConsoleTab';
 import { DuelTab } from './DuelTab';
 import { PreviewTab } from './PreviewTab';
 import { TimeMachineTab } from './TimeMachineTab';
+import { TerminalTab } from './TerminalTab';
 import { VerifyTab } from './VerifyTab';
 
 /**
@@ -51,6 +53,9 @@ import { VerifyTab } from './VerifyTab';
 const TAB_ICON: Record<PanelTabDefinition['icon'], LucideIcon> = {
   eye: Eye,
   terminal: SquareTerminal,
+  /* The Terminal tab's icon is the *command* mark, so the two log tabs are not the same glyph: SquareTerminal
+     is the Console (the prototype's `terminal-square`), SquareChevronRight is a prompt (0.7.13). */
+  chevron: SquareChevronRight,
   clock: Clock,
   swords: Swords,
   check: CircleCheckBig,
@@ -60,6 +65,7 @@ const TAB_ICON: Record<PanelTabDefinition['icon'], LucideIcon> = {
 const VIEWS: Record<PanelTabId, ComponentType> = {
   preview: PreviewTab,
   console: ConsoleTab,
+  terminal: TerminalTab,
   timemachine: TimeMachineTab,
   duel: DuelTab,
   verify: VerifyTab,

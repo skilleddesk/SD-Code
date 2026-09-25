@@ -71,9 +71,13 @@ export const strings = {
     degraded: 'degraded',
     offline: 'offline',
     connecting: 'connecting',
+    /** The fifth state (0.7.13): the host answered, its key is new to SDC, and it is waiting on you. */
+    untrusted: 'needs your trust',
     /** `3 chats · connected` - the second line of a New chat row. */
     chatsAndStatus: (chats: number, status: string): string =>
       `${chats} chat${chats === 1 ? '' : 's'} · ${status}`,
+    /** The key-and-environment button of a host row (0.7.13): its fingerprint, and what that host has. */
+    keysAndDoctor: 'This host’s key and environment',
   },
 
   /** Sidebar - spec section 7.3. */
@@ -264,6 +268,16 @@ export const strings = {
     saving: 'Saving…',
     cancel: 'Cancel',
     saved: (name: string): string => `Saved ${name} · a checkpoint was taken first`,
+    /**
+     * The variant for a file on a **host** (0.7.13).
+     *
+     * The checkpoint is real there too - it is a commit in a shadow git repository **on that machine**
+     * (`$HOME/.sdc/git/<hash of the root>`, see `docs/REMOTE.md` §5) - so this says *where* the
+     * checkpoint lives rather than claiming there is none, which is what the first version of this
+     * string said before remote checkpoints existed.
+     */
+    savedRemote: (name: string, host: string): string =>
+      `Saved ${name} on ${host} · a checkpoint was taken on that host`,
     saveFailed: 'Could not save that file',
     /** Shown beside the meta line while the draft differs from what is on disk. */
     unsaved: 'edited',
@@ -386,11 +400,12 @@ export const strings = {
     },
   },
 
-  /** Right panel - spec sections 7.7 to 7.12. */
+  /** Right panel - spec sections 7.7 to 7.12, and the Terminal (0.7.13). */
   rightPanel: {
     tabs: {
       preview: 'Preview',
       console: 'Console',
+      terminal: 'Terminal',
       timemachine: 'Time Machine',
       duel: 'Duel',
       verify: 'Verify',
@@ -785,6 +800,20 @@ export const strings = {
     endpointToast: 'Custom endpoint saved',
     modelToggled: (id: string, on: boolean): string => `${id} ${on ? 'enabled' : 'disabled'}`,
     doctorFixed: (fix: string): string => `${fix}: done`,
+    /**
+     * A `Fix` this build cannot perform, said honestly (0.7.13).
+     *
+     * `doctorFixed` above is the placeholder that shipped with the doctor tab, and for `Install` and
+     * `Kill process` it claimed something that never happened - there is no installer in the daemon.
+     * The two fixes the window *can* carry out (`Trust`, `Re-pin`) act now; every other label gets this
+     * sentence instead, which says where to go rather than pretending to have gone there.
+     */
+    doctorFixManual: (fix: string): string =>
+      fix === 'Install'
+        ? 'Install it in your own terminal — SDC does not run installers for you'
+        : fix === 'Kill process'
+          ? 'Nothing is holding that port in this daemon; find the process in your own terminal'
+          : `${fix}: do it in your own terminal — SDC has no action for that yet`,
   },
   /** Add host - spec section 9.12. */
   addHost: {
@@ -817,8 +846,87 @@ export const strings = {
     alreadyThere: (label: string): string => `${label} is already in the host list`,
     /** `host.add` answered: the row exists. Whether it can be *reached* is the daemon's next sentence. */
     added: (label: string): string => `Added ${label} · checking it can be reached…`,
+    /**
+     * The trust step (0.7.13).
+     *
+     * `host.add` scans the machine's host key and, when it is one SDC has never seen, stops and asks -
+     * nothing is sent (no key offered, no password typed) until the fingerprint on this card is
+     * trusted. That is the difference between a pin and a formality, and the card says what to compare
+     * it with so a person can check it without taking SDC's word for anything.
+     */
+    trust: {
+      title: (label: string): string => `Trust ${label}?`,
+      sub: 'Its host key is one SDC has never seen',
+      fingerprint: 'Host key fingerprint',
+      compare:
+        'Compare it with your own terminal if you like: `ssh-keyscan <host> | ssh-keygen -lf -`. Nothing has been sent to this machine — no key was offered and no password was typed.',
+      accept: 'Trust and connect',
+      accepting: 'Pinning the key…',
+      waiting: 'Waiting for the host to answer…',
+      rejected: 'The host key changed while you were deciding',
+      refused: 'Could not trust that host',
+      pinned: (fingerprint: string): string => `Pinned ${fingerprint}`,
+      /**
+       * The re-pin case (0.7.13) - the row the prototype draws as *"host key changed — needs re-pin"*.
+       *
+       * The key a host presents is **not** the pinned one, which is either a machine whose keys were
+       * rotated on purpose or the one case a man-in-the-middle needs. The card shows both fingerprints
+       * and the button pins the *new* one; nothing here offers to continue without deciding.
+       */
+      rePinTitle: (label: string): string => `Re-pin ${label}?`,
+      rePin: 'Re-pin and connect',
+      wasPinned: (fingerprint: string): string => `SDC pinned ${fingerprint} — the key it presents now is different.`,
+      alreadyPinned: (fingerprint: string): string => `Key pinned: ${fingerprint}`,
+      /** The `local` card: this machine, whose own key SDC does not pin (it *is* the machine). */
+      localKey: 'This machine — there is no host key to pin. Its environment is below.',
+    },
+    /**
+     * The step after the pin: copying SDC's key onto the host, with the password, **once** (0.7.13).
+     *
+     * Without it a host looks added and never connects - its key is trusted, and the far side still has
+     * no reason to let SDC in. It is the same call the add form makes (`host.add` with a password, which
+     * reuses the row and goes straight to the install), so the state has one implementation and this is
+     * only the surface that can reach it *after* the fact - the missing half that made "VPS connect
+     * hocche nah" permanent for a host whose pin was already in place.
+     */
+    keyInstall: {
+      title: (label: string): string => `SDC cannot sign in to ${label} yet`,
+      sub: 'Its host key is pinned. The one thing left is copying SDC’s key over, which needs your password once.',
+      password: 'Password for that host',
+      passwordPlaceholder: 'Used once, then dropped',
+      button: 'Install SDC’s key',
+      installing: 'Copying the key…',
+      /** The manual way out, for a host that only offers a verification code. */
+      manual: 'SDC does not ask for a verification code (a code is a second factor, and a daemon holding one would defeat it). If that host needs one, sign in from your own terminal and paste this line there instead:',
+      /** One line, safe to run twice, and the same shape the daemon's own install uses. */
+      publicKey: (key: string): string =>
+        `mkdir -p ~/.ssh && chmod 700 ~/.ssh && echo '${key}' >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys`,
+    },
+    /** The heading over a host's own environment checks (0.7.13). */
+    doctorTitle: 'On that host',
+    /** A host that was reached: the daemon's own sentence, said back as a toast. */
+    reachable: (label: string): string => `${label} is reachable`,
     welcomeTitle: (label: string): string => `Welcome to ${label}`,
     welcomePrompt: 'Try the sample project',
+  },
+
+  /**
+   * Choosing a folder on a **host** (0.7.13).
+   *
+   * `Open folder` uses the native picker, which is this machine's filesystem; a VPS's folders are only
+   * visible through `fs.list` on that host, so this small browser is the way in - one level at a time,
+   * the same `fs.list` the tree already uses, with a path that can also be typed.
+   */
+  remoteFolder: {
+    title: (host: string): string => `Open a folder on ${host}`,
+    sub: 'Pick the folder a chat will work in — browsing, editing, git and shell run there',
+    path: 'Folder',
+    open: 'Open this folder',
+    up: 'Up one level',
+    loading: 'Reading…',
+    empty: 'Nothing in this folder',
+    readFailed: 'Could not read that folder',
+    needAbsolute: 'A host folder starts at its root — /srv/app — or at your home: ~/app',
   },
 
   /** Permission dialog - spec section 9.13. */
@@ -1167,6 +1275,45 @@ export const strings = {
 
   overlays: {
     none: '',
+  },
+
+  /**
+   * The Terminal tab (0.7.13) - a command surface that runs **here or on the chat's host**.
+   *
+   * The one sentence this surface owes the person is *where the command will run*: `where`/`whereOn` are
+   * that sentence, and the tab prints it above the input. The rest is a terminal's vocabulary kept short:
+   * run, run in background, stop, clear.
+   */
+  terminal: {
+    /** Where a command runs when the chat has no folder yet: the daemon's own working directory. */
+    anywhere: 'where the daemon runs',
+    whereOn: (root: string, host: string): string => `${root} on ${host}`,
+    /** The standing note under the input: what a run does and does not leave behind (0.7.13). */
+    hint: 'A checkpoint is taken first, so this run is undoable from the Time Machine.',
+    /** With no chat open there is nothing to checkpoint against, and no conversation to belong to. */
+    hintNoChat: 'No chat is open: nothing is checkpointed, and this run is not part of a conversation.',
+    backgroundHint: 'Long-running: keep reading its output here while it runs.',
+    placeholder: 'command…',
+    run: 'Run',
+    background: 'Run in background',
+    stop: 'Stop',
+    clear: 'Clear',
+    empty: 'Commands you run appear here.',
+    /** The deny list's refusal, shown where output goes - the daemon's own sentence follows it. */
+    refused: 'Refused',
+    running: 'running…',
+    stopped: 'stopped',
+    /** A second background start while one is alive: one at a time, and the sentence says so. */
+    backgroundBusy: 'A background process is already running',
+    timedOut: 'stopped after its timeout',
+    exit: (code: number): string => `exit ${code}`,
+    took: (ms: number): string => `${ms} ms`,
+    /** A background process that has ended on its own. */
+    ended: 'ended',
+    /** `Open the terminal` - the doctor's `not installed` row leads here (0.7.13). */
+    openForHost: (host: string): string => `Terminal on ${host}`,
+    /** A host with no chat has no folder to run a command in, and that is the honest sentence. */
+    noChat: (host: string): string => `${host} has no chat yet, so there is no folder to run in`,
   },
 } as const;
 
