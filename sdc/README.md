@@ -242,22 +242,16 @@ binary is on `PATH`; both read the same `tauri.conf.json`.
 Nothing here is a stub that pretends: each gap below is a boundary the code states at the point where
 it is reached.
 
-* **SDC drives an agent; it is not (yet) one itself.** This is the honest answer to "does it do what
-  Cline does — give it a prompt and the project is finished?".
-
-  What exists today: the daemon runs the *real* coding agents (`claude`, `codex`, `gemini`) and
-  streams their structured output, gates a mutating action behind the Permission dialog, writes a
-  checkpoint before it runs, restores files and conversation on a rewind, and can now **execute a
-  command itself** (`shell.run`: captured output, exit code, translated failure, deny list, timeout).
-  So an agent loop's four verbs — read, write, run, observe — are all in the daemon.
-
-  What is missing is the **loop itself**: planning, choosing a tool, feeding the result back to a
-  model and continuing until the task is done, without an external CLI in the middle. Today that loop
-  lives inside Claude Code's CLI; SDC is the workbench around it. Building it in `sdcd` means a tool
-  registry, a turn planner, the permission gate wired to execution rather than to a modal, and a
-  budget/token accountant — the pieces are named in `NOTES.md` and each one is a step of its own.
-  Until then, "prompt → finished project" works exactly as far as the CLI you connect can take it.
-
+* **SDC is an agent now, for API and local models (0.8.0) - and it stays the workbench around the CLIs.**
+  With **Agent** chosen, a native-API or Ollama model runs inside the daemon's own loop (`sdcd/src/agent`):
+  eight tools on the daemon's existing `fs.*` / `shell.run` / `git.*` paths, so it works in a folder on a
+  host exactly as it does here; a permission gate that waits for the person (Simple / Pro / Auto); a
+  checkpoint taken synchronously before its first change; 25 steps per turn. It was verified against a real
+  provider: a DeepSeek turn edited a file, ran `npm test` and reported 5 of 5 passing.
+  What it deliberately is not: a replacement for `claude` / `codex` / `gemini`. A subscription is only
+  usable through its own CLI, and those CLIs are agents already; the switch changes nothing for them. What is
+  still narrow: the loop has had one provider family exercised live (OpenAI-compatible); the Anthropic
+  dialect is covered by a recorded stream, not yet by a paid live turn from here.
 * **The sign-in recipes are one table, and they are not exercised against the real CLIs here.** SDC
   drives `claude` / `codex` / `gemini`'s own login (`auth::cli_login::RECIPES`) and proves the
   mechanism against a stand-in CLI that behaves the same way (prints a URL, waits for a line,
@@ -349,28 +343,20 @@ it is reached.
   own words. SDC does not install anything on somebody else's server - but the row's `Install` button opens the
   **Terminal on that host**, so the person runs the installer themselves, in that folder, with the checkpoint,
   the deny list and the tool-call record every other command gets.
-* **Editing is one file at a time, and there is no editor.** Since 0.7.7 the sidebar shows the folder a chat
-  works in (`fs.list`, lazily, with the guard's hidden names counted) and a click opens a file in the right
-  panel's Preview (`fs.read`, capped at a megabyte and saying so); since 0.7.9 that file can be **edited and
-  saved** (`fs.write`, with the daemon taking a checkpoint first - P5 on a UI gesture), the Files header shows
-  the branch and the changed count (`git.status`) and **Diff** opens the patch (`git.diff`). What is still
-  absent is everything an editor is: no multi-file tab set, no syntax highlighting, no rename/delete from the
-  tree, no search across the project from the window, and no marker for which line a turn touched. Each is a
-  feature with its own questions ("which file is current when two are open?", "what does a half-typed line
-  mean?") and none of them is needed to make Save honest.
+* **The editor is an editor now, and still not an IDE.** Since 0.8.0 a file opens in a CodeMirror 6 tab
+  (highlighting, search, undo, Ctrl+S with a checkpoint first), the tree creates, renames, deletes and
+  searches through the daemon, and answers render Markdown. What stays absent on purpose: language services
+  (completion, go-to-definition), a debugger and extensions - SDC is not an IDE (spec §2.2) - and a marker
+  for which line a turn touched.
 
 ## Next step
 
-1. The provider OAuth token exchange, wired to `provider.oauth.callback` - the transport is ready (see above),
-   and what it needs is a client registration with each provider, which is a person's job rather than a build's.
-2. A streaming turn against a paid `https://` endpoint, so the remote path is verified end to end and not just
-   its transport.
-3. A screen-reader pass over the palette, the Permission modal and the Time Machine tab - the automated
-   audit covers the screen the app opens on, and this is the part that needs a person.
-4. `protocol/` as a workspace package, now that `protocol/check.mjs` is what keeps it honest.
-5. A **terminal emulator**: the Terminal tab (0.7.13) runs commands, reads long-running output and stops a
-   process group, but it is not a pty (`tty: false` in every answer), so a full-screen program - `vim`,
-   `top`, `htop` - has nowhere to draw. That needs `-tt` plus an emulator in the window, a dependency and a
-   design of its own; `pty.write` is already in the daemon, so a stdin *box* for a running process is the
-   smaller step in the same direction.
+1. **Drive the VPS path against the owner's server**: `Install key` needs its password once; after that,
+   the agent, Verify, the tree and the Terminal all use the same host code the tests cover.
+2. **A paid live turn in the Anthropic dialect** (thinking with its signature, tool results), to go with the
+   recorded stream the tests replay.
+3. **A terminal emulator** - `xterm.js` in the window and `-tt` on a host - for full-screen programs; the
+   Terminal tab runs commands and long-running processes today, but it is not a PTY.
+4. The provider OAuth token exchange, which needs a client registration with each provider.
+5. A screen-reader pass over the palette, the Permission modal and the Time Machine tab.
 6. Code signing for the installers, which needs certificates this repository does not hold.
