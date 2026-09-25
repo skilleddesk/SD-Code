@@ -14,6 +14,278 @@ This file describes what changed, not what is planned. Anything still open is na
 release - the newest - and deletes the others when it publishes (`release.yml`, "Keep only this
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
+### Added — `Install SDC's key`: the step that finished a host whose pin was already in place
+
+The report *"VPS connect hosse nah kono vabai"* was, on the machine it came from, **not** a broken
+connection. Run against that server (`ssh -p 8443 deploy@203.0.113.10`), the daemon's own calls
+say so:
+
+```
+port 22 → closed        port 8443 → open (SSH-2.0-OpenSSH_10.2p1 Ubuntu)
+host.add            → untrusted · SHA256:Xk3v9Qm2b7EXAMPLEfingerprintNotARealKey0
+host.trust          → pinned: true
+probe               → offline · "…does not accept SDC's key yet…"
+host.key (again)    → matches: true · pinned: true
+pty.open            → Permission denied (keyboard-interactive)   ← the far side's own words
+```
+
+The pin was in place, the transport was fine, and **nothing had copied SDC's key onto the host** — which is
+the one step that needs the password, once. That was reachable only from the *add* form, so a host whose pin
+already existed had no way to finish: it stayed red for ever.
+
+* **`host.doctor`'s `ssh` row now carries the fix** (`Install key`), and it is derived from the trust state
+  rather than guessed from a sentence: unknown key → `Trust`, changed key → `Re-pin`, **pin in place and the
+  probe still failed → `Install key`**, and a machine that is simply down gets no button at all;
+* **the host's card asks for the password once** and installs the key with it (`AddHost` →
+  `installHostKey` → `host.add` reusing the row, which is the already-tested install path), and re-runs the
+  doctor so the card and the row move to the truth;
+* **`user@host:8443` parses**, because the card sends the address it *shows* back to the daemon — and it is
+  what a hosting panel prints. `-p` still wins when both are written, a bracketed IPv6 keeps its colons, and
+  a mistyped port is refused (`host:eight` is not a hostname);
+* **`ssh.key`** (67th method): the **public** half of SDC's key. It never makes one — the surface that needs
+  it is the case this daemon deliberately does not automate, a host that requires a **verification code**,
+  and the line a person pastes into `authorized_keys` is now shown instead of described.
+
+### Fixed — three sentences that sent people to the wrong place
+
+* **`ssh-keyscan`'s header was becoming the error.** On that host `ssh-keyscan` fails
+  (`choose_kex: unsupported KEX method sntrup761x25519-sha512@openssh.com`) while a real `ssh` to the same
+  port completes the key exchange, so the fallback handshake is what makes the host work — and when *both*
+  fail the reason reported is now the handshake's (`Connection refused`, `Permission denied`), with
+  ssh-keyscan's appended only when it differs. The first line of its stderr is its own `# host:port`
+  comment, and that comment used to be the reason a person read;
+* **`did not answer: Connection timed out` now says which door SDC knocked on.** A target written without a
+  port dials 22; on that host 22 is closed and the sshd is on 8443, so the sentence read as "the machine is
+  down". The hint names the port and the two ways to give another one, and it is absent when the target
+  already named one;
+* **the scan's fingerprint sentence** now names the **host** rather than `user@host`, matching what
+  `ssh-keyscan`/`known_hosts` mean by an address.
+
+### Added — `sdc/docs/SSH-CONNECT.md`, and `_verify/ssh-doctor.mjs`
+
+The operational half of `REMOTE.md`: every step's real code (target parsing, the key, the scan, the pin, the
+hardened argument set, the install), the exact `ssh` command to run by hand for each layer, the failure
+table, and the fifteen-second diagnosis. `_verify/ssh-doctor.mjs` runs those five layers in one command and
+exits non-zero when the probe fails:
+
+```powershell
+node _verify/ssh-doctor.mjs 'deploy@203.0.113.10:8443'
+```
+
+```
+1. client     : OpenSSH_for_Windows_9.5p2, LibreSSL 3.8.2
+2. port       : 8443 (no guess: this is the port in the target)
+3. host key   : ssh-keyscan said: choose_kex: unsupported KEX method sntrup761x25519-sha512@openssh.com
+4. SDC's key  : 256 SHA256:Qa+B67XMaUq4yOcvcymel5J5JIqKSF+ukXrHzCJT8MA sdc (ED25519)
+5. probe      : deploy@203.0.113.10: Permission denied (keyboard-interactive)
+verdict: the transport is fine; the far side refused the session → `Install SDC's key`
+```
+
+
+### Added — the Terminal, and a Stop that stops the whole tree
+
+Two of the four things the previous draft of this release listed as absent were not missing *layers* but a
+missing **surface** and a too-weak signal, and both are now closed.
+
+**The panel's seventh tab, `Terminal`** (`app/src/panels/right/TerminalTab.tsx`, drawn in
+`design/ui-prototype.html` with the panel's own primitives). A line typed there runs through
+`shell.run { line }` — the same call an engine's `run` step uses — so it is a step in the chat: the daemon
+checkpoints first, announces the tool call in the turn stream, applies the deny list, and on a chat whose
+folder is on a host it runs **there**, in that folder. `Run in background` uses `pty.open { line, hostId }`
+and its output keeps arriving while you look at another tab. Above the input, always, is *where the command
+will run* — `~/app/landing on prod-1` — because `rm -rf build` reads the same on a laptop and on production,
+and nothing else in the window makes that difference visible. A refused line lands in the entry's stderr
+slot with the daemon's own sentence, which is where a terminal puts a reason.
+
+**A remote cancel now kills the process *group*.** The turn line wraps the CLI in `setsid` (decided by the
+host itself, in the same round trip: `if command -v setsid …`), so the pid in the pid file is a group
+leader's; `engine.cancel` sends `kill -TERM -<pid>`, waits a second, then `kill -KILL -<pid>`. Before, a
+`kill -TERM <pid>` reached the CLI alone: a test runner or dev server it had started kept going on
+somebody's server after the turn said *interrupted*. The `~/.sdc/run` directory is also created by the line
+now — without it the pid file was never written on a fresh host, which quietly left `Stop` with nothing to
+signal. `pty.close` uses the same group kill for a background process, and both fire on a detached thread so
+a Stop button never waits on a slow link.
+
+**`Install` on a host's doctor row is now a path, not a dead end.** It opens the Terminal **on that host**
+(focusing one of its chats first, so the command runs in *that* folder on *that* machine) and the person
+runs the installer. SDC deliberately does not `npm i -g` anything over `ssh`: that writes to somebody's
+server as their user. What the button offers instead is every guard rail SDC has — the deny list, the
+checkpoint taken before the command, and the tool-call pair in the session's log.
+
+**A whole line is guarded statement by statement** (`pty::denied_reason_line`). `shell.run` and `pty.open`
+now accept a `line` as well as a program plus arguments — that is what a terminal has — and a guard anchored
+at the first word would have waved `git status && shutdown /s` through. Each statement (`;`, `&&`, `||`,
+`|`, `&`, newline) is checked where a program would be, with the same one level of shell unwrapping the
+program form has, and the shell that runs a line is the **host's** on a host (`sh`) rather than the one the
+window happens to be running on.
+
+
+### Added — the engines, the checkpoints and the rewind run **on the host** too
+
+The three things §5 of the first draft of this release called absent are in, and the reason they could be
+is that none of them needed a second daemon:
+
+* **`engine.start` on a chat whose folder is a host** spawns an `ssh` whose remote command is
+  `cd <folder> && sh -c 'echo $$ > <pid file>; exec env … <cli> …'` (`engines/cli.rs::remote_command`).
+  The prompt still travels on stdin, the CLI's own JSON stream still arrives on stdout, so the parsing,
+  the events and the window are unchanged - and the pid file means `engine.cancel` is a real
+  `kill -TERM` over a second `ssh` (on a detached thread, so a Stop button never waits on a slow link)
+  rather than a closed pipe that leaves `claude` running on somebody's VPS;
+* **checkpoints and rewind** commit to a shadow git repository **on the folder's own machine**
+  (`$HOME/.sdc/git/<hash of the root>`, the same derivation the local one uses), so a save, a
+  `shell.run` and a turn's checkpoint all hash the host's files, and `rewind.apply` restores them with
+  `git checkout <sha> -- .` there. The new `checkpoints::Snapshot` enum (`Unbound` / `Local` / `Remote`)
+  makes the compiler ask every call site which machine it means, which is what stops a remote project
+  from being hashed against a local path;
+* **`host.doctor { hostId }` about a host** now answers about *it*: reachable, key pinned, `git` and the
+  three CLIs present **there**, `$HOME` writable, and the chat's folder when one is named. Before this it
+  returned the ten local checks for every host - ten rows about the laptop under a heading that said the
+  VPS's name.
+
+### Added — `host.key`, and the Re-pin the prototype draws
+
+`host.add` asks the trust question once, in the same breath as adding the host - so a window that was not
+open at that moment (a relaunch, a second window, a host added days ago) had the row, the sentence, and
+no fingerprint: a button needs a value, and a paragraph is not one. `host.key` is that value: it scans
+(no authentication), answers `{hostKey, keyType, pinned, matches, pinnedKey}`, and pushes a `HostStatus`
+when the answer changes what the host's row says. A key that **changed** answers `matches: false` with
+the fingerprint the machine presents *now*, which is what `Re-pin` confirms - the doctor row the
+prototype has drawn since before there was a doctor (`SSH to prod-1 · host key changed — needs re-pin`,
+fix `Re-pin`).
+
+The window got one surface for all of it: the Add-host dialog can be opened **about a host** (the
+switcher's new key button, or a doctor row's `Trust`/`Re-pin`), where it shows the fingerprint, both
+fingerprints when the key changed, the button that follows from the state, and the host's own doctor rows
+under `On that host`. Fix buttons now tell the truth: `Trust`/`Re-pin` act, and `Install`/`Kill process`
+say where to do it instead of toasting `Install: done` while installing nothing.
+
+`session.list` also carries the pinned fingerprint now, so a host's card can say `Key pinned: SHA256:…`
+without an event to read it from - and `host_type` maps the `hosts.kind` column (`ssh`) onto the
+protocol's own word (`vps`), which is what the same host was called in a list and in an event.
+
+## [0.7.13] — the layers a VPS needed, and the four that were missing
+
+The report: *"vps connect korai jasse nah. VPS connection ar jonno je sokol layer proyojon sai rokom kono
+kisui aikhane nai."* 0.7.0 had built one layer of eight - a target parser, a key, a one-time install and
+a probe - and called it VPS support. This release builds the rest, and `sdc/docs/REMOTE.md` is the
+research behind it: how VS Code Remote-SSH is actually put together (the local `ssh` binary, a server on
+the far side, an `ssh -L` tunnel, and a **pinned host key** that is refused when it changes), what SDC
+had, and what each layer is here.
+
+### Fixed — the port was thrown away, so a VPS on 8443 could only ever connect once
+
+`host.add` parsed `ssh -p 8443 user@host` correctly and then wrote only `user@host` into `hosts.target`.
+The probe used the parsed target, so the *first* connection worked and everything after it would have
+gone to port 22 - the second half of the report, and a bug no sentence in the UI could explain. There
+are two columns now (`0003-host-ssh`: `port`, `host_key`), `set_host_address` is the one writer,
+`session.list` answers with the port, and a host card says `root@vps.example:8443`.
+
+### Added — the host key is a pin, and a changed one is an error
+
+The old probe ran with `StrictHostKeyChecking=accept-new` against the **user's** `known_hosts`: whatever
+answered first was trusted for ever, a changed key was invisible, and nobody was ever shown a
+fingerprint. Now:
+
+* `ssh::hostkey::scan` asks with `ssh-keyscan` (a key exchange and **no authentication**, so nothing is
+  offered before the machine's identity is decided - and `ssh-keyscan` wants a *host*, not `user@host`,
+  which a test caught: OpenSSH 9.5 answers `getaddrinfo git@github.com: A non-recoverable error`),
+  falling back to a throwaway handshake into a temporary pin file where `ssh-keyscan` is missing;
+* the fingerprints are `SHA256:…` **exactly as OpenSSH prints them** - a cross-check against
+  `ssh-keygen -lf` runs in the test suite - so a person can compare what the dialog shows with their own
+  terminal (`ssh-keyscan <host> | ssh-keygen -lf -`);
+* pins live in SDC's own `<data>/ssh/known_hosts` (`0600`, in a `0700` directory), not in the user's;
+* `host.add` records a host whose key is unknown as **`untrusted`** and puts the fingerprint in the
+  answer and in the event; a host whose key is *not* the pinned one is refused with both fingerprints,
+  and there is no "continue anyway" anywhere;
+* `host.trust` is the answer: it scans **again** (a key that changes while the card is on screen is
+  refused, not pinned), pins only the key whose fingerprint was shown, and only then spends the password.
+
+And the rule that follows from it: **a password is never typed into a host whose key is not pinned**. The
+install used to run against `accept-new`; it now uses `ssh::Ssh::install_args`, which differs from every
+other call in three flags (a prompt is allowed) and in nothing else, so a machine presenting a different
+key never sees the password at all.
+
+### Added — a folder on a host is a folder: `fs.*`, `git.*` and `shell.run` on the far side
+
+`fs.read`, `fs.write`, `fs.list`, `fs.stat`, `fs.search`, `git.status`, `git.diff`, `shell.run` and
+`project.add` take a `hostId` (or the session's host), and on an SSH host they answer from that machine
+with **the same shapes** the local implementations answer with - so the sidebar's tree, the Preview
+editor, the Save button and the Diff badge are the same code on a VPS and on the laptop:
+
+* the fork in the path is `remote_for(envelope)`; `ssh::ops` is the far side;
+* the listing is a `printf '%s\t%s\t%s\n'` loop (a format this daemon defines, rather than `ls -l`'s
+  columns, which differ between GNU and BSD), and a name that cannot be represented in one line is
+  **counted** as hidden rather than dropped;
+* `fs.read` asks the size first, so a 200 MB log is never pulled over the link to be thrown away, and a
+  truncated read still hashes the **whole** file (`sha256sum`, or `shasum -a 256` where that is what the
+  host has);
+* `fs.write` sends the text on `ssh`'s **stdin** (`cat > <path>`), so nothing in a file is a word in a
+  shell command;
+* `git.status` answers for the *project's own* repository on that machine, and `("", 0)` - no badge - for
+  a folder that is not one;
+* the file guard runs on the remote path too: `.env`, `*.pem`, `id_rsa` and `credentials` are refused and
+  counted on `/srv/app` exactly as on `H:\app`;
+* every path and argument that reaches a remote shell goes through `ssh::sh_quote`, and a relative path
+  is refused with a sentence instead of resolving against whatever directory a remote shell started in;
+* `shell.run` keeps the deny list on the far side - a `shutdown` refused here has no business reaching
+  somebody's VPS.
+
+`project.add` with a host validates the folder with `test -d` **on that machine**, so a typo is refused
+by the host that has the folder rather than by the laptop that does not. A chat whose folder is on a host
+can be browsed, read, edited, diffed, shelled into - and, in the same release, **run its engines there**
+(L9) and **keep its checkpoints and rewind there** (L10), because none of that needed a second daemon.
+
+### Added — the window: the trust step, and a folder browser for a host
+
+The Add-host dialog does not close the moment `host.add` answers any more. It watches the host's row
+(folded from `HostStatus`, never held locally) and shows the daemon's own sentence: `connecting` while
+the scan runs, then either the **trust card** - the fingerprint in monospace, what to compare it with,
+and `Trust and connect` - or the refusal. `Cancel`/`✕`/`Escape` forget a half-finished flow.
+
+`Open folder` cannot be used on a host: `tauri-plugin-dialog` shows *this* machine's filesystem. The
+Files section's empty state grows `Open a folder on <host>`, which opens `RemoteFolder` - the host's home
+first, one level per click, a path that can also be typed (`~/app` works) - and the chosen folder goes
+through `project.add` with that host id.
+
+### Fixed — a host's sentences were travelling in `platform`
+
+`event::host_status` had one field for two jobs, so a machine line and a sentence were the same string:
+`copying SDC's key with that password…` was pushed as the host's `platform`, and About's `This host` row
+read it. There is a `detail` field now (and `hostKey` for the fingerprint), `platform` is a machine line
+or nothing - the guess `linux · x64` on a VPS nobody had looked at is gone - and the five host states
+(`untrusted` is the new one) map onto the waiting colour, because a question is what orange already
+means everywhere else in this window.
+
+### Added — `sdc/docs/REMOTE.md`
+
+The research and the design in one file: how Remote-SSH works and why each piece exists, the eight layers
+with the file each lives in, the seven security rules with the reason for each, the Terminal surface and
+what it is not, and what is deliberately absent - each of those with the condition that would change the
+answer. The `sdcd`-on-the-host tunnel is a table now rather than a sentence: what a far-side daemon would
+buy (a PTY, file watching, a cache) is either **already done over exec** — `pty.open` on a host is an `ssh`
+with a pid file and a group kill — or a feature the window does not have locally either. `sdc/README.md`'s
+federated-host entry says what is true: an added host is a machine whose files, git, shell, engines,
+checkpoints and terminal work.
+
+### Verified
+
+`sdcd`: **175 unit + 9 lifecycle + 2 streaming + 6 VCR** tests, clippy clean under `-D warnings` (one
+`--ignored` test makes SDC's key on purpose). The new tests pin the things that quietly break: the
+hardened flag set (including that `accept-new` never returns), `sh_quote` on hostile names, the
+fingerprint against `ssh-keygen -lf`, the known-hosts parser and its `[host]:port` lookup, the listing
+and hit parsers, the guard running **before** a connection is opened, the trust/changed-key sentences, the
+remote turn line (the port, the chat's folder, the pid file, the CLI's arguments inside the line rather
+than as `ssh` arguments, the `setsid` branch and the `mkdir` that makes the pid file possible), the
+group-then-pid-then-`KILL` escalation, and the line guard. `app`: 93 vitest, typecheck/lint clean,
+`protocol/check.mjs` green at **67 methods, 26 events**. A live run against the host from the original
+report is in the CHANGELOG's first entry of this release: the pin, the probe's sentence and the far side's
+own `Permission denied (keyboard-interactive)`.
+And the whole trust flow was run against a **real sshd** (`_verify/probe-remote.mjs`, which drives
+`host.add` → `HostStatus untrusted` → `host.trust` → the probe): the fingerprint the daemon printed is
+character-for-character what `ssh-keygen -lf` prints for that host's key, the pin landed in SDC's own
+`known_hosts`, and the sentence that came back afterwards was about **authentication** -
+`does not accept SDC's key yet` - not about the host key, which is how a pin is supposed to behave.
+
 ## [0.7.12] — what CI caught that no local run could
 
 0.7.10 shipped with a bug that only exists on unix, and this release is the fix plus the three things the hunt
@@ -919,7 +1191,7 @@ picking `Opus` did not reach the CLI. Now:
 
 ### Fixed — VPS connect, which did not exist
 
-The report pasted `ssh -p 8443 mehedi105117@109.199.108.216` - precisely what a person types into their
+The report pasted `ssh -p 8443 deploy@203.0.113.10` - precisely what a person types into their
 own terminal - and the daemon used the whole string as a hostname: `ssh` was asked for a machine called
 `ssh`, and the port was never used. Then the honest-but-useless sentence appeared: *"…asks for a password
 or a verification code, and SDC runs ssh without a terminal, so it cannot type it. Add your public key…"*.
@@ -940,7 +1212,7 @@ Now:
   password*.
 
 Measured against the real VPS in the report: the probe reached the address **on port 8443** in 1.8s and
-answered *"mehedi105117@109.199.108.216 answered, but it asks for a password or a verification code. Add
+answered *"deploy@203.0.113.10 answered, but it asks for a password or a verification code. Add
 this host again with its password filled in…"*, with the public-key generator verified separately.
 
 ### Fixed — the faint rows in every box

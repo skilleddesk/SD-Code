@@ -126,12 +126,23 @@ pub mod event {
         Value::Object(map)
     }
 
+    /// `HostStatus` - the host's state, and the three facts that explain it.
+    ///
+    /// `platform` is the machine line (`Debian 12 · x64`). `detail` is the *sentence* - what just
+    /// happened to this host, in words: `copying SDC's key with that password…`, `root@vps is
+    /// reachable`, or the fingerprint a host is waiting to be trusted with. Until 0.7.13 there was one
+    /// parameter for both jobs and the sentences travelled in `platform`, so a card that reads the
+    /// machine line read "copying SDC's key…" instead, and About's `This host` row said the same.
+    /// `host_key` is the fingerprint itself when the host is **waiting to be trusted** - the string the
+    /// dialog's `Trust and connect` button hands back to `host.trust`.
     pub fn host_status(
         host_id: &str,
         name: &str,
         host_type: &str,
         status: &str,
         platform: Option<&str>,
+        detail: Option<&str>,
+        host_key: Option<&str>,
     ) -> Value {
         base(
             "HostStatus",
@@ -142,6 +153,8 @@ pub mod event {
                 "status": status,
                 "sdcd": crate::VERSION,
                 "platform": platform,
+                "detail": detail,
+                "hostKey": host_key,
             }),
         )
     }

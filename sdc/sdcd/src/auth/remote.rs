@@ -9,7 +9,7 @@
 //! Three things happen here instead:
 //!
 //! * **the target is parsed**, not assumed. A person pastes what they type into their own shell -
-//!   `ssh -p 8443 mehedi105117@109.199.108.216` - and the port comes out of it, so the probe dials the
+//!   `ssh -p 8443 deploy@203.0.113.10` - and the port comes out of it, so the probe dials the
 //!   port they actually use. (Before this, that string was treated as a hostname, `-p` and all, and the
 //!   port was never used: `ssh` was asked for `8443` as a host.)
 //! * **SDC owns a key**, generated on first use under `~/.ssh/sdc_ed25519` - the same place `ssh-keygen`
@@ -57,10 +57,10 @@ impl SshTarget {
 /// Accepted, because all four are things people paste:
 ///
 /// ```text
-/// mehedi105117@109.199.108.216
-/// ssh mehedi105117@109.199.108.216
-/// ssh -p 8443 mehedi105117@109.199.108.216
-/// mehedi105117@109.199.108.216 -p 8443
+/// deploy@203.0.113.10
+/// ssh deploy@203.0.113.10
+/// ssh -p 8443 deploy@203.0.113.10
+/// deploy@203.0.113.10 -p 8443
 /// ```
 ///
 /// A bare hostname is an error rather than a guess: `ssh` needs a user to try, and inventing `root`
@@ -127,7 +127,61 @@ pub fn parse_target(input: &str) -> Result<SshTarget, String> {
         ));
     }
 
+    /* `user@host:8443` - the form a hosting panel, a README and SDC's own host row use (0.7.13). `-p`
+       wins when both are given, because it is the explicit one. */
+    let (user_host, port) = match port {
+        Some(port) => (user_host, Some(port)),
+        None => match split_port(&user_host)? {
+            Some((without_port, parsed)) => (without_port, Some(parsed)),
+            None => (user_host, None),
+        },
+    };
+
     Ok(SshTarget { user_host, port })
+}
+
+/// Splits `user@host:8443` into the address and the port - only when it is unambiguous.
+///
+/// Three shapes, and the ambiguity is why this is a function rather than a `split(':')`:
+///
+/// * `mehedi@203.0.113.10:8443` - one colon after the `@`, so it is a port;
+/// * `root@[2001:db8::1]:2222` - bracketed, so the colon after `]` is the port and the address keeps its
+///   colons;
+/// * `root@2001:db8::1` - an IPv6 address and nothing else; several colons mean no port was written, and
+///   guessing one would dial a machine that does not exist.
+///
+/// A suffix that is not a number is an error rather than a hostname: `mehedi@host:eight` is somebody
+/// mistyping a port, and `ssh` would only say `Could not resolve hostname`.
+fn split_port(user_host: &str) -> Result<Option<(String, u16)>, String> {
+    let (prefix, host) = match user_host.rfind('@') {
+        Some(at) => (&user_host[..=at], &user_host[at + 1..]),
+        None => ("", user_host),
+    };
+
+    if let Some(rest) = host.strip_prefix('[') {
+        let Some((inside, tail)) = rest.split_once(']') else {
+            return Ok(None);
+        };
+        let Some(port) = tail.strip_prefix(':') else {
+            return Ok(None);
+        };
+        let parsed = port
+            .parse::<u16>()
+            .map_err(|error| format!("`{port}` is not a port: {error}"))?;
+
+        return Ok(Some((format!("{prefix}[{inside}]"), parsed)));
+    }
+
+    if host.matches(':').count() != 1 {
+        return Ok(None);
+    }
+
+    let (name, port) = host.split_once(':').unwrap_or((host, ""));
+    let parsed = port
+        .parse::<u16>()
+        .map_err(|error| format!("`{port}` is not a port: {error}"))?;
+
+    Ok(Some((format!("{prefix}{name}"), parsed)))
 }
 
 /// The path of the key SDC uses for hosts it adds: `~/.ssh/sdc_ed25519`.
@@ -191,25 +245,21 @@ pub fn ensure_key() -> Result<String, String> {
 /// Returns the sentence the UI shows on success. The password is passed to `ssh` and never written
 /// anywhere: not to the store, not to the event log, not into the sentence that comes back - which is
 /// why this function takes it as an argument and has no way to keep it.
+///
+/// Since 0.7.13 the arguments come from `ssh::Ssh::install_args`, so this call differs from every
+/// other connection in **three flags** (a prompt is allowed) and in nothing else: the host key is
+/// checked against SDC's own pins with `StrictHostKeyChecking=yes`, SDC's key is the only identity
+/// offered, and a host presenting a different key never sees the password at all.
 pub fn install_key(pty: &PtyManager, target: &SshTarget, password: &str) -> Result<String, ErrorObject> {
     let public_key = ensure_key().map_err(ErrorObject::internal)?;
     let command = install_command(&public_key);
 
-    let mut args = target.port_args();
+    let mut args = crate::ssh::Ssh::new(target.clone()).install_args()?;
 
-    args.extend([
-        "-o".to_string(),
-        "StrictHostKeyChecking=accept-new".to_string(),
-        "-o".to_string(),
-        "NumberOfPasswordPrompts=1".to_string(),
-        "-o".to_string(),
-        "ConnectTimeout=10".to_string(),
-        target.user_host.clone(),
-        command,
-    ]);
+    args.push(command);
 
     let opened = pty
-        .open("ssh", &args, None)
+        .open("ssh", &args, None, None, None)
         .map_err(|error| ErrorObject::not_found(format!("`ssh` could not be started: {}", error.message)))?;
     let pty_id = opened["ptyId"].as_str().unwrap_or_default().to_string();
 
@@ -341,9 +391,9 @@ mod tests {
     /// The exact string from the report: a full `ssh` command with a port.
     #[test]
     fn a_pasted_ssh_command_yields_the_address_and_the_port() {
-        let parsed = parse_target("ssh -p 8443 mehedi105117@109.199.108.216").unwrap();
+        let parsed = parse_target("ssh -p 8443 deploy@203.0.113.10").unwrap();
 
-        assert_eq!(parsed.user_host, "mehedi105117@109.199.108.216");
+        assert_eq!(parsed.user_host, "deploy@203.0.113.10");
         assert_eq!(parsed.port, Some(8443));
         assert_eq!(parsed.port_args(), vec!["-p", "8443"]);
     }
@@ -351,8 +401,8 @@ mod tests {
     #[test]
     fn the_other_shapes_a_person_types_are_accepted() {
         assert_eq!(
-            parse_target("mehedi105117@109.199.108.216").unwrap(),
-            SshTarget { user_host: "mehedi105117@109.199.108.216".into(), port: None }
+            parse_target("deploy@203.0.113.10").unwrap(),
+            SshTarget { user_host: "deploy@203.0.113.10".into(), port: None }
         );
         assert_eq!(parse_target("ssh root@vps.example").unwrap().port, None);
         assert_eq!(parse_target("root@vps.example -p2222").unwrap().port, Some(2222));
@@ -360,9 +410,39 @@ mod tests {
         assert_eq!(parse_target("  ssh   -p   2200   root@vps.example  ").unwrap().port, Some(2200));
     }
 
+    /// `user@host:8443` - what a hosting panel prints and what SDC's own host row shows (0.7.13).
+    ///
+    /// The colon form is what makes the card's **`Install SDC's key`** button possible: the row's address
+    /// is `user@host:port`, so the address can be sent back verbatim instead of the window having to keep
+    /// the two halves apart. `-p` wins when both are there, and an IPv6 address is not mistaken for one.
+    #[test]
+    fn a_port_written_with_a_colon_is_read_the_way_a_panel_shows_it() {
+        let with_colon = parse_target("deploy@203.0.113.10:8443").unwrap();
+
+        assert_eq!(with_colon.user_host, "deploy@203.0.113.10");
+        assert_eq!(with_colon.port, Some(8443));
+        assert_eq!(with_colon.port_args(), vec!["-p", "8443"]);
+
+        /* The explicit `-p` is the one that counts when both are written. */
+        assert_eq!(parse_target("ssh -p 22 root@vps.example:8443").unwrap().port, Some(22));
+
+        /* Bracketed IPv6 keeps its colons; a bare one has no port to read. */
+        let ipv6 = parse_target("root@[2001:db8::1]:2222").unwrap();
+
+        assert_eq!(ipv6.user_host, "root@[2001:db8::1]");
+        assert_eq!(ipv6.port, Some(2222));
+        assert_eq!(parse_target("root@2001:db8::1").unwrap().port, None);
+
+        /* A mistyped port is refused where the person can see it, not turned into a hostname. */
+        let refused = parse_target("mehedi@host:eight").unwrap_err();
+
+        assert!(refused.contains("is not a port"), "{refused}");
+        assert!(parse_target("mehedi@host:").is_err());
+    }
+
     #[test]
     fn a_host_without_a_user_is_explained_rather_than_guessed() {
-        let error = parse_target("109.199.108.216").unwrap_err();
+        let error = parse_target("203.0.113.10").unwrap_err();
 
         assert!(error.contains("user@host"), "{error}");
         assert!(parse_target("").is_err());
@@ -372,7 +452,7 @@ mod tests {
 
     #[test]
     fn the_prompts_are_told_apart() {
-        assert_eq!(prompt_in("mehedi105117@109.199.108.216's password:"), Prompt::Password);
+        assert_eq!(prompt_in("deploy@203.0.113.10's password:"), Prompt::Password);
         assert_eq!(prompt_in("Password for root@vps:"), Prompt::Password);
         assert_eq!(prompt_in("Verification code:"), Prompt::VerificationCode);
         assert_eq!(prompt_in("Enter passcode: "), Prompt::VerificationCode);

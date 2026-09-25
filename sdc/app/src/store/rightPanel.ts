@@ -16,20 +16,26 @@ import { create } from 'zustand';
  * errors - which is what the prototype's badge shows, not the sum of their occurrences.
  */
 
-/** The six tabs, in the fixed order of spec section 7.7-7.12. */
-export type PanelTabId = 'preview' | 'console' | 'timemachine' | 'duel' | 'verify' | 'analytics';
+/** The seven tabs, in the fixed order of spec sections 7.7-7.12, plus the Terminal (0.7.13). */
+export type PanelTabId = 'preview' | 'console' | 'terminal' | 'timemachine' | 'duel' | 'verify' | 'analytics';
 
 export interface PanelTabDefinition {
   id: PanelTabId;
   label: string;
   /** Lucide icon name; `RightPanel.tsx` owns the name-to-component map. */
-  icon: 'eye' | 'terminal' | 'clock' | 'swords' | 'check' | 'chart';
+  icon: 'eye' | 'terminal' | 'chevron' | 'clock' | 'swords' | 'check' | 'chart';
 }
 
-/** Tab strip order is fixed by the spec: Preview, Console, Time Machine, Duel, Verify, Analytics. */
+/**
+ * Tab strip order: Preview, Console, Terminal, Time Machine, Duel, Verify, Analytics.
+ *
+ * The spec's six are in their spec'd order and the Terminal sits next to the Console, because the two
+ * are the panel's two logs - the Console is what the page said, the Terminal is what a command said.
+ */
 export const PANEL_TABS: readonly PanelTabDefinition[] = [
   { id: 'preview', label: strings.rightPanel.tabs.preview, icon: 'eye' },
   { id: 'console', label: strings.rightPanel.tabs.console, icon: 'terminal' },
+  { id: 'terminal', label: strings.rightPanel.tabs.terminal, icon: 'chevron' },
   { id: 'timemachine', label: strings.rightPanel.tabs.timemachine, icon: 'clock' },
   { id: 'duel', label: strings.rightPanel.tabs.duel, icon: 'swords' },
   { id: 'verify', label: strings.rightPanel.tabs.verify, icon: 'check' },

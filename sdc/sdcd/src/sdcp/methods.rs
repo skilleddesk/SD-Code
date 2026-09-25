@@ -60,8 +60,11 @@ impl Daemon {
         match envelope.method.as_str() {
             /* Host ---------------------------------------------------------------------------- */
             "host.status" => Ok(self.host_status(&*out)),
-            "host.doctor" => Ok(json!({ "checks": host::checks(self.store()) })),
+            "host.doctor" => self.host_doctor(envelope),
             "host.add" => self.host_add(envelope, out),
+            "host.trust" => self.host_trust(envelope, out),
+            "host.key" => self.host_key(envelope, &*out),
+            "ssh.key" => self.ssh_key(envelope),
             "host.remove" => self.host_remove(envelope, &*out),
             "host.shutdown" => Ok(self.host_shutdown()),
 
@@ -178,7 +181,7 @@ impl Daemon {
            a window that asks *without* this call (a second one, a reload) already will. */
         let _ = self.store().ensure_host("local", "Local", "local", "connected");
 
-        out.push(event::host_status("local", "Local", "local", "connected", Some(&platform)), None, None);
+        out.push(event::host_status("local", "Local", "local", "connected", Some(&platform), None, None), None, None);
 
         json!({
             "hostId": "local",
@@ -219,6 +222,19 @@ impl Daemon {
         })
     }
 
+    /// `host.add` - a machine joins the list, and the layers of `docs/REMOTE.md` run in order.
+    ///
+    /// 1. **the target is parsed**, and this time the port is **stored** with it. 0.7.0 parsed
+    ///    `ssh -p 8443 user@host` correctly and then wrote only `user@host` into the row, so the port
+    ///    was used by the probe and lost for everything after it - half of "vps connect korai jasse nah".
+    /// 2. **SDC's key is made**, because `-i` plus `IdentitiesOnly=yes` means that key is the only
+    ///    credential this daemon will ever offer.
+    /// 3. **the host's key is scanned and checked against SDC's pin** (`ssh::hostkey`): a key exchange
+    ///    with no authentication, so nothing is offered before the machine's identity is decided. A key
+    ///    that is not the pinned one is refused; a host with no pin is recorded `untrusted` and the
+    ///    answer carries its fingerprint, which is what the dialog asks about.
+    /// 4. **the password is spent last**, and only against a pinned key. A password typed for a host
+    ///    whose key is unknown is dropped here rather than sent to whatever answered the port.
     fn host_add(&self, envelope: &Envelope, out: Arc<dyn Notifier>) -> Result<Value, ErrorObject> {
         if envelope.opt_str("type").unwrap_or_else(|| "ssh".into()) == "local" {
             return Ok(json!({ "hostId": "local" }));
@@ -230,18 +246,14 @@ impl Daemon {
             return Err(ErrorObject::bad_request("`target` is required for an SSH host"));
         }
 
-        /*
-         * What the user typed is parsed, not trusted - and that is a fix, not tidiness.
-         *
-         * The report pasted `ssh -p 8443 mehedi105117@109.199.108.216`, which is exactly what a person
-         * types into their own shell. The daemon used that whole string as a hostname: `ssh` was asked
-         * for a machine called `ssh`, and the port was never used, so a VPS that answers on 8443 could
-         * not be reached however correct the key was. `parse_target` pulls the address and the port out,
-         * and the port travels with every `ssh` call this daemon makes for that host.
-         */
-        let parsed = crate::auth::remote::parse_target(&raw_target).map_err(ErrorObject::bad_request)?;
-        let target = parsed.user_host.clone();
-        /* Used for this one install and dropped. It is never stored, never logged, and never part of a
+        /* What the user typed is parsed, not trusted - and this is a fix, not tidiness. The report
+           pasted `ssh -p 8443 deploy@203.0.113.10`, which is what a person types into their
+           own shell: the daemon used the whole string as a hostname (`ssh` was asked for a machine
+           called `ssh`) and the port was never used. `parse_target` pulls both out, `0003-host-ssh`
+           stores both, and the port travels with every `ssh` call this daemon makes for that host. */
+        let ssh = crate::ssh::Ssh::parse(&raw_target)?;
+        let target = ssh.target.user_host.clone();
+        /* Used for one install and dropped. It is never stored, never logged, and never part of a
            sentence the UI shows. */
         let password = envelope.opt_str("password").unwrap_or_default().trim().to_string();
 
@@ -250,131 +262,412 @@ impl Daemon {
             .filter(|label| !label.trim().is_empty())
             .unwrap_or_else(|| target.clone());
 
+        /* The key is made here, once. A machine without `ssh-keygen` is told about rather than ignored:
+           with no key and no pin a probe cannot succeed, and the sentence names which of the two is
+           missing instead of leaving a red dot with no explanation. */
+        let key_note = crate::auth::remote::ensure_key().err();
+
         /*
          * The same machine added twice is one host.
          *
-         * A sidebar of `Website, Website, Website` is what the alternative looks like in practice:
-         * a second row for the same `user@host` says nothing the first one did not, and it can never
-         * be told apart from it afterwards. The row's id comes back with `reused: true`, so a caller
-         * can say "already there" instead of pretending it just connected.
+         * A sidebar of `Website, Website, Website` is what the alternative looks like in practice: a
+         * second row for the same `user@host` says nothing the first one did not. The row's id comes
+         * back with `reused: true`, so a caller can say "already there" instead of pretending it just
+         * connected - and its **address is refreshed**, because a person who re-adds a host with its
+         * port meant that port.
          */
-        if let Some(existing) = self.store().host_id_for_target(&target).map_err(ErrorObject::internal)? {
-            let row = self.store().host(&existing).map_err(ErrorObject::internal)?;
-            let name = row
-                .as_ref()
-                .and_then(|row| row["name"].as_str())
-                .unwrap_or(&label)
-                .to_string();
-            let status = row
-                .as_ref()
-                .and_then(|row| row["status"].as_str())
-                .unwrap_or("connecting")
-                .to_string();
+        let existing = self.store().host_id_for_target(&target).map_err(ErrorObject::internal)?;
+        let reused = existing.is_some();
+        let host_id = match existing {
+            Some(existing) => {
+                self.store()
+                    .set_host_address(&existing, &target, ssh.target.port)
+                    .map_err(ErrorObject::internal)?;
 
-            out.push(event::host_status(&existing, &name, "vps", &status, Some(&target)), None, None);
+                existing
+            }
+            None => {
+                let host_id = format!("h{}", self.state.events.seq() + 1);
 
-            return Ok(json!({ "hostId": existing, "reused": true }));
-        }
+                self.store()
+                    .upsert_host(&host_id, &label, "ssh", Some(&target), "connecting", None)
+                    .map_err(ErrorObject::internal)?;
+                self.store()
+                    .set_host_address(&host_id, &target, ssh.target.port)
+                    .map_err(ErrorObject::internal)?;
 
-        let host_id = format!("h{}", self.state.events.seq() + 1);
+                host_id
+            }
+        };
+        let name = self
+            .store()
+            .host(&host_id)
+            .map_err(ErrorObject::internal)?
+            .and_then(|row| row["name"].as_str().map(str::to_string))
+            .unwrap_or(label);
 
-        out.push(event::host_status(&host_id, &label, "vps", "connecting", Some("linux · x64")), None, None);
-        self.store()
-            .upsert_host(&host_id, &label, "ssh", Some(&target), "connecting", None)
-            .map_err(ErrorObject::internal)?;
+        out.push(
+            event::host_status(
+                &host_id,
+                &name,
+                "vps",
+                "connecting",
+                None,
+                Some(&format!("checking {target}'s host key…")),
+                None,
+            ),
+            None,
+            None,
+        );
 
-        /*
-         * The probe runs *after* the answer, which is the `engine.start` shape: the dialog closes
-         * with a host on screen, and the sentence about whether that host can be reached arrives
-         * when there is something to attach it to.
-         *
-         * `connecting` is therefore not a placeholder for a status that never comes. Every added
-         * host gets a second `HostStatus` - `connected` when `ssh` answered, `offline` when it did
-         * not - and a `Toast` beside it, because a 7px dot is not a notification.
-         */
         let state = self.state.clone();
         let notifier = out.clone();
-        let probe_host_id = host_id.clone();
-        let probe_label = label.clone();
-        let probe_target = parsed.clone();
+        /* The id the answer needs, taken before the task takes its own copy of everything else. */
+        let answer_host_id = host_id.clone();
 
+        /*
+         * The measurement runs *after* the answer, which is the `engine.start` shape: the dialog has a
+         * host on screen and the sentences arrive when there is something to attach them to.
+         *
+         * Three endings, and each one says what happened rather than "it did not work":
+         *   * **pinned** - the key matches SDC's own record, so the one-time install (when a password
+         *     was given) and the probe run;
+         *   * **unknown** - this machine has never been pinned, so it is recorded `untrusted`, the
+         *     fingerprint travels with the event, and the dialog asks. The password is *not* used;
+         *   * **changed** - the host presents a key that is not the pinned one. Nothing is sent, and the
+         *     sentence says so with both fingerprints.
+         */
         tokio::spawn(async move {
-            /*
-             * The password, when one was given, is spent here - before the probe - because the probe is
-             * `ssh` with `BatchMode=yes`, which by design cannot answer a prompt. One install is enough
-             * for every connection after it: the key is in `authorized_keys` and the password is gone.
-             */
-            if !password.is_empty() {
-                notifier.push(
+            let scan_target = ssh.target.clone();
+            let seen = tokio::task::spawn_blocking(move || crate::ssh::hostkey::inspect(&scan_target))
+                .await
+                .unwrap_or_else(|_| Err(ErrorObject::internal("the host key scan could not be run")));
+
+            match seen {
+                Ok(crate::ssh::hostkey::Trust::Pinned(_)) => {
+                    finish_connection(state, notifier, host_id, name, ssh, password, key_note).await;
+                }
+                Ok(crate::ssh::hostkey::Trust::Unknown(keys)) => {
+                    let fingerprint = crate::ssh::hostkey::primary(&keys)
+                        .map(|key| key.fingerprint.clone())
+                        .unwrap_or_default();
+
+                    let _ = state
+                        .store
+                        .upsert_host(&host_id, &name, "ssh", Some(&target), "untrusted", None);
+
+                    notifier.push(
+                        event::host_status(
+                            &host_id,
+                            &name,
+                            "vps",
+                            "untrusted",
+                            None,
+                            Some(&untrusted_sentence(&target, &fingerprint, key_note.as_deref())),
+                            Some(&fingerprint),
+                        ),
+                        None,
+                        None,
+                    );
+                }
+                Ok(crate::ssh::hostkey::Trust::Changed { pinned, seen }) => {
+                    let sentence = changed_sentence(&target, &pinned, &seen);
+
+                    let _ = state
+                        .store
+                        .upsert_host(&host_id, &name, "ssh", Some(&target), "offline", None);
+
+                    notifier.push(
+                        event::host_status(&host_id, &name, "vps", "offline", None, Some(&sentence), None),
+                        None,
+                        None,
+                    );
+                }
+                Err(error) => {
+                    let _ = state
+                        .store
+                        .upsert_host(&host_id, &name, "ssh", Some(&target), "offline", None);
+
+                    notifier.push(
+                        event::host_status(&host_id, &name, "vps", "offline", None, Some(&error.message), None),
+                        None,
+                        None,
+                    );
+                }
+            }
+        });
+
+        Ok(json!({ "hostId": answer_host_id, "reused": reused }))
+    }
+
+    /// `host.trust` - the one question a remote connection asks a person, and the answer to it.
+    ///
+    /// The dialog shows a fingerprint (`SHA256:…`) that `host.add` scanned, a person decides, and this
+    /// method pins it. Three rules make it a decision rather than a formality:
+    ///
+    /// * the machine is **scanned again**, and the fingerprint being pinned has to be one of the keys
+    ///   it presents *now* (`hostkey::confirm`). A key that changes between the question and the answer
+    ///   is exactly the case a pin exists for, and it is refused with both fingerprints;
+    /// * only the key whose fingerprint was shown is pinned - never the other types the machine offers,
+    ///   which nobody looked at;
+    /// * the password, when the dialog still has it, is spent **after** the pin, so the credential
+    ///   reaches a host whose identity has been checked. If the pin fails, it is never sent.
+    fn host_trust(&self, envelope: &Envelope, out: Arc<dyn Notifier>) -> Result<Value, ErrorObject> {
+        let host_id = envelope.require_str("hostId")?;
+        let fingerprint = envelope.require_str("fingerprint")?;
+        let password = envelope.opt_str("password").unwrap_or_default().trim().to_string();
+
+        let Some(ssh) = self.ssh_for(&host_id)? else {
+            return Err(ErrorObject::bad_request(format!(
+                "`{host_id}` is not an SSH host this daemon can reach, so there is no key to trust"
+            )));
+        };
+
+        let name = self
+            .store()
+            .host(&host_id)
+            .map_err(ErrorObject::internal)?
+            .and_then(|row| row["name"].as_str().map(str::to_string))
+            .unwrap_or_else(|| ssh.label());
+
+        /* The scan and the pin happen here rather than in a task on purpose: a failure has to be an
+           *answer* the dialog can show (`the key is not the one you confirmed`), not an event that
+           arrives after it has closed. */
+        let keys = crate::ssh::hostkey::confirm(&ssh.target, &fingerprint)?;
+
+        crate::ssh::hostkey::pin_into(&crate::ssh::hostkey::known_hosts_path()?, &keys)?;
+        self.store().set_host_key(&host_id, &fingerprint).map_err(ErrorObject::internal)?;
+
+        out.push(
+            event::host_status(
+                &host_id,
+                &name,
+                "vps",
+                "connecting",
+                None,
+                Some(&format!("{fingerprint} pinned · connecting…")),
+                Some(&fingerprint),
+            ),
+            None,
+            None,
+        );
+
+        let state = self.state.clone();
+        let notifier = out.clone();
+
+        spawn_finish(state, notifier, host_id.clone(), name, ssh, password, None);
+
+        Ok(json!({ "trusted": true, "hostId": host_id, "fingerprint": fingerprint }))
+    }
+
+    /// `host.doctor` - the environment checks, about the machine the caller names (0.7.13).
+    ///
+    /// Before this release the ten local checks answered for **any** `hostId`, so asking about a VPS
+    /// returned ten rows about the laptop: whether *this* machine has `claude` installed, under a
+    /// heading that said the host's name. A host now gets rows about itself (`host::remote_checks`),
+    /// including the two questions that only make sense for one - is its key the pinned one, and can the
+    /// engines run *there*.
+    fn host_doctor(&self, envelope: &Envelope) -> Result<Value, ErrorObject> {
+        let host_id = envelope.opt_str("hostId").unwrap_or_else(|| "local".into());
+
+        let Some(ssh) = self.ssh_for(&host_id)? else {
+            return Ok(json!({ "checks": host::checks(self.store()) }));
+        };
+
+        /* The chat's folder, when the caller knows the chat: a folder that is not there is the most
+           actionable row of the lot, and it is the one thing only the caller can name. */
+        let root = match envelope.opt_str("sessionId") {
+            Some(session_id) => self
+                .store()
+                .session_project_root(&session_id)
+                .map_err(ErrorObject::internal)?,
+            None => None,
+        };
+
+        Ok(json!({ "checks": host::remote_checks(&ssh, root.as_deref()) }))
+    }
+
+    ///
+    /// `host.add` asks it once, in the same breath as adding the host, and pushes the answer as a
+    /// `HostStatus`. A window that was not open at that moment - a relaunch, a second window, a host
+    /// added days ago - has the row (`untrusted` or `offline`) and the *sentence* (which is also in the
+    /// event), but the fingerprint is a value a button needs, and a sentence is not a value. That is the
+    /// gap this method closes, and it closes the re-pin case with the same call: a host whose key
+    /// **changed** answers `matches: false` with the fingerprint it presents now, which is exactly what
+    /// `Re-pin` has to confirm.
+    ///
+    /// It is a measurement, not a tab open: it scans (`ssh-keyscan`, no authentication) and pushes a
+    /// `HostStatus` only when the answer makes the host's row say something it did not already say.
+    /// `ssh.key` - the **public** half of the key SDC uses for the hosts it adds (0.7.13).
+    ///
+    /// Read-only, and it never creates a key: making one is `host.add`'s job, on the path where a key is
+    /// actually needed. It exists because one case cannot be automated and must not be a dead end - a host
+    /// that requires a **verification code** cannot be set up by this daemon (a one-time code is a second
+    /// factor, and a daemon holding one would defeat it), so the window has to be able to show the line a
+    /// person pastes into `~/.ssh/authorized_keys` themselves. A public key is meant to be shown; it is
+    /// the private half that never leaves `~/.ssh`.
+    fn ssh_key(&self, _envelope: &Envelope) -> Result<Value, ErrorObject> {
+        let public = crate::auth::remote::public_key();
+        let path = crate::auth::remote::key_path();
+
+        Ok(json!({
+            "publicKey": public,
+            "path": path.map(|path| path.display().to_string()),
+            "exists": public.is_some(),
+        }))
+    }
+
+    fn host_key(&self, envelope: &Envelope, out: &dyn Notifier) -> Result<Value, ErrorObject> {
+        let host_id = envelope.require_str("hostId")?;
+
+        let Some(ssh) = self.ssh_for(&host_id)? else {
+            return Err(ErrorObject::bad_request(format!(
+                "`{host_id}` is not an SSH host, so it has no key to look at"
+            )));
+        };
+
+        let name = self
+            .store()
+            .host(&host_id)
+            .map_err(ErrorObject::internal)?
+            .and_then(|row| row["name"].as_str().map(str::to_string))
+            .unwrap_or_else(|| ssh.label());
+        let answer = crate::ssh::hostkey::inspect(&ssh.target)?;
+        let fingerprint_of = |keys: &[crate::ssh::hostkey::HostKey]| {
+            crate::ssh::hostkey::primary(keys)
+                .map(|key| key.fingerprint.clone())
+                .unwrap_or_default()
+        };
+        let key_type_of = |keys: &[crate::ssh::hostkey::HostKey]| {
+            crate::ssh::hostkey::primary(keys)
+                .map(|key| key.key_type.clone())
+                .unwrap_or_default()
+        };
+
+        match answer {
+            crate::ssh::hostkey::Trust::Pinned(key) => Ok(json!({
+                "hostId": host_id,
+                "hostKey": key.fingerprint,
+                "keyType": key.key_type,
+                "pinned": true,
+                "matches": true,
+                "pinnedKey": key.fingerprint,
+            })),
+            crate::ssh::hostkey::Trust::Unknown(keys) => {
+                let fingerprint = fingerprint_of(&keys);
+
+                /* The row's story has not changed (it was `untrusted` or it is being added), so this is
+                   an answer rather than news - but a host that had *no* fingerprint on its row gets one
+                   now, which is the sentence the card needs. */
+                out.push(
                     event::host_status(
-                        &probe_host_id,
-                        &probe_label,
+                        &host_id,
+                        &name,
                         "vps",
-                        "connecting",
-                        Some("copying SDC's key with that password…"),
+                        "untrusted",
+                        None,
+                        Some(&untrusted_sentence(&ssh.target.user_host, &fingerprint, None)),
+                        Some(&fingerprint),
                     ),
                     None,
                     None,
                 );
 
-                let pty = state.pty.clone();
-                let install_target = probe_target.clone();
-
-                let installed = tokio::task::spawn_blocking(move || {
-                    crate::auth::remote::install_key(&pty, &install_target, &password)
-                })
-                .await
-                .unwrap_or_else(|_| Err(ErrorObject::internal("the key install could not be run")));
-
-                match installed {
-                    Ok(sentence) => {
-                        /* The sentence goes on the *status* line rather than into a `Toast`.
-                           A toast is written to the event log and replayed on the next launch, so a
-                           four-line explanation became four lines of furniture over the Provider Hub
-                           every time the app started. The card shows the detail itself, which is where
-                           a fact about a host belongs. */
-                        notifier.push(
-                            event::host_status(&probe_host_id, &probe_label, "vps", "connecting", Some(&sentence)),
-                            None,
-                            None,
-                        );
-                    }
-                    Err(error) => {
-                        /* The install is the whole reason the password was asked for, so its failure is
-                           the host's status - and the sentence is the actionable one. */
-                        let _ = state
-                            .store
-                            .upsert_host(&probe_host_id, &probe_label, "ssh", Some(&probe_target.user_host), "offline", None);
-
-                        notifier.push(
-                            event::host_status(&probe_host_id, &probe_label, "vps", "offline", Some(&error.message)),
-                            None,
-                            None,
-                        );
-
-                        return;
-                    }
-                }
+                Ok(json!({
+                    "hostId": host_id,
+                    "hostKey": fingerprint,
+                    "keyType": key_type_of(&keys),
+                    "pinned": false,
+                    "matches": Value::Null,
+                    "pinnedKey": Value::Null,
+                }))
             }
+            crate::ssh::hostkey::Trust::Changed { pinned, seen } => {
+                let sentence = changed_sentence(&ssh.target.user_host, &pinned, &seen);
+                let fingerprint = fingerprint_of(&seen);
 
-            let (status, detail) = tokio::task::spawn_blocking(move || probe_ssh(&probe_target))
-                .await
-                .unwrap_or_else(|_| ("offline".to_string(), unreachable_sentence(&target)));
+                /* A changed key *is* news, and it is the loud kind: the host goes `offline` with both
+                   fingerprints named, on its own row, where a person will see it without asking. */
+                let _ = self
+                    .store()
+                    .upsert_host(&host_id, &name, "ssh", Some(&ssh.target.user_host), "offline", None);
 
-            let _ = state.store.upsert_host(&probe_host_id, &probe_label, "ssh", Some(&target), &status, None);
+                out.push(
+                    event::host_status(&host_id, &name, "vps", "offline", None, Some(&sentence), None),
+                    None,
+                    None,
+                );
 
-            /* One event, not two. The `HostStatus` carries the sentence and the card renders it; the
-               `Toast` that used to accompany it was written to the log as well, so a machine that could
-               not be reached produced the same four-line paragraph again on every launch. A fact about a
-               host belongs on the host's row. */
-            notifier.push(
-                event::host_status(&probe_host_id, &probe_label, "vps", &status, Some(&detail)),
-                None,
-                None,
-            );
-        });
+                Ok(json!({
+                    "hostId": host_id,
+                    "hostKey": fingerprint,
+                    "keyType": key_type_of(&seen),
+                    "pinned": true,
+                    "matches": false,
+                    "pinnedKey": pinned.first().cloned().unwrap_or_default(),
+                }))
+            }
+        }
+    }
 
-        Ok(json!({ "hostId": host_id, "reused": false }))
+    /// The SSH side of a host, when the daemon has an address for it: `None` for `local`, and `None`
+    /// for a host row that was never added as an SSH target.
+    fn ssh_for(&self, host_id: &str) -> Result<Option<crate::ssh::Ssh>, ErrorObject> {
+        if host_id == "local" {
+            return Ok(None);
+        }
+
+        let Some((Some(target), port)) = self.store().host_address(host_id).map_err(ErrorObject::internal)? else {
+            return Ok(None);
+        };
+
+        Ok(Some(crate::ssh::Ssh::new(crate::auth::remote::SshTarget { user_host: target, port })))
+    }
+
+    /// The host a file, git or shell method works on: the one the envelope names, or - since 0.7.6 -
+    /// the host the **session** belongs to.
+    ///
+    /// The envelope first, because a caller that names a host means that host; the session is the
+    /// fallback that makes `fs.list { path }` work on a remote chat: the app knows the chat, the daemon
+    /// knows which machine that chat's folder is on.
+    fn host_id_for(&self, envelope: &Envelope) -> Result<Option<String>, ErrorObject> {
+        if let Some(host_id) = envelope.opt_str("hostId").filter(|host_id| !host_id.trim().is_empty()) {
+            return Ok(Some(host_id));
+        }
+
+        let Some(session_id) = envelope.opt_str("sessionId") else {
+            return Ok(None);
+        };
+
+        Ok(self
+            .store()
+            .session(&session_id)
+            .map_err(ErrorObject::internal)?
+            .and_then(|session| session["hostId"].as_str().map(str::to_string)))
+    }
+
+    /// The remote connection a method should use, or `None` when the work is local.
+    fn remote_for(&self, envelope: &Envelope) -> Result<Option<crate::ssh::Ssh>, ErrorObject> {
+        match self.host_id_for(envelope)? {
+            Some(host_id) => self.ssh_for(&host_id),
+            None => Ok(None),
+        }
+    }
+
+    /// Where a checkpoint's or a rewind's files are - the host and the folder, **owned**.
+    ///
+    /// `checkpoints::Snapshot` borrows its two halves, and a call site that had to build one would have
+    /// to keep an `Option<Ssh>` and an `Option<PathBuf>` alive next to it and remember which of the three
+    /// cases it was in. This holds both, so a site is one line: `self.subject(envelope)?.snapshot()`.
+    fn subject(&self, envelope: &Envelope) -> Result<Subject, ErrorObject> {
+        let remote = self.remote_for(envelope)?;
+        let root = self.root_for(envelope)?;
+        let root_text = root
+            .as_ref()
+            .map(|path| path.to_string_lossy().to_string())
+            .unwrap_or_default();
+
+        Ok(Subject { remote, root, root_text })
     }
 
     /// `host.remove` - the other half of `host.add`, and the one that was missing.
@@ -605,7 +898,17 @@ impl Daemon {
         let host_id = envelope.opt_str("hostId").unwrap_or_else(|| "local".into());
         let root = envelope.require_str("root")?;
 
-        if !std::path::Path::new(&root).is_dir() {
+        /*
+         * The folder is validated **on the machine that has it**, which is the whole point of a remote
+         * project: `/srv/app` is not a folder on this laptop, so asking this laptop would refuse every
+         * remote folder there is. `test -d` over `ssh` answers the same question where the answer
+         * exists, and the sentence that comes back is the host's own.
+         */
+        if let Some(ssh) = self.ssh_for(&host_id)? {
+            if !crate::ssh::ops::is_dir(&ssh, &root)? {
+                return Err(ErrorObject::bad_request(format!("`{root}` is not a folder on {}", ssh.label())));
+            }
+        } else if !std::path::Path::new(&root).is_dir() {
             return Err(ErrorObject::bad_request(format!("`{root}` is not a folder")));
         }
 
@@ -715,6 +1018,9 @@ impl Daemon {
             .store()
             .session_project_root(&session_id)
             .map_err(ErrorObject::internal)?;
+        /* And **which machine** that folder is on (0.7.13): with a host here, the adapter runs the CLI
+           over `ssh` in that folder rather than locally (see `engines::cli::remote_command`). */
+        let remote = self.remote_for(envelope)?;
 
         /* The turn runs on its own task, so the response can go back before the first token does. */
         let state = self.state.clone();
@@ -729,6 +1035,7 @@ impl Daemon {
             provider,
             history,
             project_root,
+            remote,
         };
 
         tokio::spawn(async move {
@@ -883,8 +1190,20 @@ impl Daemon {
     /// something that is not the file.
     const MAX_READ_BYTES: usize = 1024 * 1024;
 
+    /// `fs.read` - the file's text, its hash, its real size, and whether the text was cut.
+    ///
+    /// Since 0.7.13 the path may be on a **host**: `hostId` (or the session's own host) decides, and
+    /// `ssh::ops::read` answers with exactly this shape from the far side of the connection. The tree,
+    /// the Preview editor and the checkpoint stamp read one contract either way, which is what makes a
+    /// folder on a VPS a folder rather than a special case.
     fn fs_read(&self, envelope: &Envelope) -> Result<Value, ErrorObject> {
-        let path = std::path::PathBuf::from(envelope.require_str("path")?);
+        let raw = envelope.require_str("path")?;
+
+        if let Some(ssh) = self.remote_for(envelope)? {
+            return crate::ssh::ops::read(&ssh, &raw, Self::MAX_READ_BYTES);
+        }
+
+        let path = std::path::PathBuf::from(&raw);
         let size = std::fs::metadata(&path).map(|meta| meta.len()).unwrap_or(0);
 
         if size <= Self::MAX_READ_BYTES as u64 {
@@ -920,11 +1239,24 @@ impl Daemon {
     /// write. `sessionId` is optional, because a caller with no chat (a probe, a script) has nothing to
     /// checkpoint *against*; with one, the checkpoint is taken first and pushed as `CheckpointSaved` before a
     /// single byte is written - a checkpoint taken afterwards would be a photograph of the damage.
+    ///
+    /// **On a host there is no checkpoint**, and that is named rather than hidden: the shadow repository is
+    /// this machine's (`docs/REMOTE.md` §5), so a remote save writes the file and says nothing about a
+    /// checkpoint it did not take. The window's own toast says it (the app knows which host the chat is on),
+    /// and the daemon's doc for this method is the other half of that honesty.
     fn fs_write(&self, envelope: &Envelope, out: &dyn Notifier) -> Result<Value, ErrorObject> {
-        let path = std::path::PathBuf::from(envelope.require_str("path")?);
+        let raw = envelope.require_str("path")?;
         let text = envelope.opt_str("text").unwrap_or_default();
         let session_id = envelope.opt_str("sessionId");
         let turn_id = envelope.opt_str("turnId");
+
+        if let Some(ssh) = self.remote_for(envelope)? {
+            let sha256 = crate::ssh::ops::write(&ssh, &raw, &text)?;
+
+            return Ok(json!({ "path": raw, "sha256": sha256, "bytes": text.len() }));
+        }
+
+        let path = std::path::PathBuf::from(&raw);
 
         if let Some(session) = session_id.as_deref() {
             let name = path
@@ -933,15 +1265,16 @@ impl Daemon {
                 .unwrap_or("a file")
                 .to_string();
             /* The root comes from the session (0.7.6), so the checkpoint hashes the files that are about to
-               change rather than nothing. */
-            let root = self.root_for(envelope)?;
+               change rather than nothing - and since 0.7.13 it is the same folder whether that is a local
+               path or a path on a host, because the subject says which. */
+            let subject = self.subject(envelope)?;
 
             if let Ok(fresh) = crate::checkpoints::create(
                 self.store(),
                 session,
                 self.state.events.seq(),
                 &format!("Before editing {name}"),
-                root.as_deref(),
+                subject.snapshot(),
                 crate::checkpoints::screenshot::capture(),
             ) {
                 out.push(
@@ -967,11 +1300,28 @@ impl Daemon {
     /// the tree asks for - it knows the chat, not the directory - and it is the same rule `root_for`
     /// applies to `git.*` and `fs.search`. The answer names the directory it listed, so a caller that
     /// gave only a session id can say which folder it is looking at, and counts the names the guard hid.
+    ///
+    /// On a host the same contract is answered from the far side (`ssh::ops::list`), and the path comes
+    /// back **absolute** even when the caller named it as `~/app` - which is how the tree stops needing
+    /// to know that homes exist.
     fn fs_list(&self, envelope: &Envelope) -> Result<Value, ErrorObject> {
-        let path = match envelope.opt_str("path") {
-            Some(path) => std::path::PathBuf::from(path),
-            None => self.root_required(envelope)?,
+        let remote = self.remote_for(envelope)?;
+        let raw = match envelope.opt_str("path") {
+            Some(path) => path,
+            None => self
+                .root_required(envelope)?
+                .to_str()
+                .map(str::to_string)
+                .unwrap_or_default(),
         };
+
+        if let Some(ssh) = remote {
+            let (path, entries, hidden) = crate::ssh::ops::list(&ssh, &raw)?;
+
+            return Ok(json!({ "path": path, "entries": entries, "hidden": hidden }));
+        }
+
+        let path = std::path::PathBuf::from(&raw);
         let (entries, hidden) = crate::fs::list(&path)?;
 
         Ok(json!({
@@ -981,45 +1331,97 @@ impl Daemon {
         }))
     }
 
+    /// `fs.stat` - `{path, size, dir, sha256}` on whichever machine the path is on.
     fn fs_stat(&self, envelope: &Envelope) -> Result<Value, ErrorObject> {
-        crate::fs::stat(&std::path::PathBuf::from(envelope.require_str("path")?))
+        let raw = envelope.require_str("path")?;
+
+        if let Some(ssh) = self.remote_for(envelope)? {
+            return crate::ssh::ops::stat(&ssh, &raw);
+        }
+
+        crate::fs::stat(&std::path::PathBuf::from(&raw))
     }
 
+    /// `fs.search` - a literal search, capped, on the folder's own machine.
+    ///
+    /// Locally this is a small walk (`fs::search`) because `rg` may be missing; on a host it is `grep
+    /// -rnI --fixed-strings`, which every Linux and macOS box has. Both answer `{path, line, text}`, and
+    /// both honour the guard on the names they walk past.
     fn fs_search(&self, envelope: &Envelope) -> Result<Value, ErrorObject> {
-        let root = self.root_for(envelope)?.unwrap_or_else(|| std::path::PathBuf::from("."));
+        let remote = self.remote_for(envelope)?;
+        let root = self.root_for(envelope)?;
         let query = envelope.require_str("query")?;
         let glob = envelope.opt_str("glob");
         let limit = envelope.opt_i64("limit").unwrap_or(50).clamp(1, 500) as usize;
 
+        if let Some(ssh) = remote {
+            let root = match root {
+                Some(root) => root.to_str().map(str::to_string).unwrap_or_default(),
+                None => crate::ssh::ops::home(&ssh)?,
+            };
+
+            return Ok(json!({ "hits": crate::ssh::ops::search(&ssh, &root, &query, glob.as_deref(), limit)? }));
+        }
+
+        let root = root.unwrap_or_else(|| std::path::PathBuf::from("."));
+
         Ok(json!({ "hits": crate::fs::search(&root, &query, glob.as_deref(), limit)? }))
     }
 
+    /// `git.status` - which branch, and how many files the working tree has changed.
+    ///
+    /// Read from the **folder's own** machine, so a chat pointed at `/srv/app` on a VPS is told about
+    /// that repository and not about anything on this laptop. `("", 0)` - no badge - for a folder that
+    /// is not a repository, on either side.
     fn git_status(&self, envelope: &Envelope) -> Result<Value, ErrorObject> {
+        let remote = self.remote_for(envelope)?;
         let root = self.root_required(envelope)?;
+
+        if let Some(ssh) = remote {
+            let root = root.to_str().map(str::to_string).unwrap_or_default();
+            let (branch, dirty) = crate::ssh::ops::git_status(&ssh, &root)?;
+
+            return Ok(json!({ "branch": branch, "dirty": dirty }));
+        }
+
         let (branch, dirty) = crate::git::status(&root)?;
 
         Ok(json!({ "branch": branch, "dirty": dirty }))
     }
 
+    /// `git.diff` - the working tree's patch, from the folder's own machine.
     fn git_diff(&self, envelope: &Envelope) -> Result<Value, ErrorObject> {
+        let remote = self.remote_for(envelope)?;
         let root = self.root_required(envelope)?;
-        let patch = crate::git::diff(&root, envelope.opt_str("sha").as_deref())?;
+        let since = envelope.opt_str("sha");
+
+        if let Some(ssh) = remote {
+            let root = root.to_str().map(str::to_string).unwrap_or_default();
+
+            return Ok(json!({ "patch": crate::ssh::ops::git_diff(&ssh, &root, since.as_deref())? }));
+        }
+
+        let patch = crate::git::diff(&root, since.as_deref())?;
 
         Ok(json!({ "patch": patch }))
     }
 
     /// `git.checkpoint`: a checkpoint whose hash comes from the shadow repository's commit, and which
     /// emits the same `CheckpointSaved` event `checkpoint.create` does.
+    ///
+    /// The shadow repository is on the **folder's own machine** (0.7.13): a chat on a host gets its
+    /// history in `$HOME/.sdc/git/<project hash>` *there*, which is what makes a rewind able to restore
+    /// files that only exist on that host.
     fn git_checkpoint(&self, envelope: &Envelope, out: &dyn Notifier) -> Result<Value, ErrorObject> {
         let session_id = envelope.opt_str("sessionId").unwrap_or_else(|| "s1".into());
-        let root = self.project_root(envelope);
+        let subject = self.subject(envelope)?;
         let turn = envelope.opt_i64("turn").unwrap_or_else(|| self.state.events.seq());
         let fresh = crate::checkpoints::create(
             self.store(),
             &session_id,
             turn,
             &envelope.opt_str("title").unwrap_or_else(|| "Checkpoint".into()),
-            root.as_deref(),
+            subject.snapshot(),
             crate::checkpoints::screenshot::capture(),
         )?;
 
@@ -1035,8 +1437,17 @@ impl Daemon {
         Ok(json!({ "path": crate::git::worktree(&root, &session_id)?.display().to_string() }))
     }
 
+    /// `pty.open` - a long-running process, here or **on a host** (0.7.13).
+    ///
+    /// With a `hostId` (or a session whose folder is on one) the child is an `ssh` whose remote command
+    /// is `cd <cwd> && sh -c 'echo $$ > <pid>; exec setsid … <command> …'`, which makes the far side of
+    /// this method behave exactly like the near side: `pty.output` reads the process's output tail,
+    /// `pty.write` sends bytes to its stdin (that is what an `ssh` forwards), and `pty.close` signals its
+    /// **process group** there through the pid file rather than only closing the connection.
+    ///
+    /// It is not a terminal (`tty: false` still - no `-tt`, so no full-screen programs), and the answer
+    /// says so rather than leaving a caller to discover it.
     fn pty_open(&self, envelope: &Envelope) -> Result<Value, ErrorObject> {
-        let command = envelope.require_str("command")?;
         let args: Vec<String> = envelope
             .params
             .get("args")
@@ -1048,8 +1459,56 @@ impl Daemon {
                     .collect()
             })
             .unwrap_or_default();
+        let cwd = envelope.opt_str("cwd");
+        /*
+         * Two ways to say what to run, and the difference is who owns the line (0.7.13):
+         *
+         *  * `command` + `args` - a program SDC already knows (`cli.login` starts a CLI this way);
+         *  * `line` - a whole command as a person typed it, which is what the Terminal's `Run in
+         *    background` sends. **Here** the local platform's shell runs it (`sh -c` / `cmd /C`), and on
+         *    a host the *host's* shell does, because someone typing about a VPS means that machine's
+         *    shell. The line is guarded by `denied_reason_line` before anything is started.
+         */
+        let line = envelope.opt_str("line");
+        let (command, args) = match line.as_deref() {
+            Some(line) => {
+                if let Some(reason) = crate::pty::denied_reason_line(line) {
+                    return Err(ErrorObject::permission_denied(format!("{line}: {reason}")));
+                }
 
-        self.state.pty.open(&command, &args, envelope.opt_str("cwd").as_deref())
+                crate::pty::shell_for_line(line)
+            }
+            None => (envelope.require_str("command")?, args),
+        };
+        let display = line.clone().unwrap_or_else(|| command.clone());
+
+        let Some(ssh) = self.remote_for(envelope)? else {
+            return match line {
+                /* `command`/`args` already name the line's shell here; `display` is what a UI shows. */
+                Some(_) => self.state.pty.open(&command, &args, cwd.as_deref(), Some(&display), None),
+                None => self.state.pty.open(&command, &args, cwd.as_deref(), None, None),
+            };
+        };
+
+        /* The same deny list the local runner applies: a long-running process on somebody's server is
+           exactly where a `shutdown` would be worst. */
+        if let Some(reason) = crate::pty::denied_reason(&command, &args) {
+            return Err(ErrorObject::permission_denied(format!("{command}: {reason}")));
+        }
+
+        let pid_file = crate::ssh::ops::pid_file(&format!("pty-{}", self.state.events.seq() + 1));
+        let remote_line = match line.as_deref() {
+            Some(raw) => crate::ssh::ops::process_raw_line(raw, cwd.as_deref(), &pid_file)?,
+            None => crate::ssh::ops::process_line(&command, &args, cwd.as_deref(), &pid_file)?,
+        };
+        let mut ssh_args = ssh.base_args()?;
+
+        ssh_args.push(remote_line);
+
+        let label = format!("{display} on {}", ssh.label());
+        let opened = self.state.pty.open("ssh", &ssh_args, None, Some(&label), Some((ssh, pid_file)))?;
+
+        Ok(json!({ "ptyId": opened["ptyId"], "command": display, "tty": false, "hostId": self.host_id_for(envelope)? }))
     }
 
     fn pty_write(&self, envelope: &Envelope) -> Result<Value, ErrorObject> {
@@ -1266,7 +1725,6 @@ impl Daemon {
     /// * the run is announced as a tool call, so the turn stream shows it the way it shows an engine's
     ///   own tool calls - the app needs no second way to render "a command ran".
     fn shell_run(&self, envelope: &Envelope, out: &dyn Notifier) -> Result<Value, ErrorObject> {
-        let command = envelope.require_str("command")?;
         let args: Vec<String> = envelope
             .params
             .get("args")
@@ -1278,6 +1736,31 @@ impl Daemon {
                     .collect()
             })
             .unwrap_or_default();
+        /*
+         * A whole command **line** instead of a program plus arguments (0.7.13).
+         *
+         * This is what a terminal surface means: a person types `git status -s`, not a program and six
+         * arguments, and splitting their line in the window would be guesswork about quoting. So the
+         * platform's own shell runs it - `sh -c` here, `cmd /C` on Windows, and on a host `ops::shell`
+         * sends the very same `sh -c <line>` with the folder prepended.
+         *
+         * The line goes through `pty::denied_reason_line` first, which checks every *statement* of it and
+         * not only its first word, and the checkpoint and the tool-call pair below are unchanged: a
+         * command typed into SDC is a step in the chat, exactly like a command the engine ran.
+         */
+        let line = envelope.opt_str("line");
+        let (command, args) = match line.as_deref() {
+            Some(line) => {
+                if let Some(reason) = crate::pty::denied_reason_line(line) {
+                    return Err(ErrorObject::permission_denied(format!("{line}: {reason}")));
+                }
+
+                crate::pty::shell_for_line(line)
+            }
+            None => (envelope.require_str("command")?, args),
+        };
+        /* What the checkpoint title, the tool call and the log say: the line as typed, or the program. */
+        let display = line.unwrap_or_else(|| command.clone());
         let cwd = envelope.opt_str("cwd");
         let session_id = envelope.opt_str("sessionId");
         let turn_id = envelope.opt_str("turnId");
@@ -1286,15 +1769,70 @@ impl Daemon {
         );
         let call_id = format!("shell-{}", self.state.events.seq() + 1);
 
-        if let (Some(session), Some(root)) = (session_id.as_deref(), self.root_for(envelope)?.as_deref()) {
+        /*
+         * A `shell.run` for a chat whose folder is on a host: the command runs **there**, in that
+         * folder, with the same deny list (`pty::denied_reason`, inside `ops::shell`) - a `shutdown`
+         * that is refused on this laptop must not be allowed to reach a VPS. The tool-call pair still
+         * lands in the log, because an engine's `run` step is a step in the conversation wherever the
+         * process ran - and so does the checkpoint, whose shadow commit is on that host (0.7.13).
+         */
+        if let Some(ssh) = self.remote_for(envelope)? {
+            if let Some(session) = session_id.as_deref() {
+                let subject = self.subject(envelope)?;
+
+                if let Ok(fresh) = crate::checkpoints::create(
+                    self.store(),
+                    session,
+                    self.state.events.seq(),
+                    &format!("Before `{display}`"),
+                    subject.snapshot(),
+                    crate::checkpoints::screenshot::capture(),
+                ) {
+                    out.push(
+                        event::checkpoint_saved(session, fresh.to_event_payload()),
+                        Some(session.to_string()),
+                        turn_id.clone(),
+                    );
+                }
+            }
+
+            if let Some(turn) = turn_id.as_deref() {
+                out.push(
+                    event::tool_call_started(turn, &call_id, "run", &display, cwd.as_deref().unwrap_or(".")),
+                    session_id.clone(),
+                    turn_id.clone(),
+                );
+            }
+
+            let result = crate::ssh::ops::shell(&ssh, &command, &args, cwd.as_deref(), timeout)?;
+
+            if let Some(turn) = turn_id.as_deref() {
+                let status = if result["ok"] == Value::Bool(true) { "done" } else { "failed" };
+                let meta = format!("exit {} · {}ms", result["exitCode"], result["durationMs"].as_u64().unwrap_or(0));
+
+                out.push(
+                    event::tool_call_completed(turn, &call_id, status, &meta, None),
+                    session_id.clone(),
+                    turn_id.clone(),
+                );
+            }
+
+            return Ok(result);
+        }
+
+        if let Some(session) = session_id.as_deref() {
             let ordinal = self.state.events.seq();
+            /* The same subject a file save uses: the folder's own machine, so a `shell.run` on a host
+               checkpoints the host's files (0.7.13). A command with no session has nothing to checkpoint
+               against - see the note on `fs.write`. */
+            let subject = self.subject(envelope)?;
 
             if let Ok(fresh) = crate::checkpoints::create(
                 self.store(),
                 session,
                 ordinal,
-                &format!("Before `{command}`"),
-                Some(root),
+                &format!("Before `{display}`"),
+                subject.snapshot(),
                 crate::checkpoints::screenshot::capture(),
             ) {
                 out.push(
@@ -1307,7 +1845,7 @@ impl Daemon {
 
         if let Some(turn) = turn_id.as_deref() {
             out.push(
-                event::tool_call_started(turn, &call_id, "run", &command, cwd.as_deref().unwrap_or(".")),
+                event::tool_call_started(turn, &call_id, "run", &display, cwd.as_deref().unwrap_or(".")),
                 session_id.clone(),
                 turn_id.clone(),
             );
@@ -1366,14 +1904,15 @@ impl Daemon {
         let session_id = envelope.opt_str("sessionId").unwrap_or_else(|| "s1".into());
         let title = envelope.opt_str("title").unwrap_or_else(|| "Checkpoint".into());
         let turn = envelope.opt_i64("turn").unwrap_or_else(|| self.state.events.seq());
-        /* The session's folder when the caller does not send one - see `root_for`. */
-        let root = self.root_for(envelope)?;
+        /* The session's folder when the caller does not send one - see `root_for`, and on whichever
+           machine that folder is (`Subject`). */
+        let subject = self.subject(envelope)?;
         let fresh = crate::checkpoints::create(
             self.store(),
             &session_id,
             turn,
             &title,
-            root.as_deref(),
+            subject.snapshot(),
             crate::checkpoints::screenshot::capture(),
         )?;
 
@@ -1390,9 +1929,9 @@ impl Daemon {
         let session_id = envelope.opt_str("sessionId").unwrap_or_else(|| "s1".into());
         let turn = crate::checkpoints::turn_of(&envelope.require_str("turnId")?);
         /* The session's folder when the caller does not send one: a rewind restores the files of the chat
-           it belongs to, which is the folder that chat works in. */
-        let root = self.root_for(envelope)?;
-        let applied = crate::rewind::apply(self.store(), &session_id, turn, root.as_deref())?;
+           it belongs to, which is the folder that chat works in - locally or on a host (0.7.13). */
+        let subject = self.subject(envelope)?;
+        let applied = crate::rewind::apply(self.store(), &session_id, turn, subject.snapshot())?;
 
         out.push(
             applied.to_event_payload(&session_id),
@@ -1516,8 +2055,8 @@ impl Daemon {
             .ok_or_else(|| ErrorObject::not_found(format!("no checkpoint `{checkpoint_id}`")))?;
         let session_id = checkpoint["sessionId"].as_str().unwrap_or("s1").to_string();
         let turn = checkpoint["turn"].as_i64().unwrap_or(0);
-        let root = self.project_root(envelope);
-        let applied = crate::rewind::apply(self.store(), &session_id, turn, root.as_deref())?;
+        let subject = self.subject(envelope)?;
+        let applied = crate::rewind::apply(self.store(), &session_id, turn, subject.snapshot())?;
 
         out.push(applied.to_event_payload(&session_id), Some(session_id), None);
 
@@ -1594,6 +2133,9 @@ struct RunPlan {
     /// inside the `Prompt`, which is where every fact about the session that the engine cannot guess
     /// travels - the same reason the model and the provider are there.
     project_root: Option<String>,
+    /// The host that folder is on, when it is not this machine (0.7.13). It travels the same way and for
+    /// the same reason: `cli.rs` uses it to run the CLI there instead of here.
+    remote: Option<crate::ssh::Ssh>,
 }
 
 /// Runs one turn and pushes its events - including the checkpoint that must exist *before* a mutating
@@ -1617,6 +2159,7 @@ async fn run_turn(
         provider: plan.provider.clone(),
         history: plan.history.clone(),
         project_root: plan.project_root.clone(),
+        remote: plan.remote.clone(),
     };
     let mut answer = String::new();
     let mut checkpoint_written = false;
@@ -1654,15 +2197,20 @@ async fn run_turn(
                     let ordinal = state.events.seq();
                     /* The chat's own folder, so a checkpoint written before a mutating tool hashes the
                        files that tool is about to touch. Until 0.7.6 this passed `None`, which meant the
-                       checkpoint recorded a conversation and no files at all. */
-                    let root = plan.project_root.as_deref().map(std::path::Path::new);
+                       checkpoint recorded a conversation and no files at all - and since 0.7.13 the folder
+                       may be on a **host**, where the hash is the host's own shadow commit. */
+                    let snapshot = match (&plan.remote, plan.project_root.as_deref()) {
+                        (Some(ssh), Some(root)) => crate::checkpoints::Snapshot::Remote(ssh, root),
+                        (None, Some(root)) => crate::checkpoints::Snapshot::Local(std::path::Path::new(root)),
+                        _ => crate::checkpoints::Snapshot::Unbound,
+                    };
 
                     if let Ok(fresh) = crate::checkpoints::create(
                         &state.store,
                         &plan.session_id,
                         ordinal,
                         &format!("Before {name}"),
-                        root,
+                        snapshot,
                         crate::checkpoints::screenshot::capture(),
                     ) {
                         out.push(
@@ -1753,93 +2301,184 @@ async fn run_turn(
  * into a measurement with a sentence attached.
  * -------------------------------------------------------------------------------------------------- */
 
-/// The sentence for a probe that could not even be started.
-fn unreachable_sentence(target: &str) -> String {
-    format!("{target} was added, but the probe could not be run; check the daemon's log")
+/// One checkpoint's or one rewind's subject: the host (when the folder is not here) and the folder.
+///
+/// It exists because `checkpoints::Snapshot` borrows what it describes and a method handler owns both
+/// halves for only part of its body - see `Daemon::subject`.
+struct Subject {
+    remote: Option<crate::ssh::Ssh>,
+    root: Option<std::path::PathBuf>,
+    /// The same root as a string, for the remote case (a host's path is a `String`, not a `PathBuf`).
+    root_text: String,
 }
 
-/// Can this machine reach an SSH target? Returns the status and the sentence that goes with it.
-///
-/// Three flags carry the whole point:
-///
-/// * `BatchMode=yes` - without it `ssh` asks for a password on a stdin that has nobody attached and
-///   the daemon waits for a human who is not there;
-/// * `ConnectTimeout=8` - bounds the TCP step, so a black-holed address costs seconds rather than a
-///   stuck turn;
-/// * `StrictHostKeyChecking=accept-new` - a first connection to a fresh VPS is the normal case, and
-///   the alternative is an interactive prompt with no terminal behind it.
-///
-/// The command is `true`, i.e. "can I get a shell", which is exactly the question. It runs through
-/// `host::program::command`, so a Windows `ssh.exe` is resolved the same way every other program in
-/// this daemon is.
-fn probe_ssh(target: &crate::auth::remote::SshTarget) -> (String, String) {
-    let Some(mut command) = host::program::command("ssh") else {
-        return (
-            "offline".to_string(),
-            format!("{} was added, but `ssh` is not installed on this machine", target.user_host),
-        );
-    };
-
-    let mut args = target.port_args();
-
-    args.extend([
-        "-o".to_string(),
-        "BatchMode=yes".to_string(),
-        "-o".to_string(),
-        "ConnectTimeout=8".to_string(),
-        "-o".to_string(),
-        "StrictHostKeyChecking=accept-new".to_string(),
-        target.user_host.clone(),
-        "true".to_string(),
-    ]);
-
-    let output = command.args(&args).output();
-
-    match output {
-        Ok(output) if output.status.success() => (
-            "connected".to_string(),
-            format!("{} is reachable", target.user_host),
-        ),
-        Ok(output) => (
-            "offline".to_string(),
-            ssh_refusal(&target.user_host, &String::from_utf8_lossy(&output.stderr)),
-        ),
-        Err(reason) => (
-            "offline".to_string(),
-            format!("{} could not be contacted: {reason}", target.user_host),
-        ),
+impl Subject {
+    /// The borrowed view the checkpoint and rewind modules take.
+    fn snapshot(&self) -> crate::checkpoints::Snapshot<'_> {
+        match (&self.remote, &self.root) {
+            (Some(ssh), Some(_)) => crate::checkpoints::Snapshot::Remote(ssh, &self.root_text),
+            (None, Some(root)) => crate::checkpoints::Snapshot::Local(root),
+            _ => crate::checkpoints::Snapshot::Unbound,
+        }
     }
 }
 
-/// The sentence for an `ssh` that ran and refused - and the reason this function exists.
+/// The two steps a host still needs once its key is trusted: the one-time key install, and the probe.
 ///
-/// The common refusal by far is a host that wants a password or a one-time verification code: the
-/// daemon runs `ssh` in batch mode on purpose (there is no terminal behind this call, so a prompt
-/// would hang it), which means SDC cannot type that code, and reporting "unreachable" for a machine
-/// the user logs into from a terminal every day is both wrong and impossible to act on. The target
-/// answered; it asked for something this call cannot give.
+/// Shared by `host.add` (a host whose key was already pinned) and `host.trust` (a host a person has
+/// just decided about), because the two differ in *when* they get here and in nothing else.
 ///
-/// The way out is what it always was for a headless tool: a key. A host that accepts one connects
-/// without a prompt, and the sentence says so where the user is looking.
-fn ssh_refusal(target: &str, stderr: &str) -> String {
-    let line = first_line(stderr);
-    let lowered = line.to_lowercase();
+/// The password is spent here and only here, and this function is only ever reached with a pinned key:
+/// the probe is `ssh` with `BatchMode=yes`, which by design cannot answer a prompt, so the install is
+/// what makes every later connection passwordless. `install_key` runs on the daemon's PTY (the one
+/// terminal it has) and types the password into `ssh`'s own prompt.
+async fn finish_connection(
+    state: Arc<DaemonState>,
+    notifier: Arc<dyn Notifier>,
+    host_id: String,
+    name: String,
+    ssh: crate::ssh::Ssh,
+    password: String,
+    key_note: Option<String>,
+) {
+    let target = ssh.target.user_host.clone();
 
-    if lowered.contains("keyboard-interactive") || lowered.contains("permission denied") {
-        return format!(
-            "{target} answered, but it asks for a password or a verification code. Add this host again with its password filled in (Add a host → SSH / VPS) and SDC copies its key over once, after which every connection is passwordless - or add a key to `~/.ssh/authorized_keys` yourself."
+    if let Some(note) = &key_note {
+        notifier.push(
+            event::host_status(&host_id, &name, "vps", "connecting", None, Some(note), None),
+            None,
+            None,
         );
     }
 
-    if lowered.contains("host key verification failed") {
-        return format!(
-            "{target} answered, but its host key is not in `known_hosts` and the check cannot be answered here. Run `ssh {target}` once in a terminal to accept it."
+    if !password.is_empty() {
+        notifier.push(
+            event::host_status(
+                &host_id,
+                &name,
+                "vps",
+                "connecting",
+                None,
+                Some("copying SDC's key with that password…"),
+                None,
+            ),
+            None,
+            None,
         );
+
+        let pty = state.pty.clone();
+        let install_target = ssh.target.clone();
+
+        let installed = tokio::task::spawn_blocking(move || {
+            crate::auth::remote::install_key(&pty, &install_target, &password)
+        })
+        .await
+        .unwrap_or_else(|_| Err(ErrorObject::internal("the key install could not be run")));
+
+        match installed {
+            Ok(sentence) => {
+                /* The sentence goes on the *status* line rather than into a `Toast`. A toast is written
+                   to the event log and replayed on the next launch, so a four-line explanation became
+                   four lines of furniture over the Provider Hub every time the app started. The host's
+                   own row is where a fact about a host belongs. */
+                notifier.push(
+                    event::host_status(&host_id, &name, "vps", "connecting", None, Some(&sentence), None),
+                    None,
+                    None,
+                );
+            }
+            Err(error) => {
+                /* The install is the whole reason the password was asked for, so its failure is the
+                   host's status - and its sentence is the actionable one. */
+                let _ = state.store.upsert_host(&host_id, &name, "ssh", Some(&target), "offline", None);
+
+                notifier.push(
+                    event::host_status(&host_id, &name, "vps", "offline", None, Some(&error.message), None),
+                    None,
+                    None,
+                );
+
+                return;
+            }
+        }
     }
 
-    /* Everything else is reported in `ssh`'s own words: a timeout, a refused port, a bad key. */
-    format!("{target} did not answer: {line}")
+    let probe_target = ssh.clone();
+
+    let (status, detail) = tokio::task::spawn_blocking(move || crate::ssh::ops::probe(&probe_target))
+        .await
+        .unwrap_or_else(|_| {
+            ("offline".to_string(), format!("{target} could not be measured; check the daemon's log"))
+        });
+
+    let _ = state.store.upsert_host(&host_id, &name, "ssh", Some(&target), &status, None);
+
+    /* One event, not two. The `HostStatus` carries the sentence and the host's row renders it; the
+       `Toast` that used to accompany it was written to the log as well, so a machine that could not be
+       reached produced the same four-line paragraph again on every launch. */
+    notifier.push(
+        event::host_status(&host_id, &name, "vps", &status, None, Some(&detail), None),
+        None,
+        None,
+    );
 }
+
+/// [`finish_connection`] on its own task, for the caller that is not already in one (`host.trust`).
+fn spawn_finish(
+    state: Arc<DaemonState>,
+    notifier: Arc<dyn Notifier>,
+    host_id: String,
+    name: String,
+    ssh: crate::ssh::Ssh,
+    password: String,
+    key_note: Option<String>,
+) {
+    tokio::spawn(finish_connection(state, notifier, host_id, name, ssh, password, key_note));
+}
+
+/// The sentence for a host whose key SDC has never seen: it is a **question**, and it says so.
+///
+/// This is the layer 0.7.0 did not have. The old probe ran with `accept-new`, so the first key ever
+/// seen was trusted for ever and nobody was asked anything. The fingerprint in this sentence is what
+/// the dialog puts on screen, and `host.trust` is how it is answered.
+fn untrusted_sentence(target: &str, fingerprint: &str, key_note: Option<&str>) -> String {
+    let host = crate::ssh::hostkey::host_of(target);
+    /*
+     * The command to check the fingerprint is the one that **works on that machine**, which is not always
+     * `ssh-keyscan`: against OpenSSH 10.2 on Ubuntu, `ssh-keyscan` fails the key exchange while a real
+     * `ssh` completes it, so the sentence used to send a person to a command that prints nothing - and the
+     * one thing a pin must never do is make its own verification look broken. The handshake form is named
+     * first for that reason (it is also what SDC's own scan falls back to), and the `ssh-keyscan` form is
+     * offered as the shorter one where it negotiates.
+     */
+    let port = crate::auth::remote::parse_target(target)
+        .ok()
+        .and_then(|parsed| parsed.port)
+        .unwrap_or(22);
+
+    let base = format!(
+        "{target} is reachable, and its host key is {fingerprint} - a key SDC has never seen. Nothing has been sent to it yet: no key was offered and no password was typed. Trust the key to pin it, and SDC finishes the connection. To check that fingerprint in your own terminal, this prints the same string on any machine: `ssh -p {port} -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=check {target} true`, then `ssh-keygen -lf check`. Where `ssh-keyscan` can negotiate with that server, the shorter `ssh-keyscan -p {port} {host} | ssh-keygen -lf -` says the same thing."
+    );
+
+    match key_note {
+        Some(note) => format!("{base} One thing to fix first: {note}."),
+        None => base,
+    }
+}
+
+/// The sentence for a host presenting a key which is **not** the pinned one - the alarm.
+///
+/// Both fingerprints are named, because a person has to be able to see which is which, and there is
+/// deliberately no "continue anyway" anywhere in this daemon: that is the one thing a man-in-the-middle
+/// needs, and a machine whose key changed is a machine something happened to.
+fn changed_sentence(target: &str, pinned: &[String], seen: &[crate::ssh::hostkey::HostKey]) -> String {
+    format!(
+        "{target} presented a host key that is not the one SDC pinned for it. SDC pinned {} and it now presents {}. Nothing was sent to it. If you changed the machine's keys yourself, remove the host and add it again to see and pin the new fingerprint - and if you did not, find out what did.",
+        if pinned.is_empty() { "no key".to_string() } else { pinned.join(", ") },
+        seen.iter().map(|key| key.fingerprint.clone()).collect::<Vec<_>>().join(", ")
+    )
+}
+
 
 /// The last segment of a path: the name `Open folder` gives a project without asking the user for one.
 /// `H:\SDC` becomes `SDC`, `/home/me/app` becomes `app`, and a path with no last segment (a drive root,
@@ -1854,6 +2493,11 @@ fn folder_name(root: &str) -> String {
 }
 
 /// The first non-empty line of a program's output - a sentence, not a wall of stderr.
+///
+/// (0.7.13 moved the refusal sentences to `ssh::ops`, which reads `ssh`'s own words itself, so this
+/// helper has no caller left here. It is kept only while a later change needs it - deleting it and
+/// re-adding the same three lines twice is the alternative.)
+#[allow(dead_code)]
 fn first_line(text: &str) -> String {
     text.lines()
         .map(str::trim)
@@ -1869,16 +2513,18 @@ mod tests {
 
     /// The VPS in the bug report: `ssh` refused because the host wants a password or a one-time
     /// verification code - the user logs in from a terminal every day, so "unreachable" is the wrong
-    /// sentence and leaves them nothing to do.
+    /// sentence and leaves them nothing to do. The sentence now lives in `ssh::ops::refusal` (0.7.13),
+    /// where the same rules cover the probe, a file read and a git call; this test is the daemon-level
+    /// guarantee that the *method* still answers with it rather than with "offline".
     #[test]
     fn a_host_that_wants_a_password_is_not_reported_as_unreachable() {
-        let sentence = ssh_refusal(
+        let sentence = crate::ssh::ops::refusal(
             "root@vps.example",
-            "root@vps.example: Permission denied (keyboard-interactive,publickey).\n",
+            "root@vps.example: Permission denied (keyboard-interactive,publickey).",
         );
 
         assert!(sentence.contains("answered"), "{sentence}");
-        assert!(sentence.contains("verification code"), "{sentence}");
+        assert!(sentence.contains("password"), "{sentence}");
         assert!(sentence.contains("authorized_keys"), "{sentence}");
         assert!(!sentence.contains("did not answer"), "{sentence}");
     }
@@ -1886,13 +2532,51 @@ mod tests {
     /// Everything else keeps `ssh`'s own first line, because that is what a person can act on.
     #[test]
     fn every_other_refusal_keeps_ssh_own_words() {
-        let timed_out = ssh_refusal("h", "\nssh: connect to host h port 22: Connection timed out\nmore\n");
+        let timed_out = crate::ssh::ops::refusal("h", "\nssh: connect to host h port 22: Connection timed out\nmore\n");
 
         assert_eq!(timed_out, "h did not answer: ssh: connect to host h port 22: Connection timed out");
 
-        let host_key = ssh_refusal("h", "Host key verification failed.\n");
+        let host_key = crate::ssh::ops::refusal("h", "Host key verification failed.");
 
-        assert!(host_key.contains("known_hosts"), "{host_key}");
+        assert!(host_key.contains("host key is not the one SDC pinned"), "{host_key}");
+        assert!(host_key.contains("Add the host again"), "{host_key}");
+    }
+
+    /// The sentence a `host.add` puts on screen when the machine's key is one SDC has never seen, and
+    /// the one it puts there when that key is *wrong*. Two different questions, two different actions.
+    #[test]
+    fn a_trust_question_and_a_changed_key_are_two_different_sentences() {
+        let asked = untrusted_sentence("ssh -p 8443 root@vps.example", "SHA256:abc", None);
+
+        assert!(asked.contains("SHA256:abc"), "{asked}");
+        assert!(asked.contains("never seen"), "{asked}");
+        assert!(asked.contains("Nothing has been sent"), "{asked}");
+        /* The command a person can check the fingerprint with has to be one that **works there**: the
+           handshake form first, because `ssh-keyscan` cannot negotiate with every server (it fails on the
+           host in the bug report) - and the port from the target, not a guessed 22. */
+        assert!(asked.contains("-o StrictHostKeyChecking=accept-new"), "{asked}");
+        assert!(asked.contains("ssh-keygen -lf check"), "{asked}");
+        assert!(asked.contains("-p 8443"), "{asked}");
+        assert!(asked.contains("ssh-keyscan"), "the shorter form is offered too: {asked}");
+
+        let with_note = untrusted_sentence("root@vps.example", "SHA256:abc", Some("ssh-keygen is missing"));
+        assert!(with_note.ends_with("One thing to fix first: ssh-keygen is missing."), "{with_note}");
+
+        let alarmed = changed_sentence(
+            "root@vps.example",
+            &["SHA256:pin".to_string()],
+            &[crate::ssh::hostkey::HostKey {
+                key_type: "ssh-ed25519".into(),
+                base64: "AAAA".into(),
+                fingerprint: "SHA256:now".into(),
+                line: "root@vps.example ssh-ed25519 AAAA".into(),
+            }],
+        );
+
+        assert!(alarmed.contains("SHA256:pin"), "{alarmed}");
+        assert!(alarmed.contains("SHA256:now"), "{alarmed}");
+        assert!(alarmed.contains("Nothing was sent"), "{alarmed}");
+        assert!(!alarmed.to_lowercase().contains("continue anyway"), "{alarmed}");
     }
 
     /// The acceptance test for live streaming - the report *"akbare answare disse"*, in code.
@@ -2022,6 +2706,7 @@ mod tests {
             provider: None,
             history: Vec::new(),
             project_root: None,
+            remote: None,
         };
         let engine: Arc<dyn crate::engines::Engine> = Arc::new(Halfway {
             release: std::sync::Mutex::new(Some(gated)),

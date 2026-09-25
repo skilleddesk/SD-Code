@@ -27,6 +27,8 @@ fn prompt(text: &str) -> Prompt {
         provider: None,
         history: Vec::new(),
         project_root: None,
+        /* A live API check talks to a provider from this machine; a folder on a host is irrelevant to it. */
+        remote: None,
     }
 }
 

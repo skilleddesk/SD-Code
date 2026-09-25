@@ -15,6 +15,9 @@ import type { HostStatus, SessionState } from '../../store/sessions';
 /** `.host-status.*` - 7px, with a halo except when offline. */
 export const HOST_STATUS_CLASS: Record<HostStatus, string> = {
   connected: 'bg-state-success shadow-[0_0_0_2px_var(--green-subtle)]',
+  /* `untrusted` wears the waiting colour (0.7.13): it is not an error and it is not connected - it is a
+     question waiting for a person, which is exactly what the orange means everywhere else in the window. */
+  untrusted: 'bg-state-waiting shadow-[0_0_0_2px_var(--orange-subtle)]',
   degraded: 'bg-state-waiting shadow-[0_0_0_2px_var(--orange-subtle)]',
   offline: 'bg-state-idle',
   connecting: 'bg-accent animate-pulse-ring',
@@ -23,6 +26,7 @@ export const HOST_STATUS_CLASS: Record<HostStatus, string> = {
 /** The word next to it, for tooltips, popover rows and `aria-label`s. */
 export const HOST_STATUS_LABEL: Record<HostStatus, string> = {
   connected: strings.popover.connected,
+  untrusted: strings.popover.untrusted,
   degraded: strings.popover.degraded,
   offline: strings.popover.offline,
   connecting: strings.popover.connecting,
@@ -31,6 +35,7 @@ export const HOST_STATUS_LABEL: Record<HostStatus, string> = {
 /** The dot at the head of a host's status (the host pill's 6px dot, the status bar's 6px dot). */
 export const HOST_STATUS_DOT_CLASS: Record<HostStatus, string> = {
   connected: 'bg-state-success shadow-[0_0_6px_var(--state-success)]',
+  untrusted: 'bg-state-waiting shadow-[0_0_6px_var(--state-waiting)]',
   degraded: 'bg-state-waiting shadow-[0_0_6px_var(--state-waiting)]',
   offline: 'bg-state-idle',
   connecting: 'bg-accent animate-pulse-ring',

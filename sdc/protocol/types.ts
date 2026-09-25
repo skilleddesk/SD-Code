@@ -70,6 +70,30 @@ export type SdcpMethod =
   | 'host.status'
   | 'host.doctor'
   | 'host.add'
+  /**
+   * Trust a host's key: the answer to the question `host.add` asks (0.7.13).
+   *
+   * `host.add` scans the machine's host key and, when it is not the one SDC pinned, records the host
+   * `untrusted` and puts the fingerprint on the screen. This method pins it - after scanning **again**,
+   * so what was confirmed is what is stored - and only then may the password (when the dialog still has
+   * it) be spent on the one-time key install. See `docs/REMOTE.md` §4.
+   */
+  | 'host.trust'
+  /**
+   * What a host presents **now** (0.7.13) - the read that makes the trust question answerable again.
+   *
+   * `host.add` asks it once and pushes the answer as a `HostStatus`; a window that was not open at that
+   * moment (a relaunch, a second window) has the row and the sentence but not the *fingerprint*, and a
+   * button needs a value rather than a paragraph. The same call answers the re-pin case: a host whose key
+   * changed replies `matches: false` with the fingerprint it presents now.
+   */
+  | 'host.key'
+  /**
+   * The **public** half of the key SDC uses for hosts it adds (0.7.13) - read-only, and it never makes a
+   * key. It is here so a surface can show the one line that finishes a host SDC cannot: a machine that
+   * requires a verification code is set up by hand, and the line to paste is this key.
+   */
+  | 'ssh.key'
   | 'host.remove'
   | 'host.shutdown'
   | 'session.open'
@@ -148,8 +172,14 @@ export type SdcpMethod =
   | 'console.attach'
   | 'console.detach';
 
-/** Host lifecycle (schema `$defs.eventTypes` → `HostStatus`). */
-export type HostStatusValue = 'connected' | 'degraded' | 'offline' | 'connecting';
+/**
+ * Host lifecycle (schema `$defs.eventTypes` → `HostStatus`).
+ *
+ * `untrusted` is 0.7.13's fifth state, and it is the one that asks a question: the host answered, its
+ * key is one SDC has never seen, and nothing has been sent to it. `HostStatusEvent.hostKey` carries the
+ * fingerprint the dialog shows, and `host.trust` is the answer.
+ */
+export type HostStatusValue = 'connected' | 'untrusted' | 'degraded' | 'offline' | 'connecting';
 
 /** Provider lifecycle — `needs-auth` is the state that lights the topbar dot. */
 export type ProviderLifecycle = 'connected' | 'needs-auth' | 'available' | 'error';
@@ -260,6 +290,23 @@ export interface HostRecord {
   platform?: string | null;
   /** The `user@host` the host was added with; null for `local`. Used to refuse a duplicate. */
   target?: string | null;
+  /**
+   * The port it was added on (0.7.13), or null for the default.
+   *
+   * This field is the fix for half of the "vps connect korai jasse nah" report: 0.7.0 parsed the port,
+   * used it for the first probe and then dropped it, so every later connection to a VPS on 8443 would
+   * have gone to 22.
+   */
+  port?: number | null;
+  /**
+   * The fingerprint a person **pinned** for this host (0.7.13), or null - which is every host whose key
+   * no one has decided about yet, and every `local` host.
+   *
+   * It is the row's copy of the decision: `HostStatus.hostKey` carries the fingerprint a host is
+   * *waiting* to be trusted with, and this is the one that is already stored (`hosts.host_key`, written
+   * by `host.trust`). A window that never saw the event still knows what a host's key is.
+   */
+  hostKey?: string | null;
   sessions: SessionListItem[];
 }
 
@@ -318,6 +365,22 @@ export interface HostStatusEvent {
   sdcd?: string;
   /** Machine line for the tooltip: `macOS 15.1 · arm64`, `Debian 12 · x64`. */
   platform?: string;
+  /**
+   * What just happened to this host, in words (0.7.13).
+   *
+   * `platform` is the machine line and this is the *sentence* - `root@vps is reachable`, `copying SDC's
+   * key with that password…`, `its host key is not the one SDC pinned for it…`. Until 0.7.13 the
+   * daemon had one parameter for both jobs and the sentences travelled in `platform`, so the card that
+   * reads the machine line read "copying SDC's key…" instead.
+   */
+  detail?: string | null;
+  /**
+   * The fingerprint this host is **waiting to be trusted** with, when `status` is `untrusted`.
+   *
+   * This is the string `host.trust` takes back, and it is a field rather than a sentence to be parsed
+   * because a button needs an exact value.
+   */
+  hostKey?: string | null;
 }
 
 /**
@@ -655,7 +718,7 @@ export type SdcpEventByType = {
  */
 export interface SdcpMethodMap {
   'host.status': { params: Record<string, never>; result: HostStatusEvent };
-  'host.doctor': { params: { hostId?: string }; result: { checks: DoctorCheck[] } };
+  'host.doctor': { params: { hostId?: string; sessionId?: string }; result: { checks: DoctorCheck[] } };
   'host.add': {
     params: {
       type: 'local' | 'ssh';
@@ -675,6 +738,44 @@ export interface SdcpMethodMap {
     };
     /** `reused` is true when that `user@host` was already in the list - the row is returned as-is. */
     result: { hostId: string; reused: boolean };
+  };
+  /**
+   * The answer to the trust question `host.add` may have asked (0.7.13).
+   *
+   * `fingerprint` is the string the dialog showed (`SHA256:…`), and it is re-checked against the
+   * machine before anything is written: a key that changed between the question and the answer is
+   * refused rather than pinned. `password` is only spent **after** the pin, which is what makes the
+   * one-time key install safe on a host whose identity was never checked.
+   */
+  'host.trust': {
+    params: { hostId: string; fingerprint: string; password?: string };
+    result: { trusted: boolean; hostId: string; fingerprint: string };
+  };
+  /**
+   * The scan `host.add` does once, as a call (0.7.13).
+   *
+   * `matches` is `null` for a host SDC has no pin for (nothing to match against), `true` when the key is
+   * the pinned one, and `false` when it is **not** - which is the case a `Re-pin` button confirms and the
+   * case nothing in this daemon offers to "continue anyway" through.
+   */
+  'host.key': {
+    params: { hostId: string };
+    result: {
+      hostId: string;
+      hostKey: string;
+      keyType: string;
+      pinned: boolean;
+      matches: boolean | null;
+      pinnedKey: string | null;
+    };
+  };
+  /**
+   * SDC's own **public** key (`~/.ssh/sdc_ed25519.pub`), for the surfaces that have to show it - the
+   * `authorized_keys` line a person pastes when a host requires a verification code (0.7.13).
+   */
+  'ssh.key': {
+    params: Record<string, never>;
+    result: { publicKey: string | null; path: string | null; exists: boolean };
   };
   /** The row, its sessions and their turns go. `local` is refused: it is the machine `sdcd` runs on. */
   'host.remove': {
@@ -740,7 +841,8 @@ export interface SdcpMethodMap {
   };
 
   'fs.read': {
-    params: { path: string };
+    /** `hostId` names the machine the path is on (0.7.13); absent means this one. */
+    params: { path: string; hostId?: string };
     result: {
       path: string;
       text: string;
@@ -752,7 +854,7 @@ export interface SdcpMethodMap {
     };
   };
   'fs.write': {
-    params: { path: string; text: string; sessionId?: string; turnId?: string };
+    params: { path: string; text: string; sessionId?: string; turnId?: string; hostId?: string };
     /**
      * `bytes` is what was written. There is no `checkpointId` here: the checkpoint a Save takes (P5) arrives as
      * a `CheckpointSaved` event, which is where the Time Machine reads it from - and the field this type used to
@@ -761,17 +863,29 @@ export interface SdcpMethodMap {
     result: { path: string; sha256: string; bytes: number };
   };
   'fs.list': {
-    /** `path` may be omitted since 0.7.7: the **session's** folder is listed then. */
-    params: { path?: string; sessionId?: string };
+    /**
+     * `path` may be omitted since 0.7.7: the **session's** folder is listed then.
+     *
+     * Since 0.7.13 `hostId` may name another machine, and the same answer comes back from it - absolute
+     * paths, the guard's hidden count, one level. The app sends the chat's host so a tree on a VPS is
+     * the same tree the sidebar already draws.
+     */
+    params: { path?: string; sessionId?: string; hostId?: string };
     result: { path: string; entries: FsEntry[]; hidden: number };
   };
-  'fs.stat': { params: { path: string }; result: { size: number; sha256: string } };
-  'fs.search': { params: { query: string; glob?: string }; result: { hits: FsHit[] } };
+  'fs.stat': { params: { path: string; hostId?: string }; result: { size: number; sha256: string } };
+  'fs.search': {
+    params: { query: string; glob?: string; root?: string; sessionId?: string; hostId?: string };
+    result: { hits: FsHit[] };
+  };
 
-  'git.status': { params: { sessionId?: string; root?: string }; result: { branch: string; dirty: number } };
+  'git.status': {
+    params: { sessionId?: string; root?: string; hostId?: string };
+    result: { branch: string; dirty: number };
+  };
   'git.diff': {
     /** Either a session (whose folder is used) or a `root`; the daemon refuses both-missing in words. */
-    params: { sessionId?: string; root?: string; checkpointId?: string; sha?: string };
+    params: { sessionId?: string; root?: string; checkpointId?: string; sha?: string; hostId?: string };
     result: { patch: string };
   };
   'git.checkpoint': {
@@ -780,7 +894,29 @@ export interface SdcpMethodMap {
   };
   'git.worktree': { params: { sessionId: string }; result: { path: string } };
 
-  'pty.open': { params: { command: string; args: string[] }; result: { ptyId: string } };
+  /**
+   * `pty.open` starts a long-running process, **here or on a host** (0.7.13).
+   *
+   * With `hostId` the daemon's child is an `ssh` and the process runs on that machine: `pty.output`
+   * reads its output tail, `pty.write` reaches its stdin, and `pty.close` signals its **process group**
+   * there. `tty` is false either way - there is no pty, so a full-screen program is not this.
+   *
+   * `line` is a whole command as a person typed it (what the Terminal's `Run in background` sends) and
+   * `command` + `args` is a program SDC already knows (`cli.login`). With `line`, the local platform's
+   * shell runs it here and the **host's** shell runs it there - and the line is checked against the deny
+   * list before it starts, statement by statement. One of the two forms is required.
+   */
+  'pty.open': {
+    params: {
+      command?: string;
+      args?: string[];
+      line?: string;
+      cwd?: string;
+      sessionId?: string;
+      hostId?: string;
+    };
+    result: { ptyId: string; command: string; tty: boolean; hostId?: string };
+  };
   'pty.write': { params: { ptyId: string; data: string }; result: Record<string, never> };
   'pty.resize': {
     params: { ptyId: string; cols: number; rows: number };
@@ -885,13 +1021,26 @@ export interface SdcpMethodMap {
    */
   'shell.run': {
     params: {
-      command: string;
+      /** A program with `args` - **or** `line`, which is the whole command as a person typed it. */
+      command?: string;
       args?: string[];
+      /**
+       * A whole command line, run by the platform's own shell (`sh -c` here, `cmd /C` on Windows, the
+       * remote shell on a host) - what the Terminal tab sends (0.7.13). Every *statement* of it is
+       * checked against the deny list, so `git status && shutdown /s` is refused like a bare
+       * `shutdown /s` would be. One of `command` and `line` is required.
+       */
+      line?: string;
       cwd?: string;
       /** Given a session and a `root`, a checkpoint is written before the command runs. */
       sessionId?: string;
       turnId?: string;
       root?: string;
+      /**
+       * The machine the command runs on (0.7.13). Given a host, `cwd` and `command` are the *host's*
+       * folder and program, the deny list still applies, and the answer keeps the same shape.
+       */
+      hostId?: string;
       /** How long the command may run; the default is 120 s. */
       timeoutMs?: number;
     };

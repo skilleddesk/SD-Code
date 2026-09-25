@@ -38,6 +38,9 @@ and the protocol definition that connects them.
 | `design/ui-prototype.html` | Working UI prototype — the UI source of truth. |
 | `design/tokens.json` | Design tokens extracted from the prototype CSS. |
 | `protocol/README.md` | What SDCP is, and the rules this directory will follow. |
+| `docs/REMOTE.md` | How a host is reached: the Remote-SSH research, the eight layers of 0.7.13 with the file each lives in, the seven security rules, the Terminal surface and what it is not, and what is deliberately absent — each with the condition that would change the answer. |
+| `docs/SSH-CONNECT.md` | The same chain **operationally**: every step's real code, the exact `ssh` command to run by hand for each layer, and the failure table (`did not answer` / `did not present a host key` / `does not accept SDC's key yet`) with its cause and its fix. Start here when a VPS does not connect. |
+| `docs/ROADMAP-v4.md` | **Proposal, awaiting approval** — the v4 direction: the gap analysis against the owner's asks, seven architecture decisions with their proof, the phased plan (SDC Agent, Verify pipeline, connected-only models), and the UI proposal drawn in `design/ui-proposal-v4.html`. |
 
 ## Layout
 
@@ -61,10 +64,11 @@ sdc/
 │   └── index.html           Vite entry document
 ├── sdcd/                    Host daemon — a separate Rust binary (spec §3.1)
 │   ├── src/main.rs
+│   ├── src/ssh/             reaching another machine (0.7.13): mod.rs (flags, run), hostkey.rs (pins), ops.rs (its files)
 │   └── Cargo.toml
 ├── protocol/                SDCP schema (JSON Schema + generated TS types) — README only in STEP 1
 ├── design/                  tokens.json (authoritative), ui-prototype.html
-├── docs/                    MASTER_SPEC.md
+├── docs/                    MASTER_SPEC.md, REMOTE.md, RELEASE.md
 ├── package.json             workspace root: scripts that fan out to app/ and sdcd/
 ├── pnpm-workspace.yaml      the workspace definition
 └── README.md
@@ -115,9 +119,9 @@ Run these from the repository root unless noted. `pnpm --filter app …` and
 | `pnpm typecheck` | Strict TypeScript check of `src/` and of the build tooling. |
 | `pnpm lint` | ESLint over the frontend. |
 | `pnpm sdcd:run` | Build and run the host daemon (`cargo run` in `sdcd/`) — serves SDCP on `127.0.0.1:7811`. |
-| `pnpm test` | Vitest over the frontend: the reducer, the command registry, the store-selector rule (23 tests). |
+| `pnpm test` | Vitest over the frontend: the reducer, the intents (the daemon-facing half, including the Terminal's), the command registry and the store-selector rule (91 tests). |
 | `pnpm --filter @sdc/app smoke` | **Opens the built `dist` in a real browser** and fails unless the app mounted, the shell is in the page, there is text to read and nothing threw. No dependencies, no CDP; `skipped` on a machine with no Chromium-family browser, required in CI. |
-| `pnpm sdcd:test` | `cargo test` in `sdcd/`: 100 tests — 92 unit, 3 daemon-lifecycle (real binary: `host.shutdown`, `--idle-exit`, hand-started stays) and 5 VCR. |
+| `pnpm sdcd:test` | `cargo test` in `sdcd/`: 192 tests — 175 unit, 9 daemon-lifecycle (real binary: `host.shutdown`, `--idle-exit`, hand-started stays), 2 streaming and 6 VCR — plus 2 `--ignored` live tests that need a real provider. |
 | `pnpm daemon:package` | Build `sdcd` in release and stage it as the sidecar the installer bundles. |
 | `pnpm rust:fmt` / `pnpm rust:clippy` | Format / lint the daemon crate. |
 
@@ -327,11 +331,24 @@ it is reached.
   dispatch table**, and it runs in CI - which is what the missing generator was for. Turning the folder into a
   workspace package is still open, and it is now a packaging question rather than a safety one: the check is
   what makes the two unable to disagree, and a package would only change who imports what.
-* **Federated/remote hosts beyond one SSH target.** `host.add` records an SSH host, says out loud
-  whether this machine can `ssh` to it, and `host.remove` takes it back off the list along with its
-  chats; the app's switcher works. A second daemon on the far side of a tunnel is reached with
-  `VITE_SDCP_URL` and is not yet provisioned by the app, so an added host is a *record* of a machine
-  rather than a second `sdcd` to talk to.
+* **A second `sdcd` on a host over an `ssh -L` tunnel - an alternative, not a missing layer.** 0.7.13's remote
+  layer is **exec-based**: every operation against a host is an `ssh` command (`docs/REMOTE.md`), including the
+  engines (`cd <folder> && sh -c 'mkdir -p …; echo $$ > <pid>; exec setsid … <cli> …'`, with a **process group**
+  so a cancel kills the tree and not one process), the checkpoints (a shadow git repository at
+  `$HOME/.sdc/git/<hash>` **on that host**), long-running processes (`pty.open { line, hostId }` — an `ssh`
+  whose remote process writes the same kind of pid file, so output, stdin and cancellation all work), and
+  `host.doctor`, which answers about the host itself. The tunnel design - a Linux `sdcd` copied to each host,
+  reached over a forwarded port - would buy a far-side process to watch files, hold a PTY and cache state; of
+  those, the PTY is now done over exec, file watching is a feature this window does not have *locally* either,
+  and the cost is an artifact per architecture, a listening port and a token to provision, and a second event
+  log to reconcile with this one. SDCP's `ws` transport (`VITE_SDCP_URL`) is still there for it, so it is a
+  design decision with a stated condition to revisit rather than work left undone. See `sdc/docs/REMOTE.md` §5
+  for the trade-off as a table.
+* **The engines' CLIs still have to be installed on the host.** A turn there runs `claude`/`codex`/`gemini` on
+  that machine, so a host without them answers `not installed` in its doctor row and a turn fails in the CLI's
+  own words. SDC does not install anything on somebody else's server - but the row's `Install` button opens the
+  **Terminal on that host**, so the person runs the installer themselves, in that folder, with the checkpoint,
+  the deny list and the tool-call record every other command gets.
 * **Editing is one file at a time, and there is no editor.** Since 0.7.7 the sidebar shows the folder a chat
   works in (`fs.list`, lazily, with the guard's hidden names counted) and a click opens a file in the right
   panel's Preview (`fs.read`, capped at a megabyte and saying so); since 0.7.9 that file can be **edited and
@@ -351,6 +368,9 @@ it is reached.
 3. A screen-reader pass over the palette, the Permission modal and the Time Machine tab - the automated
    audit covers the screen the app opens on, and this is the part that needs a person.
 4. `protocol/` as a workspace package, now that `protocol/check.mjs` is what keeps it honest.
-5. A provisioned remote host: `host.add` records an `ssh` target and the app can `ssh` to it, but a second
-   `sdcd` on the far side of a tunnel is still reached by hand (`VITE_SDCP_URL`).
+5. A **terminal emulator**: the Terminal tab (0.7.13) runs commands, reads long-running output and stops a
+   process group, but it is not a pty (`tty: false` in every answer), so a full-screen program - `vim`,
+   `top`, `htop` - has nowhere to draw. That needs `-tt` plus an emulator in the window, a dependency and a
+   design of its own; `pty.write` is already in the daemon, so a stdin *box* for a running process is the
+   smaller step in the same direction.
 6. Code signing for the installers, which needs certificates this repository does not hold.

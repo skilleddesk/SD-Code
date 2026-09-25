@@ -1,0 +1,545 @@
+<title>SDC v4 UI প্রস্তাব</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Noto+Sans+Bengali:wght@400;500;600;700&display=swap">
+<style>
+  /* ————— SDC design tokens (design/tokens.json) — dark first, exactly as the product ————— */
+  :root {
+    --bg-base:#0A0B0F; --bg-raised:#101218; --bg-overlay:#161921; --bg-input:#06070A;
+    --bg-hover:#1A1E27; --bg-active:#20252F; --bg-glass:rgba(22,25,33,.85);
+    --border-subtle:#1B1F29; --border-default:#282E3B; --border-strong:#3A4252; --border-focus:#5B9CFF;
+    --text-primary:#E9EEF5; --text-secondary:#96A1B3; --text-muted:#5C677A; --text-faint:#3A4354;
+    --accent:#5B9CFF; --accent-hover:#7CB0FF; --accent-subtle:rgba(91,156,255,.10); --accent-glow:rgba(91,156,255,.35);
+    --purple:#A78BFA; --purple-subtle:rgba(167,139,250,.12);
+    --green:#3DD68C; --green-subtle:rgba(61,214,140,.12);
+    --orange:#F5A524; --orange-subtle:rgba(245,165,36,.12);
+    --red:#F25E68; --red-subtle:rgba(242,94,104,.12);
+    --diff-add:#6EE7A8; --diff-remove:#FF8A91;
+    --shadow-md:0 6px 20px rgba(0,0,0,.5); --shadow-xl:0 32px 80px rgba(0,0,0,.8);
+    --r-xs:3px; --r-sm:5px; --r-md:7px; --r-lg:10px; --r-full:9999px;
+    --font-ui:'Inter','Noto Sans Bengali','Nirmala UI',system-ui,sans-serif;
+    --font-mono:'JetBrains Mono',ui-monospace,'Cascadia Mono',Consolas,monospace;
+    color-scheme: dark;
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --bg-base:#F6F8FC; --bg-raised:#FFFFFF; --bg-overlay:#FFFFFF; --bg-input:#FFFFFF;
+      --bg-hover:#EDF1F8; --bg-active:#E1E8F3; --bg-glass:rgba(255,255,255,.85);
+      --border-subtle:#E4E9F2; --border-default:#CFD7E4; --border-strong:#A9B5CA; --border-focus:#2C7BFF;
+      --text-primary:#111827; --text-secondary:#4E5A72; --text-muted:#8A95A9; --text-faint:#C5CDDB;
+      --accent:#2C7BFF; --accent-hover:#1B6CE8; --accent-subtle:rgba(44,123,255,.08); --accent-glow:rgba(44,123,255,.25);
+      --purple:#7C3AED; --purple-subtle:rgba(124,58,237,.08);
+      --green:#16A34A; --green-subtle:rgba(22,163,74,.08);
+      --orange:#D97706; --orange-subtle:rgba(217,119,6,.08);
+      --red:#DC2626; --red-subtle:rgba(220,38,38,.08);
+      --diff-add:#15803D; --diff-remove:#B91C1C;
+      --shadow-md:0 6px 20px rgba(17,24,39,.10); --shadow-xl:0 32px 80px rgba(17,24,39,.18);
+      color-scheme: light;
+    }
+  }
+  :root[data-theme="light"] {
+    --bg-base:#F6F8FC; --bg-raised:#FFFFFF; --bg-overlay:#FFFFFF; --bg-input:#FFFFFF;
+    --bg-hover:#EDF1F8; --bg-active:#E1E8F3; --bg-glass:rgba(255,255,255,.85);
+    --border-subtle:#E4E9F2; --border-default:#CFD7E4; --border-strong:#A9B5CA; --border-focus:#2C7BFF;
+    --text-primary:#111827; --text-secondary:#4E5A72; --text-muted:#8A95A9; --text-faint:#C5CDDB;
+    --accent:#2C7BFF; --accent-hover:#1B6CE8; --accent-subtle:rgba(44,123,255,.08); --accent-glow:rgba(44,123,255,.25);
+    --purple:#7C3AED; --purple-subtle:rgba(124,58,237,.08);
+    --green:#16A34A; --green-subtle:rgba(22,163,74,.08);
+    --orange:#D97706; --orange-subtle:rgba(217,119,6,.08);
+    --red:#DC2626; --red-subtle:rgba(220,38,38,.08);
+    --diff-add:#15803D; --diff-remove:#B91C1C;
+    --shadow-md:0 6px 20px rgba(17,24,39,.10); --shadow-xl:0 32px 80px rgba(17,24,39,.18);
+    color-scheme: light;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin:0; background:var(--bg-base); color:var(--text-primary);
+    font-family:var(--font-ui); font-size:14px; line-height:1.6;
+    padding-inline:16px; padding-block:0 48px;
+  }
+  .page { max-width:1240px; margin:0 auto; }
+
+  /* ————— intro ————— */
+  .intro { padding-block:40px 24px; }
+  .intro .eyebrow { font-size:11px; letter-spacing:.14em; text-transform:uppercase; color:var(--accent); font-weight:600; }
+  .intro h1 { font-size:26px; font-weight:700; margin:6px 0 8px; text-wrap:balance; }
+  .intro p { max-width:62ch; color:var(--text-secondary); margin:0 0 4px; }
+  .intro .meta { font-family:var(--font-mono); font-size:11px; color:var(--text-muted); margin-top:10px; }
+  .legend { display:flex; flex-wrap:wrap; gap:8px; margin-top:16px; }
+  .legend a { display:inline-flex; align-items:center; gap:7px; padding:5px 11px 5px 6px; border:1px solid var(--border-default);
+    border-radius:var(--r-full); background:var(--bg-raised); color:var(--text-secondary); text-decoration:none; font-size:12px; }
+  .legend a:hover { border-color:var(--border-focus); color:var(--text-primary); }
+
+  /* numbered callout chip — sits inside each proposed element */
+  .co { display:inline-flex; align-items:center; justify-content:center; width:18px; height:18px; flex:none;
+    border-radius:var(--r-full); background:var(--accent); color:#fff; font-size:11px; font-weight:700;
+    text-decoration:none; line-height:1; box-shadow:0 0 0 3px var(--accent-glow); }
+  .co:hover { background:var(--accent-hover); }
+
+  /* ————— the mocked window ————— */
+  .window-scroll { overflow-x:auto; margin-block:8px 12px; }
+  .window { min-width:1180px; max-width:1240px; border:1px solid var(--border-strong); border-radius:var(--r-lg);
+    overflow:hidden; background:var(--bg-base); box-shadow:var(--shadow-xl); font-size:12.5px; }
+  .mock-note { font-size:12px; color:var(--text-muted); margin:0 0 28px; }
+
+  /* topbar 46px */
+  .topbar { height:46px; display:flex; align-items:center; gap:10px; padding-inline:12px;
+    background:var(--bg-raised); border-bottom:1px solid var(--border-subtle); }
+  .logo { display:flex; align-items:center; gap:8px; font-weight:700; font-size:13px; letter-spacing:.02em; }
+  .logo .mark { width:18px; height:18px; border-radius:var(--r-sm); background:linear-gradient(135deg,var(--accent),var(--purple)); }
+  .hostpill { display:flex; align-items:center; gap:7px; padding:4px 10px; border:1px solid var(--border-default);
+    border-radius:var(--r-full); background:var(--bg-overlay); font-family:var(--font-mono); font-size:11px; color:var(--text-secondary); }
+  .dot { width:7px; height:7px; border-radius:var(--r-full); flex:none; }
+  .dot.g { background:var(--green); } .dot.b { background:var(--accent); } .dot.o { background:var(--orange); }
+  .top-spacer { flex:1; }
+  .iconbtn { width:26px; height:26px; display:grid; place-items:center; border-radius:var(--r-sm);
+    color:var(--text-muted); border:1px solid transparent; font-size:13px; }
+  .iconbtn:hover { background:var(--bg-hover); color:var(--text-primary); }
+  .seg { display:flex; border:1px solid var(--border-default); border-radius:var(--r-md); overflow:hidden; background:var(--bg-overlay); }
+  .seg span { padding:4px 12px; font-size:11.5px; color:var(--text-muted); font-weight:500; }
+  .seg span.on { background:var(--bg-active); color:var(--text-primary); }
+
+  /* three columns */
+  .cols { display:grid; grid-template-columns:240px 1fr 340px; min-height:640px; }
+
+  /* sidebar */
+  .sidebar { border-right:1px solid var(--border-subtle); background:var(--bg-raised); padding:10px; display:flex; flex-direction:column; gap:4px; }
+  .sb-search { display:flex; align-items:center; gap:8px; padding:6px 10px; border:1px solid var(--border-default);
+    border-radius:var(--r-md); background:var(--bg-input); color:var(--text-faint); font-size:12px; margin-bottom:8px; }
+  .sb-group { font-size:10px; letter-spacing:.12em; text-transform:uppercase; color:var(--text-muted);
+    font-weight:600; padding:10px 6px 4px; display:flex; align-items:center; gap:7px; }
+  .sb-row { display:flex; align-items:center; gap:8px; padding:6px 8px; border-radius:var(--r-md); color:var(--text-secondary); }
+  .sb-row .t { flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .sb-row.on { background:var(--accent-subtle); color:var(--text-primary); box-shadow:inset 2px 0 0 var(--accent); }
+  .sb-row .st { font-family:var(--font-mono); font-size:10px; color:var(--text-muted); }
+  .files { margin-top:auto; border-top:1px solid var(--border-subtle); padding-top:8px; }
+  .f-row { display:flex; align-items:center; gap:8px; padding:3.5px 8px; font-family:var(--font-mono); font-size:11px; color:var(--text-secondary); }
+  .f-row .badge { margin-left:auto; font-size:10px; color:var(--orange); }
+  .f-note { padding:4px 8px 0; font-size:10.5px; color:var(--text-faint); }
+
+  /* main column */
+  .main { display:flex; flex-direction:column; background:var(--bg-base); min-width:0; }
+  .tabstrip { display:flex; align-items:center; gap:2px; padding:6px 10px 0; border-bottom:1px solid var(--border-subtle); background:var(--bg-raised); }
+  .tab { display:flex; align-items:center; gap:8px; padding:7px 14px; border:1px solid var(--border-subtle); border-bottom:none;
+    border-radius:var(--r-md) var(--r-md) 0 0; font-size:12px; color:var(--text-muted); background:var(--bg-overlay); }
+  .tab.on { background:var(--bg-base); color:var(--text-primary); border-color:var(--border-default); position:relative; top:1px; }
+  .tab .plus { color:var(--text-faint); padding-inline:6px; }
+
+  /* stream with checkpoint rail */
+  .stream { flex:1; padding:16px 18px 8px 10px; display:flex; flex-direction:column; gap:10px; position:relative; }
+  .row2 { display:grid; grid-template-columns:26px minmax(0,1fr); gap:0 10px; position:relative; }
+  .rail { position:relative; }
+  .rail::before { content:""; position:absolute; left:12px; top:-6px; bottom:-16px; width:1px; background:var(--border-subtle); }
+  .row2:first-child .rail::before { top:10px; }
+  .row2:last-of-type .rail::before { bottom:auto; height:calc(100% + 6px); }
+  .rail .cpdot { position:absolute; left:7px; top:14px; width:11px; height:11px; border-radius:var(--r-full);
+    background:var(--bg-base); border:2px solid var(--text-faint); }
+  .rail .cpdot.cp { border-color:var(--green); box-shadow:0 0 0 3px var(--green-subtle); }
+  .rail .cpdot.run { border-color:var(--accent); }
+
+  .umsg { justify-self:end; max-width:78%; background:var(--accent-subtle); border:1px solid var(--border-default);
+    border-radius:var(--r-lg); padding:9px 13px; color:var(--text-primary); }
+
+  .card { background:var(--bg-raised); border:1px solid var(--border-subtle); border-radius:var(--r-md); overflow:hidden; }
+  .card-h { display:flex; align-items:center; gap:9px; padding:8px 12px; font-size:12px; color:var(--text-secondary); }
+  .card-h .name { font-weight:600; color:var(--text-primary); }
+  .card-h .mono { font-family:var(--font-mono); font-size:11px; }
+  .card-h .right { margin-left:auto; display:flex; align-items:center; gap:8px; }
+  .ok { color:var(--green); font-weight:600; }
+  .spin { width:11px; height:11px; border-radius:var(--r-full); border:2px solid var(--accent-subtle);
+    border-top-color:var(--accent); animation:spin 1s linear infinite; flex:none; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+
+  /* plan card (#5) */
+  .plan .card-h { background:var(--purple-subtle); }
+  .plan-steps { padding:4px 12px 10px; display:flex; flex-direction:column; gap:5px; }
+  .step { display:flex; align-items:center; gap:9px; font-size:12px; color:var(--text-secondary); }
+  .step .s { width:14px; text-align:center; font-weight:700; flex:none; }
+  .step.done .s { color:var(--green); } .step.done { color:var(--text-muted); text-decoration:line-through; text-decoration-color:var(--border-strong); }
+  .step.run { color:var(--text-primary); } .step.wait .s { color:var(--text-faint); }
+
+  /* thinking (#3) */
+  .think { border-left:2px solid var(--purple); }
+  .think .card-h { color:var(--purple); font-weight:600; }
+  .think-body { padding:0 12px 10px; font-style:italic; color:var(--text-muted); font-size:12px; max-width:70ch; }
+  .caret { display:inline-block; width:7px; height:13px; background:var(--purple); vertical-align:-2px; animation:blink 1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity:0; } }
+
+  .diffchip { font-family:var(--font-mono); font-size:11px; }
+  .diffchip .a { color:var(--diff-add); } .diffchip .r { color:var(--diff-remove); }
+  .cp-tag { font-family:var(--font-mono); font-size:10px; color:var(--green); background:var(--green-subtle);
+    border-radius:var(--r-xs); padding:1.5px 6px; }
+  .out { margin:0; padding:8px 12px 10px; font-family:var(--font-mono); font-size:11px; color:var(--text-secondary);
+    background:var(--bg-input); border-top:1px solid var(--border-subtle); overflow-x:auto; }
+  .out .dim { color:var(--text-muted); }
+
+  /* turn footer (#6) */
+  .tfoot { display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:2px 2px 0; }
+  .chip { display:inline-flex; align-items:center; gap:7px; padding:3.5px 10px; border:1px solid var(--border-default);
+    border-radius:var(--r-full); font-size:11px; color:var(--text-secondary); background:var(--bg-raised); }
+  .chip.v { border-color:var(--green); color:var(--green); background:var(--green-subtle); }
+  .chip .n { font-weight:600; }
+
+  /* composer */
+  .composer { border-top:1px solid var(--border-subtle); background:var(--bg-raised); padding:10px 14px 12px; position:relative; }
+  .modeseg { display:inline-flex; border:1px solid var(--border-default); border-radius:var(--r-md); overflow:hidden; margin-bottom:8px; }
+  .modeseg span { padding:4px 14px; font-size:11.5px; color:var(--text-muted); font-weight:500; background:var(--bg-overlay); }
+  .modeseg span.on { background:var(--accent); color:#fff; }
+  .inputbox { border:1px solid var(--border-default); border-radius:var(--r-md); background:var(--bg-input);
+    padding:10px 12px; color:var(--text-faint); min-height:44px; }
+  .c-row { display:flex; align-items:center; gap:10px; margin-top:8px; flex-wrap:wrap; }
+  .modelpill { display:inline-flex; align-items:center; gap:8px; padding:5px 12px; border:1px solid var(--border-focus);
+    border-radius:var(--r-full); background:var(--accent-subtle); font-size:12px; color:var(--text-primary); font-weight:500; }
+  .ticker { font-family:var(--font-mono); font-size:11px; color:var(--text-muted); }
+  .stopbtn { margin-left:auto; display:inline-flex; align-items:center; gap:7px; padding:5px 14px; border:1px solid var(--red);
+    color:var(--red); background:var(--red-subtle); border-radius:var(--r-md); font-size:12px; font-weight:600; }
+
+  /* model dropdown, drawn open (#2) */
+  .dropdown { position:absolute; bottom:96px; left:14px; width:330px; background:var(--bg-overlay);
+    border:1px solid var(--border-strong); border-radius:var(--r-lg); box-shadow:var(--shadow-xl); overflow:hidden; z-index:3; }
+  .dd-h { display:flex; align-items:center; gap:8px; padding:9px 13px 4px; font-size:10px; letter-spacing:.12em;
+    text-transform:uppercase; color:var(--text-muted); font-weight:600; }
+  .dd-h .how { margin-left:auto; letter-spacing:0; text-transform:none; font-family:var(--font-mono); font-size:10px; color:var(--green); }
+  .dd-row { display:flex; align-items:center; gap:10px; padding:7px 13px; font-size:12.5px; color:var(--text-secondary); }
+  .dd-row:hover { background:var(--bg-hover); }
+  .dd-row.on { background:var(--accent-subtle); color:var(--text-primary); }
+  .dd-row .d { font-size:11px; color:var(--text-muted); margin-left:auto; }
+  .dd-row .ck { color:var(--accent); font-weight:700; }
+  .dd-older { padding:5px 13px 9px; font-size:11.5px; color:var(--text-faint); }
+  .dd-foot { border-top:1px solid var(--border-subtle); padding:8px 13px; font-size:11.5px; color:var(--text-muted); background:var(--bg-raised); }
+  .dd-foot b { color:var(--accent); font-weight:600; }
+
+  /* right panel (#7) */
+  .right { border-left:1px solid var(--border-subtle); background:var(--bg-raised); display:flex; flex-direction:column; min-width:0; }
+  .r-tabs { display:flex; gap:2px; padding:8px 10px 0; border-bottom:1px solid var(--border-subtle); font-size:11px; }
+  .r-tab { padding:6px 9px; color:var(--text-muted); border-radius:var(--r-sm) var(--r-sm) 0 0; white-space:nowrap; }
+  .r-tab.on { color:var(--text-primary); background:var(--bg-base); border:1px solid var(--border-default); border-bottom:none; position:relative; top:1px; font-weight:600; }
+  .r-body { flex:1; padding:12px; display:flex; flex-direction:column; gap:8px; background:var(--bg-base); }
+  .r-label { display:flex; align-items:center; gap:8px; font-size:10px; letter-spacing:.12em; text-transform:uppercase; color:var(--text-muted); font-weight:600; padding-top:4px; }
+  .vrow { display:flex; align-items:center; gap:10px; border:1px solid var(--border-subtle); background:var(--bg-raised);
+    border-radius:var(--r-md); padding:8px 12px; font-family:var(--font-mono); font-size:11.5px; }
+  .vrow .nm { flex:1; color:var(--text-primary); }
+  .vrow .tm { color:var(--text-muted); font-size:10.5px; }
+  .vrow .p { color:var(--green); font-weight:700; } .vrow .f { color:var(--red); font-weight:700; }
+  .verdict { border:1px solid var(--border-default); border-radius:var(--r-md); background:var(--bg-raised); overflow:hidden; }
+  .verdict-h { display:flex; align-items:center; gap:9px; padding:9px 12px; font-size:12px; border-bottom:1px solid var(--border-subtle); }
+  .verdict-h .eng { font-weight:600; }
+  .pill-i { margin-left:auto; font-size:10.5px; font-weight:600; color:var(--orange); background:var(--orange-subtle);
+    border-radius:var(--r-full); padding:2px 9px; }
+  .issue { padding:10px 12px; display:flex; flex-direction:column; gap:7px; }
+  .issue .loc { font-family:var(--font-mono); font-size:11px; color:var(--accent); }
+  .issue .msg { font-size:12px; color:var(--text-secondary); }
+  .fixbtn { align-self:flex-start; font-size:11px; font-weight:600; color:var(--accent); border:1px solid var(--border-focus);
+    background:var(--accent-subtle); border-radius:var(--r-sm); padding:4px 10px; }
+  .runv { margin-top:auto; text-align:center; background:var(--accent); color:#fff; font-weight:600; font-size:12.5px;
+    border-radius:var(--r-md); padding:9px; }
+
+  /* status bar 30px */
+  .statusbar { height:30px; display:flex; align-items:center; gap:16px; padding-inline:14px; background:var(--bg-raised);
+    border-top:1px solid var(--border-subtle); font-family:var(--font-mono); font-size:10.5px; color:var(--text-muted); }
+  .statusbar .sseg { display:flex; align-items:center; gap:6px; }
+  .statusbar .end { margin-left:auto; }
+
+  /* ————— explanation sections ————— */
+  .sections { display:flex; flex-direction:column; gap:14px; margin-top:36px; }
+  .sec { border:1px solid var(--border-subtle); border-radius:var(--r-lg); background:var(--bg-raised); padding:18px 20px; scroll-margin-top:16px; }
+  .sec h2 { display:flex; align-items:center; gap:10px; font-size:15.5px; margin:0 0 6px; }
+  .sec h2 .co { width:22px; height:22px; font-size:12px; box-shadow:none; }
+  .sec p { margin:4px 0; color:var(--text-secondary); max-width:75ch; }
+  .sec p b { color:var(--text-primary); font-weight:600; }
+  .sec .why { color:var(--text-muted); font-size:13px; }
+  .sec .why b { color:var(--accent); }
+  code { font-family:var(--font-mono); font-size:.92em; background:var(--bg-overlay); border:1px solid var(--border-subtle);
+    border-radius:var(--r-xs); padding:1px 5px; color:var(--text-primary); }
+
+  .approve { margin-top:32px; border:1px solid var(--border-focus); border-radius:var(--r-lg);
+    background:var(--accent-subtle); padding:20px 22px; }
+  .approve h2 { margin:0 0 8px; font-size:16px; }
+  .approve ol { margin:8px 0 0; padding-inline-start:22px; color:var(--text-secondary); }
+  .approve li { margin-bottom:5px; }
+
+  @media (prefers-reduced-motion: reduce) { .spin, .caret { animation:none; } }
+  @media (max-width: 720px) {
+    .intro h1 { font-size:21px; }
+    .sec { padding:15px 15px; }
+  }
+</style>
+
+<div class="page">
+
+  <header class="intro">
+    <div class="eyebrow">SDC — Skilleddesk Code · প্রস্তাব, approval-এর অপেক্ষায়</div>
+    <h1>v4 UI প্রস্তাব: Agent, Verify, Connected-only models</h1>
+    <p>নিচের window-টা প্রস্তাবিত চেহারা — আপনার বিদ্যমান design token (রঙ, radius, Inter + JetBrains Mono)
+      হুবহু ব্যবহার করা। Grid (46px / 1fr / 30px), topbar, sidebar, right panel-এর ৬ tab, status bar —
+      কিছুই ভাঙা হয়নি; ৭টা জিনিস <b style="color:var(--text-primary)">যোগ</b> হয়েছে, প্রতিটায় নীল নম্বর-chip।</p>
+    <p>পুরো যুক্তি ও phase-পরিকল্পনা: <code>sdc/docs/ROADMAP-v4.md</code></p>
+    <div class="meta">২৫ সেপ্টেম্বর ২০২৬ · ভিত্তি: MASTER_SPEC v3.0 · 0.7.13-এর উপরে · window-র লেখা ইংরেজি (spec §2.7), ব্যাখ্যা বাংলায় · সব সংখ্যা উদাহরণ</div>
+    <nav class="legend">
+      <a href="#c1"><span class="co">১</span> Chat | Agent switch</a>
+      <a href="#c2"><span class="co">২</span> Connected-only dropdown</a>
+      <a href="#c3"><span class="co">৩</span> Live thinking</a>
+      <a href="#c4"><span class="co">৪</span> Checkpoint rail</a>
+      <a href="#c5"><span class="co">৫</span> Agent plan card</a>
+      <a href="#c6"><span class="co">৬</span> Verify chip</a>
+      <a href="#c7"><span class="co">৭</span> Verify tab, দুই স্তর</a>
+    </nav>
+  </header>
+
+  <div class="window-scroll">
+  <div class="window" role="img" aria-label="SDC v4 প্রস্তাবিত UI-র ছবি">
+
+    <div class="topbar">
+      <div class="logo"><span class="mark"></span>SDC</div>
+      <div class="hostpill"><span class="dot g"></span>vps-1 · root@203.0.113.10:8443</div>
+      <div class="top-spacer"></div>
+      <span class="iconbtn" title="Command palette">⌘K</span>
+      <span class="iconbtn" title="Providers">⚡</span>
+      <span class="iconbtn" title="Theme">◐</span>
+      <span class="iconbtn" title="Panels">▤</span>
+      <span class="iconbtn" title="Settings">⚙</span>
+      <div class="seg"><span>Simple</span><span class="on">Pro</span><span>Auto</span></div>
+    </div>
+
+    <div class="cols">
+
+      <aside class="sidebar">
+        <div class="sb-search">⌕&nbsp; Search chats…</div>
+        <div class="sb-group">Local</div>
+        <div class="sb-row"><span class="dot" style="background:var(--text-faint)"></span><span class="t">tokens refactor</span><span class="st">2h</span></div>
+        <div class="sb-row"><span class="dot" style="background:var(--text-faint)"></span><span class="t">landing copy</span><span class="st">1d</span></div>
+        <div class="sb-group"><span class="dot g"></span>vps-1</div>
+        <div class="sb-row on"><span class="dot b"></span><span class="t">payment-api fix</span><span class="st">now</span></div>
+        <div class="files">
+          <div class="sb-group">Files · /srv/payment-api</div>
+          <div class="f-row">▸ src/</div>
+          <div class="f-row" style="color:var(--text-primary)">&nbsp;&nbsp;pay.js<span class="badge">M</span></div>
+          <div class="f-row">&nbsp;&nbsp;pay.test.js<span class="badge" style="color:var(--green)">+</span></div>
+          <div class="f-row">package.json</div>
+          <div class="f-note">1 name hidden by the file guard</div>
+        </div>
+      </aside>
+
+      <section class="main">
+        <div class="tabstrip">
+          <div class="tab on"><span class="dot b"></span>payment-api fix</div>
+          <div class="tab">tokens refactor</div>
+          <div class="tab plus">+</div>
+        </div>
+
+        <div class="stream">
+
+          <div class="row2">
+            <div class="rail"></div>
+            <div class="umsg">Fix the 500 on POST /pay and add a regression test. Run the suite when you're done.</div>
+          </div>
+
+          <div class="row2">
+            <div class="rail"><span class="cpdot run"></span></div>
+            <div class="card plan">
+              <div class="card-h"><span style="color:var(--purple)">◈</span><span class="name">Plan</span>
+                <span class="mono" style="color:var(--text-muted)">4 steps · SDC Agent</span>
+                <span class="right"><a class="co" href="#c5">৫</a></span></div>
+              <div class="plan-steps">
+                <div class="step done"><span class="s">✓</span>Reproduce the failure with the existing suite</div>
+                <div class="step done"><span class="s">✓</span>Patch the rounding bug in src/pay.js</div>
+                <div class="step run"><span class="s" style="color:var(--accent)">◉</span>Add a regression test for negative refunds</div>
+                <div class="step wait"><span class="s">○</span>Run the full suite and report</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="row2">
+            <div class="rail"><span class="cpdot"></span></div>
+            <div class="card think">
+              <div class="card-h">✳ Thinking <span class="mono" style="color:var(--text-muted)">6.2s · live</span>
+                <span class="right"><a class="co" href="#c3">৩</a><span style="color:var(--text-faint)">▾</span></span></div>
+              <div class="think-body">The 500 comes from `Math.round` on a negative refund — `-0.005` rounds toward zero, so the
+                ledger check fails. The regression test needs a negative amount and the exact cents assertion…<span class="caret"></span></div>
+            </div>
+          </div>
+
+          <div class="row2">
+            <div class="rail"><span class="cpdot"></span></div>
+            <div class="card">
+              <div class="card-h">📄 <span class="name">Read</span><span class="mono">src/pay.js</span>
+                <span class="right"><span class="mono" style="color:var(--text-muted)">240 lines</span><span class="ok">✓</span></span></div>
+            </div>
+          </div>
+
+          <div class="row2">
+            <div class="rail"><span class="cpdot cp" title="Checkpoint c41 — click opens Time Machine"></span></div>
+            <div class="card">
+              <div class="card-h">✎ <span class="name">Edit</span><span class="mono">src/pay.js</span>
+                <span class="diffchip"><span class="a">+12</span> <span class="r">−4</span></span>
+                <span class="right"><span class="cp-tag">checkpoint c41</span><a class="co" href="#c4">৪</a><span class="ok">✓</span></span></div>
+            </div>
+          </div>
+
+          <div class="row2">
+            <div class="rail"><span class="cpdot run"></span></div>
+            <div class="card">
+              <div class="card-h">▶ <span class="name">Run</span><span class="mono">pnpm test --filter pay</span>
+                <span class="right"><span class="spin" aria-hidden="true"></span><span style="color:var(--accent);font-weight:600">running</span></span></div>
+              <pre class="out">RUN  pay.test.js
+<span class="dim">✓ pays a positive amount (14ms)</span>
+◌ refunds a negative amount…</pre>
+            </div>
+          </div>
+
+          <div class="row2">
+            <div class="rail"></div>
+            <div class="tfoot">
+              <span class="chip"><span class="n">Opus 5.5</span>· CLI</span>
+              <span class="chip">Verify with… <span style="color:var(--text-faint)">▾</span><a class="co" href="#c6">৬</a></span>
+              <span class="chip v">✓ Verified · <span class="n">Gemini 3 Pro</span> · 1 issue</span>
+              <span class="ticker">turn 3 · 12.4k tok · $0.18</span>
+            </div>
+          </div>
+
+        </div>
+
+        <div class="composer">
+          <div class="dropdown" aria-label="Model dropdown, প্রস্তাবিত — খোলা অবস্থায় আঁকা">
+            <div class="dd-h">Claude Code <span class="how">CLI · subscribed ✓</span></div>
+            <div class="dd-row on"><span class="ck">✓</span> Opus 5.5 <span class="d">deep work</span></div>
+            <div class="dd-row"><span style="width:14px"></span> Sonnet 5 <span class="d">everyday</span></div>
+            <div class="dd-row"><span style="width:14px"></span> Haiku 4.5 <span class="d">fast</span></div>
+            <div class="dd-older">Older versions…</div>
+            <div class="dd-h">Gemini CLI <span class="how">CLI · signed in ✓</span></div>
+            <div class="dd-row"><span style="width:14px"></span> Gemini 3 Pro <span class="d">deep work</span></div>
+            <div class="dd-row"><span style="width:14px"></span> Gemini 3 Flash <span class="d">fast</span></div>
+            <div class="dd-h">Anthropic API <span class="how">API key ✓</span></div>
+            <div class="dd-row"><span style="width:14px"></span> Opus 5.5 <span class="d">via API · SDC Agent</span></div>
+            <div class="dd-row"><span style="width:14px"></span> Sonnet 5 <span class="d">via API · SDC Agent</span></div>
+            <div class="dd-foot">2 providers not connected · <b>Manage in Provider Hub →</b></div>
+          </div>
+
+          <div class="modeseg"><span>Chat</span><span class="on">Agent</span><a class="co" href="#c1" style="margin-left:8px;vertical-align:middle">১</a></div>
+          <div class="inputbox">Describe the task — the agent will read, edit and run until it's done…</div>
+          <div class="c-row">
+            <span class="modelpill">Opus 5.5 · CLI ✓ <span style="color:var(--text-faint)">▴</span><a class="co" href="#c2">২</a></span>
+            <span class="ticker">12.4k tok · $0.18 · budget $2.00</span>
+            <span class="stopbtn">■ Stop</span>
+          </div>
+        </div>
+      </section>
+
+      <aside class="right">
+        <div class="r-tabs">
+          <span class="r-tab">Preview</span><span class="r-tab">Console</span><span class="r-tab">Time M.</span>
+          <span class="r-tab">Duel</span><span class="r-tab on">Verify</span><span class="r-tab">Analytics</span>
+        </div>
+        <div class="r-body">
+          <div class="r-label">Checks <a class="co" href="#c7">৭</a></div>
+          <div class="vrow"><span class="p">✓</span><span class="nm">typecheck</span><span class="tm">2.1s</span></div>
+          <div class="vrow"><span class="p">✓</span><span class="nm">build</span><span class="tm">8.4s</span></div>
+          <div class="vrow"><span class="f">✗</span><span class="nm">tests · 1 failing</span><span class="tm">12.0s</span></div>
+          <div class="vrow"><span class="p">✓</span><span class="nm">lint</span><span class="tm">1.9s</span></div>
+          <div class="r-label">AI review — cross-engine</div>
+          <div class="verdict">
+            <div class="verdict-h">🔍 <span class="eng">Gemini 3 Pro</span><span style="color:var(--text-muted);font-size:11px">read the diff, c41 → now</span>
+              <span class="pill-i">1 issue</span></div>
+            <div class="issue">
+              <span class="loc">src/pay.js:87</span>
+              <span class="msg">The rounding fix ignores refunds over the ledger cap — a −$10,000 refund still rounds
+                before the cap check, so the test passes while the ledger drifts by one cent.</span>
+              <span class="fixbtn">Fix with a prompt →</span>
+            </div>
+          </div>
+          <div class="runv">▶ Run verify &nbsp;⌘⏎</div>
+        </div>
+      </aside>
+
+    </div>
+
+    <div class="statusbar">
+      <span class="sseg"><span class="dot g"></span>vps-1</span>
+      <span class="sseg">Agent</span>
+      <span class="sseg">Opus 5.5</span>
+      <span class="sseg">12.4k tok</span>
+      <span class="sseg">$0.18 / $2.00</span>
+      <span class="sseg">c41 · 12 checkpoints</span>
+      <span class="sseg end"><span class="dot g"></span>sdcd 0.8.0</span>
+    </div>
+
+  </div>
+  </div>
+  <p class="mock-note">Window-টা ১১৮০px-এ আঁকা (desktop app-এর মাপ); ছোট পর্দায় পাশে scroll করুন। সব নাম, সংখ্যা ও model উদাহরণ।</p>
+
+  <div class="sections">
+
+    <section class="sec" id="c1">
+      <h2><span class="co">১</span>Chat | Agent switch — composer-এ</h2>
+      <p><b>কী:</b> দুটো mode। <b>Chat</b> = আজকের আচরণ (এক প্রশ্ন, এক উত্তর)। <b>Agent</b> = কাজ শেষ না হওয়া
+        পর্যন্ত AI নিজে পড়ে, লেখে, terminal command চালায়, ফল দেখে আবার চালায়।</p>
+      <p class="why"><b>কেন:</b> CLI engine (claude/codex/gemini) হলে CLI-ই agent — আজ যেমন। API বা Ollama হলে
+        daemon-এর নতুন <code>SDC Agent</code> loop চলে (ROADMAP §১, সিদ্ধান্ত ১–২)। ব্যবহারকারীর কাছে দুটোই এক switch —
+        ভিতরের যন্ত্র কোনটা, সেটা জানার দরকার নেই। Mutation-এর আগে permission gate আর checkpoint দুই পথেই সমান।</p>
+    </section>
+
+    <section class="sec" id="c2">
+      <h2><span class="co">২</span>Model dropdown — শুধু connected, প্রতি family-র শেষ ২–৩ version</h2>
+      <p><b>কী:</b> তালিকায় সেই engine-ই ওঠে যেটা এখনই চলবে — CLI installed + signed-in, বা API key verified।
+        প্রতিটা group-এর মাথায় connection badge (<code>CLI · subscribed ✓</code> / <code>API key ✓</code>)। প্রতি family-র
+        current ২–৩টা version; পুরনোগুলো "Older versions…"-এর ভিতরে। Disconnect থাকা provider তালিকায় নেই —
+        footer-এ এক লাইনে গোনা, click করলে Provider Hub।</p>
+      <p class="why"><b>কেন:</b> নীতি P4 — যে model বাছলে turn fail করবে তাকে দেখানোই মিথ্যা। তথ্যের তিনটা উৎস daemon-এ
+        আগেই আছে (<code>cli.recipes</code>, keychain, <code>provider.test</code>) — নতুন method <code>models.connected</code> শুধু জড়ো করে।</p>
+    </section>
+
+    <section class="sec" id="c3">
+      <h2><span class="co">৩</span>Live thinking — অক্ষর-অক্ষর, শেষে এক লাইনে ভাঁজ</h2>
+      <p><b>কী:</b> Model ভাবতে শুরু করা মাত্র বেগুনি block-টা আঁকা শুরু হয় — dim italic, চলন্ত timer, লেখার শেষে
+        cursor। ভাবনা শেষ হলে block নিজে ভাঁজ হয়ে এক লাইনের সারাংশ হয় ("Thinking · 6.2s"), click-এ আবার খোলে।</p>
+      <p class="why"><b>কেন:</b> Claude Code-এর সমান অভিজ্ঞতা — আর ভিতটা (P3 structured stream, <code>ThinkingBlock.tsx</code>,
+        <code>live.ts</code>) already আছে; এটা polish, নতুন নির্মাণ নয়।</p>
+    </section>
+
+    <section class="sec" id="c4">
+      <h2><span class="co">৪</span>Checkpoint timeline rail — Claude Code-এ যেটা নেই</h2>
+      <p><b>কী:</b> Stream-এর বাঁ কিনারায় একটা সরু রেখা; প্রতিটা mutation (Edit, Run, Save)-এর পাশে dot। সবুজ dot =
+        checkpoint নেওয়া হয়েছে; hover = কী বদলেছিল; click = Time Machine ঠিক সেই মুহূর্তে।</p>
+      <p class="why"><b>কেন:</b> এটাই "Claude Code-এর চেয়ে ভালো"-র উত্তর: শুধু কী <i>ভাবছে</i> নয়, প্রতিটা পদক্ষেপ থেকে
+        <b>ফেরার দরজাটাও</b> দৃশ্যমান (P5)। Checkpoint গুলো daemon-এ প্রতিটা mutation-এ এমনিতেই তৈরি হয় — rail শুধু
+        সেগুলোকে চোখের সামনে আনে।</p>
+    </section>
+
+    <section class="sec" id="c5">
+      <h2><span class="co">৫</span>Agent plan card — turn-এর মাথায়</h2>
+      <p><b>কী:</b> Agent mode-এ model প্রথমে ধাপগুলো ঘোষণা করে; card-টায় প্রতিটা ধাপ live tick হয় — শেষ (✓),
+        চলছে (◉), বাকি (○)।</p>
+      <p class="why"><b>কেন:</b> লম্বা agent run-এ সবচেয়ে বড় প্রশ্ন "এখন কী হচ্ছে, আর কতটা বাকি?" — plan card সেটার
+        এক-নজরের উত্তর। Budget ছুঁলে বা ধাপ আটকালে ঠিক কোথায় থামল সেটাও এই card-ই বলে।</p>
+    </section>
+
+    <section class="sec" id="c6">
+      <h2><span class="co">৬</span>Verify chip — turn footer-এ, এক click-এ অন্য AI-র review</h2>
+      <p><b>কী:</b> প্রতিটা turn-এর নিচে <b>Verify with…</b> — engine বাছলে সেই turn-এর diff (checkpoint → এখন)
+        reviewer engine পড়ে। ফলটা chip হয়ে turn-এই থেকে যায়: <code>✓ Verified · Gemini 3 Pro · 1 issue</code>।</p>
+      <p class="why"><b>কেন:</b> এক AI-র লেখা আরেক AI দিয়ে যাচাই — আপনার চাওয়া ৬। ভিন্ন model-এর ভুলের ধরন ভিন্ন, তাই
+        cross-model review নিজের-review-র চেয়ে বেশি ধরে; আর diff-based বলে সস্তা (ROADMAP সিদ্ধান্ত ৩)।</p>
+    </section>
+
+    <section class="sec" id="c7">
+      <h2><span class="co">৭</span>Verify tab — দুই স্তর: যন্ত্রের check, তারপর AI-র চোখ</h2>
+      <p><b>কী:</b> উপরে আজকের চারটা row (typecheck / build / tests / lint) — এবার সত্যিই daemon চালায়, static নয়।
+        নিচে AI reviewer-এর verdict: প্রতিটা issue-তে file:line (click = Preview সেই লাইনে) আর <b>Fix with a prompt</b> —
+        এক click-এ fix-প্রস্তাবটা composer-এ।</p>
+      <p class="why"><b>কেন:</b> যেটা যন্ত্রে ধরা যায় সেটায় token খরচ নয় — mechanical fail হলে AI ধাপ চলেই না।
+        আর issue → file:line → fix prompt চেইনটা Error Translator-এর একই দর্শন: ভুলটা শুধু দেখানো নয়, ফেরার পথসহ দেখানো।</p>
+    </section>
+
+  </div>
+
+  <div class="approve">
+    <h2>Approve করার আগে এই ৫টা দেখুন</h2>
+    <ol>
+      <li>নম্বর ১–৭ প্রতিটা — রাখব, বদলাব, না বাদ দেব?</li>
+      <li>Dropdown-এ "শেষ ২–৩ version + Older…" নিয়মটা ঠিক আছে, নাকি সংখ্যাটা অন্য হবে?</li>
+      <li>Agent mode-এ permission-এর তিন স্তর (Simple = সব জিজ্ঞেস, Pro = লেখা auto/command জিজ্ঞেস, Auto = deny-list ছাড়া সব) — মানানসই?</li>
+      <li>Checkpoint rail বাঁয়ে — নাকি dot গুলো card-এর ভিতরেই যথেষ্ট?</li>
+      <li>রঙ/মাপ সব বিদ্যমান token থেকে — কোথাও চোখে লাগলে বলুন, token-এই ঠিক হবে।</li>
+    </ol>
+  </div>
+
+</div>

@@ -75,6 +75,23 @@ CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL);
 "#,
     ),
+    (
+        /* 0.7.13 - the SSH columns a remote host needs, and the bug the first one fixes.
+         *
+         * `host.add` parsed `ssh -p 8443 user@host` correctly and then wrote only `user@host` into
+         * `target`: the port was dropped, so a VPS added on 8443 connected once (the probe used the
+         * parsed target) and every later connection for that host would have used 22. That is half of
+         * the "vps connect korai jasse nah" report, and it is exactly the kind of loss a column fixes
+         * rather than a comment.
+         *
+         * `host_key` records the fingerprint the person pinned, so a host's decision is readable from
+         * the host's own row (`known_hosts` holds the pin itself; this is what a card can show). */
+        "0003-host-ssh",
+        r#"
+ALTER TABLE hosts ADD COLUMN port INTEGER;
+ALTER TABLE hosts ADD COLUMN host_key TEXT;
+"#,
+    ),
 ];
 
 /// The daemon's database handle.
@@ -91,6 +108,21 @@ fn collect_json<T>(rows: rusqlite::MappedRows<'_, impl FnMut(&rusqlite::Row<'_>)
     }
 
     Ok(collected)
+}
+
+/// The `kind` column, in the protocol's own vocabulary.
+///
+/// The column stores how this daemon *reaches* the machine (`local`, `ssh`); every event and every
+/// `session.list` row says what the machine *is* from the window's point of view (`local`, `vps`).
+/// Until 0.7.13 the row read the column straight into `hostType`, so the same host said `ssh` in a list
+/// and `vps` in a `HostStatus` - and the sidebar drew the right icon only because anything that is not
+/// `local` is a server.
+fn host_type(kind: &str) -> &'static str {
+    if kind == "local" {
+        "local"
+    } else {
+        "vps"
+    }
 }
 
 /// One checkpoint row, as every checkpoint query maps it: the seven columns in schema order.
@@ -476,15 +508,19 @@ impl Store {
 
     pub fn hosts(&self) -> Result<Vec<Value>> {
         let connection = self.connection.lock().unwrap();
-        let mut statement = connection.prepare("SELECT id, name, kind, status, platform FROM hosts ORDER BY created_at ASC")?;
+        let mut statement = connection
+            .prepare("SELECT id, name, kind, status, platform, host_key FROM hosts ORDER BY created_at ASC")?;
 
         let rows = statement.query_map([], |row| {
             Ok(serde_json::json!({
                 "hostId": row.get::<_, String>(0)?,
                 "name": row.get::<_, String>(1)?,
-                "hostType": row.get::<_, String>(2)?,
+                "hostType": host_type(&row.get::<_, String>(2)?),
                 "status": row.get::<_, String>(3)?,
                 "platform": row.get::<_, Option<String>>(4)?,
+                /* The fingerprint a person pinned (0.7.13), so a window that never saw the
+                   `HostStatus` that asked the question can still say which key this host is. */
+                "hostKey": row.get::<_, Option<String>>(5)?,
             }))
         })?;
 
@@ -500,20 +536,65 @@ impl Store {
     pub fn host(&self, id: &str) -> Result<Option<Value>> {
         let connection = self.connection.lock().unwrap();
         let mut statement = connection
-            .prepare("SELECT id, name, kind, status, platform, target FROM hosts WHERE id = ?1")?;
+            .prepare("SELECT id, name, kind, status, platform, target, port, host_key FROM hosts WHERE id = ?1")?;
         let mut rows = statement.query(params![id])?;
 
         match rows.next()? {
             Some(row) => Ok(Some(serde_json::json!({
                 "hostId": row.get::<_, String>(0)?,
                 "name": row.get::<_, String>(1)?,
-                "hostType": row.get::<_, String>(2)?,
+                "hostType": host_type(&row.get::<_, String>(2)?),
                 "status": row.get::<_, String>(3)?,
                 "platform": row.get::<_, Option<String>>(4)?,
                 "target": row.get::<_, Option<String>>(5)?,
+                "port": row.get::<_, Option<i64>>(6)?,
+                "hostKey": row.get::<_, Option<String>>(7)?,
             }))),
             None => Ok(None),
         }
+    }
+
+    /// The address a host was added with: its `user@host` and the port the person uses.
+    ///
+    /// The port is the half 0.7.0 lost (`MIGRATIONS`, `0003-host-ssh`). `None` for the row means the
+    /// daemon has never heard of the host; a `None` *address* means the row is a host it knows
+    /// (`local`, or one `session.open` made) that was never added as an SSH target.
+    pub fn host_address(&self, id: &str) -> Result<Option<(Option<String>, Option<u16>)>> {
+        let connection = self.connection.lock().unwrap();
+        let mut statement = connection.prepare("SELECT target, port FROM hosts WHERE id = ?1")?;
+        let mut rows = statement.query(params![id])?;
+
+        match rows.next()? {
+            Some(row) => Ok(Some((
+                row.get::<_, Option<String>>(0)?,
+                row.get::<_, Option<i64>>(1)?.and_then(|port| u16::try_from(port).ok()),
+            ))),
+            None => Ok(None),
+        }
+    }
+
+    /// Records the address a host was added with - the target **and** the port.
+    ///
+    /// `upsert_host` deliberately does not touch these columns (it is the path `host.add` uses while a
+    /// probe is still running, and it must not erase an address), so this is the one writer.
+    pub fn set_host_address(&self, id: &str, target: &str, port: Option<u16>) -> Result<()> {
+        let connection = self.connection.lock().unwrap();
+
+        connection.execute(
+            "UPDATE hosts SET target = ?2, port = ?3 WHERE id = ?1",
+            params![id, target, port.map(i64::from)],
+        )?;
+
+        Ok(())
+    }
+
+    /// Records the fingerprint a person pinned for a host.
+    pub fn set_host_key(&self, id: &str, fingerprint: &str) -> Result<()> {
+        let connection = self.connection.lock().unwrap();
+
+        connection.execute("UPDATE hosts SET host_key = ?2 WHERE id = ?1", params![id, fingerprint])?;
+
+        Ok(())
     }
 
     /// The id of the host already added for this `user@host`, if there is one.
@@ -579,18 +660,22 @@ impl Store {
         for host in &mut hosts {
             let id = host.get("hostId").and_then(Value::as_str).unwrap_or_default().to_string();
             let sessions = self.sessions_for_host(&id)?;
-            let target: Option<String> = {
+            let address: (Option<String>, Option<i64>, Option<String>) = {
                 let connection = self.connection.lock().unwrap();
                 connection
-                    .query_row("SELECT target FROM hosts WHERE id = ?1", params![id], |row| {
-                        row.get(0)
+                    .query_row("SELECT target, port, host_key FROM hosts WHERE id = ?1", params![id], |row| {
+                        Ok((row.get(0)?, row.get(1)?, row.get(2)?))
                     })
-                    .unwrap_or(None)
+                    .unwrap_or((None, None, None))
             };
 
             if let Value::Object(map) = host {
                 map.insert("sessions".to_string(), Value::Array(sessions));
-                map.insert("target".to_string(), target.map_or(Value::Null, Value::String));
+                map.insert("target".to_string(), address.0.map_or(Value::Null, Value::String));
+                /* The port travels with the address (0.7.13): the window's host card says which port a
+                   VPS answers on, which is the fact 0.7.0 threw away. */
+                map.insert("port".to_string(), address.1.map_or(Value::Null, Value::from));
+                map.insert("hostKey".to_string(), address.2.map_or(Value::Null, Value::String));
             }
         }
 

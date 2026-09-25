@@ -12,7 +12,7 @@ Provider Hub পূর্ণাঙ্গ সেকশন	§9.10 — ৭টি �
 Settings ৭টি ট্যাব	§9.11 — General, Appearance, Keymap, Safety, Notifications, Backup, About — UI-এর সাথে হুবহু।
 Model dropdown	§9.3 — Tier / Engine / Model তিনটি গ্রুপ, প্রতিটির আইকন ও লেবেল UI-এর সাথে মিলে।
 Turn rendering	§7.4 — collapsed summary, thinking block, tool cards (Read / Edit / Run), error card, turn footer (feedback), সব UI-এর আইডেন্টিকাল।
-Right panel-এর ৬টি ট্যাব	§7.7–§7.12 — Preview, Console, Time Machine, Duel, Verify, Analytics, প্রতিটি তার নিজস্ব wireframe সহ।
+Right panel-এর ৬টি ট্যাব	§7.7–§7.12 — Preview, Console, Time Machine, Duel, Verify, Analytics, প্রতিটি তার নিজস্ব wireframe সহ। **0.7.13-এ সাতে নম্বরটি যোগ হলো: Terminal** (§7.7-এর প্যানেলে, Console-এর পাশে — UI-এর prototype-এও আঁকা, `design/ui-prototype.html`-এ `.term-*`), কারণ host-এ কাজ করার পর একটা command surface ছাড়া বাকি সব অসম্পূর্ণ: একটা লাইন `shell.run { line }`-এ যায় (chat-এর folder-এ, host-এ হলে ওখানেই, checkpoint + deny list সহ), `Run in background` যায় `pty.open { line, hostId }`-এ, আর ইনপুটের উপরে সবসময় লেখা থাকে *কোথায় চলবে* — `~/app/landing on prod-1`।
 Empty states	§7.13 — প্রতিটি স্ক্রিনের empty state-এর হুবহু ইংরেজি টেক্সট।
 Modals	§9.10–§9.14 — Add Host, Permission, Settings, Search, Palette-এর নির্দিষ্ট টেক্সট, আইকন ও কী।
 Module count	৭৮ → ৯২ (১০টি UI মডিউল + ৪টি সংশোধিত)।
@@ -81,6 +81,8 @@ sdcd	১ প্রতি হোস্ট	local ও/বা প্রতিটি 
 Engine process	১ প্রতি সক্রিয় সেশনে	sdcd-র হোস্টে	আসল agent loop
 লোকাল ও রিমোট মোড একই binary, একই প্রোটোকল, শুধু transport আলাদা।
 
+**০.৭.১৩ — একটা হোস্টে আসলে কীভাবে পৌঁছানো হয়** (`sdc/docs/REMOTE.md` = *কেন*, `sdc/docs/SSH-CONNECT.md` = *কী চলে, কোথায় থামে*): কোনও দ্বিতীয় `sdcd` নেই, tunnel নেই — প্রতিটা কাজই **এই মেশিনের `ssh` binary দিয়ে একটা exec**: engine (`cd <folder> && sh -c 'mkdir -p …; echo $$ > <pid>; exec setsid … <cli> …'` — pid file + process group, তাই cancel সত্যিই kill), checkpoint/rewind (host-এর নিজের `$HOME/.sdc/git/<hash>` shadow repo), file/git/shell (`hostId` সহ একই method), long-running process (`pty.open { line, hostId }`), doctor (`host.doctor { hostId }`)। নিরাপত্তার নিয়ম: host key **pin** (SDC-র নিজের `known_hosts`, `StrictHostKeyChecking=yes`; `accept-new` কোথাও নেই, key বদলালে error — "continue anyway" নেই), SDC-র নিজের key (`~/.ssh/sdc_ed25519`) একবার password দিয়ে বসে, আর প্রতিটা dynamic path/argument `sh_quote` হয়।
+
 ৩.২ পূর্ণ চিত্র
 v2.0-এর ASCII diagram অপরিবর্তিত, তবে UI স্তরে যোগ হলো:
 
@@ -92,7 +94,7 @@ text
 ║ │  Topbar: brand · host · mode · palette · 6 icon-btns     │  ║
 ║ │  Sidebar: New chat · filter · host groups · sessions      │  ║
 ║ │  Main: degraded-banner · tabstrip · turn stream · prompt │  ║
-║ │  Right: Preview · Console · TM · Duel · Verify · Analytics║ │  ║
+║ │  Right: Preview · Console · Terminal · TM · Duel · Verify   ║  ║
 ║ │  Status: host · engine · model · providers · chats · conn║  ║
 ║ └──────────────────────────────────────────────────────────┘  ║
 ║  Overlays: palette · search · provider hub · settings ·       ║
@@ -1069,6 +1071,7 @@ UI এলিমেন্ট	সেকশন
 .rightpanel	§7.7–§7.12
 [data-panel="preview"]	§7.7, §15.4
 [data-panel="console"]	§7.8, §15.5
+[data-panel="terminal"]	§7.7, §7.8 — 0.7.13-এর সাতে নম্বর ট্যাব (Console-এর পাশে): `shell.run {line}` + `pty.open {line, hostId}`, ইনপুটের উপরে `where`
 [data-panel="timemachine"]	§7.9, §14.4
 [data-panel="duel"]	§7.10, §16.6
 [data-panel="verify"]	§7.11, §15.6

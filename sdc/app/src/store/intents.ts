@@ -1,4 +1,4 @@
-import type { PermissionDecision, PermissionRisk, TierName } from '../../../protocol/types';
+import type { FsEntry, PermissionDecision, PermissionRisk, TierName } from '../../../protocol/types';
 import { nameOf, pickFolder } from '../lib/picker';
 import { sdcpCall } from '../lib/sdcp';
 import { isSdcpError } from '../lib/transport';
@@ -12,6 +12,8 @@ import { usePrefsStore } from './prefs';
 import { withProjects, withProviders, withWorkspace } from './reducer';
 import { useRightPanelStore } from './rightPanel';
 import { selectActiveSession, dispatch, useAppStore } from './store';
+import { findSession } from './sessions';
+import { useTerminalStore } from './terminal';
 import type { AppState, HostView, TurnView } from './types';
 
 /**
@@ -388,7 +390,46 @@ export async function closeSession(sessionId: string): Promise<void> {
   }
 }
 
-/** Spec section 9.12. The daemon answers immediately and then *measures* the host. */
+/**
+ * The **one step a VPS needs after its key is pinned**: copy SDC's key onto it, with the password, once
+ * (0.7.13).
+ *
+ * This is the missing half of the trust flow, and the reason a host could look "added but never
+ * connected": the pin answers *is this the right machine*, and this answers *may SDC get in*. The daemon
+ * does the work in `host.add` - adding the same `user@host` again reuses the row and, because the key is
+ * already pinned, goes straight to `install_key` and the probe - so the window sends the address it
+ * already shows (`user@host:8443`, which the daemon parses) and the password it just read.
+ *
+ * The password travels with this one call and is kept nowhere: not in the store, not in the event log,
+ * and not in the sentence that comes back.
+ */
+export async function installHostKey(hostId: string, password: string): Promise<boolean> {
+  const host = useAppStore.getState().hosts.find((candidate) => candidate.id === hostId);
+
+  if (host === undefined || host.address === '') {
+    return false;
+  }
+
+  const answer = await addHost({
+    type: 'ssh',
+    target: host.address,
+    label: host.name,
+    ...(password === '' ? {} : { password }),
+  });
+
+  return answer !== null && answer.hostId === hostId;
+}
+
+/**
+ * Spec section 9.12. The daemon answers immediately and then *measures* the host.
+ *
+ * The answer is passed back rather than swallowed (0.7.13), because the dialog's second step needs the
+ * `hostId`: `host.add` scans the machine's host key and, when it is not one SDC pinned, the host
+ * arrives `untrusted` with its fingerprint - and trusting it is `host.trust`, which takes that id. The
+ * two sentences this function says are about the *row*; whether the machine can be reached is the
+ * daemon's next sentence, on the host's own line (a fact about a host does not belong in a toast that a
+ * relaunch replays).
+ */
 export async function addHost(input: {
   type: 'local' | 'ssh';
   target?: string;
@@ -396,16 +437,15 @@ export async function addHost(input: {
   /**
    * The password for a VPS, when the user chooses to give one.
    *
-   * It goes to the daemon with this one call, is typed into the user's own `ssh` through a PTY, and is
-   * kept nowhere - the daemon has no field to store it in. What it buys is the *key*: once SDC's public
-   * key is in `authorized_keys`, every later connection is passwordless and this argument is not
-   * needed again.
+   * It goes to the daemon with this one call and is kept nowhere - the daemon has no field to store it
+   * in. Since 0.7.13 it is only *spent* after the host's key is pinned (`host.trust` re-sends it), so a
+   * password never reaches a machine whose identity SDC has not been asked about.
    */
   password?: string;
-}): Promise<string | null> {
+}): Promise<{ hostId: string; reused: boolean } | null> {
   if (input.type === 'local') {
     toast(strings.addHost.localAlready);
-    return 'local';
+    return { hostId: 'local', reused: true };
   }
 
   if (!input.target || input.target.trim() === '') {
@@ -416,22 +456,75 @@ export async function addHost(input: {
   const label = input.label?.trim() === '' || input.label === undefined ? input.target : input.label;
 
   try {
-    const { hostId, reused } = await sdcpCall('host.add', input);
+    const answer = await sdcpCall('host.add', input);
 
-    /*
-     * Two sentences, because there are two facts and this function only knows the first.
-     *
-     * `reused` is the case that used to be invisible: the same `user@host` added twice, which is how
-     * a sidebar ends up as four hosts called `Website`. Whether the host can be *reached* is not
-     * known here - the daemon ran `ssh` in the background - so this says what `host.add` answered
-     * and the daemon's own `Toast` says the rest a moment later.
-     */
-    toast(reused ? strings.addHost.alreadyThere(label) : strings.addHost.added(label));
+    /* Same `user@host` twice is one host, and saying so is the difference between a list and four
+       copies of one row (0.7.0). */
+    toast(answer.reused ? strings.addHost.alreadyThere(label) : strings.addHost.added(label));
 
-    return hostId;
+    return answer;
   } catch (error) {
     reportFailure(error, 'Could not connect to that host');
     return null;
+  }
+}
+
+/**
+ * `host.key` - what a host presents **now** (0.7.13).
+ *
+ * Two callers, one call: a host that is `untrusted` and whose fingerprint this window never saw (a
+ * relaunch, a second window) needs the value to show and to act on, and a host whose key **changed**
+ * needs the fingerprint it presents *now* before `Re-pin` can mean anything. The daemon pushes the
+ * answer as a `HostStatus` too, so the sidebar's dot and sentence move with it.
+ */
+export async function hostKey(
+  hostId: string,
+): Promise<{ hostKey: string; keyType: string; pinned: boolean; matches: boolean | null; pinnedKey: string | null } | null> {
+  try {
+    const answer = await sdcpCall('host.key', { hostId });
+
+    return {
+      hostKey: answer.hostKey,
+      keyType: answer.keyType,
+      pinned: answer.pinned,
+      matches: answer.matches ?? null,
+      pinnedKey: answer.pinnedKey ?? null,
+    };
+  } catch (error) {
+    reportFailure(error, strings.addHost.trust.refused);
+
+    return null;
+  }
+}
+
+/**
+ * `host.trust` - the answer to the one question a remote connection asks (0.7.13).
+ *
+ * The daemon scans the machine **again** and refuses if the key is no longer the fingerprint this was
+ * called with, so trusting is a decision about a key that was on screen a moment ago rather than about
+ * whatever answers the port now. The password, when the dialog still has it, is spent only after the pin
+ * lands: it is what completes the one-time key install, and the install is what makes every later
+ * connection passwordless.
+ */
+export async function trustHost(
+  hostId: string,
+  fingerprint: string,
+  password?: string,
+): Promise<boolean> {
+  try {
+    await sdcpCall('host.trust', {
+      hostId,
+      fingerprint,
+      ...(password === undefined || password === '' ? {} : { password }),
+    });
+
+    toast(strings.addHost.trust.pinned(fingerprint));
+
+    return true;
+  } catch (error) {
+    reportFailure(error, strings.addHost.trust.refused);
+
+    return false;
   }
 }
 
@@ -471,6 +564,31 @@ export async function removeHost(hostId: string, name: string): Promise<boolean>
  * The `local` row is why `host.status` runs first: `session.list` answers from the daemon's rows, so
  * the machine this window is on has to be one of them (it is, because `host.status` records it).
  */
+/**
+ * Which host a chat's files live on (0.7.13).
+ *
+ * The window knows the chat; the daemon knows which machine the chat's folder is on - but only *per
+ * method*: `fs.list` for a child path is sent without a session (the tree knows the directory, not the
+ * chat), so the app names the host explicitly. `undefined` means "this machine", which is what the
+ * daemon assumes when nothing is named - and it is what `local` means too.
+ */
+function hostIdOf(sessionId: string | null): string | undefined {
+  if (sessionId === null) {
+    return undefined;
+  }
+
+  const host = useAppStore
+    .getState()
+    .hosts.find((candidate) => candidate.sessions.some((session) => session.id === sessionId));
+
+  return host === undefined || host.id === 'local' ? undefined : host.id;
+}
+
+/** A host's name, for a sentence. Falls back to the id so a stale reference still reads. */
+function hostName(hostId: string): string {
+  return useAppStore.getState().hosts.find((host) => host.id === hostId)?.name ?? hostId;
+}
+
 export async function loadWorkspace(): Promise<void> {
   try {
     const { hosts } = await sdcpCall('session.list', {});
@@ -524,6 +642,7 @@ export async function toggleDirectory(path: string): Promise<void> {
  */
 export async function loadDirectory(path: string | null): Promise<void> {
   const sessionId = usePrefsStore.getState().activeTab;
+  const hostId = hostIdOf(sessionId);
 
   if (path !== null) {
     useFilesStore.getState().startLoading(path);
@@ -532,8 +651,8 @@ export async function loadDirectory(path: string | null): Promise<void> {
   try {
     const answer =
       path === null
-        ? await sdcpCall('fs.list', { sessionId: sessionId ?? undefined })
-        : await sdcpCall('fs.list', { path });
+        ? await sdcpCall('fs.list', { sessionId: sessionId ?? undefined, hostId })
+        : await sdcpCall('fs.list', { path, hostId });
     const files = useFilesStore.getState();
 
     if (path === null) {
@@ -561,7 +680,10 @@ export async function openFile(path: string, name: string): Promise<void> {
   useFilesStore.getState().startOpening(path);
 
   try {
-    const answer = await sdcpCall('fs.read', { path });
+    const answer = await sdcpCall('fs.read', {
+      path,
+      hostId: hostIdOf(usePrefsStore.getState().activeTab),
+    });
 
     useFilesStore.getState().setOpen({
       path: answer.path,
@@ -607,6 +729,7 @@ export async function refreshDirectory(path: string): Promise<void> {
  */
 export async function saveFile(path: string, text: string): Promise<boolean> {
   const sessionId = usePrefsStore.getState().activeTab;
+  const hostId = hostIdOf(sessionId);
   const open = useFilesStore.getState().open;
 
   try {
@@ -614,6 +737,7 @@ export async function saveFile(path: string, text: string): Promise<boolean> {
       path,
       text,
       ...(sessionId === null ? {} : { sessionId }),
+      hostId,
     });
 
     useFilesStore.getState().setOpen(
@@ -621,7 +745,14 @@ export async function saveFile(path: string, text: string): Promise<boolean> {
         ? open
         : { ...open, text, sha256: answer.sha256, bytes: answer.bytes, truncated: false },
     );
-    toast(strings.files.saved(nameOf(path)));
+
+    /* A save on a host takes no checkpoint, and the sentence says which of the two happened: the shadow
+       repository is on the machine `sdcd` runs on, and the file is not (docs/REMOTE.md §5). */
+    toast(
+      hostId === undefined
+        ? strings.files.saved(nameOf(path))
+        : strings.files.savedRemote(nameOf(path), hostName(hostId)),
+    );
 
     /* The badge is live, not a snapshot: a Save is exactly the moment the changed count and the Diff button
        become interesting, and reading `git.status` once when the folder was opened left both stale (found by
@@ -655,6 +786,7 @@ export async function loadGitStatus(): Promise<void> {
   try {
     const answer = await sdcpCall('git.status', {
       sessionId,
+      hostId: hostIdOf(sessionId),
       ...(useFilesStore.getState().root === null ? {} : { root: useFilesStore.getState().root ?? undefined }),
     });
 
@@ -679,6 +811,7 @@ export async function openDiff(): Promise<boolean> {
   try {
     const { patch } = await sdcpCall('git.diff', {
       sessionId: sessionId ?? undefined,
+      hostId: hostIdOf(sessionId),
       ...(root === null ? {} : { root }),
     });
 
@@ -895,6 +1028,34 @@ export async function closeFolder(projectId: string, name: string): Promise<bool
 
     return false;
   }
+}
+
+/**
+ * `fs.list` on a **host**, for the folder browser (0.7.13).
+ *
+ * No session is involved: the browser is about a machine, not a chat - it reads `~/` first (the daemon
+ * expands it and answers with the absolute path), then one level at a time.
+ */
+export async function listRemoteDirectory(
+  hostId: string,
+  path?: string,
+): Promise<{ path: string; entries: FsEntry[]; hidden: number } | null> {
+  try {
+    return await sdcpCall('fs.list', { hostId, ...(path === undefined ? {} : { path }) });
+  } catch (error) {
+    reportFailure(error, strings.remoteFolder.readFailed);
+
+    return null;
+  }
+}
+
+/**
+ * Opens a folder **on a host**: `project.add` with that `hostId`, which validates the path with
+ * `test -d` on the machine that has it - and then the ordinary landing (`openFolderIn`), so a chat whose
+ * folder is on a VPS is bound, opened and shown exactly like a local one.
+ */
+export async function openRemoteFolder(hostId: string, root: string): Promise<string | null> {
+  return openFolderIn(root, hostId);
 }
 
 /** Opens the chat's tab and puts the caret in its prompt - where a person wants to be after a folder. */
@@ -1402,5 +1563,270 @@ export async function fixWithAgent(input: {
        provider the model came from to find its endpoint and its key. */
     ...(providerId === null ? {} : { provider: providerId }),
   });
+}
+
+
+/* ------------------------------------------------------------------------------------------------
+ * Terminal (the panel's command surface, 0.7.13)
+ * ---------------------------------------------------------------------------------------------- */
+
+/**
+ * What a command typed into the Terminal is about: the active chat's folder, and the machine that
+ * folder is on.
+ *
+ * The rule is the one every file and git call already follows - *the chat's folder on the chat's
+ * machine* - and `where` is that rule as a sentence, because a terminal that does not say which machine
+ * it is talking to is the most dangerous surface in a remote-capable app: `rm -rf build` looks the same
+ * on a laptop and on production.
+ */
+export interface TerminalSubject {
+  sessionId: string | null;
+  /** The chat's folder, or `null` when it has none - then the command runs where the daemon runs. */
+  root: string | null;
+  /** `undefined` for this machine, which is also how the daemon spells "local". */
+  hostId: string | undefined;
+  where: string;
+}
+
+export function terminalSubject(): TerminalSubject {
+  /* The same two reads the sessions facade makes (`store/sessions.ts` → `state.hosts`, `prefs.activeTab`),
+     so the click and the render cannot disagree about which machine they mean. */
+  return terminalSubjectFrom(useAppStore.getState().hosts, usePrefsStore.getState().activeTab);
+}
+
+/**
+ * The pure half of [`terminalSubject`] - the statement the tab prints, from what it subscribes to.
+ *
+ * It exists because the panel keeps every tab mounted and hides the inactive ones with a class: the tab
+ * is still on screen when the chat changes, and a store read inside a memo would leave `where` saying
+ * `on prod-1` after you moved to a local chat. A function of `(hosts, activeTab)` gives the same sentence
+ * to the click (which wants the truth *now*) and to the render (which must follow the subscription).
+ */
+export function terminalSubjectFrom(hosts: HostView[], activeTab: string | null): TerminalSubject {
+  const found = activeTab === null ? null : findSession(hosts, activeTab);
+  const sessionId = found?.session.id ?? null;
+  const root = found?.session.projectRoot ?? null;
+  const remote = found !== null && found.host.type !== 'local' ? found.host : null;
+  const where =
+    root === null
+      ? strings.terminal.anywhere
+      : remote === null
+        ? root
+        : strings.terminal.whereOn(root, remote.name);
+
+  return { sessionId, root, hostId: remote?.id, where };
+}
+
+/** The parameters every terminal call sends: the folder, the chat and the host, each only when known. */
+function terminalParams(subject: TerminalSubject): Record<string, unknown> {
+  return {
+    ...(subject.root === null ? {} : { root: subject.root }),
+    ...(subject.sessionId === null ? {} : { sessionId: subject.sessionId }),
+    ...(subject.hostId === undefined ? {} : { hostId: subject.hostId }),
+  };
+}
+
+/**
+ * A whole command line, run by the daemon's own shell - here, or in the chat's folder on its host.
+ *
+ * It goes through `shell.run`, so a typed command is a step in the conversation exactly as an engine's
+ * `run` step is: the daemon writes a **checkpoint** first (the command may change files), announces the
+ * tool call in the turn stream, and refuses a denied line with a sentence rather than a stack trace. The
+ * refusal lands in the entry's `stderr`, because that is where a terminal shows the reason - and it is
+ * toasted too, because the person asked for it a moment ago and is looking at the input, not the log.
+ */
+export async function runCommand(line: string): Promise<void> {
+  const trimmed = line.trim();
+
+  if (trimmed === '') {
+    return;
+  }
+
+  const subject = terminalSubject();
+  const terminal = useTerminalStore.getState();
+  const id = terminal.start(trimmed, subject.where);
+
+  terminal.remember(trimmed);
+  terminal.setBusy(true);
+
+  try {
+    const answer = await sdcpCall('shell.run', { line: trimmed, ...terminalParams(subject) });
+
+    useTerminalStore.getState().finish(id, {
+      state: answer.ok ? 'done' : 'failed',
+      stdout: answer.stdout ?? '',
+      stderr: answer.stderr ?? '',
+      code: answer.exitCode ?? null,
+      ms: answer.durationMs ?? 0,
+      timedOut: answer.timedOut === true,
+    });
+  } catch (error) {
+    const sentence = isSdcpError(error) ? error.message : 'The command did not run';
+
+    useTerminalStore.getState().finish(id, { state: 'failed', stderr: sentence, code: null });
+    toast(sentence);
+  } finally {
+    useTerminalStore.getState().setBusy(false);
+  }
+}
+
+
+/**
+ * `Run in background`: a process that does not finish, whose output the tab reads while it runs.
+ *
+ * It is `pty.open`, which is the daemon's long-running form - and with a host it is the same call: the
+ * daemon's child is an `ssh`, so `pty.output` reads the process's output on that machine and `pty.close`
+ * signals its **process group** there. A dev server, a `tail -f`, a long build: none of them may hold
+ * the input while they run, which is why this is a second button rather than a checkbox on `Run`.
+ *
+ * `line` is what a terminal has, so the daemon takes a line here too - the local platform's shell runs
+ * it here, and the **host's** shell runs it there. One process at a time: the tab starts the next one
+ * when the first has been stopped or has ended.
+ */
+export async function runInBackground(line: string): Promise<void> {
+  const trimmed = line.trim();
+
+  if (trimmed === '') {
+    return;
+  }
+
+  const subject = terminalSubject();
+  const terminal = useTerminalStore.getState();
+
+  if (terminal.background !== null) {
+    toast(strings.terminal.backgroundBusy);
+    return;
+  }
+
+  const id = terminal.start(trimmed, subject.where);
+
+  terminal.remember(trimmed);
+
+  try {
+    const answer = await sdcpCall('pty.open', {
+      line: trimmed,
+      /* `pty.open` names the folder `cwd` (its own contract since 0.7.0, and `command`+`args` still use
+         it); `shell.run` names it `root`. Sending the wrong one is silent: the daemon would start the
+         process in `$HOME` instead of the chat's folder, which for a remote chat is the wrong machine's
+         home. */
+      ...(subject.root === null ? {} : { cwd: subject.root }),
+      ...(subject.sessionId === null ? {} : { sessionId: subject.sessionId }),
+      ...(subject.hostId === undefined ? {} : { hostId: subject.hostId }),
+    });
+
+    useTerminalStore.getState().setBackground({
+      id,
+      ptyId: answer.ptyId,
+      command: trimmed,
+      where: subject.where,
+    });
+  } catch (error) {
+    const sentence = isSdcpError(error) ? error.message : 'The process did not start';
+
+    useTerminalStore.getState().finish(id, { state: 'failed', stderr: sentence, code: null });
+    toast(sentence);
+  }
+}
+
+/** One poll of the background process's output tail - `watchBackground` drives it. */
+export async function pollBackground(): Promise<void> {
+  const background = useTerminalStore.getState().background;
+
+  if (background === null) {
+    return;
+  }
+
+  try {
+    const answer = await sdcpCall('pty.output', { ptyId: background.ptyId });
+    const terminal = useTerminalStore.getState();
+
+    terminal.update(background.id, {
+      state: answer.state === 'running' ? 'running' : 'done',
+      stdout: answer.lines.join('\n'),
+      ms: answer.ms,
+    });
+
+    /* Ended on its own: the input is free again, and the output stays in the log. */
+    if (answer.state !== 'running') {
+      terminal.setBackground(null);
+    }
+  } catch (error) {
+    /*
+     * A daemon that restarted has no pty, and saying so beats polling a `not_found` for ever: the
+     * process died with the daemon that started it, which is a fact rather than a poll failure.
+     */
+    if (isSdcpError(error) && error.code === 'not_found') {
+      const terminal = useTerminalStore.getState();
+
+      terminal.finish(background.id, { state: 'done', stderr: strings.terminal.ended });
+      terminal.setBackground(null);
+
+      return;
+    }
+
+    reportFailure(error, 'Could not read the output');
+  }
+}
+
+/** `Stop`: the process's **group** on the host, or the child here. The daemon decides which. */
+export async function stopBackground(): Promise<void> {
+  const background = useTerminalStore.getState().background;
+
+  if (background === null) {
+    return;
+  }
+
+  try {
+    await sdcpCall('pty.close', { ptyId: background.ptyId });
+  } catch (error) {
+    reportFailure(error, 'Could not stop it');
+  }
+
+  const terminal = useTerminalStore.getState();
+
+  terminal.update(background.id, { state: 'done', stderr: strings.terminal.stopped });
+  terminal.setBackground(null);
+}
+
+/** How often the background tail is read: fast enough to feel live, slow enough to be free. */
+const BACKGROUND_POLL_MS = 1000;
+
+/**
+ * Starts the background poll and returns its stop function, the way `watchDaemon` does.
+ *
+ * The poll is global rather than owned by the tab: a process keeps running while you look at the Preview
+ * or another chat, and its output has to keep filling in - a tail that only advances while it is on
+ * screen is a tail that lies about what it collected.
+ */
+export function watchBackground(): () => void {
+  const timer = window.setInterval(() => {
+    void pollBackground();
+  }, BACKGROUND_POLL_MS);
+
+  return () => window.clearInterval(timer);
+}
+
+/**
+ * Opens the Terminal tab **about a host** - the destination of a doctor row's `Install` fix (0.7.13).
+ *
+ * The tab runs commands in the active chat's folder on the active chat's host, so focusing one of that
+ * host's chats is not a nicety: without it the surface would open as a terminal about **another machine**,
+ * which is the one mistake a remote-capable terminal must not make. A host with no chat has no folder to
+ * run in, and the sentence says so rather than opening an empty tab pointed somewhere else.
+ */
+export function openTerminalForHost(hostId: string): void {
+  const host = useAppStore.getState().hosts.find((candidate) => candidate.id === hostId);
+  const sessionId = host?.sessions[0]?.id ?? null;
+
+  if (host === undefined || sessionId === null) {
+    toast(strings.terminal.noChat(hostId));
+
+    return;
+  }
+
+  usePrefsStore.getState().focusTab(sessionId);
+  useRightPanelStore.getState().setActiveTab('terminal', sessionId);
+  useLayoutStore.getState().showRight();
+  toast(strings.terminal.openForHost(host.name));
 }
 

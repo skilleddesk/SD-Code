@@ -66,6 +66,17 @@ pub struct Prompt {
     /// rather than in the CLI adapters because it is a fact about the session, like the model: the engine
     /// cannot guess it, and guessing it wrong is a turn that edits the wrong files.
     pub project_root: Option<String>,
+    /// The **host** this chat's folder is on, when it is not this machine (0.7.13).
+    ///
+    /// With this set, `cli.rs` runs the CLI *there*: the child is an `ssh` whose command is
+    /// `cd <project_root> && <cli> <args>`, the prompt still travels on stdin, the CLI's own JSON stream
+    /// still arrives on stdout - so the parsing, the events and the window are unchanged - and the pid is
+    /// written into a file on that host (see `ssh::ops::turn_line`) so `engine.cancel` really stops it.
+    ///
+    /// The two HTTP adapters ignore it for the same reason they ignore `project_root`: their turn is a
+    /// network call from this daemon, not a process on a folder. A provider that answered text is not a
+    /// provider whose tools ran anywhere.
+    pub remote: Option<crate::ssh::Ssh>,
 }
 
 /// One item of an engine's stream. The checkpoint is *not* here: the daemon writes that itself,

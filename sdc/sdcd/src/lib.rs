@@ -55,6 +55,7 @@ pub mod pty;
 pub mod rewind;
 pub mod sdcp;
 pub mod session_bridge;
+pub mod ssh;
 pub mod store;
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};

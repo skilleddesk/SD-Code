@@ -71,11 +71,26 @@ export interface HostView {
   id: string;
   name: string;
   type: 'local' | 'vps';
-  status: 'connected' | 'degraded' | 'offline' | 'connecting';
+  status: 'connected' | 'untrusted' | 'degraded' | 'offline' | 'connecting';
   /** sdcd version on the far side; empty while the host is still connecting. */
   sdcd: string;
   /** `macOS 15.1 · arm64` - the About tab's "This host" line. */
   platform: string;
+  /**
+   * What just happened to this host, in words (0.7.13).
+   *
+   * `platform` is the machine line; this is the sentence - `root@vps is reachable`, `copying SDC's key
+   * with that password…`, or, for a host SDC has never seen before, the question that ends with the
+   * fingerprint. It is shown on the host's own card rather than in a toast, because a toast is written
+   * to the log and replayed on every launch.
+   */
+  detail: string;
+  /** The fingerprint an `untrusted` host is waiting to be trusted with - what `host.trust` takes. */
+  hostKey: string;
+  /** The fingerprint already pinned for this host (0.7.13), from its row - empty when there is none. */
+  pinned: string;
+  /** The `user@host:port` it was added with, for the card and the tooltip (0.7.13). */
+  address: string;
   sessions: SessionView[];
 }
 

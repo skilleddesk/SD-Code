@@ -295,6 +295,96 @@ describe('reducer', () => {
     expect(again.permission).toBeNull();
   });
 
+  it('keeps the pin a host row carries, and the fingerprint an `untrusted` host is waiting with', () => {
+    /*
+     * Two fingerprints, two meanings (0.7.13): `hostKey` on a `HostStatus` is the value a host is
+     * *waiting* to be trusted with, and `hostKey` on a `session.list` row is the one that is **pinned**.
+     * A window that never saw the trust event still knows which key a host is - and a host that is
+     * `untrusted` keeps its `pinned` empty, because nothing has been decided for it.
+     */
+    const asked = withWorkspace(fold(EMPTY_STATE, {
+      type: 'HostStatus',
+      hostId: 'h7',
+      name: 'prod-1',
+      hostType: 'vps',
+      status: 'untrusted',
+      detail: 'root@vps.example is reachable, and its host key is SHA256:abc - a key SDC has never seen.',
+      hostKey: 'SHA256:abc',
+    }), [
+      {
+        hostId: 'h7',
+        name: 'prod-1',
+        hostType: 'vps',
+        status: 'untrusted',
+        target: 'root@vps.example',
+        port: 8443,
+        hostKey: null,
+        sessions: [],
+      },
+    ]);
+
+    expect(asked.hosts[0].hostKey).toBe('SHA256:abc');
+    expect(asked.hosts[0].pinned).toBe('');
+    expect(asked.hosts[0].address).toBe('root@vps.example:8443');
+    expect(asked.hosts[0].detail).toContain('never seen');
+
+    /* And after a pin, the row is where the decision lives. */
+    const pinned = withWorkspace(asked, [
+      {
+        hostId: 'h7',
+        name: 'prod-1',
+        hostType: 'vps',
+        status: 'connected',
+        target: 'root@vps.example',
+        port: 8443,
+        hostKey: 'SHA256:abc',
+        sessions: [],
+      },
+    ]);
+
+    expect(pinned.hosts[0].pinned).toBe('SHA256:abc');
+    expect(pinned.hosts[0].status).toBe('connected');
+  });
+
+  it('keeps a host’s sentence and the fingerprint it is waiting to be trusted with', () => {
+    /*
+     * 0.7.13: `untrusted` is the state that asks a question, and the two fields it arrives with are the
+     * question itself (`detail`) and the value the answer needs (`hostKey`). Both used to be impossible:
+     * the daemon pushed its sentences in `platform`, and there was no fifth status at all.
+     */
+    const state = fold(EMPTY_STATE, {
+      type: 'HostStatus',
+      hostId: 'h7',
+      name: 'prod-1',
+      hostType: 'vps',
+      status: 'untrusted',
+      detail: 'root@vps.example is reachable, and its host key is SHA256:abc - a key SDC has never seen.',
+      hostKey: 'SHA256:abc',
+    });
+
+    const host = state.hosts[0];
+
+    expect(host.status).toBe('untrusted');
+    expect(host.detail).toContain('never seen');
+    expect(host.hostKey).toBe('SHA256:abc');
+
+    /* The next event for the same host is the answer, and it carries the fingerprint forward so the
+       card that is on screen does not lose it while the probe runs. */
+    const pinned = fold(state, {
+      type: 'HostStatus',
+      hostId: 'h7',
+      name: 'prod-1',
+      hostType: 'vps',
+      status: 'connecting',
+      detail: 'SHA256:abc pinned · connecting…',
+      hostKey: 'SHA256:abc',
+    });
+
+    expect(pinned.hosts[0].status).toBe('connecting');
+    expect(pinned.hosts[0].hostKey).toBe('SHA256:abc');
+    expect(pinned.hosts[0].detail).toContain('pinned');
+  });
+
   it('deduplicates console lines by file and line, and counts the repeats', () => {
     const line = {
       type: 'ConsoleError' as const,

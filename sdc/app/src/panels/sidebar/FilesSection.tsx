@@ -6,6 +6,7 @@ import { nameOf } from '../../lib/picker';
 import { sizeOf, strings } from '../../strings';
 import { useFilesStore, type DirectoryView } from '../../store/files';
 import { loadDirectory, loadGitStatus, openDiff, openFile, refreshDirectory, toggleDirectory } from '../../store/intents';
+import { useOverlayStore } from '../../store/overlays';
 import { findSession, useSessionsStore } from '../../store/sessions';
 
 /**
@@ -46,6 +47,10 @@ export function FilesSection() {
   const { hosts, activeTab } = useSessionsStore();
   const session = activeTab === null ? null : findSession(hosts, activeTab);
   const root = session?.session.projectRoot ?? null;
+  /* The host this chat is on (0.7.13). A chat on a VPS has no local folder to pick, so the way in is
+     the host's own browser (`RemoteFolder`) - and this is where it is offered. */
+  const host = activeTab === null ? null : hosts.find((candidate) => candidate.sessions.some((item) => item.id === activeTab)) ?? null;
+  const openRemoteFolder = useOverlayStore((state) => state.openRemoteFolder);
 
   const { root: storedRoot, directories, expanded, loading, error, git } = useFilesStore();
 
@@ -81,6 +86,20 @@ export function FilesSection() {
         <div className="files-hint text-[11px] leading-[1.5] text-text-muted">
           {strings.files.noFolder}
         </div>
+
+        {/* A chat on a host: the folder it works in lives on *that* machine, so the native picker (which
+            shows this one) cannot find it and `fs.list` on the host is the way in (0.7.13). */}
+        {host === null || host.id === 'local' ? null : (
+          <button
+            type="button"
+            id="openRemoteFolder"
+            className="files-remote mt-[6px] flex w-full items-center gap-[6px] rounded-md border border-dashed border-border-default px-[8px] py-[6px] text-[11px] text-text-secondary transition-all duration-fast ease-ease hover:border-solid hover:border-border-strong hover:bg-bg-hover hover:text-text-primary"
+            onClick={() => openRemoteFolder(host.id)}
+          >
+            <FolderOpen size={12} aria-hidden="true" />
+            {strings.remoteFolder.title(host.name)}
+          </button>
+        )}
       </div>
     );
   }

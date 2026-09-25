@@ -20,7 +20,9 @@ const sdcpCall = vi.hoisted(() => vi.fn());
 
 vi.mock('../lib/sdcp', () => ({ sdcpCall }));
 
-const { chooseModel, closeDiff, closeFolder, forkSession, loadCliRecipe, loadGitStatus, saveFile, emptySessionOn, newChatOnHost, openDiff, openFolderIn, loadDirectory, toggleDirectory, openFile, closeFile } = await import('./intents');
+const { chooseModel, closeDiff, closeFolder, forkSession, loadCliRecipe, loadGitStatus, saveFile, emptySessionOn, newChatOnHost, openDiff, openFolderIn, loadDirectory, toggleDirectory, openFile, closeFile, addHost, hostKey, trustHost, listRemoteDirectory, runDoctor, runCommand, runInBackground, pollBackground, stopBackground, openTerminalForHost, installHostKey } = await import('./intents');
+const { useTerminalStore } = await import('./terminal');
+const { tabForSession } = await import('./rightPanel');
 const { engineForProvider, useModelStore } = await import('./model');
 const { useFilesStore } = await import('./files');
 const { useLayoutStore } = await import('./layout');
@@ -100,6 +102,10 @@ describe('emptySessionOn', () => {
       status: 'connected' as const,
       sdcd: '0.7.5',
       platform: 'Windows 11 · x64',
+      detail: '',
+      hostKey: '',
+      address: '',
+      pinned: '',
       sessions: sessions.map((id) => ({
         id,
         title: 'New chat',
@@ -144,6 +150,10 @@ describe('newChatOnHost', () => {
           status: 'connected',
           sdcd: '0.7.5',
           platform: 'Windows 11 · x64',
+          detail: '',
+          hostKey: '',
+          address: '',
+      pinned: '',
           sessions: [{ id: 's1', title: 'New chat', prompt: '', state: 'idle', minutesAgo: 1, unread: 0 }],
         },
       ],
@@ -169,6 +179,10 @@ describe('newChatOnHost', () => {
           status: 'connected',
           sdcd: '0.7.5',
           platform: 'Windows 11 · x64',
+          detail: '',
+          hostKey: '',
+          address: '',
+      pinned: '',
           sessions: [],
         },
       ],
@@ -201,6 +215,10 @@ describe('openFolderIn', () => {
       status: 'connected' as const,
       sdcd: '0.7.6',
       platform: 'Windows 11 · x64',
+      detail: '',
+      hostKey: '',
+      address: '',
+      pinned: '',
       sessions,
     },
   ];
@@ -669,6 +687,473 @@ describe('closeFolder', () => {
     expect(sdcpCall).toHaveBeenCalledWith('project.remove', { projectId: 'pr1' });
     expect(useAppStore.getState().projects).toEqual([]);
     expect(useAppStore.getState().hosts[0]?.sessions[0]?.projectRoot).toBeNull();
+  });
+});
+
+
+/**
+ * The host key trust step (0.7.13) - the one question a remote connection asks a person.
+ *
+ * `host.add` scans the machine's key and answers with a host id; a machine SDC has never seen arrives
+ * `untrusted` with its fingerprint in `HostStatus`, and the dialog hands that exact string to
+ * `host.trust`. Two properties are asserted here, and both are the security design rather than
+ * plumbing: the fingerprint travels as the value that was on screen, and the password is only sent when
+ * there is one to send (the daemon spends it after the pin lands, never before).
+ */
+describe('addHost and trustHost', () => {
+  beforeEach(() => {
+    sdcpCall.mockReset();
+    sdcpCall.mockResolvedValue({});
+  });
+
+  it('answers with the host id, because the trust step needs it', async () => {
+    sdcpCall.mockResolvedValueOnce({ hostId: 'h7', reused: false });
+
+    await expect(addHost({ type: 'ssh', target: 'root@vps.example -p 8443', label: '' })).resolves.toEqual({
+      hostId: 'h7',
+      reused: false,
+    });
+
+    /* The target travels exactly as typed: the daemon is what parses the port out of it (`0003-host-ssh`
+       is the migration that stops it being dropped after the first probe). */
+    expect(sdcpCall).toHaveBeenCalledWith('host.add', {
+      type: 'ssh',
+      target: 'root@vps.example -p 8443',
+      label: '',
+    });
+  });
+
+  it('pins the fingerprint it was given, and sends no password when there is none', async () => {
+    await expect(trustHost('h7', 'SHA256:abc123')).resolves.toBe(true);
+
+    expect(sdcpCall).toHaveBeenCalledWith('host.trust', { hostId: 'h7', fingerprint: 'SHA256:abc123' });
+  });
+
+  it('carries the password only after the decision, and only when the field has one', async () => {
+    await trustHost('h7', 'SHA256:abc123', 'hunter2');
+
+    expect(sdcpCall).toHaveBeenCalledWith('host.trust', {
+      hostId: 'h7',
+      fingerprint: 'SHA256:abc123',
+      password: 'hunter2',
+    });
+
+    /* A refused pin is `false` and not a thrown promise: the dialog stays open, and the daemon's own
+       sentence (a key that changed while the card was on screen) is the toast. */
+    sdcpCall.mockRejectedValueOnce(new SdcpCallError({ code: 'bad_request', message: 'the key changed' }));
+
+    await expect(trustHost('h7', 'SHA256:abc123')).resolves.toBe(false);
+  });
+});
+
+/**
+ * A chat whose folder is on a host (0.7.13): every file call names the machine.
+ *
+ * The daemon can resolve the host from a `sessionId`, but the tree asks for a *directory* (it knows the
+ * path, not the chat), so the id has to travel with each request. Getting this wrong is not a crash: it
+ * is a local `fs.list` of `/srv/app`, which answers "not a folder" on a machine that is fine.
+ */
+describe('a chat whose folder is on a host', () => {
+  const remoteHost = {
+    id: 'h7',
+    name: 'prod-1',
+    type: 'vps' as const,
+    status: 'connected' as const,
+    sdcd: '0.7.13',
+    platform: '',
+    detail: '',
+    hostKey: '',
+    address: 'root@vps.example:8443',
+      pinned: '',
+    sessions: [
+      { id: 's7', title: 'Deploy', prompt: '', state: 'idle' as const, minutesAgo: 1, unread: 0, projectId: 'p1', projectRoot: '/srv/app' },
+    ],
+  };
+
+  beforeEach(() => {
+    sdcpCall.mockReset();
+    sdcpCall.mockResolvedValue({});
+    useFilesStore.getState().reset();
+    usePrefsStore.setState({ activeTab: 's7', openTabs: ['s7'] });
+    useAppStore.setState({ hosts: [remoteHost] });
+  });
+
+  it('tells the daemon which machine a directory is on', async () => {
+    sdcpCall.mockResolvedValueOnce({ path: '/srv/app', entries: [], hidden: 0 });
+
+    await loadDirectory('/srv/app/src');
+
+    expect(sdcpCall).toHaveBeenCalledWith('fs.list', { path: '/srv/app/src', hostId: 'h7' });
+  });
+
+  it('reads the host\'s home when the browser asks for nothing in particular', async () => {
+    sdcpCall.mockResolvedValueOnce({ path: '/home/me', entries: [{ name: 'app', path: '/home/me/app', dir: true, size: 0 }], hidden: 0 });
+
+    const answer = await listRemoteDirectory('h7');
+
+    expect(sdcpCall).toHaveBeenCalledWith('fs.list', { hostId: 'h7' });
+    expect(answer?.path).toBe('/home/me');
+  });
+
+  it('takes a checkpoint on the host, and the toast says where', async () => {
+    useFilesStore.getState().setOpen({
+      path: '/srv/app/src/auth.ts',
+      name: 'auth.ts',
+      text: 'const a = 1;',
+      sha256: 'a'.repeat(64),
+      bytes: 12,
+      truncated: false,
+    });
+    sdcpCall.mockResolvedValue({ path: '/srv/app/src/auth.ts', sha256: 'c'.repeat(64), bytes: 12 });
+
+    await expect(saveFile('/srv/app/src/auth.ts', 'const a = 2;')).resolves.toBe(true);
+
+    expect(sdcpCall).toHaveBeenCalledWith('fs.write', {
+      path: '/srv/app/src/auth.ts',
+      text: 'const a = 2;',
+      sessionId: 's7',
+      hostId: 'h7',
+    });
+
+    /* The checkpoint is the daemon's own work - it commits into a shadow repository **on that host**
+       (`$HOME/.sdc/git/<hash>`, see `docs/REMOTE.md` §5) - and the toast names the host, because "where
+       did that checkpoint go" is the question a person asks next. */
+    const last = useAppStore.getState().toasts.at(-1);
+
+    expect(last?.message).toContain('a checkpoint was taken on that host');
+    expect(last?.message).toContain('prod-1');
+  });
+});
+
+
+
+/**
+ * `host.key` and a host's own doctor (0.7.13) - the two calls that make a host answerable *after* the
+ * window that added it has closed.
+ *
+ * The case they exist for: a host added days ago, or in another window, sits at `needs your trust` with a
+ * sentence and no fingerprint - and a button needs a value. `host.key` is the read; `host.doctor` with a
+ * host id is the host's *own* environment rather than ten rows about this laptop, which is what it used
+ * to answer.
+ */
+describe('asking a host about itself', () => {
+  beforeEach(() => {
+    sdcpCall.mockReset();
+    sdcpCall.mockResolvedValue({});
+  });
+
+  it('reads the fingerprint a host presents now, and says whether it is the pinned one', async () => {
+    sdcpCall.mockResolvedValueOnce({
+      hostId: 'h7',
+      hostKey: 'SHA256:now',
+      keyType: 'ssh-ed25519',
+      pinned: true,
+      matches: false,
+      pinnedKey: 'SHA256:before',
+    });
+
+    await expect(hostKey('h7')).resolves.toEqual({
+      hostKey: 'SHA256:now',
+      keyType: 'ssh-ed25519',
+      pinned: true,
+      matches: false,
+      pinnedKey: 'SHA256:before',
+    });
+    expect(sdcpCall).toHaveBeenCalledWith('host.key', { hostId: 'h7' });
+
+    /* A refusal (the host is gone, the scan failed) is `null` plus the daemon's sentence as a toast - the
+       card keeps whatever it had rather than rendering half an answer. */
+    sdcpCall.mockRejectedValueOnce(new SdcpCallError({ code: 'bad_request', message: 'no such host' }));
+
+    await expect(hostKey('h7')).resolves.toBeNull();
+  });
+
+  it('runs the doctor about the host, not about this machine', async () => {
+    sdcpCall.mockResolvedValueOnce({
+      checks: [
+        { id: 'ssh', label: 'SSH to root@vps.example:8443', state: 'ok', detail: 'root@vps.example:8443 is reachable' },
+        { id: 'hostkey', label: 'Host key', state: 'fail', detail: 'SHA256:x · never trusted', fix: 'Trust' },
+      ],
+    });
+
+    await runDoctor('h7');
+
+    expect(sdcpCall).toHaveBeenCalledWith('host.doctor', { hostId: 'h7' });
+
+    const stored = useAppStore.getState().doctor['h7'] ?? [];
+
+    expect(stored).toHaveLength(2);
+    expect(stored[1]?.fix).toBe('Trust');
+    /* And nothing was written under `local`: a host's checks are the host's. */
+    expect(useAppStore.getState().doctor['local']).toBeUndefined();
+  });
+});
+
+/**
+ * The Terminal tab's intents (0.7.13).
+ *
+ * Three things are worth a regression test, and each of them is a way a terminal lies:
+ *
+ *   1. **which machine** - the line has to run in the *chat's* folder on the *chat's* host, so `hostId`
+ *      travels with it (and a local chat must not send one, or a local `git status` would run on a VPS);
+ *   2. **what gets shown** - the answer's streams, exit code and duration land in the entry, and a
+ *      refusal (the deny list) lands in the stderr slot rather than disappearing into a toast;
+ *   3. **the background process** - `Run in background` opens a pty, `Stop` closes it, and the poll folds
+ *      the output tail in.
+ */
+describe('the terminal', () => {
+  const remoteHost = () => ({
+    id: 'h7',
+    name: 'prod-1',
+    type: 'vps' as const,
+    status: 'connected' as const,
+    sdcd: '0.7.13',
+    platform: '',
+    detail: '',
+    hostKey: '',
+    address: 'root@vps.example',
+    pinned: '',
+    sessions: [
+      {
+        id: 's7',
+        title: 'Deploy',
+        prompt: '',
+        state: 'idle' as const,
+        minutesAgo: 1,
+        unread: 0,
+        projectId: 'p1',
+        projectRoot: '/srv/app',
+      },
+    ],
+  });
+
+  const local = () => ({
+    id: 'local',
+    name: 'This machine',
+    type: 'local' as const,
+    status: 'connected' as const,
+    sdcd: '0.7.13',
+    platform: 'Windows 11 · x64',
+    detail: '',
+    hostKey: '',
+    address: '',
+    pinned: '',
+    sessions: [
+      {
+        id: 's1',
+        title: 'Landing',
+        prompt: '',
+        state: 'idle' as const,
+        minutesAgo: 2,
+        unread: 0,
+        projectId: 'p1',
+        projectRoot: 'H:\\SDC\\sdc',
+      },
+    ],
+  });
+
+  beforeEach(() => {
+    sdcpCall.mockReset();
+    sdcpCall.mockResolvedValue({});
+    useTerminalStore.setState({ entries: [], history: [], background: null, busy: false, nextId: 1 });
+    useRightPanelStore.setState({ activeTab: 'preview', tabBySession: {} });
+  });
+
+  it('runs the line in the chat folder on the chat host, and says so', async () => {
+    usePrefsStore.setState({ activeTab: 's7', openTabs: ['s7'] });
+    useAppStore.setState({ hosts: [remoteHost()] });
+    sdcpCall.mockResolvedValueOnce({
+      ok: true,
+      exitCode: 0,
+      stdout: 'deployed\n',
+      stderr: '',
+      durationMs: 42,
+      timedOut: false,
+    });
+
+    await runCommand('deploy.sh --prod');
+
+    expect(sdcpCall).toHaveBeenCalledWith('shell.run', {
+      line: 'deploy.sh --prod',
+      root: '/srv/app',
+      sessionId: 's7',
+      hostId: 'h7',
+    });
+
+    const entry = useTerminalStore.getState().entries[0];
+
+    expect(entry?.where).toBe('/srv/app on prod-1');
+    expect(entry?.state).toBe('done');
+    expect(entry?.stdout).toBe('deployed\n');
+    expect(entry?.code).toBe(0);
+    expect(entry?.ms).toBe(42);
+    /* The line is remembered for ↑, and the input is free again. */
+    expect(useTerminalStore.getState().history).toEqual(['deploy.sh --prod']);
+    expect(useTerminalStore.getState().busy).toBe(false);
+  });
+
+  it('sends no host for a local chat - a local command must not run on a VPS', async () => {
+    usePrefsStore.setState({ activeTab: 's1', openTabs: ['s1'] });
+    useAppStore.setState({ hosts: [local()] });
+
+    await runCommand('pnpm test');
+
+    expect(sdcpCall).toHaveBeenCalledWith('shell.run', { line: 'pnpm test', root: 'H:\\SDC\\sdc', sessionId: 's1' });
+    expect(useTerminalStore.getState().entries[0]?.where).toBe('H:\\SDC\\sdc');
+  });
+
+  it('shows a refusal where output goes, and frees the input', async () => {
+    usePrefsStore.setState({ activeTab: 's7', openTabs: ['s7'] });
+    useAppStore.setState({ hosts: [remoteHost()] });
+    sdcpCall.mockRejectedValueOnce(
+      new SdcpCallError({
+        code: 'permission_denied',
+        message: '`shutdown` was refused because it powers the machine off under the user',
+      }),
+    );
+
+    await runCommand('shutdown /s');
+
+    const entry = useTerminalStore.getState().entries[0];
+
+    expect(entry?.state).toBe('failed');
+    expect(entry?.stderr).toContain('was refused');
+    expect(entry?.code).toBeNull();
+    expect(useTerminalStore.getState().busy).toBe(false);
+  });
+
+  it('runs a long line in the background, and Stop closes it', async () => {
+    usePrefsStore.setState({ activeTab: 's7', openTabs: ['s7'] });
+    useAppStore.setState({ hosts: [remoteHost()] });
+    sdcpCall.mockResolvedValueOnce({ ptyId: 'pty-4', command: 'pnpm dev', tty: false, hostId: 'h7' });
+
+    await runInBackground('pnpm dev');
+
+    /* The daemon owns the shell: the window sends the line, not a program guessed for its platform - and
+       the folder under `cwd`, which is what `pty.open` has called it since 0.7.0. */
+    expect(sdcpCall).toHaveBeenCalledWith('pty.open', {
+      line: 'pnpm dev',
+      cwd: '/srv/app',
+      sessionId: 's7',
+      hostId: 'h7',
+    });
+    expect(useTerminalStore.getState().background).toMatchObject({ ptyId: 'pty-4', command: 'pnpm dev' });
+
+    /* A second one is refused with a sentence rather than a second process. */
+    await runInBackground('tail -f log');
+
+    expect(sdcpCall).toHaveBeenCalledTimes(1);
+
+    sdcpCall.mockResolvedValueOnce({ lines: ['ready in 300 ms'], state: 'running', ms: 1200 });
+    await pollBackground();
+
+    expect(useTerminalStore.getState().entries[0]?.stdout).toBe('ready in 300 ms');
+    expect(useTerminalStore.getState().entries[0]?.state).toBe('running');
+
+    sdcpCall.mockResolvedValueOnce({ closed: true });
+    await stopBackground();
+
+    expect(sdcpCall).toHaveBeenLastCalledWith('pty.close', { ptyId: 'pty-4' });
+    expect(useTerminalStore.getState().background).toBeNull();
+    expect(useTerminalStore.getState().entries[0]?.stderr).toBe('stopped');
+  });
+
+  it('frees the input when a background process ends on its own', async () => {
+    usePrefsStore.setState({ activeTab: 's7', openTabs: ['s7'] });
+    useAppStore.setState({ hosts: [remoteHost()] });
+    sdcpCall.mockResolvedValueOnce({ ptyId: 'pty-9', command: 'build', tty: false });
+
+    await runInBackground('pnpm build');
+
+    sdcpCall.mockResolvedValueOnce({ lines: ['done'], state: 'exited', ms: 8000 });
+    await pollBackground();
+
+    expect(useTerminalStore.getState().entries[0]?.state).toBe('done');
+    expect(useTerminalStore.getState().background).toBeNull();
+  });
+
+  it('says the process is gone when a restarted daemon has never heard of it', async () => {
+    usePrefsStore.setState({ activeTab: 's7', openTabs: ['s7'] });
+    useAppStore.setState({ hosts: [remoteHost()] });
+    sdcpCall.mockResolvedValueOnce({ ptyId: 'pty-2', command: 'serve', tty: false });
+
+    await runInBackground('serve');
+
+    sdcpCall.mockRejectedValueOnce(
+      new SdcpCallError({ code: 'not_found', message: 'pty-2 is not a process this daemon started' }),
+    );
+    await pollBackground();
+
+    expect(useTerminalStore.getState().background).toBeNull();
+    expect(useTerminalStore.getState().entries[0]?.stderr).toBe('ended');
+  });
+
+  /**
+   * `Install` on a doctor row leads here: the terminal opens **about that host** or not at all.
+   *
+   * This is the assertion that keeps the surface from lying: the tab runs in the active chat's folder on
+   * the active chat's host, so opening it while a *different* chat is focused would show a terminal about
+   * the wrong computer - the exact mistake a remote-capable terminal must not make.
+   */
+  it('opens the terminal about the host by focusing its chat first', () => {
+    const shown = vi.fn();
+
+    usePrefsStore.setState({ activeTab: 's1', openTabs: ['s1'] });
+    useAppStore.setState({ hosts: [local(), remoteHost()] });
+    useLayoutStore.setState({ showRight: shown });
+
+    openTerminalForHost('h7');
+
+    expect(usePrefsStore.getState().activeTab).toBe('s7');
+    expect(useRightPanelStore.getState().activeTab).toBe('terminal');
+    expect(tabForSession(useRightPanelStore.getState(), 's7')).toBe('terminal');
+    expect(shown).toHaveBeenCalled();
+  });
+
+  it('does not open a terminal pointed at another machine when the host has no chat', () => {
+    const quiet = { ...remoteHost(), sessions: [] };
+
+    usePrefsStore.setState({ activeTab: 's1', openTabs: ['s1'] });
+    useAppStore.setState({ hosts: [local(), quiet] });
+    useRightPanelStore.setState({ activeTab: 'preview', tabBySession: {} });
+
+    openTerminalForHost('h7');
+
+    expect(usePrefsStore.getState().activeTab).toBe('s1');
+    expect(useRightPanelStore.getState().activeTab).toBe('preview');
+  });
+
+  /**
+   * The step that finishes a VPS: SDC's key is copied over with the password, once.
+   *
+   * This is the half that was missing after the pin - a host could be trusted and still never connect,
+   * with nowhere in the window to type the password. The proven path is `host.add` again (the daemon
+   * reuses the row and, because the key is pinned, goes straight to the install), so the assertion is
+   * that the window sends the address it *shows* - `user@host:8443`, port and all - because a target
+   * without the port is a target that dials 22 and fails on a host whose sshd is elsewhere.
+   */
+  it('installs the key against the address the row shows, with the port in it', async () => {
+    const host = { ...remoteHost(), address: 'root@vps.example:8443', pinned: 'SHA256:abc123', status: 'offline' as const };
+
+    useAppStore.setState({ hosts: [{ ...host, sessions: [] }] });
+    sdcpCall.mockResolvedValueOnce({ hostId: 'h7', reused: true });
+
+    await expect(installHostKey('h7', 'hunter2')).resolves.toBe(true);
+
+    expect(sdcpCall).toHaveBeenCalledWith('host.add', {
+      type: 'ssh',
+      target: 'root@vps.example:8443',
+      label: 'prod-1',
+      password: 'hunter2',
+    });
+  });
+
+  it('says nothing to the daemon when the host is not in the list', async () => {
+    useAppStore.setState({ hosts: [] });
+
+    await expect(installHostKey('h9', 'hunter2')).resolves.toBe(false);
+
+    expect(sdcpCall).not.toHaveBeenCalled();
   });
 });
 

@@ -104,6 +104,193 @@ pub fn has(program: &str) -> bool {
     version_of(program).is_some()
 }
 
+/// The checks for a **host**: the same question the local ten ask, answered about that machine (0.7.13).
+///
+/// The local list probes programs on this computer, which is exactly the wrong answer for a VPS - and it
+/// is what `host.doctor { hostId }` returned for a host before this release: ten rows about the laptop,
+/// under a heading that said the host's name. Now a remote host gets rows about *it*:
+///
+/// | id | what it asks | how |
+/// | -- | ------------ | --- |
+/// | `ssh` | can this machine be reached | the probe (`ssh::ops::probe`), whose sentence is the detail |
+/// | `hostkey` | is its key the pinned one | `ssh::hostkey::inspect` - and `Re-pin` is the fix when it is not |
+/// | `git` | is `git` there | one `--version` |
+/// | `claude`, `codex`, `gemini` | can a turn run there | one `--version` each, which is the question a chat on that host will ask later |
+/// | `home` | is `$HOME` writable | `test -w`, because the shadow repository lives under it |
+/// | `folder` | does the chat's folder exist there | `test -d`, when the caller named one |
+///
+/// The `fix` values are the two the window can actually perform (`Trust`, `Re-pin` - the Add-host
+/// dialog's trust card) and nothing else: a `Fix` button that toasts "Install: done" while installing
+/// nothing is the kind of small lie this build keeps removing, and `detail` is where an instruction
+/// belongs.
+pub fn remote_checks(ssh: &crate::ssh::Ssh, root: Option<&str>) -> Vec<Value> {
+    let mut rows: Vec<Value> = Vec::new();
+    /* Asked once, because two rows are decided by it: `ssh` (can a session be made at all) and `hostkey`
+       (is the machine the one SDC pinned). */
+    let trust = crate::ssh::hostkey::inspect(&ssh.target);
+    let (status, detail) = crate::ssh::ops::probe(ssh);
+
+    /*
+     * The `ssh` row's **fix**, when there is one a surface can carry out (0.7.13 - after the report that
+     * this row was red with nothing to click).
+     *
+     * It is derived from the trust state, not from the sentence: a host whose key is unknown needs the
+     * `Trust` decision, a changed one needs `Re-pin`, and a host whose pin is *in place* and whose probe
+     * still failed is a host that does not accept SDC's key yet - the one case where a password is needed
+     * once, and the card is where that field lives. A machine that is simply down gets no button, because
+     * there is no button for "the machine is down".
+     */
+    let ssh_fix = match (&trust, status.as_str()) {
+        (_, "connected") => None,
+        (Ok(crate::ssh::hostkey::Trust::Unknown(_)), _) => Some("Trust"),
+        (Ok(crate::ssh::hostkey::Trust::Changed { .. }), _) => Some("Re-pin"),
+        (Ok(crate::ssh::hostkey::Trust::Pinned(_)), _) => Some("Install key"),
+        (Err(_), _) => None,
+    };
+
+    let mut ssh_row = json!({
+        "id": "ssh",
+        "label": format!("SSH to {}", ssh.label()),
+        "state": if status == "connected" { "ok" } else { "fail" },
+        "detail": detail,
+    });
+
+    if let Some(fix) = ssh_fix {
+        ssh_row["fix"] = json!(fix);
+    }
+
+    rows.push(ssh_row);
+
+    rows.push(match &trust {
+        Ok(crate::ssh::hostkey::Trust::Pinned(key)) => json!({
+            "id": "hostkey",
+            "label": "Host key",
+            "state": "ok",
+            "detail": format!("pinned · {}", key.fingerprint),
+        }),
+        Ok(crate::ssh::hostkey::Trust::Unknown(keys)) => {
+            let fingerprint = crate::ssh::hostkey::primary(keys)
+                .map(|key| key.fingerprint.clone())
+                .unwrap_or_default();
+
+            json!({
+                "id": "hostkey",
+                "label": "Host key",
+                "state": "fail",
+                "detail": format!("{fingerprint} · never trusted"),
+                "fix": "Trust",
+            })
+        }
+        Ok(crate::ssh::hostkey::Trust::Changed { pinned, seen }) => json!({
+            "id": "hostkey",
+            "label": "Host key",
+            "state": "fail",
+            "detail": format!(
+                "changed — needs re-pin · pinned {}{}",
+                pinned.first().cloned().unwrap_or_else(|| "nothing".to_string()),
+                crate::ssh::hostkey::primary(seen)
+                    .map(|key| format!(", now {}", key.fingerprint))
+                    .unwrap_or_default()
+            ),
+            "fix": "Re-pin",
+        }),
+        Err(error) => json!({
+            "id": "hostkey",
+            "label": "Host key",
+            "state": "warn",
+            "detail": error.message,
+        }),
+    });
+
+    rows.extend(if status == "connected" {
+        let mut checked = tool_rows(ssh);
+
+        checked.push(match crate::ssh::ops::writable_home(ssh) {
+            Ok(true) => json!({ "id": "home", "label": "Home directory", "state": "ok", "detail": "writable" }),
+            Ok(false) => json!({
+                "id": "home",
+                "label": "Home directory",
+                "state": "fail",
+                "detail": "not writable, so SDC cannot keep a checkpoint there",
+            }),
+            Err(error) => json!({ "id": "home", "label": "Home directory", "state": "warn", "detail": error.message }),
+        });
+
+        checked
+    } else {
+        /* Nothing else can be measured without a session, and pretending otherwise is how a doctor
+           ends up saying "not installed" about programs on a machine it never logged into: the one row
+           that matters (`hostkey`, which carries `Trust`/`Re-pin`) is above, and this says the rest was
+           not asked. */
+        vec![json!({
+            "id": "notreached",
+            "label": "Everything else",
+            "state": "warn",
+            "detail": "not checked — SDC could not get a session on that host",
+        })]
+    });
+
+    if status == "connected" {
+        if let Some(root) = root {
+            rows.push(match crate::ssh::ops::is_dir(ssh, root) {
+                Ok(true) => json!({ "id": "folder", "label": "Chat's folder", "state": "ok", "detail": root }),
+                Ok(false) => json!({
+                    "id": "folder",
+                    "label": "Chat's folder",
+                    "state": "fail",
+                    "detail": format!("{root} is not a folder on that host"),
+                }),
+                Err(error) => json!({ "id": "folder", "label": "Chat's folder", "state": "warn", "detail": error.message }),
+            });
+        }
+    }
+
+    rows
+}
+
+/// The programs a turn on that host needs, asked in **one** round trip: `name=version` per line, or
+/// `name=not installed`.
+fn tool_rows(ssh: &crate::ssh::Ssh) -> Vec<Value> {
+    let script = "for p in git claude codex gemini rg node; do printf '%s=' \"$p\"; if command -v \"$p\" >/dev/null 2>&1; then \"$p\" --version 2>/dev/null | head -n 1 || echo present; else echo 'not installed'; fi; done";
+    let labels = [
+        ("git", "Git"),
+        ("claude", "Claude Code CLI"),
+        ("codex", "Codex CLI"),
+        ("gemini", "Gemini CLI"),
+        ("rg", "ripgrep"),
+        ("node", "Node.js"),
+    ];
+
+    let Ok(output) = ssh.run(script, std::time::Duration::from_secs(30)) else {
+        return Vec::new();
+    };
+
+    if !output.ok() {
+        return Vec::new();
+    }
+
+    labels
+        .iter()
+        .map(|(id, label)| {
+            let version = output
+                .stdout
+                .lines()
+                .find_map(|line| line.strip_prefix(&format!("{id}=")))
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            let missing = version.is_empty() || version.eq_ignore_ascii_case("not installed");
+
+            json!({
+                "id": id,
+                "label": format!("{label} (on the host)"),
+                "state": if missing { "warn" } else { "ok" },
+                "detail": if missing { "not installed".to_string() } else { version },
+            })
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -54,6 +54,15 @@ export interface OverlayState {
   paletteOpen: boolean;
   searchOpen: boolean;
   addHostOpen: boolean;
+  /**
+   * The host the Add-host dialog is **already about**, when it was opened to answer a question about a
+   * host rather than to add one (0.7.13): a key that needs trusting, or a re-pin after a change.
+   *
+   * One surface for both entry points on purpose - the dialog already knows how to
+   * show a fingerprint, a sentence and a button, and a second "Manage host" modal would be a second
+   * implementation of the trust card that could drift from the first.
+   */
+  addHostHostId: string | null;
   permissionOpen: boolean;
   /** The F1 keyboard reference (spec section 9.1). */
   keymapOpen: boolean;
@@ -69,6 +78,14 @@ export interface OverlayState {
   hostSwitcher: Anchor | null;
   /** Non-null while the New chat popover is up. */
   newChat: Anchor | null;
+  /**
+   * The host whose folders are being browsed (0.7.13), or `null`.
+   *
+   * A remote folder cannot be chosen with the native picker - that dialog shows *this* machine's
+   * filesystem, and a VPS is not on it - so `fs.list` on that host is the browser, and this flag says
+   * which host it is about.
+   */
+  remoteFolderHostId: string | null;
 }
 
 export interface OverlayActions {
@@ -81,7 +98,7 @@ export interface OverlayActions {
   closePalette: () => void;
   openSearch: () => void;
   closeSearch: () => void;
-  openAddHost: () => void;
+  openAddHost: (hostId?: string) => void;
   closeAddHost: () => void;
   openPermission: () => void;
   closePermission: () => void;
@@ -94,6 +111,9 @@ export interface OverlayActions {
   closeHostSwitcher: () => void;
   openNewChat: (anchor: Anchor) => void;
   closeNewChat: () => void;
+  /** The remote folder browser, for a host that has no native picker (0.7.13). */
+  openRemoteFolder: (hostId: string) => void;
+  closeRemoteFolder: () => void;
   /** Esc: every overlay closes at once (spec section 8.6). */
   closeAll: () => void;
 }
@@ -106,6 +126,7 @@ const initialOverlayState: OverlayState = {
   paletteOpen: false,
   searchOpen: false,
   addHostOpen: false,
+  addHostHostId: null,
   permissionOpen: false,
   keymapOpen: false,
   connectOpen: false,
@@ -113,6 +134,7 @@ const initialOverlayState: OverlayState = {
   connectMode: 'api',
   hostSwitcher: null,
   newChat: null,
+  remoteFolderHostId: null,
 };
 
 export const useOverlayStore = create<OverlayState & OverlayActions>()((set) => ({
@@ -134,9 +156,9 @@ export const useOverlayStore = create<OverlayState & OverlayActions>()((set) => 
 
   closeSearch: () => set({ searchOpen: false }),
 
-  openAddHost: () => set({ addHostOpen: true }),
+  openAddHost: (hostId) => set({ addHostOpen: true, addHostHostId: hostId ?? null }),
 
-  closeAddHost: () => set({ addHostOpen: false }),
+  closeAddHost: () => set({ addHostOpen: false, addHostHostId: null }),
 
   openPermission: () => set({ permissionOpen: true }),
 
@@ -157,6 +179,10 @@ export const useOverlayStore = create<OverlayState & OverlayActions>()((set) => 
   openNewChat: (anchor) => set({ newChat: anchor, hostSwitcher: null }),
 
   closeNewChat: () => set({ newChat: null }),
+
+  openRemoteFolder: (hostId) => set({ remoteFolderHostId: hostId }),
+
+  closeRemoteFolder: () => set({ remoteFolderHostId: null }),
 
   closeAll: () => set({ ...initialOverlayState }),
 }));

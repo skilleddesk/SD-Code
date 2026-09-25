@@ -19,6 +19,7 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 
 use crate::engines::{parse_stream_line, EngineEvent, EventSink, Prompt, GENERIC_ENDING};
+use crate::sdcp::envelope::ErrorObject;
 
 /// Where a CLI wants the prompt.
 ///
@@ -59,25 +60,73 @@ pub struct CliSpec {
     pub env: &'static [(&'static str, &'static str)],
 }
 
-/// The running children, so a cancel can kill one.
+/// The running children, so a cancel can kill one: the local pid, and - for a turn on a host - the
+/// connection and the pid file the remote process wrote (0.7.13).
 pub struct CliAdapter {
     spec: CliSpec,
     children: Arc<Mutex<HashMap<String, u32>>>,
+    /// `turn id → (host, pid file)`, for the turns whose CLI runs on the far side of an `ssh`.
+    ///
+    /// A local cancel can only close the connection; this is what makes it a *kill*: the daemon knows
+    /// which pid file to read on that host (`ssh::ops::kill_line`), so a Stop button stops the process
+    /// rather than the pipe. See `turn_line` for why the pid in that file is the CLI's own.
+    remotes: Arc<Mutex<HashMap<String, (crate::ssh::Ssh, String)>>>,
 }
 
 impl Default for CliAdapter {
     fn default() -> Self {
-        Self { spec: crate::engines::claude_code::CLAUDE_SPEC, children: Arc::new(Mutex::new(HashMap::new())) }
+        Self {
+            spec: crate::engines::claude_code::CLAUDE_SPEC,
+            children: Arc::new(Mutex::new(HashMap::new())),
+            remotes: Arc::new(Mutex::new(HashMap::new())),
+        }
     }
 }
 
 impl CliAdapter {
     pub fn new(spec: CliSpec) -> Self {
-        Self { spec, children: Arc::new(Mutex::new(HashMap::new())) }
+        Self {
+            spec,
+            children: Arc::new(Mutex::new(HashMap::new())),
+            remotes: Arc::new(Mutex::new(HashMap::new())),
+        }
     }
 
     pub fn spec(&self) -> &CliSpec {
         &self.spec
+    }
+
+    /// The command for a turn whose CLI runs **on a host**: an `ssh` whose remote command runs the CLI
+    /// in the chat's folder there, with the pid tracked so a cancel can kill it (0.7.13).
+    ///
+    /// The `ssh` binary itself is resolved through `host::program`, like every other program this daemon
+    /// starts - and `get_program`/`get_args` are how the batch-file wrap (`cmd.exe /c …` on Windows)
+    /// survives the move from `std::process::Command` to tokio's.
+    fn remote_command(&self, prompt: &Prompt, args: &[String]) -> Result<Command, ErrorObject> {
+        let Some(ssh) = prompt.remote.as_ref() else {
+            return Err(ErrorObject::internal("a remote turn without a host"));
+        };
+
+        let pid_file = crate::ssh::ops::pid_file(&prompt.turn_id);
+        let line = crate::ssh::ops::turn_line(
+            self.spec.program,
+            args,
+            prompt.project_root.as_deref(),
+            self.spec.env,
+            &pid_file,
+        )?;
+        let launcher = crate::host::program::command("ssh").ok_or_else(|| {
+            ErrorObject::not_found("`ssh` is not on this machine's PATH, so no turn can run on a host")
+        })?;
+        let mut command = Command::new(launcher.get_program());
+
+        command.args(launcher.get_args()).args(ssh.base_args()?).arg(line);
+
+        if let Ok(mut remotes) = self.remotes.lock() {
+            remotes.insert(prompt.turn_id.clone(), (ssh.clone(), pid_file));
+        }
+
+        Ok(command)
     }
 
     /// The program, resolved the way the shell would, **inside the chat's folder**.
@@ -162,11 +211,28 @@ impl CliAdapter {
 
         /* `host::program` resolves the name the way the shell does - which is what makes an
            npm-installed CLI (`claude.cmd`, `codex.cmd`, `gemini.cmd` on Windows) startable at all. The
-           command it builds already carries the chat's folder - see `command`. */
-        let mut command = self.command(prompt);
+           command it builds already carries the chat's folder - see `command`. On a **host**, the whole
+           turn goes over `ssh` instead: same args, same prompt placement, same stream - a different
+           machine (0.7.13). */
+        let mut command = match prompt.remote {
+            Some(_) => match self.remote_command(prompt, &args) {
+                Ok(command) => command,
+                Err(error) => {
+                    sink.send(EngineEvent::Failed(error.message));
+
+                    return;
+                }
+            },
+            None => {
+                let mut command = self.command(prompt);
+
+                command.args(&args);
+
+                command
+            }
+        };
 
         command
-            .args(&args)
             .envs(self.spec.env.iter().copied())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -234,6 +300,10 @@ impl CliAdapter {
             children.remove(&prompt.turn_id);
         }
 
+        if let Ok(mut remotes) = self.remotes.lock() {
+            remotes.remove(&prompt.turn_id);
+        }
+
         let stderr = match stderr_task {
             Some(task) => task.await.unwrap_or_default(),
             None => String::new(),
@@ -256,7 +326,27 @@ impl CliAdapter {
 
     /// Kills the child of one turn. `engine.kill` and `engine.cancel` both land here; the difference
     /// between them is the event the daemon emits, not how the process dies.
+    ///
+    /// A turn on a **host** takes one more step (0.7.13): dropping the local `ssh` closes the connection,
+    /// which is not the same thing as stopping the CLI on the far side, so the daemon also runs
+    /// `ssh::ops::kill_line` there - on a **detached thread**, because this method is called from the
+    /// request that answered `engine.cancel` and a Stop button must not wait for a connection to a host
+    /// that may be slow. The remote process gets a `SIGTERM` a moment later; nothing here blocks.
     pub fn kill(&self, turn_id: &str) -> bool {
+        let remote = self
+            .remotes
+            .lock()
+            .ok()
+            .and_then(|mut remotes| remotes.remove(turn_id));
+
+        if let Some((ssh, pid_file)) = remote {
+            std::thread::spawn(move || {
+                let line = crate::ssh::ops::kill_line(&pid_file);
+
+                let _ = ssh.run(&line, std::time::Duration::from_secs(15));
+            });
+        }
+
         let Ok(mut children) = self.children.lock() else {
             return false;
         };
@@ -396,7 +486,40 @@ mod tests {
             provider: None,
             history: Vec::new(),
             project_root: folder.map(str::to_string),
+            remote: None,
         }
+    }
+
+    /// 0.7.13: a turn on a **host** runs the CLI over `ssh`, in the chat's folder *there*.
+    ///
+    /// The assertion worth having is the command that would be started, and it can be built without a
+    /// connection: `remote_command` is where the `ssh` invocation is assembled, and the line it carries
+    /// is what `ssh::ops::turn_line` wrote - `cd <folder> && sh -c 'echo $$ > <pid>; exec env … <cli> …'`.
+    #[test]
+    fn a_turn_on_a_host_is_an_ssh_to_the_chats_folder_with_the_pid_tracked() {
+        let ssh = crate::ssh::Ssh::parse("ssh -p 8443 root@vps.example").unwrap();
+        let adapter = CliAdapter::new(CLAUDE_SPEC);
+        let mut remote = prompt_in(Some("/srv/app"));
+
+        remote.turn_id = "turn-9".to_string();
+        remote.remote = Some(ssh);
+
+        let command = adapter.remote_command(&remote, &["--print".to_string()]).unwrap();
+        let args: Vec<String> = command.as_std().get_args().map(|arg| arg.to_string_lossy().to_string()).collect();
+        let line = args.last().cloned().unwrap_or_default();
+
+        assert!(args.contains(&"-p".to_string()), "the port travels: {args:?}");
+        assert!(args.contains(&"8443".to_string()), "{args:?}");
+        assert!(args.iter().any(|arg| arg == "StrictHostKeyChecking=yes"), "{args:?}");
+        assert!(line.contains("cd '/srv/app'"), "{line}");
+        assert!(line.contains("claude"), "{line}");
+        assert!(line.contains("run/turn-9.pid"), "the pid is tracked so a cancel can kill it: {line}");
+        assert!(line.contains("exec"), "{line}");
+        assert!(
+            !args.iter().any(|arg| arg == "--print"),
+            "the CLI's own args travel inside the remote line, not as ssh arguments: {args:?}"
+        );
+        assert!(line.contains("'--print'"), "{line}");
     }
 
     /// 0.7.6: the child process is started **in the chat's folder**.

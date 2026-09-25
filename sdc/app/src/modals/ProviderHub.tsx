@@ -20,6 +20,7 @@ import { strings } from '../strings';
 import {
   authorizeSubscription,
   connectApiKey,
+  openTerminalForHost,
   connectLocal,
   runDoctor,
   saveCustomEndpoint,
@@ -717,13 +718,95 @@ function DoctorRow({
           type="button"
           className={BTN + ' ' + BTN_SECONDARY}
           data-fix={fix}
-          onClick={() => toast(strings.hub.doctorFixed(fix))}
+          /*
+           * The button tells the truth about what this build can do (0.7.13).
+           *
+           * Three labels lead somewhere real:
+           *
+           *   Trust / Re-pin   open the host's card, which is where a fingerprint is shown and a decision
+           *                   is taken;
+           *   Install         opens the **Terminal on that host**, because SDC does not install software on
+           *                   somebody's server on its own - but the person can, in the window, in that
+           *                   folder, with the checkpoint and the deny list and the tool-call record that
+           *                   every other command gets. That is the honest version of an `Install` button:
+           *                   the command is theirs, the guard rails are ours.
+           *
+           * Every other label (`Kill process`) says where to do it instead of faking success - a button
+           * that toasted `Install: done` while installing nothing was the bug this shape removes.
+           */
+          onClick={() => {
+            /*
+             * `Trust`, `Re-pin` and `Install key` open the host's card, because that is where the
+             * decision and the password field live (0.7.13). `Install key` is the one the `ssh` row
+             * carries when the pin is in place and the host still will not let SDC in - the card has the
+             * password input that finishes it, which is exactly what used to be missing for a host that
+             * was already added.
+             */
+            if (fix === 'Trust' || fix === 'Re-pin' || fix === 'Install key') {
+              openAddHostForLabel(label);
+              return;
+            }
+
+            if (fix === 'Install') {
+              openTerminalForLabel(label);
+              return;
+            }
+
+            toast(strings.hub.doctorFixManual(fix));
+          }}
         >
           {fix}
         </button>
       )}
     </div>
   );
+}
+
+/**
+ * Opens the host's key-and-environment card for a `Trust`/`Re-pin` row.
+ *
+ * The row's label is `SSH to <address>` (that is what the daemon writes for a host check), so the host
+ * is found by matching it against the rows the window holds - and when nothing matches, the sentence
+ * says so rather than opening a dialog about the wrong machine.
+ */
+function openAddHostForLabel(label: string): void {
+  const address = label.replace(/^SSH to\s+/, '');
+  const host = useAppStore
+    .getState()
+    .hosts.find((candidate) => candidate.address === address || candidate.id === address);
+
+  if (host === undefined) {
+    toast(strings.hub.doctorFixManual(address));
+
+    return;
+  }
+
+  useOverlayStore.getState().openAddHost(host.id);
+}
+
+/**
+ * Opens the **Terminal** for the host a doctor row is about, which is where an `Install` fix leads.
+ *
+ * The row's label is `SSH to <address>` (that is what the daemon writes for a host check), so the host is
+ * found the same way `openAddHostForLabel` finds it. Focusing one of its chats first is what makes the
+ * terminal *about that machine*: the tab runs commands in the active chat's folder on the active chat's
+ * host, so opening it without the chat would open a terminal about the wrong computer - the one mistake
+ * this surface must not make. The hub closes on the way out, because the panel is behind it.
+ */
+function openTerminalForLabel(label: string): void {
+  const address = label.replace(/^SSH to\s+/, '');
+  const host = useAppStore
+    .getState()
+    .hosts.find((candidate) => candidate.address === address || candidate.id === address);
+
+  if (host === undefined) {
+    toast(strings.hub.doctorFixManual(address));
+
+    return;
+  }
+
+  useOverlayStore.getState().closeHub();
+  openTerminalForHost(host.id);
 }
 
 /** A labelled form row, the shape the four flows share. */
