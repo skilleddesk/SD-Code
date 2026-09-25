@@ -168,6 +168,8 @@ export default function CodeEditor({ path, value, readOnly, onChange, onSave, li
         },
       ]),
       theme,
+      /* The panel is 320-760px wide: a long line wraps rather than hiding behind a sideways scroll. */
+      EditorView.lineWrapping,
       syntaxHighlighting(highlight),
       editable.current.of([EditorState.readOnly.of(readOnly), EditorView.editable.of(!readOnly)]),
       EditorView.updateListener.of((update) => {

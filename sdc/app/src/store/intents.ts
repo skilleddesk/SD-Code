@@ -1002,6 +1002,13 @@ export async function saveFile(path: string, text: string): Promise<boolean> {
        the probe, which saved a line and watched `0 changed` stay `0`). */
     await loadGitStatus();
 
+    /* And the file's row: its size changed, and a tree that still shows the old size is a stale tree. */
+    const directory = parentOf(path);
+
+    if (useFilesStore.getState().directories[directory] !== undefined) {
+      await loadDirectory(directory === useFilesStore.getState().root ? null : directory);
+    }
+
     return true;
   } catch (error) {
     reportFailure(error, strings.files.saveFailed);

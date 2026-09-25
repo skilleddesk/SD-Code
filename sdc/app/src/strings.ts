@@ -550,6 +550,31 @@ export const strings = {
     },
     timeMachine: {
       current: 'CURRENT',
+      /** When a checkpoint was taken: `3 min ago`, `14:02`, or `25 Sep, 14:02` - never a raw stamp. */
+      when: (stamp: string): string => {
+        const time = Date.parse(stamp);
+
+        if (!Number.isFinite(time)) {
+          return stamp;
+        }
+
+        const minutes = Math.round((Date.now() - time) / 60_000);
+
+        if (minutes < 1) {
+          return 'just now';
+        }
+
+        if (minutes < 60) {
+          return `${minutes} min ago`;
+        }
+
+        const date = new Date(time);
+        const clock = date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+
+        return new Date().toDateString() === date.toDateString()
+          ? clock
+          : `${date.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}, ${clock}`;
+      },
       /** `git.diff` of the chat's folder - what has changed since its last commit. */
       compare: 'Show the folder’s changes',
       rewound: (turn: number): string => `Rewound to turn ${turn}`,
@@ -640,7 +665,7 @@ export const strings = {
       day: 'Day',
       failedNote: (failed: number): string => (failed === 0 ? 'none failed' : `${failed} failed`),
       costNote: (priced: number, total: number): string =>
-        priced === 0 ? 'no engine reported a cost' : priced === total ? 'as the engines reported it' : `reported by ${priced} of ${total} turns`,
+        priced === 0 ? 'none reported' : priced === total ? 'as reported' : `${priced} of ${total} reported`,
       tokensNote: (input: string, output: string): string => `${input} in · ${output} out`,
       chartTitle: (byCost: boolean): string => (byCost ? 'Cost · last 7 days' : 'Turns · last 7 days'),
       chartLabel: (byCost: boolean): string => (byCost ? 'Reported cost per day, last seven days' : 'Turns per day, last seven days'),

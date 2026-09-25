@@ -21,8 +21,22 @@ const CodeEditor = lazy(() => import('./CodeEditor'));
  * A file the daemon cut at a megabyte opens read-only: saving the first megabyte of a larger file would
  * cut the file itself.
  */
+/** A path inside the folder, as `src/pay.js`; a path outside it is shown whole. */
+function relativeTo(root: string | null, path: string): string {
+  if (root === null) {
+    return path;
+  }
+
+  const normal = (value: string): string => value.replace(/[\\/]+/g, '/').replace(/\/$/, '');
+  const base = normal(root);
+  const full = normal(path);
+
+  return full.toLowerCase().startsWith(`${base.toLowerCase()}/`) ? full.slice(base.length + 1) : path;
+}
+
 export function PreviewFile() {
   const file = useFilesStore((state) => state.open);
+  const root = useFilesStore((state) => state.root);
   const tabs = useFilesStore((state) => state.tabs);
   const drafts = useFilesStore((state) => state.drafts);
   const reveal = useFilesStore((state) => state.reveal);
@@ -116,8 +130,10 @@ export function PreviewFile() {
       </div>
 
       <div className="preview-file-head flex items-center gap-[6px] border-b border-border-subtle px-[10px] py-[6px]">
+        {/* The path inside the folder: the folder's own path is the same for every file and pushed the part
+            that differs off the end of the line. */}
         <div className="min-w-0 flex-1 truncate font-mono text-[10.5px] text-text-muted" title={file.path}>
-          {file.path}
+          {relativeTo(root, file.path)}
         </div>
 
         {changed ? (

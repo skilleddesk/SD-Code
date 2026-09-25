@@ -1,4 +1,4 @@
-import { GitCompare } from 'lucide-react';
+import { GitCompare, History } from 'lucide-react';
 import { useMemo } from 'react';
 
 import { strings } from '../../strings';
@@ -76,11 +76,18 @@ export function TimeMachineTab() {
                 </span>
               ) : null}
 
-              <div className="tm-thumb h-[48px] w-[72px] shrink-0 overflow-hidden rounded-sm shadow-[inset_0_0_0_1px_rgba(255,255,255,.05)] [background-image:var(--grad-thumb)]" />
+              {/* A screenshot when the preview wrote one; otherwise an icon, not a gradient that looks like one. */}
+              {entry.thumbnail === null ? (
+                <div className="tm-thumb grid h-[48px] w-[48px] shrink-0 place-items-center rounded-sm border border-border-subtle bg-bg-base text-text-muted" aria-hidden="true">
+                  <History size={16} />
+                </div>
+              ) : (
+                <img className="tm-thumb h-[48px] w-[72px] shrink-0 rounded-sm object-cover" src={entry.thumbnail} alt="" />
+              )}
 
               <div className="tm-body min-w-0 flex-1">
                 <div className="tm-turn font-mono text-[10.5px] text-text-muted">
-                  turn {entry.turn} · {entry.when}
+                  {strings.rightPanel.timeMachine.when(entry.when)}
                 </div>
                 <div className="tm-title my-[3px] overflow-hidden text-ellipsis whitespace-nowrap text-[12.5px] font-medium text-text-primary">
                   {entry.title}
