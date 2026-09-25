@@ -903,6 +903,55 @@ export async function refreshDirectory(path: string): Promise<void> {
 }
 
 /**
+ * After a turn in this chat ends (v4): the tree, the git badge and the open files show what it changed.
+ *
+ * An agent edits files the window has on screen. Until this, the tree kept its old listing, the badge
+ * kept saying `clean`, and an open tab kept the text from before the edit - so the window disagreed with
+ * the disk right after the most interesting thing that happened to it. Every open directory is re-read,
+ * and every open tab **without unsaved text** is re-read; a tab the person is editing is left alone (their
+ * text is not overwritten), and the Save that follows is what decides.
+ */
+export async function refreshAfterTurn(): Promise<void> {
+  const files = useFilesStore.getState();
+
+  if (files.root === null) {
+    return;
+  }
+
+  const hostId = hostIdOf(usePrefsStore.getState().activeTab);
+
+  await loadDirectory(null);
+
+  for (const directory of files.expanded) {
+    await loadDirectory(directory);
+  }
+
+  await loadGitStatus();
+
+  for (const tab of useFilesStore.getState().tabs) {
+    if (useFilesStore.getState().drafts[tab.path] !== undefined) {
+      continue;
+    }
+
+    try {
+      const answer = await sdcpCall('fs.read', { path: tab.path, hostId });
+
+      if (answer.sha256 !== tab.sha256) {
+        const fresh = { ...tab, text: answer.text, sha256: answer.sha256, bytes: answer.bytes, truncated: answer.truncated };
+
+        useFilesStore.setState((state) => ({
+          tabs: state.tabs.map((candidate) => (candidate.path === tab.path ? fresh : candidate)),
+          open: state.open?.path === tab.path ? fresh : state.open,
+        }));
+      }
+    } catch {
+      /* The file went away (deleted or renamed by the turn): its tab closes rather than lying. */
+      useFilesStore.getState().closeTab(tab.path);
+    }
+  }
+}
+
+/**
  * Saves the open file (`fs.write`) - **and the daemon takes a checkpoint first** (principle P5).
  *
  * The checkpoint is not written here on purpose: a rule about not changing a file without a checkpoint

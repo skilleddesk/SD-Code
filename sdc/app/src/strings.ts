@@ -238,6 +238,9 @@ export const strings = {
     answer: {
       title: 'Answer',
       streaming: 'streaming…',
+      code: 'code',
+      copy: 'Copy',
+      copied: 'Copied',
     },
     tools: {
       read: 'Read',
@@ -1040,17 +1043,17 @@ export const strings = {
 
   /** Permission dialog - spec section 9.13. */
   permission: {
-    title: 'Delete a file',
-    sub: 'Claude wants to perform a mutating action',
-    target: 'src/database.js',
-    explainStrong: 'What this file does:',
-    explain:
-      'Your database connection settings. If this is deleted, your app will stop loading data.',
-    note: 'A checkpoint was saved before this turn, so you can undo it either way.',
+    /** The target when a caller named none - said plainly rather than a sample file name. */
+    target: 'this chat’s folder',
+    /** The label before the daemon's explanation, by what is being asked. */
+    explainStrong: (action: string): string =>
+      action === 'run' ? 'What happens:' : action === 'edit' ? 'What changes:' : 'What this does:',
+    note: 'SDC takes a checkpoint before the first change of a turn, so Rewind can undo this either way.',
     deny: 'Esc · Deny',
     allowOnce: 'Allow once · Enter',
     allowAlways: 'Always allow',
-    showMe: 'Show me the file',
+    /** "Show me" asks the agent to show the exact change or command and wait. */
+    showMe: (action: string): string => (action === 'run' ? 'Show me first' : 'Show me the change'),
     granted: 'Permission granted',
     denied: 'Denied',
     alwaysToast: (target: string): string => `Always allow: ${target}`,

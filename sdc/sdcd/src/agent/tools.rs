@@ -152,6 +152,33 @@ pub struct ToolContext<'a> {
     /// Kinds of action the person said `Always allow` to, for the rest of this turn.
     pub always: HashSet<&'static str>,
     pub calls: usize,
+    /// Writes the turn's checkpoint **now**, before the change - see `Checkpointer`.
+    pub checkpoint: Option<Checkpointer>,
+    /// Whether this turn's checkpoint exists yet: one per turn, before its first change.
+    pub checkpointed: bool,
+}
+
+/**
+ * Takes the checkpoint of the chat's folder and pushes `CheckpointSaved`, and returns when both are done.
+ *
+ * The daemon's turn loop used to take the checkpoint when it *received* a mutating `ToolStarted` - but the
+ * agent does not wait for the loop, so the file was written first and the "before" checkpoint recorded the
+ * change it was meant to undo (found by Verify: "no changes since the checkpoint"). The agent now calls this
+ * itself, synchronously, between the permission and the write.
+ */
+pub type Checkpointer = std::sync::Arc<dyn Fn(&str) + Send + Sync>;
+
+/// The turn's checkpoint, taken once, before its first change.
+fn checkpoint_first(context: &mut ToolContext, title: &str) {
+    if context.checkpointed {
+        return;
+    }
+
+    if let Some(checkpoint) = &context.checkpoint {
+        checkpoint(title);
+    }
+
+    context.checkpointed = true;
 }
 
 /// One tool's answer to the model: the text, and whether it is an error the model should react to.
@@ -348,6 +375,8 @@ fn write_file(context: &mut ToolContext, call_id: &str, path: &str, content: &st
         return refused;
     }
 
+    checkpoint_first(context, &format!("Before {} {path}", if existed { "Edit" } else { "Create" }));
+
     match context.workspace.write(path, content) {
         Ok(()) => {
             completed(context, call_id, true, &format!("done · +{added} −{removed}"), Some(card(&diff)));
@@ -406,6 +435,8 @@ fn edit_file(context: &mut ToolContext, call_id: &str, path: &str, old: &str, ne
         return refused;
     }
 
+    checkpoint_first(context, &format!("Before Edit {path}"));
+
     match context.workspace.write(path, &after) {
         Ok(()) => {
             completed(context, call_id, true, &format!("done · +{added} −{removed}"), Some(card(&diff)));
@@ -452,6 +483,8 @@ fn run_command(context: &mut ToolContext, call_id: &str, line: &str, timeout: Du
 
         return refused;
     }
+
+    checkpoint_first(context, &format!("Before Run {line}"));
 
     match context.workspace.run(line, timeout) {
         Ok(report) => {
@@ -530,7 +563,13 @@ fn update_plan(context: &mut ToolContext, input: &Value) -> Outcome {
 
     context.sink.send(EngineEvent::Plan(json!(steps)));
 
-    Outcome::ok(format!("Plan shown: {done} of {} steps done.", steps.len()))
+    let total = steps.len();
+
+    Outcome::ok(if done == total {
+        format!("Plan shown: all {total} steps done.")
+    } else {
+        format!("Plan shown: {done} of {total} steps done. Call update_plan again as each step starts or finishes.")
+    })
 }
 
 /// Asks the person when the autonomy level says so; `Some(outcome)` is the refusal to hand the model.
@@ -639,7 +678,7 @@ mod tests {
     use crate::engines::Recorder;
 
     fn context<'a>(workspace: &'a Workspace, sink: &'a EventSink, autonomy: Autonomy) -> ToolContext<'a> {
-        ToolContext { workspace, sink, turn_id: "turn-t", autonomy, always: HashSet::new(), calls: 0 }
+        ToolContext { workspace, sink, turn_id: "turn-t", autonomy, always: HashSet::new(), calls: 0, checkpoint: None, checkpointed: false }
     }
 
     fn folder(name: &str) -> (std::path::PathBuf, Workspace) {
@@ -747,7 +786,7 @@ mod tests {
             &call("update_plan", json!({ "steps": [{ "text": "Read", "status": "done" }, { "text": "Fix", "status": "in_progress" }, { "text": " ", "status": "pending" }] })),
         );
 
-        assert_eq!(outcome.content, "Plan shown: 1 of 2 steps done.");
+        assert!(outcome.content.starts_with("Plan shown: 1 of 2 steps done."), "{}", outcome.content);
         assert_eq!(
             recorder.events(),
             vec![EngineEvent::Plan(json!([{ "text": "Read", "status": "done" }, { "text": "Fix", "status": "in_progress" }]))]

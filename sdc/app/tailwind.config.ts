@@ -87,6 +87,9 @@ const config: Config = {
           idle: 'var(--state-idle)',
           running: 'var(--state-running)',
           waiting: 'var(--state-waiting)',
+          /* Five components wrote `text-state-warning`, a class that never existed, so their amber fell
+             back to the inherited colour. It is the same token as `waiting`. */
+          warning: 'var(--state-waiting)',
           success: 'var(--state-success)',
           error: 'var(--state-error)',
         },
