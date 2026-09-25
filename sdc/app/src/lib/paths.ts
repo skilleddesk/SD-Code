@@ -17,6 +17,33 @@ export function inFolder(root: string, file: string): string {
   return `${trimmed}${separator}${file.replace(/[\\/]/g, separator)}`;
 }
 
+/**
+ * One spelling of a path, for comparing two of them.
+ *
+ * On Windows the same file arrives as `C:/p/src\a.ts` from one call and `C:/p/src/a.ts` from another
+ * (the daemon joins with `\`, a folder picked in the window uses `/`), and a drive's letter and names are
+ * not case-sensitive - so a tab and a tree row for the same file compared unequal, and a rename left the
+ * old tab open. Paths on a host (they start with `/`) keep their case: POSIX names are case-sensitive.
+ */
+export function pathKey(path: string): string {
+  const slashed = path.replace(/\\/g, '/').replace(/\/+$/, '');
+
+  return /^[a-zA-Z]:\//.test(slashed) ? slashed.toLowerCase() : slashed;
+}
+
+/** Whether two paths name the same file. */
+export function samePath(left: string, right: string): boolean {
+  return pathKey(left) === pathKey(right);
+}
+
+/** Whether `path` is `folder` itself or anything inside it. */
+export function isUnder(path: string, folder: string): boolean {
+  const inner = pathKey(path);
+  const outer = pathKey(folder);
+
+  return inner === outer || inner.startsWith(`${outer}/`);
+}
+
 /** The last part of a path, whichever separator it uses. */
 export function baseName(path: string): string {
   return path.split(/[\\/]/).pop() ?? path;

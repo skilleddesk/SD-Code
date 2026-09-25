@@ -2,7 +2,7 @@ import type { FsEntry, PermissionDecision, PermissionRisk, TierName } from '../.
 import { nameOf, pickFolder } from '../lib/picker';
 import { sdcpCall } from '../lib/sdcp';
 import { isSdcpError } from '../lib/transport';
-import { baseName, inFolder } from '../lib/paths';
+import { baseName, inFolder, isUnder, samePath } from '../lib/paths';
 import { strings } from '../strings';
 import { useDaemonStore } from './daemon';
 import { useFilesStore } from './files';
@@ -809,7 +809,7 @@ function closeTabsUnder(path: string): void {
   const files = useFilesStore.getState();
 
   for (const tab of files.tabs) {
-    if (tab.path === path || tab.path.startsWith(`${path}/`) || tab.path.startsWith(`${path}\\`)) {
+    if (isUnder(tab.path, path)) {
       useFilesStore.getState().closeTab(tab.path);
     }
   }
@@ -851,7 +851,7 @@ export async function searchFolder(query: string): Promise<SearchHit[] | null> {
  */
 export async function openFile(path: string, name: string, line?: number): Promise<void> {
   const files = useFilesStore.getState();
-  const already = files.tabs.find((tab) => tab.path === path);
+  const already = files.tabs.find((tab) => samePath(tab.path, path));
 
   /* An open tab is brought forward rather than re-read: it may hold unsaved text. */
   if (already !== undefined) {
@@ -976,14 +976,14 @@ export async function saveFile(path: string, text: string): Promise<boolean> {
       hostId,
     });
 
-    const saved = useFilesStore.getState().tabs.find((tab) => tab.path === path) ?? (open?.path === path ? open : null);
+    const saved = useFilesStore.getState().tabs.find((tab) => samePath(tab.path, path)) ?? (open !== null && samePath(open.path, path) ? open : null);
 
     if (saved !== null) {
       /* The tab takes what was written, and its draft is gone: the disk and the editor agree again. The
          active tab stays the active one - saving a background tab must not bring it forward. */
       useFilesStore.setState((state) => ({
-        tabs: state.tabs.map((tab) => (tab.path === path ? { ...saved, text, sha256: answer.sha256, bytes: answer.bytes, truncated: false } : tab)),
-        open: state.open?.path === path ? { ...saved, text, sha256: answer.sha256, bytes: answer.bytes, truncated: false } : state.open,
+        tabs: state.tabs.map((tab) => (samePath(tab.path, path) ? { ...saved, text, sha256: answer.sha256, bytes: answer.bytes, truncated: false } : tab)),
+        open: state.open !== null && samePath(state.open.path, path) ? { ...saved, text, sha256: answer.sha256, bytes: answer.bytes, truncated: false } : state.open,
       }));
     }
 
@@ -1828,6 +1828,8 @@ export async function runVerify(input: {
 export async function rewindTo(sessionId: string, turnId: string): Promise<void> {
   try {
     await sdcpCall('rewind.apply', { sessionId, turnId });
+    /* The files just changed under the window: the tree, the badge and the open tabs follow. */
+    await refreshAfterTurn();
   } catch (error) {
     reportFailure(error, 'Rewind failed');
   }
@@ -1837,6 +1839,7 @@ export async function rewindTo(sessionId: string, turnId: string): Promise<void>
 export async function redoRewind(sessionId: string): Promise<void> {
   try {
     await sdcpCall('rewind.redo', { sessionId });
+    await refreshAfterTurn();
   } catch (error) {
     reportFailure(error, 'Redo failed');
   }

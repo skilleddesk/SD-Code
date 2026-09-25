@@ -747,8 +747,10 @@ pub fn shadow_changes(ssh: &Ssh, root: &str, since: &str) -> Result<String, Erro
 /// Restores the host's working tree to a shadow commit - the file half of a rewind, on the far side.
 pub fn shadow_restore(ssh: &Ssh, root: &str, sha: &str) -> Result<(), ErrorObject> {
     let shadow = shadow_dir(root);
-    let line = shadow_git(root, &shadow, &["checkout", sha, "--", "."])?;
-    let output = ssh.run(&line, TRANSFER)?;
+    /* The same exact restore as `git::restore`: new files are removed, deleted ones come back. */
+    let add = shadow_git(root, &shadow, &["add", "-A"])?;
+    let reset = shadow_git(root, &shadow, &["read-tree", "-u", "--reset", sha])?;
+    let output = ssh.run(&format!("{add} && {reset}"), TRANSFER)?;
 
     if !output.ok() {
         return Err(failed(ssh, "restoring the files", &output));

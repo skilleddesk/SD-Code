@@ -106,16 +106,24 @@ export function getTransport(): SdcpTransport {
    * own replay overlapping this one) is dropped by `seq`, and a gap is answered with another `event.list`.
    */
   let replayed = false;
+  let catching = false;
   const held: Notification[] = [];
+  /*
+   * The daemon's own sequence, apart from the log's. A toast this window raises is appended to the same
+   * log with the *next* number (`eventLog.append`), so the log's `seq` is not the daemon's - and comparing
+   * against it dropped the daemon's next event as "already seen" (found with a rewind: a local toast took
+   * 623, and the daemon's `RewindApplied` 623 never reached the reducer).
+   */
+  let daemonSeq = 0;
 
   const fold = (notification: Notification): void => {
-    if (notification.seq <= eventLog.seq) {
+    if (notification.seq <= daemonSeq) {
       return;
     }
 
-    if (replayed && eventLog.hasGap(notification.seq)) {
+    if (replayed && notification.seq > daemonSeq + 1) {
       held.push(notification);
-      void catchUp(eventLog.seq);
+      void catchUp(daemonSeq);
 
       return;
     }
@@ -124,12 +132,24 @@ export function getTransport(): SdcpTransport {
   };
 
   const catchUp = async (since: number): Promise<void> => {
+    if (catching) {
+      return;
+    }
+
+    catching = true;
+
     try {
       const { events } = await transport!.request('event.list', { since });
 
       for (const entry of [...events].sort((left, right) => left.seq - right.seq)) {
+        if (entry.seq <= daemonSeq) {
+          continue;
+        }
+
+        daemonSeq = entry.seq;
+
         /* A replayed toast is history, not news (see the note on the toast filter below). */
-        if (entry.seq > eventLog.seq && entry.event.type !== 'Toast' && entry.event.type !== 'ToastDismissed') {
+        if (entry.event.type !== 'Toast' && entry.event.type !== 'ToastDismissed') {
           eventLog.accept(entry as Notification);
         }
       }
@@ -137,16 +157,19 @@ export function getTransport(): SdcpTransport {
       /* No daemon yet: the live stream and the next catch-up fill the log when it answers. */
     }
 
+    catching = false;
     replayed = true;
 
     for (const notification of held.splice(0).sort((left, right) => left.seq - right.seq)) {
-      if (notification.seq > eventLog.seq) {
+      if (notification.seq > daemonSeq) {
         admit(notification);
       }
     }
   };
 
   const admit = (notification: Notification): void => {
+    daemonSeq = Math.max(daemonSeq, notification.seq);
+
     if (notification.event.type === 'Toast' || notification.event.type === 'ToastDismissed') {
       /* The envelope carries the moment the daemon wrote the event, so "old" is a fact rather than a
          guess about how long the backlog takes: a notification about something that happened half a
