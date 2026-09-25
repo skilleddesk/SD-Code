@@ -360,12 +360,21 @@ export const strings = {
         engine: 'Engine',
         model: 'Model',
       },
-      /** The count beside the MODEL title: how many providers can actually run right now. */
-      verifiedCount: (connected: number, total: number): string =>
-        connected === 0 ? 'nothing connected yet' : `${connected} of ${total} connected`,
-      verified: 'connected',
-      notConnected: 'not connected',
+      /** The count beside the MODEL title: how many providers can run a turn right now. */
+      connectedCount: (connected: number): string =>
+        connected === 1 ? '1 provider connected' : `${connected} providers connected`,
+      /** How a group is connected - the badge beside its name. */
+      via: (engine: 'cli' | 'api' | 'local'): string =>
+        engine === 'cli' ? 'CLI · signed in' : engine === 'local' ? 'local · running' : 'API key · verified',
       catalogEmpty: 'the daemon has not listed any yet',
+      /** Nothing connected: the menu has no rows, and says what would give it some. */
+      noneConnected: 'Nothing is connected yet. Sign in to a CLI or add an API key to get models here.',
+      /** The one line that stands in for every provider the menu leaves out. */
+      disconnected: (count: number): string =>
+        count === 1 ? '1 provider not connected' : `${count} providers not connected`,
+      manage: 'Manage in Provider Hub',
+      older: (count: number): string => `Older versions (${count})`,
+      hideOlder: 'Hide older versions',
       connect: (mode: 'login' | 'api', label: string): string =>
         mode === 'login' ? `Sign in to ${label}` : `Add a key for ${label}`,
       tiers: {
@@ -380,20 +389,19 @@ export const strings = {
         native_api: { name: 'Native API', description: 'API key · any provider' },
       },
       models: {
-        haiku: { name: 'Haiku 4', description: 'fast' },
-        sonnet: { name: 'Sonnet 4.5', description: 'balanced' },
-        opus: { name: 'Opus 4', description: 'deep' },
+        haiku: { name: 'Claude Haiku', description: 'fast · the plan’s current Haiku' },
+        sonnet: { name: 'Claude Sonnet', description: 'balanced · the plan’s current Sonnet' },
+        opus: { name: 'Claude Opus', description: 'deep · the plan’s current Opus' },
         codexDefault: { name: 'Default', description: 'gpt-5-mini' },
         gpt5: { name: 'GPT-5', description: 'flagship' },
         flash: { name: 'Gemini Flash', description: 'fast' },
         pro: { name: 'Gemini Pro', description: 'long ctx' },
-        claudeSonnet: { name: 'claude-sonnet-4-5', description: 'Anthropic' },
+        claudeSonnet: { name: 'claude-sonnet-5', description: 'Anthropic' },
         deepseekChat: { name: 'deepseek-chat', description: 'DeepSeek' },
         llama: { name: 'llama3.2', description: 'Ollama local' },
       },
       connectMore: 'Connect more providers or models…',
       footerNote: 'Every change visible',
-      footerCost: '~$0.10 – $0.28',
       tierChanged: (tier: string): string => `Tier: ${tier}`,
       engineChanged: (engine: string): string => `Engine: ${engine}`,
       modelChanged: (model: string): string => `Model: ${model}`,

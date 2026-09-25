@@ -1,6 +1,6 @@
 {
   "$comment": "The model catalogue, as data (master spec section 9.10: 'the model list is always up to date'). This file is what the daemon ships with, so a fresh install can offer sensible models with no network at all. It is NOT the source of truth: `models.list { refresh: true }` asks each provider's own endpoint and caches what it answers, and a model the provider has that this file has never heard of is still shown. Editing this file is how a curated row (tier, context, price) is added or corrected - no code change, no rebuild of the daemon's logic.",
-  "snapshot": "2026-09-20",
+  "snapshot": "2026-09-25",
   "providers": [
     {
       "id": "ollama",
@@ -38,25 +38,46 @@
       "protocol": "anthropic",
       "models": [
         {
-          "id": "claude-sonnet-4-5",
-          "tier": "balanced",
-          "ctx": 200000,
-          "cost": "$3 / $15",
-          "name": "Claude Sonnet 4.5"
-        },
-        {
-          "id": "claude-opus-4",
+          "id": "claude-opus-5-5",
           "tier": "deep",
-          "ctx": 200000,
-          "cost": "$15 / $75",
-          "name": "Claude Opus 4"
+          "ctx": 1000000,
+          "cost": "$4 / $20",
+          "name": "Claude Opus 5.5"
         },
         {
-          "id": "claude-haiku-4",
+          "id": "claude-opus-5",
+          "tier": "deep",
+          "ctx": 1000000,
+          "cost": "$5 / $25",
+          "name": "Claude Opus 5"
+        },
+        {
+          "id": "claude-fable-5-1",
+          "tier": "deep",
+          "ctx": 1000000,
+          "cost": "$10 / $50",
+          "name": "Claude Fable 5.1"
+        },
+        {
+          "id": "claude-sonnet-5",
+          "tier": "balanced",
+          "ctx": 1000000,
+          "cost": "$2 / $10",
+          "name": "Claude Sonnet 5"
+        },
+        {
+          "id": "claude-sonnet-4-6",
+          "tier": "balanced",
+          "ctx": 1000000,
+          "cost": "$3 / $15",
+          "name": "Claude Sonnet 4.6"
+        },
+        {
+          "id": "claude-haiku-4-5",
           "tier": "fast",
           "ctx": 200000,
-          "cost": "$0.80 / $4",
-          "name": "Claude Haiku 4"
+          "cost": "$1 / $5",
+          "name": "Claude Haiku 4.5"
         }
       ]
     },
@@ -164,14 +185,14 @@
         {
           "id": "sonnet",
           "tier": "balanced",
-          "ctx": 200000,
+          "ctx": 1000000,
           "cost": "subscription",
           "name": "Claude Sonnet · plan"
         },
         {
           "id": "opus",
           "tier": "deep",
-          "ctx": 200000,
+          "ctx": 1000000,
           "cost": "subscription",
           "name": "Claude Opus · plan"
         },

@@ -44,7 +44,7 @@ pub fn model_for(engine: &str) -> &'static str {
     match engine {
         "codex" => "default",
         "gemini" => "gemini-2.5-pro",
-        "native_api" => "anthropic/claude-sonnet-4-5",
+        "native_api" => "anthropic/claude-sonnet-5",
         "ollama" => "llama3.2:3b",
         _ => "sonnet",
     }

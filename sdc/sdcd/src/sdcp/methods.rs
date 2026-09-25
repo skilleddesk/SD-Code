@@ -2128,7 +2128,7 @@ struct RunPlan {
     /// The provider the model belongs to, when the caller said. `native_api` needs it to find the
     /// endpoint (and therefore the key entry) of a model id this build's catalogue has never seen.
     provider: Option<String>,
-    history: Vec<String>,
+    history: Vec<crate::engines::Message>,
     /// The folder the chat works in, or `None` for a chat that has no project. It reaches the adapters
     /// inside the `Prompt`, which is where every fact about the session that the engine cannot guess
     /// travels - the same reason the model and the provider are there.

@@ -13,6 +13,7 @@
 
 use serde_json::{json, Value};
 
+use crate::engines::Message;
 use crate::sdcp::envelope::ErrorObject;
 use crate::store::sqlite::Store;
 
@@ -21,20 +22,20 @@ use crate::store::sqlite::Store;
 /// Each entry is one message: the turn's `prompt` then its `answer`, oldest first. A turn that never
 /// produced an answer contributes its prompt only - a half-finished turn is still context, and
 /// dropping it would change the question the new engine is being asked.
-pub fn history_for(store: &Store, session_id: &str) -> Result<Vec<String>, ErrorObject> {
+pub fn history_for(store: &Store, session_id: &str) -> Result<Vec<Message>, ErrorObject> {
     let turns = store.turns(session_id).map_err(ErrorObject::internal)?;
     let mut history = Vec::new();
 
     for turn in turns {
         if let Some(prompt) = turn.get("prompt").and_then(Value::as_str) {
             if !prompt.is_empty() {
-                history.push(prompt.to_string());
+                history.push(Message::user(prompt));
             }
         }
 
         if let Some(answer) = turn.get("answer").and_then(Value::as_str) {
             if !answer.is_empty() {
-                history.push(answer.to_string());
+                history.push(Message::assistant(answer));
             }
         }
     }
@@ -100,8 +101,9 @@ mod tests {
         let history = history_for(&store, "s1").unwrap();
 
         assert_eq!(history.len(), 2);
-        assert_eq!(history[0], "add rate limiting");
-        assert!(history[1].starts_with("Added the limiter"));
+        assert_eq!(history[0], Message::user("add rate limiting"));
+        assert_eq!(history[1].role, crate::engines::Role::Assistant);
+        assert!(history[1].text.starts_with("Added the limiter"));
     }
 
     #[test]
