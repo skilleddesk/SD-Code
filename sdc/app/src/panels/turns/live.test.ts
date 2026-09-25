@@ -22,6 +22,8 @@ function turn(overrides: Partial<TurnView> = {}): TurnView {
     prompt: 'Reply with exactly: OK',
     text: '',
     thinking: '',
+    thinkingMs: 0,
+    thinkingSince: null,
     status: 'running',
     stuckForMs: 0,
     tools: [],
@@ -65,5 +67,43 @@ describe('toTurns', () => {
 
   it('collapses nothing until the window is exceeded', () => {
     expect(collapsedSummary([turn()], 's1')).toBeNull();
+  });
+});
+
+describe('toTurns (v4: live thinking and the checkpoint rail)', () => {
+  it('marks thinking live while the turn runs and the engine is still thinking', () => {
+    const [live] = toTurns([turn({ thinking: 'hm', thinkingSince: '2026-09-25T10:00:00Z' })], 's1');
+    const [done] = toTurns([turn({ thinking: 'hm', thinkingMs: 6200, status: 'done' })], 's1');
+
+    expect(live?.thinking).toEqual({ text: 'hm', ms: 0, since: '2026-09-25T10:00:00Z', live: true });
+    expect(done?.thinking).toEqual({ text: 'hm', ms: 6200, since: null, live: false });
+  });
+
+  it('is not live once the engine has moved on, even though the turn is still running', () => {
+    const [moved] = toTurns([turn({ thinking: 'hm', thinkingMs: 1200, thinkingSince: null, text: 'answer' })], 's1');
+
+    expect(moved?.thinking?.live).toBe(false);
+  });
+
+  it('gives each turn only the checkpoints it wrote, oldest first', () => {
+    const checkpoint = (id: string, turnId: string | null, ordinal: number) => ({
+      id,
+      sessionId: 's1',
+      turnId,
+      turn: ordinal,
+      when: 'now',
+      title: `Before ${id}`,
+      thumbnail: null,
+      filesHash: 'abc',
+    });
+    const [drawn] = toTurns([turn()], 's1', [
+      checkpoint('late', 't1', 9),
+      checkpoint('other', 't2', 5),
+      checkpoint('early', 't1', 3),
+      checkpoint('save', null, 4),
+    ]);
+
+    expect(drawn?.checkpoints.map((entry) => entry.id)).toEqual(['early', 'late']);
+    expect(drawn?.checkpoints[0]).toEqual({ id: 'early', title: 'Before early', turn: 3 });
   });
 });

@@ -772,3 +772,78 @@ describe('the folder a chat works in', () => {
   });
 });
 
+
+/*
+ * v4: the thinking block's time is measured between the log's own stamps, and a checkpoint remembers
+ * which turn wrote it - the two facts the live thinking block and the checkpoint rail draw.
+ */
+describe('thinking time and checkpoint ownership', () => {
+  function at(state: AppState, second: number, event: SdcpEvent, turnId?: string): AppState {
+    return applyEvent(state, {
+      seq: state.seq + 1,
+      ts: `2026-09-25T10:00:${String(second).padStart(2, '0')}.500Z`,
+      event,
+      ...(turnId === undefined ? {} : { turnId }),
+    });
+  }
+
+  const started: SdcpEvent = {
+    type: 'TurnStarted',
+    turnId: 't1',
+    sessionId: 's1',
+    engine: 'native_api',
+    model: 'claude-opus-5-5',
+    tier: 'Deep',
+    prompt: 'why is it slow',
+  };
+
+  it('counts the time spent thinking, and stops counting when the answer starts', () => {
+    let state = at(EMPTY_STATE, 0, started);
+
+    state = at(state, 1, { type: 'ThinkingDelta', turnId: 't1', delta: 'The query ' });
+    state = at(state, 3, { type: 'ThinkingDelta', turnId: 't1', delta: 'has no index.' });
+
+    expect(state.turns[0]?.thinkingSince).toBe('2026-09-25T10:00:01.500Z');
+    expect(state.turns[0]?.thinkingMs).toBe(0);
+
+    state = at(state, 7, { type: 'TurnDelta', turnId: 't1', delta: 'Add an index.' });
+
+    expect(state.turns[0]?.thinkingSince).toBeNull();
+    expect(state.turns[0]?.thinkingMs).toBe(6000);
+  });
+
+  it('adds up separate stretches of thinking, not the time between them', () => {
+    let state = at(EMPTY_STATE, 0, started);
+
+    state = at(state, 1, { type: 'ThinkingDelta', turnId: 't1', delta: 'Read the file first.' });
+    state = at(state, 3, { type: 'ToolCallStarted', turnId: 't1', callId: 'c1', tool: 'read', name: 'Read', target: 'db.ts' });
+    state = at(state, 20, { type: 'ThinkingDelta', turnId: 't1', delta: 'Now I see it.' });
+    state = at(state, 21, { type: 'TurnCompleted', turnId: 't1', summary: 'Done', meta: '21s' });
+
+    expect(state.turns[0]?.thinkingMs).toBe(3000);
+    expect(state.turns[0]?.thinkingSince).toBeNull();
+  });
+
+  it('measures nothing when a stamp is not a date, rather than inventing a time', () => {
+    let state = applyEvent(EMPTY_STATE, { seq: 1, ts: 'now', event: started });
+
+    state = applyEvent(state, { seq: 2, ts: 'now', event: { type: 'ThinkingDelta', turnId: 't1', delta: 'hm' } });
+    state = applyEvent(state, { seq: 3, ts: 'now', event: { type: 'TurnDelta', turnId: 't1', delta: 'ok' } });
+
+    expect(state.turns[0]?.thinkingMs).toBe(0);
+  });
+
+  it('keeps the id of the turn that wrote a checkpoint', () => {
+    const checkpoint = (id: string): SdcpEvent => ({
+      type: 'CheckpointSaved',
+      sessionId: 's1',
+      checkpoint: { id, turn: 4, ts: 'now', title: 'Before Edit', thumbnail: null, filesHash: 'abc', rewindRef: null },
+    });
+    let state = at(EMPTY_STATE, 0, checkpoint('cp-a'), 't1');
+
+    state = at(state, 1, checkpoint('cp-b'));
+
+    expect(state.checkpoints.find((entry) => entry.id === 'cp-a')?.turnId).toBe('t1');
+    expect(state.checkpoints.find((entry) => entry.id === 'cp-b')?.turnId).toBeNull();
+  });
+});

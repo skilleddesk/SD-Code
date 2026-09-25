@@ -65,11 +65,28 @@ export interface RunToolData {
 
 export type ToolCardData = ReadToolData | EditToolData | RunToolData;
 
-/** The reasoning block: collapsed by default, and only its duration is shown until you open it. */
+/**
+ * The reasoning block (v4): open and streaming while the engine thinks, folded to one line after.
+ *
+ * The time is measured, never written: `ms` is the thinking the log has seen end, and `since` is the
+ * stamp of the stretch still going on, which the block adds a live clock to.
+ */
 export interface ThinkingData {
-  /** The duration text, parentheses included - `(4s)`. */
-  duration: string;
   text: string;
+  /** Milliseconds of thinking that has ended. */
+  ms: number;
+  /** When the stretch still going on started, or `null` when the engine is not thinking now. */
+  since: string | null;
+  /** The turn is still running and nothing has come after the thinking yet. */
+  live: boolean;
+}
+
+/** A checkpoint a turn wrote before it changed something - one dot on the stream's rail. */
+export interface TurnCheckpointData {
+  id: string;
+  title: string;
+  /** The ordinal `rewind.apply` restores to (`turn-<n>`). */
+  turn: number;
 }
 
 /**
@@ -135,6 +152,8 @@ export interface Turn {
   /** Absent until the first `TurnDelta` - a turn shows no empty answer block before it answers. */
   answer?: AnswerData;
   tools: ToolCardData[];
+  /** The checkpoints this turn wrote, oldest first - the rail's dots and the way back. */
+  checkpoints: TurnCheckpointData[];
   error?: ErrorCardData;
   footer: TurnFooterData;
 }

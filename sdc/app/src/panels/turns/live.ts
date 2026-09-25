@@ -1,5 +1,5 @@
 import { strings } from '../../strings';
-import type { TurnView } from '../../store/types';
+import type { CheckpointView, TurnView } from '../../store/types';
 import type { CollapsedSummaryData, ToolCardData, Turn } from './types';
 import { OPEN_TURN_WINDOW } from './types';
 
@@ -15,7 +15,11 @@ import { OPEN_TURN_WINDOW } from './types';
  */
 
 /** The turns of one session, oldest first, as the stream wants them. */
-export function toTurns(turns: readonly TurnView[], sessionId: string): Turn[] {
+export function toTurns(
+  turns: readonly TurnView[],
+  sessionId: string,
+  checkpoints: readonly CheckpointView[] = [],
+): Turn[] {
   return turns
     .filter((turn) => turn.sessionId === sessionId)
     .map((turn) => ({
@@ -38,7 +42,15 @@ export function toTurns(turns: readonly TurnView[], sessionId: string): Turn[] {
       thinking:
         turn.thinking === ''
           ? undefined
-          : { duration: strings.turns.thinking.duration, text: turn.thinking },
+          : {
+              text: turn.thinking,
+              ms: turn.thinkingMs,
+              since: turn.thinkingSince,
+              /* Live while the turn runs and the thinking is still the newest thing it produced. */
+              live:
+                (turn.status === 'running' || turn.status === 'stuck') &&
+                turn.thinkingSince !== null,
+            },
       /* The answer, which `TurnView.text` has held all along. Left out while it is empty, so a turn
          that has not produced a word yet shows no empty block. */
       answer:
@@ -46,6 +58,10 @@ export function toTurns(turns: readonly TurnView[], sessionId: string): Turn[] {
           ? undefined
           : { text: turn.text, streaming: turn.status === 'running' },
       tools: turn.tools.map(toToolCard),
+      checkpoints: checkpoints
+        .filter((checkpoint) => checkpoint.turnId === turn.id)
+        .sort((left, right) => left.turn - right.turn)
+        .map((checkpoint) => ({ id: checkpoint.id, title: checkpoint.title, turn: checkpoint.turn })),
       error:
         turn.error === undefined
           ? undefined

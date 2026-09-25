@@ -37,7 +37,8 @@ export function Pane({ session, host, showHeader }: PaneProps) {
    * the daemon actually pushed, and `live.ts` only reshapes it.
    */
   const turns = useAppStore((state) => state.turns);
-  const streamTurns = toTurns(turns, session.id);
+  const checkpoints = useAppStore((state) => state.checkpoints);
+  const streamTurns = toTurns(turns, session.id, checkpoints);
   const collapsed = collapsedSummary(turns, session.id);
 
   /*
@@ -127,7 +128,7 @@ export function Pane({ session, host, showHeader }: PaneProps) {
               </div>
             </div>
           ) : (
-            <TurnStream turns={streamTurns} collapsed={collapsed} />
+            <TurnStream turns={streamTurns} collapsed={collapsed} sessionId={session.id} />
           )}
         </div>
       </div>

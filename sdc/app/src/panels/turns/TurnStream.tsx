@@ -4,6 +4,7 @@ import { strings } from '../../strings';
 import { toast } from '../../store/toast';
 import { ErrorCard } from './ErrorCard';
 import { AnswerBlock } from './AnswerBlock';
+import { CheckpointRail } from './CheckpointRail';
 import { ThinkingBlock } from './ThinkingBlock';
 import { ToolCard } from './ToolCard';
 import { TurnFooter } from './TurnFooter';
@@ -30,9 +31,11 @@ export interface TurnStreamProps {
   turns: readonly Turn[];
   /** The block above the turns, or null for a session that has not run more than five yet. */
   collapsed?: CollapsedSummaryData | null;
+  /** The chat these turns belong to - what a rewind from the checkpoint rail restores. */
+  sessionId: string;
 }
 
-export function TurnStream({ turns, collapsed = null }: TurnStreamProps) {
+export function TurnStream({ turns, collapsed = null, sessionId }: TurnStreamProps) {
   /*
    * The summary is drawn whenever the caller passes one. The caller is the thing that knows how
    * many turns came before this window - `OPEN_TURN_WINDOW` in types.ts is the threshold it applies
@@ -61,14 +64,14 @@ export function TurnStream({ turns, collapsed = null }: TurnStreamProps) {
       ) : null}
 
       {turns.map((turn) => (
-        <TurnBlock key={turn.id} turn={turn} />
+        <TurnBlock key={turn.id} turn={turn} sessionId={sessionId} />
       ))}
     </>
   );
 }
 
 /** One `.turn`: the user's message, the meta line, then whatever the engine produced. */
-function TurnBlock({ turn }: { turn: Turn }) {
+function TurnBlock({ turn, sessionId }: { turn: Turn; sessionId: string }) {
   return (
     <div className="turn mb-[26px]">
       <UserMessage message={turn.user} />
@@ -88,6 +91,9 @@ function TurnBlock({ turn }: { turn: Turn }) {
       </div>
 
       {turn.thinking ? <ThinkingBlock thinking={turn.thinking} /> : null}
+
+      {/* Before the tool cards, because that is when the daemon wrote it: ahead of the first change. */}
+      <CheckpointRail sessionId={sessionId} checkpoints={turn.checkpoints} />
 
       {turn.tools.map((tool, index) => (
         <ToolCard key={`${tool.kind}-${index}`} tool={tool} />

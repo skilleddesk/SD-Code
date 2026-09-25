@@ -308,6 +308,8 @@ describe('openFolderIn', () => {
           prompt: 'fix it',
           text: '',
           thinking: '',
+          thinkingMs: 0,
+          thinkingSince: null,
           status: 'done',
           stuckForMs: 0,
           tools: [],

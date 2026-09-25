@@ -1,16 +1,16 @@
-﻿import { GitCompare } from 'lucide-react';
+import { GitCompare } from 'lucide-react';
+import { useMemo } from 'react';
 
 import { strings } from '../../strings';
-import { rewindTo } from '../../store/intents';
+import { openDiff, rewindTo } from '../../store/intents';
 import { useAppStore } from '../../store/store';
 import { useSessionsStore } from '../../store/sessions';
-import { toast } from '../../store/toast';
 import { BTN, BTN_BLOCK, BTN_SECONDARY } from '../ui/button';
 
 /**
  * The Time Machine tab - spec section 9.13 / 14.
  *
- * Newest checkpoint first: a 72x48 thumbnail, `turn 14 Â· now` in mono, and the title of what
+ * Newest checkpoint first: a 72x48 thumbnail, `turn 14 · now` in mono, and the title of what
  * changed. The current one is outlined in accent and wears a `CURRENT` pill on its top edge; the
  * others nudge 2px to the right when you hover them, which is the whole affordance for "this is
  * reversible".
@@ -23,11 +23,17 @@ import { BTN, BTN_BLOCK, BTN_SECONDARY } from '../ui/button';
  */
 export function TimeMachineTab() {
   const { activeTab } = useSessionsStore();
-  const sessionId = activeTab ?? 's1';
-  const entries = useAppStore((state) => state.checkpoints);
+  /*
+   * This chat's checkpoints only. The tab used to list every chat's, and to send a rewind to the demo
+   * session `s1` when no chat was open - so clicking a row could ask the daemon to restore a turn of a
+   * different conversation.
+   */
+  const sessionId = activeTab;
+  const all = useAppStore((state) => state.checkpoints);
+  const entries = useMemo(() => (sessionId === null ? [] : all.filter((entry) => entry.sessionId === sessionId)), [all, sessionId]);
 
   /* Nothing has changed yet: the spec's empty line, in the same centred box the Console uses. */
-  if (entries.length === 0) {
+  if (sessionId === null || entries.length === 0) {
     return (
       <div className="flex flex-1 items-center justify-center p-[24px] text-center text-[12.5px] text-text-muted">
         {strings.rightPanel.timeMachine.empty}
@@ -74,7 +80,7 @@ export function TimeMachineTab() {
 
               <div className="tm-body min-w-0 flex-1">
                 <div className="tm-turn font-mono text-[10.5px] text-text-muted">
-                  turn {entry.turn} Â· {entry.when}
+                  turn {entry.turn} · {entry.when}
                 </div>
                 <div className="tm-title my-[3px] overflow-hidden text-ellipsis whitespace-nowrap text-[12.5px] font-medium text-text-primary">
                   {entry.title}
@@ -90,7 +96,7 @@ export function TimeMachineTab() {
         <button
           type="button"
           className={BTN + ' ' + BTN_SECONDARY + ' ' + BTN_BLOCK}
-          onClick={() => toast(strings.rightPanel.timeMachine.compareToast)}
+          onClick={() => void openDiff()}
         >
           <GitCompare size={12} aria-hidden="true" />
           {strings.rightPanel.timeMachine.compare}
