@@ -20,7 +20,7 @@ const sdcpCall = vi.hoisted(() => vi.fn());
 
 vi.mock('../lib/sdcp', () => ({ sdcpCall }));
 
-const { autonomyFor, sendPrompt, interruptTurn, chooseModel, closeDiff, closeFolder, forkSession, loadCliRecipe, loadGitStatus, saveFile, emptySessionOn, newChatOnHost, openDiff, openFolderIn, loadDirectory, toggleDirectory, openFile, closeFile, addHost, hostKey, trustHost, listRemoteDirectory, runDoctor, runCommand, runInBackground, pollBackground, stopBackground, openTerminalForHost, installHostKey } = await import('./intents');
+const { defaultReviewer, runVerify, autonomyFor, sendPrompt, interruptTurn, chooseModel, closeDiff, closeFolder, forkSession, loadCliRecipe, loadGitStatus, saveFile, emptySessionOn, newChatOnHost, openDiff, openFolderIn, loadDirectory, toggleDirectory, openFile, closeFile, addHost, hostKey, trustHost, listRemoteDirectory, runDoctor, runCommand, runInBackground, pollBackground, stopBackground, openTerminalForHost, installHostKey } = await import('./intents');
 const { useTerminalStore } = await import('./terminal');
 const { tabForSession } = await import('./rightPanel');
 const { engineForProvider, useModelStore } = await import('./model');
@@ -1210,5 +1210,50 @@ describe('sendPrompt in agent mode', () => {
     await interruptTurn('turn-9');
 
     expect(sdcpCall).toHaveBeenCalledWith('engine.cancel', { turnId: 'turn-9' });
+  });
+});
+
+describe('verify', () => {
+  const connected = (id: string, name: string) => ({ id, name, kind: 'api-key' as const, status: 'connected' as const, detail: '', account: null, logo: id, initial: 'X' });
+
+  beforeEach(() => {
+    sdcpCall.mockReset();
+    sdcpCall.mockResolvedValue({ verifyId: 'verify-3' });
+    useModelStore.setState({
+      catalog: [
+        { id: 'sonnet', providerId: 'claude', providerLabel: 'Claude', tier: 'balanced', ctx: 0, cost: '', name: 'Claude Sonnet', source: 'bundled' },
+        { id: 'gemini-3-pro', providerId: 'gemini', providerLabel: 'Gemini', tier: 'deep', ctx: 0, cost: '', name: 'Gemini 3 Pro', source: 'live' },
+      ],
+    });
+    useAppStore.setState({
+      providers: [connected('claude', 'Claude'), connected('gemini', 'Gemini')] as never,
+      turns: [
+        { id: 't1', sessionId: 's1', turnNumber: 1, engine: 'claude_code', model: 'sonnet', tier: 'Balanced', prompt: 'fix the 500', text: 'done', thinking: '', thinkingMs: 0, thinkingSince: null, plan: [], status: 'done', stuckForMs: 0, tools: [], summary: '', meta: '', pass: null },
+      ],
+      checkpoints: [
+        { id: 'cp-late', sessionId: 's1', turnId: 't1', turn: 9, when: 'now', title: 'Before Run', thumbnail: null, filesHash: 'b'.repeat(40) },
+        { id: 'cp-first', sessionId: 's1', turnId: 't1', turn: 4, when: 'now', title: 'Before Edit', thumbnail: null, filesHash: 'a'.repeat(40) },
+      ],
+    });
+  });
+
+  it('picks a reviewer that is not the engine that wrote the change', () => {
+    expect(defaultReviewer({ engine: 'claude_code', model: 'sonnet' })?.engine).toBe('gemini');
+    expect(defaultReviewer({ engine: 'gemini', model: 'gemini-3-pro' })?.engine).toBe('claude_code');
+  });
+
+  it("sends the turn's first checkpoint and its own prompt, and opens the Verify tab", async () => {
+    await expect(
+      runVerify({ sessionId: 's1', turnId: 't1', reviewer: defaultReviewer({ engine: 'claude_code', model: 'sonnet' }) }),
+    ).resolves.toBe('verify-3');
+
+    expect(sdcpCall).toHaveBeenCalledWith('verify.run', expect.objectContaining({
+      sessionId: 's1',
+      turnId: 't1',
+      task: 'fix the 500',
+      since: 'a'.repeat(40),
+      reviewer: { engine: 'gemini', model: 'gemini-3-pro', provider: 'gemini' },
+    }));
+    expect(tabForSession(useRightPanelStore.getState(), 's1')).toBe('verify');
   });
 });

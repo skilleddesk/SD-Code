@@ -539,6 +539,11 @@ export interface ModelState {
    * edits and runs commands until the task is done; the three CLIs are agents either way.
    */
   compose: ComposeMode;
+  /**
+   * Text for the prompt box to take in, then clear - what "Fix with a prompt" writes. The box is
+   * uncontrolled (it grows as you type), so this is a hand-over rather than the box's value.
+   */
+  draft: string | null;
 }
 
 export type ComposeMode = 'chat' | 'agent';
@@ -563,6 +568,7 @@ export interface ModelActions {
   /** Queue a steering prompt; ignored once three are waiting. */
   enqueue: (prompt: string) => void;
   setCompose: (compose: ComposeMode) => void;
+  setDraft: (draft: string | null) => void;
   dequeue: (prompt: string) => void;
   clearQueue: () => void;
 }
@@ -578,6 +584,7 @@ const initialModelState: ModelState = {
   queued: [...strings.prompt.queued.seed],
   /* Agent by default: the product's promise is "describe it and it gets built". */
   compose: 'agent',
+  draft: null,
 };
 
 export const useModelStore = create<ModelState & ModelActions>()((set, get) => ({
@@ -648,6 +655,8 @@ export const useModelStore = create<ModelState & ModelActions>()((set, get) => (
   cycleTier: () => get().setTier(nextTier(get().tier)),
 
   cycleEngine: () => get().setEngine(nextEngine(get().engine)),
+
+  setDraft: (draft) => set({ draft }),
 
   setCompose: (compose) => {
     if (get().compose !== compose) {

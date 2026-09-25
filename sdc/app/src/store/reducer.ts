@@ -3,6 +3,7 @@ import type {
   AppEvent,
   AppState,
   CheckpointView,
+  VerifyView,
   ConsoleLine,
   DoctorCheckView,
   HostView,
@@ -62,6 +63,7 @@ export const EMPTY_STATE: AppState = {
   permission: null,
   resolvedPermissions: {},
   doctor: {},
+  verifies: [],
 };
 
 
@@ -467,6 +469,23 @@ function reduce(state: AppState, entry: AppEvent): AppState {
             : tool,
         ),
       }));
+
+    case 'VerifyUpdated': {
+      /* Whole each time: the newest snapshot of a run replaces the last one, in place. */
+      const run: VerifyView = {
+        verifyId: event.verifyId,
+        sessionId: event.sessionId,
+        turnId: event.turnId ?? null,
+        state: event.state,
+        pass: event.pass,
+        checks: event.checks,
+        review: event.review,
+        note: event.note,
+      };
+      const others = state.verifies.filter((existing) => existing.verifyId !== run.verifyId);
+
+      return { ...state, verifies: [...others, run] };
+    }
 
     case 'PlanUpdated':
       /* Whole each time: the newest checklist replaces the last, so a step that finished is ticked. */

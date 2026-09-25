@@ -110,7 +110,10 @@ function TurnBlock({ turn, sessionId }: { turn: Turn; sessionId: string }) {
 
       {turn.error ? <ErrorCard error={turn.error} /> : null}
 
-      <TurnFooter footer={turn.footer} />
+      <TurnFooter
+        footer={turn.footer}
+        verify={turn.running ? null : { sessionId, turnId: turn.id, author: turn.author, result: turn.verify ?? null }}
+      />
     </div>
   );
 }

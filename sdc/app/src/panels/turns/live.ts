@@ -1,5 +1,5 @@
 import { strings } from '../../strings';
-import type { CheckpointView, TurnView } from '../../store/types';
+import type { CheckpointView, TurnView, VerifyView } from '../../store/types';
 import type { CollapsedSummaryData, ToolCardData, Turn } from './types';
 import { OPEN_TURN_WINDOW } from './types';
 
@@ -19,6 +19,7 @@ export function toTurns(
   turns: readonly TurnView[],
   sessionId: string,
   checkpoints: readonly CheckpointView[] = [],
+  verifies: readonly VerifyView[] = [],
 ): Turn[] {
   return turns
     .filter((turn) => turn.sessionId === sessionId)
@@ -60,6 +61,8 @@ export function toTurns(
       tools: turn.tools.map(toToolCard),
       plan: turn.plan.map((step) => ({ text: step.text, status: step.status })),
       running: turn.status === 'running' || turn.status === 'stuck',
+      author: { engine: turn.engine, model: turn.model },
+      ...verifyOf(verifies, turn.id),
       checkpoints: checkpoints
         .filter((checkpoint) => checkpoint.turnId === turn.id)
         .sort((left, right) => left.turn - right.turn)
@@ -94,6 +97,24 @@ export function collapsedSummary(
     /* A summary line that carried a token count and a price would have to make them up: the daemon
        reports what a turn used on the turn itself. */
     meta: strings.turns.collapsed.windowMeta(OPEN_TURN_WINDOW),
+  };
+}
+
+/** The newest verify run of a turn, as the footer chip needs it - or nothing. */
+function verifyOf(verifies: readonly VerifyView[], turnId: string): { verify?: Turn['verify'] } {
+  const run = [...verifies].reverse().find((candidate) => candidate.turnId === turnId);
+
+  if (run === undefined) {
+    return {};
+  }
+
+  return {
+    verify: {
+      state: run.state,
+      pass: run.pass,
+      reviewer: run.review === null ? '' : run.review.model === '' ? run.review.engine : run.review.model,
+      issues: run.review?.issues?.length ?? 0,
+    },
   };
 }
 

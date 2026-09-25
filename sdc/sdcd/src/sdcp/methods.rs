@@ -86,6 +86,7 @@ impl Daemon {
             "engine.cancel" | "engine.kill" => self.engine_stop(envelope, &*out),
             "engine.status" => self.engine_status(envelope),
             "engine.switch" => self.engine_switch(envelope, &*out),
+            "verify.run" => self.verify_run(envelope, out),
 
             /* The engines' environment ------------------------------------------------------- */
             "fs.read" => self.fs_read(envelope),
@@ -1066,6 +1067,50 @@ impl Daemon {
         });
 
         Ok(json!({ "turnId": answer_turn_id }))
+    }
+
+    /// `verify.run` (v4): the folder's own checks, then a review of the change by another engine.
+    ///
+    /// Answers with the run's id at once; the run itself streams as `VerifyUpdated` snapshots. The app
+    /// sends what it knows and the daemon cannot derive: the turn's first checkpoint (`since`, a shadow
+    /// commit - the review reads everything after it) and the turn's own prompt (`task`).
+    fn verify_run(&self, envelope: &Envelope, out: Arc<dyn Notifier>) -> Result<Value, ErrorObject> {
+        let session_id = envelope.require_str("sessionId")?;
+        let root = self
+            .root_for(envelope)?
+            .and_then(|root| root.to_str().map(str::to_string))
+            .ok_or_else(|| ErrorObject::bad_request("Verify needs a folder: open one for this chat first"))?;
+        let since = envelope
+            .opt_str("since")
+            .filter(|sha| sha.len() == 40 && sha.chars().all(|character| character.is_ascii_hexdigit()));
+        let reviewer = envelope.params.get("reviewer").and_then(|reviewer| {
+            let engine = reviewer["engine"].as_str().filter(|engine| !engine.is_empty())?;
+
+            Some(crate::verify::Reviewer {
+                engine: engine.to_string(),
+                model: reviewer["model"].as_str().unwrap_or_default().to_string(),
+                provider: reviewer["provider"].as_str().filter(|id| !id.is_empty()).map(str::to_string),
+            })
+        });
+        let verify_id = format!("verify-{}", self.state.events.seq() + 1);
+        let request = crate::verify::Request {
+            verify_id: verify_id.clone(),
+            session_id,
+            turn_id: envelope.opt_str("turnId"),
+            since,
+            task: envelope.opt_str("task").unwrap_or_default(),
+            root,
+            remote: self.remote_for(envelope)?,
+            reviewer,
+            review_failing: envelope.params.get("reviewFailing").and_then(Value::as_bool).unwrap_or(false),
+        };
+        let state = self.state.clone();
+
+        tokio::spawn(async move {
+            crate::verify::run(state, out, request).await;
+        });
+
+        Ok(json!({ "verifyId": verify_id }))
     }
 
     fn engine_stop(&self, envelope: &Envelope, out: &dyn Notifier) -> Result<Value, ErrorObject> {

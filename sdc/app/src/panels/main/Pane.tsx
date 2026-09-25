@@ -38,7 +38,8 @@ export function Pane({ session, host, showHeader }: PaneProps) {
    */
   const turns = useAppStore((state) => state.turns);
   const checkpoints = useAppStore((state) => state.checkpoints);
-  const streamTurns = toTurns(turns, session.id, checkpoints);
+  const verifies = useAppStore((state) => state.verifies);
+  const streamTurns = toTurns(turns, session.id, checkpoints, verifies);
   const collapsed = collapsedSummary(turns, session.id);
 
   /*

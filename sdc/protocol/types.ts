@@ -110,6 +110,7 @@ export type SdcpMethod =
   | 'engine.kill'
   | 'engine.status'
   | 'engine.switch'
+  | 'verify.run'
   | 'fs.read'
   | 'fs.write'
   | 'fs.list'
@@ -510,6 +511,50 @@ export interface ToolCallCompletedEvent {
   diff?: { lineNumber: string; text: string; change: 'add' | 'rem' }[];
 }
 
+/** One row of a verify run: a check the project's own manifests promise. */
+export interface VerifyCheck {
+  name: string;
+  command: string;
+  status: 'pending' | 'running' | 'pass' | 'fail';
+  ms: number | null;
+  /** The last lines of its output. */
+  tail: string[];
+}
+
+/** One issue a reviewer found, pinned to a place in the change. */
+export interface VerifyIssue {
+  file: string;
+  line: number | null;
+  severity: 'high' | 'medium' | 'low';
+  message: string;
+  fix: string;
+}
+
+/** The review stage: which engine read the diff, and what it said. */
+export interface VerifyReview {
+  engine: string;
+  model: string;
+  status: 'pending' | 'running' | 'done' | 'skipped' | 'failed';
+  verdict?: 'pass' | 'issues' | 'unreadable';
+  summary?: string;
+  issues?: VerifyIssue[];
+}
+
+/** A verify run (v4), whole each time: the checks, then the review by a different engine. */
+export interface VerifyUpdatedEvent {
+  type: 'VerifyUpdated';
+  verifyId: string;
+  sessionId: string;
+  turnId?: string | null;
+  state: 'running' | 'done';
+  /** `null` until the run is over. */
+  pass: boolean | null;
+  checks: VerifyCheck[];
+  review: VerifyReview | null;
+  /** A sentence about the run as a whole, e.g. why no checks were found. */
+  note: string;
+}
+
 /** The agent's checklist for a turn (v4), whole each time: the newest one replaces the last. */
 export interface PlanUpdatedEvent {
   type: 'PlanUpdated';
@@ -678,7 +723,8 @@ export type SdcpEvent =
   | DuelStartedEvent
   | DuelResolvedEvent
   | SessionBridgedEvent
-  | PlanUpdatedEvent;
+  | PlanUpdatedEvent
+  | VerifyUpdatedEvent;
 
 /** The `type` literals, in catalogue order — used by tests and by the reducer's exhaustiveness. */
 export const SDCP_EVENT_TYPES = [
@@ -709,6 +755,7 @@ export const SDCP_EVENT_TYPES = [
   'DuelResolved',
   'SessionBridged',
   'PlanUpdated',
+  'VerifyUpdated',
 ] as const satisfies readonly SdcpEvent['type'][];
 
 /** Every event as a `Record` keyed by `type`, handy for a switch's exhaustiveness check. */
@@ -847,6 +894,24 @@ export interface SdcpMethodMap {
       maxSteps?: number;
     };
     result: { turnId: string };
+  };
+  /**
+   * The folder's checks, then a review of the change by another engine (v4). Answers at once; the run
+   * streams as `VerifyUpdated`. `since` is the turn's first checkpoint (a shadow commit): the review
+   * reads everything after it, new files included.
+   */
+  'verify.run': {
+    params: {
+      sessionId: string;
+      turnId?: string;
+      since?: string;
+      task?: string;
+      reviewer?: { engine: string; model: string; provider?: string };
+      /** Review even when a check failed (by default the review waits for green checks). */
+      reviewFailing?: boolean;
+      hostId?: string;
+    };
+    result: { verifyId: string };
   };
   /** `stopped`: whether an engine was found for the turn and told to stop, not only marked. */
   'engine.cancel': { params: { turnId: string }; result: { state: string; engine: string; stopped: boolean } };

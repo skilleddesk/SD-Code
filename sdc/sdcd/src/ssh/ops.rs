@@ -675,6 +675,24 @@ pub fn shadow_diff(ssh: &Ssh, root: &str, since: Option<&str>) -> Result<String,
     Ok(output.stdout)
 }
 
+/// What changed in the folder since a shadow commit, **new files included** - what a review reads.
+///
+/// `git diff <sha>` alone compares tracked files only, so a file an agent created would be invisible to
+/// the reviewer. `add -N` records the new files as intended-to-add in the *shadow's* index (the
+/// project's own repository, if it has one, is not touched), which is what puts them in the diff.
+pub fn shadow_changes(ssh: &Ssh, root: &str, since: &str) -> Result<String, ErrorObject> {
+    let shadow = shadow_dir(root);
+    let intend = shadow_git(root, &shadow, &["add", "-N", "--", ":/"])?;
+    let diff = shadow_git(root, &shadow, &["diff", since])?;
+    let output = ssh.run(&format!("{intend} && {diff}"), TRANSFER)?;
+
+    if !output.ok() {
+        return Err(failed(ssh, "reading what changed since the checkpoint", &output));
+    }
+
+    Ok(output.stdout)
+}
+
 /// Restores the host's working tree to a shadow commit - the file half of a rewind, on the far side.
 pub fn shadow_restore(ssh: &Ssh, root: &str, sha: &str) -> Result<(), ErrorObject> {
     let shadow = shadow_dir(root);

@@ -81,6 +81,14 @@ export interface ThinkingData {
   live: boolean;
 }
 
+/** A verify run's outcome, as the turn footer's chip draws it. */
+export interface TurnVerifyData {
+  state: 'running' | 'done';
+  pass: boolean | null;
+  reviewer: string;
+  issues: number;
+}
+
 /** One step of the agent's plan card. */
 export interface PlanStepData {
   text: string;
@@ -164,6 +172,10 @@ export interface Turn {
   plan: PlanStepData[];
   /** Still running - the plan card's current step spins only while it is. */
   running: boolean;
+  /** Who wrote the turn: the default reviewer is someone else. */
+  author: { engine: string; model: string };
+  /** The newest verify run for this turn, when there is one (v4). */
+  verify?: TurnVerifyData;
   error?: ErrorCardData;
   footer: TurnFooterData;
 }

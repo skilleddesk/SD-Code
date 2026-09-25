@@ -6,12 +6,13 @@ import {
   Image as ImageIcon,
   Paperclip,
 } from 'lucide-react';
-import { useRef, useState, type KeyboardEvent } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 
 import { strings } from '../../strings';
 import { pickFiles, type PickKind, type PickedFile } from '../../lib/picker';
 import { interruptTurn, sendPrompt } from '../../store/intents';
 import { useAppStore } from '../../store/store';
+import { useModelStore } from '../../store/model';
 import { toast } from '../../store/toast';
 import { IconButton } from '../ui/IconButton';
 import { ComposeSwitch } from './ComposeSwitch';
@@ -84,6 +85,23 @@ export function PromptArea({ sessionId }: PromptAreaProps = {}) {
    * run: no decoration, no invented `12.4k`.
    */
   const [attached, setAttached] = useState<readonly PickedFile[]>([]);
+  const draft = useModelStore((state) => state.draft);
+
+  /* A prompt handed over from elsewhere ("Fix with a prompt"): into the box, focused, ready to edit. */
+  useEffect(() => {
+    const textarea = textareaRef.current;
+
+    if (draft === null || textarea === null) {
+      return;
+    }
+
+    textarea.value = draft;
+    textarea.focus();
+    textarea.setSelectionRange(draft.length, draft.length);
+    textarea.style.height = 'auto';
+    textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`;
+    useModelStore.getState().setDraft(null);
+  }, [draft]);
   const context = { files: attached.length, tokens: null as number | null };
 
   /**

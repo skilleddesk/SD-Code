@@ -300,6 +300,11 @@ pub mod event {
         base("PlanUpdated", json!({ "turnId": turn_id, "steps": steps }))
     }
 
+    /// A verify run as it stands (v4): its checks, its review, and whether it passed - whole each time.
+    pub fn verify_updated(fields: Value) -> Value {
+        base("VerifyUpdated", fields)
+    }
+
     pub fn permission_requested(fields: Value) -> Value {
         base("PermissionRequested", fields)
     }
