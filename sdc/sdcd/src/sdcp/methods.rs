@@ -94,6 +94,9 @@ impl Daemon {
             "fs.list" => self.fs_list(envelope),
             "fs.stat" => self.fs_stat(envelope),
             "fs.search" => self.fs_search(envelope),
+            "fs.rename" => self.fs_rename(envelope, &*out),
+            "fs.delete" => self.fs_delete(envelope, &*out),
+            "fs.mkdir" => self.fs_mkdir(envelope),
             "git.status" => self.git_status(envelope),
             "git.diff" => self.git_diff(envelope),
             "git.checkpoint" => self.git_checkpoint(envelope, &*out),
@@ -1409,6 +1412,105 @@ impl Daemon {
             "sha256": sha256,
             "bytes": text.len(),
         }))
+    }
+
+    /// A checkpoint of the chat's folder before a change a person made from the window (P5): the same one
+    /// `fs.write` takes, on whichever machine the folder is. Without a session there is nothing to
+    /// checkpoint against, and nothing is taken.
+    fn checkpoint_first(&self, envelope: &Envelope, title: &str, out: &dyn Notifier) -> Result<(), ErrorObject> {
+        let Some(session) = envelope.opt_str("sessionId") else {
+            return Ok(());
+        };
+        let subject = self.subject(envelope)?;
+
+        if let Ok(fresh) = crate::checkpoints::create(
+            self.store(),
+            &session,
+            self.state.events.seq(),
+            title,
+            subject.snapshot(),
+            crate::checkpoints::screenshot::capture(),
+        ) {
+            out.push(
+                event::checkpoint_saved(&session, fresh.to_event_payload()),
+                Some(session.clone()),
+                envelope.opt_str("turnId"),
+            );
+        }
+
+        Ok(())
+    }
+
+    /// Refuses a path that is not strictly inside the chat's folder - what `fs.rename` and `fs.delete`
+    /// need, because a tree row is always inside it and a request that is not is not from the tree.
+    fn inside_folder(&self, envelope: &Envelope, raw: &str) -> Result<(), ErrorObject> {
+        let Some(root) = self.root_for(envelope)? else {
+            return Err(ErrorObject::bad_request("This needs a chat with a folder (`sessionId`), so the change stays inside it"));
+        };
+        let root_text = root.to_string_lossy().trim_end_matches(['/', '\\']).to_string();
+        let inside = if self.remote_for(envelope)?.is_some() {
+            raw.starts_with(&format!("{root_text}/")) && !raw.split('/').any(|part| part == "..")
+        } else {
+            crate::fs::strictly_inside(&root, std::path::Path::new(raw))
+        };
+
+        if inside {
+            Ok(())
+        } else {
+            Err(ErrorObject::blocked(&format!("`{raw}` is not inside this chat's folder ({root_text})")))
+        }
+    }
+
+    /// `fs.rename` (v4) - the tree's Rename, with a checkpoint first.
+    fn fs_rename(&self, envelope: &Envelope, out: &dyn Notifier) -> Result<Value, ErrorObject> {
+        let from = envelope.require_str("path")?;
+        let to = envelope.require_str("to")?;
+
+        self.inside_folder(envelope, &from)?;
+        self.inside_folder(envelope, &to)?;
+
+        let name = from.rsplit(['/', '\\']).next().unwrap_or("a file").to_string();
+
+        self.checkpoint_first(envelope, &format!("Before renaming {name}"), out)?;
+
+        match self.remote_for(envelope)? {
+            Some(ssh) => crate::ssh::ops::rename(&ssh, &from, &to)?,
+            None => crate::fs::rename(std::path::Path::new(&from), std::path::Path::new(&to))?,
+        }
+
+        Ok(json!({ "path": to, "renamed": true }))
+    }
+
+    /// `fs.delete` (v4) - the tree's Delete, with a checkpoint first so Rewind brings it back.
+    fn fs_delete(&self, envelope: &Envelope, out: &dyn Notifier) -> Result<Value, ErrorObject> {
+        let raw = envelope.require_str("path")?;
+
+        self.inside_folder(envelope, &raw)?;
+
+        let name = raw.rsplit(['/', '\\']).next().unwrap_or("a file").to_string();
+
+        self.checkpoint_first(envelope, &format!("Before deleting {name}"), out)?;
+
+        match self.remote_for(envelope)? {
+            Some(ssh) => crate::ssh::ops::remove(&ssh, &raw)?,
+            None => crate::fs::remove(std::path::Path::new(&raw))?,
+        }
+
+        Ok(json!({ "path": raw, "deleted": true }))
+    }
+
+    /// `fs.mkdir` (v4) - the tree's New folder.
+    fn fs_mkdir(&self, envelope: &Envelope) -> Result<Value, ErrorObject> {
+        let raw = envelope.require_str("path")?;
+
+        self.inside_folder(envelope, &raw)?;
+
+        match self.remote_for(envelope)? {
+            Some(ssh) => crate::ssh::ops::mkdir(&ssh, &raw)?,
+            None => crate::fs::mkdir(std::path::Path::new(&raw))?,
+        }
+
+        Ok(json!({ "path": raw, "created": true }))
     }
 
     /// `fs.list` - one level of a directory, for the window's file tree.

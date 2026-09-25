@@ -20,7 +20,7 @@ const sdcpCall = vi.hoisted(() => vi.fn());
 
 vi.mock('../lib/sdcp', () => ({ sdcpCall }));
 
-const { defaultReviewer, runVerify, autonomyFor, sendPrompt, interruptTurn, chooseModel, closeDiff, closeFolder, forkSession, loadCliRecipe, loadGitStatus, saveFile, emptySessionOn, newChatOnHost, openDiff, openFolderIn, loadDirectory, toggleDirectory, openFile, closeFile, addHost, hostKey, trustHost, listRemoteDirectory, runDoctor, runCommand, runInBackground, pollBackground, stopBackground, openTerminalForHost, installHostKey } = await import('./intents');
+const { validName, renamePath, deletePath, createFolder, searchFolder, defaultReviewer, runVerify, autonomyFor, sendPrompt, interruptTurn, chooseModel, closeDiff, closeFolder, forkSession, loadCliRecipe, loadGitStatus, saveFile, emptySessionOn, newChatOnHost, openDiff, openFolderIn, loadDirectory, toggleDirectory, openFile, closeFile, addHost, hostKey, trustHost, listRemoteDirectory, runDoctor, runCommand, runInBackground, pollBackground, stopBackground, openTerminalForHost, installHostKey } = await import('./intents');
 const { useTerminalStore } = await import('./terminal');
 const { tabForSession } = await import('./rightPanel');
 const { engineForProvider, useModelStore } = await import('./model');
@@ -1255,5 +1255,51 @@ describe('verify', () => {
       reviewer: { engine: 'gemini', model: 'gemini-3-pro', provider: 'gemini' },
     }));
     expect(tabForSession(useRightPanelStore.getState(), 's1')).toBe('verify');
+  });
+});
+
+describe('the tree changes things through the daemon, inside the chat', () => {
+  beforeEach(() => {
+    sdcpCall.mockReset();
+    sdcpCall.mockResolvedValue({ entries: [], hidden: 0, path: '/srv/app', branch: '', dirty: 0, hits: [] });
+    usePrefsStore.setState({ activeTab: 's1' });
+    useFilesStore.getState().reset();
+    useFilesStore.getState().setRoot('/srv/app');
+  });
+
+  it('accepts a plain name and refuses one that climbs or carries a separator', () => {
+    expect(validName('pay.test.ts')).toBe(true);
+    expect(validName('../x')).toBe(false);
+    expect(validName('a/b')).toBe(false);
+    expect(validName('..')).toBe(false);
+    expect(validName('  ')).toBe(false);
+  });
+
+  it('renames in the same folder and closes the tab of the old path', async () => {
+    useFilesStore.getState().setOpen({ path: '/srv/app/src/a.ts', name: 'a.ts', text: '', sha256: '', bytes: 0, truncated: false });
+
+    await expect(renamePath('/srv/app/src/a.ts', 'b.ts')).resolves.toBe(true);
+
+    expect(sdcpCall).toHaveBeenCalledWith('fs.rename', expect.objectContaining({ path: '/srv/app/src/a.ts', to: '/srv/app/src/b.ts', sessionId: 's1' }));
+    expect(useFilesStore.getState().tabs).toEqual([]);
+  });
+
+  it('deletes through fs.delete with the chat, so the daemon checkpoints first', async () => {
+    await expect(deletePath('/srv/app/old')).resolves.toBe(true);
+
+    expect(sdcpCall).toHaveBeenCalledWith('fs.delete', expect.objectContaining({ path: '/srv/app/old', sessionId: 's1' }));
+  });
+
+  it('refuses a bad folder name before it reaches the daemon', async () => {
+    await expect(createFolder('/srv/app', 'a/b')).resolves.toBe(false);
+
+    expect(sdcpCall).not.toHaveBeenCalledWith('fs.mkdir', expect.anything());
+  });
+
+  it('searches the chat folder', async () => {
+    sdcpCall.mockResolvedValue({ hits: [{ path: '/srv/app/x.ts', line: 3, text: 'needle' }] });
+
+    await expect(searchFolder('needle')).resolves.toEqual([{ path: '/srv/app/x.ts', line: 3, text: 'needle' }]);
+    expect(sdcpCall).toHaveBeenCalledWith('fs.search', expect.objectContaining({ query: 'needle', sessionId: 's1' }));
   });
 });

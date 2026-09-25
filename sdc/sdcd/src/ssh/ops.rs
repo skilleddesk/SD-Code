@@ -307,6 +307,57 @@ pub fn write(ssh: &Ssh, path: &str, text: &str) -> Result<String, ErrorObject> {
     Ok(crate::fs::hash(text.as_bytes()))
 }
 
+/// `fs.rename` on a host: `mv`, refusing to overwrite what is already at the new name.
+pub fn rename(ssh: &Ssh, from: &str, to: &str) -> Result<(), ErrorObject> {
+    guard(from)?;
+    guard(to)?;
+
+    let (source, target) = (remote_expr(from)?, remote_expr(to)?);
+    let output = ssh.run(
+        &format!("[ -e {source} ] || exit 4; [ -e {target} ] && exit 5; mkdir -p \"$(dirname {target})\" && mv -- {source} {target}"),
+        QUICK,
+    )?;
+
+    match output.code {
+        Some(4) => Err(ErrorObject::not_found(format!("{}: `{from}` does not exist on that host", ssh.label()))),
+        Some(5) => Err(ErrorObject::bad_request(format!("{}: `{to}` already exists; pick another name", ssh.label()))),
+        _ if !output.ok() => Err(failed(ssh, "renaming", &output)),
+        _ => Ok(()),
+    }
+}
+
+/// `fs.delete` on a host: a file, or a folder with everything in it.
+pub fn remove(ssh: &Ssh, path: &str) -> Result<(), ErrorObject> {
+    guard(path)?;
+
+    if path.trim_end_matches('/').is_empty() || path == "~" || path == "~/" {
+        return Err(ErrorObject::bad_request("That is the root or a home directory; SDC does not delete it."));
+    }
+
+    let expr = remote_expr(path)?;
+    let output = ssh.run(&format!("[ -e {expr} ] || exit 4; rm -rf -- {expr}"), TRANSFER)?;
+
+    match output.code {
+        Some(4) => Err(ErrorObject::not_found(format!("{}: `{path}` does not exist on that host", ssh.label()))),
+        _ if !output.ok() => Err(failed(ssh, "deleting", &output)),
+        _ => Ok(()),
+    }
+}
+
+/// `fs.mkdir` on a host.
+pub fn mkdir(ssh: &Ssh, path: &str) -> Result<(), ErrorObject> {
+    guard(path)?;
+
+    let expr = remote_expr(path)?;
+    let output = ssh.run(&format!("mkdir -p -- {expr}"), QUICK)?;
+
+    if !output.ok() {
+        return Err(failed(ssh, "creating the folder", &output));
+    }
+
+    Ok(())
+}
+
 /// `fs.stat` on a host: `{path, size, dir, sha256}` - the same four fields the local stat answers,
 /// with an empty hash for a folder (a folder has no contents to hash, and inventing one would make
 /// two different folders look identical in a checkpoint's stamp).

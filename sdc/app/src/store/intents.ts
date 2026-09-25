@@ -2,6 +2,7 @@ import type { FsEntry, PermissionDecision, PermissionRisk, TierName } from '../.
 import { nameOf, pickFolder } from '../lib/picker';
 import { sdcpCall } from '../lib/sdcp';
 import { isSdcpError } from '../lib/transport';
+import { baseName, inFolder } from '../lib/paths';
 import { strings } from '../strings';
 import { useDaemonStore } from './daemon';
 import { useFilesStore } from './files';
@@ -665,6 +666,178 @@ export async function loadDirectory(path: string | null): Promise<void> {
   } catch (error) {
     reportFailure(error, strings.files.failed);
     useFilesStore.getState().fail(isSdcpError(error) ? error.message : strings.files.failed);
+  }
+}
+
+/* ------------------------------------------------------------------------------------------------
+ * The tree's own changes (v4): new file, new folder, rename, delete - and a search of the whole folder
+ * ---------------------------------------------------------------------------------------------- */
+
+/** The directory a path is in, with the path's own separator. */
+function parentOf(path: string): string {
+  const cut = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
+
+  return cut <= 0 ? path : path.slice(0, cut);
+}
+
+/** Re-reads one directory of the tree and the git badge, after a change made from the tree. */
+async function refreshAfter(directory: string): Promise<void> {
+  const root = useFilesStore.getState().root;
+
+  await loadDirectory(directory === root ? null : directory);
+  await loadGitStatus();
+}
+
+/** A name a person typed for a file or folder: one path segment, nothing that climbs out. */
+export function validName(name: string): boolean {
+  const trimmed = name.trim();
+
+  return trimmed !== '' && trimmed !== '.' && trimmed !== '..' && !/[\\/:*?"<>|]/.test(trimmed);
+}
+
+/** New file: an empty file, opened in a tab. `fs.write` checkpoints first, like every write. */
+export async function createFile(directory: string, name: string): Promise<boolean> {
+  const sessionId = usePrefsStore.getState().activeTab;
+
+  if (sessionId === null || !validName(name)) {
+    toast(strings.files.badName);
+
+    return false;
+  }
+
+  const path = inFolder(directory, name.trim());
+
+  try {
+    await sdcpCall('fs.stat', { path, hostId: hostIdOf(sessionId) });
+    toast(strings.files.exists(name.trim()));
+
+    return false;
+  } catch {
+    /* Not there yet - which is what a new file needs. */
+  }
+
+  try {
+    await sdcpCall('fs.write', { path, text: '', sessionId, hostId: hostIdOf(sessionId) });
+    await refreshAfter(directory);
+    await openFile(path, name.trim());
+
+    return true;
+  } catch (error) {
+    reportFailure(error, strings.files.createFailed);
+
+    return false;
+  }
+}
+
+/** New folder. */
+export async function createFolder(directory: string, name: string): Promise<boolean> {
+  const sessionId = usePrefsStore.getState().activeTab;
+
+  if (sessionId === null || !validName(name)) {
+    toast(strings.files.badName);
+
+    return false;
+  }
+
+  try {
+    await sdcpCall('fs.mkdir', { path: inFolder(directory, name.trim()), sessionId, hostId: hostIdOf(sessionId) });
+    await refreshAfter(directory);
+
+    return true;
+  } catch (error) {
+    reportFailure(error, strings.files.createFailed);
+
+    return false;
+  }
+}
+
+/** Rename, in the same directory. Open tabs of the old path are closed - their path no longer exists. */
+export async function renamePath(path: string, name: string): Promise<boolean> {
+  const sessionId = usePrefsStore.getState().activeTab;
+
+  if (sessionId === null || !validName(name)) {
+    toast(strings.files.badName);
+
+    return false;
+  }
+
+  const directory = parentOf(path);
+  const to = inFolder(directory, name.trim());
+
+  if (to === path) {
+    return true;
+  }
+
+  try {
+    await sdcpCall('fs.rename', { path, to, sessionId, hostId: hostIdOf(sessionId) });
+    closeTabsUnder(path);
+    await refreshAfter(directory);
+    toast(strings.files.renamed(baseName(path), name.trim()));
+
+    return true;
+  } catch (error) {
+    reportFailure(error, strings.files.renameFailed);
+
+    return false;
+  }
+}
+
+/** Delete - a checkpoint is taken first, so Rewind brings it back. */
+export async function deletePath(path: string): Promise<boolean> {
+  const sessionId = usePrefsStore.getState().activeTab;
+
+  if (sessionId === null) {
+    return false;
+  }
+
+  try {
+    await sdcpCall('fs.delete', { path, sessionId, hostId: hostIdOf(sessionId) });
+    closeTabsUnder(path);
+    await refreshAfter(parentOf(path));
+    toast(strings.files.deleted(baseName(path)));
+
+    return true;
+  } catch (error) {
+    reportFailure(error, strings.files.deleteFailed);
+
+    return false;
+  }
+}
+
+/** Closes every open tab at or under a path that just moved or went away. */
+function closeTabsUnder(path: string): void {
+  const files = useFilesStore.getState();
+
+  for (const tab of files.tabs) {
+    if (tab.path === path || tab.path.startsWith(`${path}/`) || tab.path.startsWith(`${path}\\`)) {
+      useFilesStore.getState().closeTab(tab.path);
+    }
+  }
+}
+
+/** One hit of a folder-wide search. */
+export interface SearchHit {
+  path: string;
+  line: number;
+  text: string;
+}
+
+/** A literal search of the chat's folder (`fs.search`), here or on the host. */
+export async function searchFolder(query: string): Promise<SearchHit[] | null> {
+  const sessionId = usePrefsStore.getState().activeTab;
+
+  if (sessionId === null || query.trim() === '') {
+    return [];
+  }
+
+  try {
+    const { hits } = await sdcpCall('fs.search', { query: query.trim(), sessionId, hostId: hostIdOf(sessionId), limit: 200 });
+
+    return hits.map((hit) => ({ path: hit.path, line: hit.line, text: hit.text }));
+  } catch (error) {
+    reportFailure(error, strings.files.searchFailed);
+
+    return null;
   }
 }
 
