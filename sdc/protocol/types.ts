@@ -116,6 +116,9 @@ export type SdcpMethod =
   | 'fs.list'
   | 'fs.stat'
   | 'fs.search'
+  | 'fs.rename'
+  | 'fs.delete'
+  | 'fs.mkdir'
   | 'git.status'
   | 'git.diff'
   | 'git.checkpoint'
@@ -900,6 +903,12 @@ export interface SdcpMethodMap {
    * streams as `VerifyUpdated`. `since` is the turn's first checkpoint (a shadow commit): the review
    * reads everything after it, new files included.
    */
+  /** The tree's Rename (v4): inside the chat's folder only, a checkpoint first, never over an existing name. */
+  'fs.rename': { params: { path: string; to: string; sessionId: string; hostId?: string }; result: { path: string; renamed: boolean } };
+  /** The tree's Delete (v4): inside the chat's folder only, and a checkpoint first so Rewind restores it. */
+  'fs.delete': { params: { path: string; sessionId: string; hostId?: string }; result: { path: string; deleted: boolean } };
+  /** The tree's New folder (v4). */
+  'fs.mkdir': { params: { path: string; sessionId: string; hostId?: string }; result: { path: string; created: boolean } };
   'verify.run': {
     params: {
       sessionId: string;
@@ -960,7 +969,7 @@ export interface SdcpMethodMap {
   };
   'fs.stat': { params: { path: string; hostId?: string }; result: { size: number; sha256: string } };
   'fs.search': {
-    params: { query: string; glob?: string; root?: string; sessionId?: string; hostId?: string };
+    params: { query: string; glob?: string; root?: string; sessionId?: string; hostId?: string; limit?: number };
     result: { hits: FsHit[] };
   };
 

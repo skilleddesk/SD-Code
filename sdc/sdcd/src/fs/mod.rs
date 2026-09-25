@@ -141,6 +141,68 @@ pub fn list(path: &Path) -> Result<(Vec<Value>, usize), ErrorObject> {
     Ok((rows, hidden))
 }
 
+/// Renames a file or a folder, refusing to overwrite what is already at the new name.
+pub fn rename(from: &Path, to: &Path) -> Result<(), ErrorObject> {
+    guard(from)?;
+    guard(to)?;
+
+    if !from.exists() {
+        return Err(ErrorObject::not_found(format!("{} does not exist", from.display())));
+    }
+
+    if to.exists() {
+        return Err(ErrorObject::bad_request(format!("{} already exists; pick another name", to.display())));
+    }
+
+    if let Some(parent) = to.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|error| ErrorObject::internal(format!("{}: {error}", parent.display())))?;
+    }
+
+    std::fs::rename(from, to).map_err(|error| ErrorObject::internal(format!("{}: {error}", from.display())))
+}
+
+/// Deletes a file, or a folder with everything in it.
+pub fn remove(path: &Path) -> Result<(), ErrorObject> {
+    guard(path)?;
+
+    let metadata = std::fs::symlink_metadata(path)
+        .map_err(|error| ErrorObject::not_found(format!("{}: {error}", path.display())))?;
+    let removed = if metadata.is_dir() { std::fs::remove_dir_all(path) } else { std::fs::remove_file(path) };
+
+    removed.map_err(|error| ErrorObject::internal(format!("{}: {error}", path.display())))
+}
+
+/// Creates a folder and any missing parents.
+pub fn mkdir(path: &Path) -> Result<(), ErrorObject> {
+    guard(path)?;
+
+    std::fs::create_dir_all(path).map_err(|error| ErrorObject::internal(format!("{}: {error}", path.display())))
+}
+
+/// Whether `path` is strictly inside `root` - never the root itself, never a sibling that shares a prefix.
+/// Lexical, so it also answers for a path that does not exist yet.
+pub fn strictly_inside(root: &Path, path: &Path) -> bool {
+    let clean = |path: &Path| -> PathBuf {
+        let mut out = PathBuf::new();
+
+        for component in path.components() {
+            match component {
+                std::path::Component::ParentDir => {
+                    out.pop();
+                }
+                std::path::Component::CurDir => {}
+                other => out.push(other.as_os_str()),
+            }
+        }
+
+        out
+    };
+    let (root, path) = (clean(root), clean(path));
+
+    path != root && path.starts_with(&root)
+}
+
 /// The SHA-256 of a whole file, read in chunks - for a file too large to hold in memory at once.
 ///
 /// `read` hashes what it read, which is the whole file; this exists for the case where the *text* is
@@ -357,5 +419,39 @@ mod tests {
 
         assert_eq!(error.code, "blocked_path");
         assert!(!error.message.is_empty());
+    }
+
+    #[test]
+    fn rename_delete_and_mkdir_work_and_refuse_what_they_should() {
+        let root = std::env::temp_dir().join(format!("sdc-fs-ops-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a.txt"), "a").unwrap();
+        std::fs::write(root.join("b.txt"), "b").unwrap();
+
+        rename(&root.join("a.txt"), &root.join("src/renamed.txt")).unwrap();
+        assert!(root.join("src/renamed.txt").is_file());
+        assert!(rename(&root.join("b.txt"), &root.join("src/renamed.txt")).is_err(), "no overwrite");
+        assert!(rename(&root.join("b.txt"), &root.join(".env")).is_err(), "the guard runs on the new name");
+
+        mkdir(&root.join("empty/deep")).unwrap();
+        assert!(root.join("empty/deep").is_dir());
+
+        remove(&root.join("src")).unwrap();
+        assert!(!root.join("src").exists());
+        remove(&root.join("b.txt")).unwrap();
+        assert!(remove(&root.join("b.txt")).is_err(), "gone is not-found, not a silent success");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn strictly_inside_excludes_the_root_and_its_lookalike_siblings() {
+        let root = Path::new("/srv/app");
+
+        assert!(strictly_inside(root, Path::new("/srv/app/src/x.ts")));
+        assert!(!strictly_inside(root, Path::new("/srv/app")));
+        assert!(!strictly_inside(root, Path::new("/srv/application/x")));
+        assert!(!strictly_inside(root, Path::new("/srv/app/../other")));
     }
 }

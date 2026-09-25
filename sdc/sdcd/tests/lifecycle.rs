@@ -966,3 +966,77 @@ fn a_host_is_added_once_and_can_be_removed_again() {
     let _ = child.wait();
 }
 
+
+/// The tree's Rename and Delete (v4): both take a checkpoint first, both stay inside the chat's folder,
+/// and a Rewind has something to restore.
+#[test]
+fn rename_and_delete_checkpoint_first_and_stay_inside_the_folder() {
+    let directory = TempDir::new().expect("a temporary directory");
+    let (mut child, port) = start(&["--idle-exit", "30"], &directory);
+
+    let project = directory.path().join("tree-project");
+    std::fs::create_dir_all(project.join("src")).expect("a project folder");
+    std::fs::write(project.join("src").join("a.ts"), "export const a = 1;\n").expect("a file");
+
+    let (added, _) = request_collect(port, "add-1", "project.add", serde_json::json!({ "root": project.display().to_string() }));
+    let project_id = added.pointer("/result/projectId").and_then(serde_json::Value::as_str).expect("a projectId").to_string();
+    let (opened, _) = request_collect(
+        port,
+        "open-1",
+        "session.open",
+        serde_json::json!({ "hostId": "local", "projectId": project_id, "title": "tree" }),
+    );
+    let session_id = opened.pointer("/result/sessionId").and_then(serde_json::Value::as_str).expect("a sessionId").to_string();
+    let from = project.join("src").join("a.ts");
+    let to = project.join("src").join("b.ts");
+
+    let (renamed, notifications) = request_collect(
+        port,
+        "rename-1",
+        "fs.rename",
+        serde_json::json!({ "path": from.display().to_string(), "to": to.display().to_string(), "sessionId": session_id }),
+    );
+
+    assert!(renamed.get("result").is_some(), "fs.rename refused: {renamed}");
+    assert!(to.is_file() && !from.exists(), "the file moved");
+    assert!(
+        notifications.iter().any(|message| message.pointer("/event/type").and_then(serde_json::Value::as_str) == Some("CheckpointSaved")),
+        "a rename checkpoints first: {notifications:?}"
+    );
+
+    /* Outside the folder is refused, whatever the path. */
+    let outside = directory.path().join("elsewhere.txt");
+    std::fs::write(&outside, "keep me\n").expect("a file outside the folder");
+    let (refused, _) = request_collect(
+        port,
+        "delete-outside",
+        "fs.delete",
+        serde_json::json!({ "path": outside.display().to_string(), "sessionId": session_id }),
+    );
+
+    assert!(refused.get("error").is_some(), "a delete outside the folder must be refused: {refused}");
+    assert!(outside.is_file(), "and the file is still there");
+
+    /* The folder itself cannot be deleted from the tree either. */
+    let (root_refused, _) = request_collect(
+        port,
+        "delete-root",
+        "fs.delete",
+        serde_json::json!({ "path": project.display().to_string(), "sessionId": session_id }),
+    );
+
+    assert!(root_refused.get("error").is_some(), "the chat's own folder is not deletable: {root_refused}");
+
+    let (deleted, _) = request_collect(
+        port,
+        "delete-1",
+        "fs.delete",
+        serde_json::json!({ "path": project.join("src").display().to_string(), "sessionId": session_id }),
+    );
+
+    assert!(deleted.get("result").is_some(), "fs.delete refused: {deleted}");
+    assert!(!project.join("src").exists(), "the folder is gone");
+
+    let _ = request(port, "stop", "host.shutdown");
+    let _ = wait_for_exit(&mut child, Duration::from_secs(10));
+}
