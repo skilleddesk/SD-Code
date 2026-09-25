@@ -94,6 +94,28 @@ export function applyEvents(state: AppState, entries: readonly AppEvent[]): AppS
   return entries.reduce<AppState>((current, entry) => applyEvent(current, entry), state);
 }
 
+/** Milliseconds between two log stamps; 0 when either is not a date (a seeded event's human `ts`). */
+function between(from: string, to: string): number {
+  const ms = Date.parse(to) - Date.parse(from);
+
+  return Number.isFinite(ms) && ms > 0 ? ms : 0;
+}
+
+/**
+ * Close the stretch of thinking a turn is in, at `ts`.
+ *
+ * Any event that is not more thinking ends a stretch - the answer starting, a tool call, the end of
+ * the turn - and a model that thinks again between tool calls opens a new one, so the total is time
+ * spent *thinking*, not time since the first thought.
+ */
+function endThinking(turn: TurnView, ts: string): TurnView {
+  if (turn.thinkingSince === null) {
+    return turn;
+  }
+
+  return { ...turn, thinkingMs: turn.thinkingMs + between(turn.thinkingSince, ts), thinkingSince: null };
+}
+
 /** The switch. One arm per catalogue entry; each arm returns the whole next state. */
 function reduce(state: AppState, entry: AppEvent): AppState {
   const { event } = entry;
@@ -317,6 +339,8 @@ function reduce(state: AppState, entry: AppEvent): AppState {
       const checkpoint: CheckpointView = {
         id: event.checkpoint.id,
         sessionId: event.sessionId,
+        /* The envelope says which turn wrote it; the record's own `turn` is an ordinal, not an id. */
+        turnId: entry.turnId ?? null,
         turn: event.checkpoint.turn,
         /*
          * A seeded checkpoint's `ts` is already the human string (`now`, `2 min ago`) because a pure
@@ -373,6 +397,8 @@ function reduce(state: AppState, entry: AppEvent): AppState {
         prompt: event.prompt,
         text: '',
         thinking: '',
+        thinkingMs: 0,
+        thinkingSince: null,
         status: 'running',
         stuckForMs: 0,
         tools: [],
@@ -388,7 +414,7 @@ function reduce(state: AppState, entry: AppEvent): AppState {
 
     case 'TurnDelta':
       return patchTurn(state, event.turnId, (turn) => ({
-        ...turn,
+        ...endThinking(turn, entry.ts),
         text: turn.text + event.delta,
         status: 'running',
         stuckForMs: 0,
@@ -398,13 +424,14 @@ function reduce(state: AppState, entry: AppEvent): AppState {
       return patchTurn(state, event.turnId, (turn) => ({
         ...turn,
         thinking: turn.thinking + event.delta,
+        thinkingSince: turn.thinkingSince ?? entry.ts,
         status: 'running',
         stuckForMs: 0,
       }));
 
     case 'ToolCallStarted':
       return patchTurn(state, event.turnId, (turn) => ({
-        ...turn,
+        ...endThinking(turn, entry.ts),
         tools: [
           ...turn.tools,
           {
@@ -442,7 +469,7 @@ function reduce(state: AppState, entry: AppEvent): AppState {
 
     case 'TurnCompleted':
       return patchTurn(state, event.turnId, (turn) => ({
-        ...turn,
+        ...endThinking(turn, entry.ts),
         status: turn.status === 'failed' ? 'failed' : 'done',
         summary: event.summary,
         meta: event.meta,
@@ -458,7 +485,7 @@ function reduce(state: AppState, entry: AppEvent): AppState {
 
     case 'ErrorRaised':
       return patchTurn(state, event.turnId ?? state.activeTurnId ?? '', (turn) => ({
-        ...turn,
+        ...endThinking(turn, entry.ts),
         status: 'failed',
         error: {
           title: event.title,

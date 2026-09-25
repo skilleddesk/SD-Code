@@ -202,7 +202,31 @@ export const strings = {
     },
     thinking: {
       title: 'Thinking',
-      duration: '',
+      /** The folded line once the engine has moved on: `Thought for 6.2s`. */
+      thoughtFor: (seconds: string): string => `Thought for ${seconds}`,
+      /** Folded, with no measurable time (a replayed turn whose stamps are not dates). */
+      thought: 'Thought',
+      /** `6.2s`, `48s`, `2m 05s` - tenths only while it is short enough for them to matter. */
+      seconds: (ms: number): string => {
+        if (ms < 10_000) {
+          return `${(ms / 1000).toFixed(1)}s`;
+        }
+
+        const total = Math.round(ms / 1000);
+
+        return total < 60 ? `${total}s` : `${Math.floor(total / 60)}m ${String(total % 60).padStart(2, '0')}s`;
+      },
+      expand: 'Show the reasoning',
+      collapse: 'Hide the reasoning',
+    },
+    /** The checkpoint rail beside a turn (v4). */
+    checkpoint: {
+      label: 'Checkpoint',
+      rewind: 'Rewind here',
+      /** The second click: what the first one armed. */
+      confirm: 'Click again to restore these files',
+      /** The dot's accessible name: what it restores and how to do it. */
+      aria: (title: string): string => `Checkpoint: ${title}. Rewind to the files as they were before this change.`,
     },
     /** The engine's answer block (0.7.3). The stream had every part of a turn except this one. */
     answer: {
@@ -473,8 +497,8 @@ export const strings = {
     },
     timeMachine: {
       current: 'CURRENT',
-      compare: 'Compare two points',
-      compareToast: 'Select two points',
+      /** `git.diff` of the chat's folder - what has changed since its last commit. */
+      compare: 'Show the folder’s changes',
       rewound: (turn: number): string => `Rewound to turn ${turn}`,
       undo: 'Undo this',
       empty: 'Checkpoints appear here after your first change.',

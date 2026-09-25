@@ -149,6 +149,14 @@ export interface TurnView {
   /** The engine's answer as it streams in; `aria-live="polite"` reads it. */
   text: string;
   thinking: string;
+  /**
+   * How long the engine has spent thinking, in milliseconds, over every stretch of it that has ended.
+   * Measured between the log's own timestamps: the first `ThinkingDelta` of a stretch, and the first
+   * event after it that is not one (an answer delta, a tool call, the end of the turn).
+   */
+  thinkingMs: number;
+  /** The `ts` of the stretch of thinking still going on, or `null` when the engine is not thinking. */
+  thinkingSince: string | null;
   status: 'running' | 'stuck' | 'done' | 'failed';
   /** Milliseconds without output, set by `StuckDetected` (spec section 12.9). */
   stuckForMs: number;
@@ -167,6 +175,8 @@ export interface TurnView {
 export interface CheckpointView {
   id: string;
   sessionId: string;
+  /** The turn that wrote it, from the event's envelope - `null` for a checkpoint a Save or a command made. */
+  turnId: string | null;
   turn: number;
   /** Relative age, computed once by the producer: `now`, `2 min ago`. */
   when: string;
