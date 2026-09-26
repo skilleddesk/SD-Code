@@ -15,6 +15,13 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [0.10.1] — the Intel Mac build is back
+
+Same app as 0.10.0. The 0.10.0 release published Windows, Linux and Apple Silicon installers but no
+Intel Mac one: that build stopped on a lifecycle test (`a_daemon_started_by_hand_stays_where_it_is`)
+whose 10-second read timeout was shorter than `host.status` takes on the Intel macOS runner. The
+timeout is now 60 seconds, so every platform's installer is built again.
+
 ## [0.10.0] — type and it works: no mandatory folder, the domain routes the chat, and Gemini stops hanging
 
 The release the screenshot forced: `native_api failed · Agent mode works inside a folder, and this
