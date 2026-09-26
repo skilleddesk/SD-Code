@@ -165,6 +165,8 @@ export const strings = {
       reconnecting: (host: string): string => `Reconnecting to ${host}…`,
       /** When the daemon refuses the call itself (an address it has nothing to dial). */
       reconnectFailed: (host: string): string => `Could not reconnect to ${host}`,
+      /** A host that was working stopped answering, and its sign-in card is opening (0.11.5). */
+      signInAgain: (host: string): string => `Lost the connection to ${host} - sign in again to reconnect`,
     },
     empty: {
       title: 'No chat open',

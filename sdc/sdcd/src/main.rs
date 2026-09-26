@@ -98,6 +98,14 @@ async fn main() -> Result<()> {
         });
     }
 
+    /* A connection that dies says so (0.11.5): every connected VPS row is measured again on an
+       interval, and a host whose sign-in went away turns `offline` on screen - which is what opens the
+       window's sign-in card - instead of looking connected until the next file read fails. */
+    sdcd::ssh::watch::spawn(
+        state.store.clone(),
+        Arc::new(ChannelNotifier::new(state.events.clone(), state.fanout.clone())),
+    );
+
     #[cfg(unix)]
     {
         let socket = paths::socket_path(port)?;

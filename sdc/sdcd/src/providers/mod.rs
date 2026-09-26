@@ -340,6 +340,13 @@ fn honest_detail(id: &str, kind: &str, fallback: &str) -> String {
     let recipe = crate::auth::cli_login::RECIPES.iter().find(|recipe| recipe.provider_id == id);
 
     match recipe {
+        /* Measured 2026-09-26 with a finished sign-in: Google answers every turn from this CLI with
+           `IneligibleTierError` for a personal account. A card that only said `Connected` sent people to
+           a route that cannot answer, so it names the one that does (0.11.5). */
+        Some(recipe) if recipe.provider_id == "gemini" && crate::host::doctor::has(recipe.program) => format!(
+            "`{}` is installed · Google no longer serves this CLI to personal accounts - use Google Gemini API (a key) for the same models",
+            recipe.program
+        ),
         Some(recipe) if crate::host::doctor::has(recipe.program) => format!(
             "`{}` is installed · Connect starts its own sign-in",
             recipe.program
