@@ -113,7 +113,10 @@ fn start(arguments: &[&str], directory: &TempDir) -> (Daemon, u16) {
 fn request(port: u16, id: &str, method: &str) -> serde_json::Value {
     let stream = TcpStream::connect(("127.0.0.1", port)).expect("connecting to sdcd");
 
-    stream.set_read_timeout(Some(Duration::from_secs(10))).expect("a read timeout");
+    /* `host.status` asks the machine about its programs before it answers, and on the Intel macOS
+       runner that alone has taken longer than ten seconds - the v0.10.0 release lost its x64 build
+       to exactly that timeout, not to a daemon that failed to answer. */
+    stream.set_read_timeout(Some(Duration::from_secs(60))).expect("a read timeout");
 
     let mut stream = stream;
 
