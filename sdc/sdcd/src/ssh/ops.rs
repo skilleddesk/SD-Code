@@ -461,6 +461,101 @@ fn parse_hits(text: &str, limit: usize) -> Vec<Value> {
     hits
 }
 
+/// `fs.search`'s **name** half on a host (0.11.0): files and folders under `root` whose name contains
+/// the query. Two bounded `find`s - folders, then files - each line prefixed so the parse knows which
+/// kind it is without a second round trip; `.git`, `node_modules` and `target` are pruned whole.
+pub fn find_names(ssh: &Ssh, root: &str, query: &str, limit: usize) -> Result<Vec<Value>, ErrorObject> {
+    guard(root)?;
+
+    if query.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let expr = remote_expr(root)?;
+    let pattern = sh_quote(&format!("*{}*", query.trim()));
+    let prune = r"\( -name .git -o -name node_modules -o -name target \) -prune -o";
+    let line = format!(
+        "find {expr} -mindepth 1 -maxdepth 6 {prune} -type d -iname {pattern} -print 2>/dev/null | head -n {limit} | sed 's/^/D /'; \
+         find {expr} -mindepth 1 -maxdepth 6 {prune} -type f -iname {pattern} -print 2>/dev/null | head -n {limit} | sed 's/^/F /'"
+    );
+    let output = ssh.run(&line, TRANSFER)?;
+    let mut found = Vec::new();
+
+    for row in output.stdout.lines() {
+        if found.len() >= limit {
+            break;
+        }
+
+        if let Some(path) = row.strip_prefix("D ") {
+            found.push(json!({ "path": path, "dir": true }));
+        } else if let Some(path) = row.strip_prefix("F ") {
+            found.push(json!({ "path": path, "dir": false }));
+        }
+    }
+
+    Ok(found)
+}
+
+/// `project.locate` on a host (0.11.0): where a named thing - almost always a domain - lives.
+///
+/// The web server's own answer is read first, because it is the authoritative one: an nginx server
+/// block whose `server_name` names the domain says `root /var/www/…;`, and Apache's says
+/// `DocumentRoot`. The conventional homes come after (`/var/www/<q>`, `/srv/<q>`, `~/<q>`, a vhost
+/// per-user layout), and only paths that are **real directories on that machine** come back - the
+/// script tests each one there, so the caller never binds a chat to a guess.
+pub fn locate_project(ssh: &Ssh, query: &str) -> Result<Vec<Value>, ErrorObject> {
+    let query = query.trim();
+
+    if query.is_empty() || query.contains(['\'', '"', '\\', '\n', ';', '&', '|', '$', '`']) {
+        return Err(ErrorObject::bad_request("`query` must be a plain name or domain"));
+    }
+
+    /* The domain as a fixed string in an extended regex: only `.` needs its escape here, and the
+       character class above has already refused everything a shell or a regex could trip on. */
+    let regex = query.replace('.', r"\.");
+    let quoted = sh_quote(query);
+    let line = format!(
+        "for f in $(grep -rlsE 'server_name[^;]*{regex}' /etc/nginx 2>/dev/null | head -n 5); do \
+           grep -hE '^[[:space:]]*root[[:space:]]' \"$f\" 2>/dev/null | head -n 1 | sed -E 's/^[[:space:]]*root[[:space:]]+([^;]+);.*/\\1/' | sed 's/^/WEB /'; \
+         done; \
+         for f in $(grep -rlsiE 'ServerName[[:space:]].*{regex}' /etc/apache2 /etc/httpd 2>/dev/null | head -n 5); do \
+           grep -hiE '^[[:space:]]*DocumentRoot' \"$f\" 2>/dev/null | head -n 1 | sed -E 's/^[[:space:]]*DocumentRoot[[:space:]]+\"?([^\"]+)\"?.*/\\1/' | sed 's/^/WEB /'; \
+         done; \
+         for p in /var/www/{quoted} /var/www/html/{quoted} /srv/{quoted} /srv/www/{quoted} \"$HOME\"/{quoted} /var/www/vhosts/{quoted}/httpdocs /home/*/{quoted} /home/*/htdocs/{quoted} /home/*/public_html/{quoted} /home/*/web/{quoted}; do \
+           [ -d \"$p\" ] && echo \"DIR $p\"; \
+         done; true"
+    );
+    let output = ssh.run(&line, TRANSFER)?;
+    let mut candidates = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    for row in output.stdout.lines() {
+        let (source, path) = match (row.strip_prefix("WEB "), row.strip_prefix("DIR ")) {
+            (Some(path), _) => ("web server config", path.trim()),
+            (_, Some(path)) => ("a conventional web folder", path.trim()),
+            _ => continue,
+        };
+
+        if path.is_empty() || !seen.insert(path.to_string()) {
+            continue;
+        }
+
+        /* A `root` from a config can name a folder that no longer exists; a candidate is only a
+           candidate when the machine says it is a directory. `DIR` lines already tested themselves. */
+        if source == "web server config" && !is_dir(ssh, path).unwrap_or(false) {
+            continue;
+        }
+
+        candidates.push(json!({ "root": path, "source": source }));
+
+        if candidates.len() >= 6 {
+            break;
+        }
+    }
+
+    Ok(candidates)
+}
+
 /* --------------------------------------------------------------------------------------------
  * Git
  * ------------------------------------------------------------------------------------------ */

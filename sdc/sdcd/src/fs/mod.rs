@@ -273,6 +273,70 @@ pub fn search(
     Ok(hits)
 }
 
+/// A recursive **name** search (0.11.0): files and folders whose name contains the query, case-
+/// insensitively, capped and depth-limited like `search`. This is the half of the sidebar's search
+/// box that answers "where is index.php" - `search` answers "which line says X".
+///
+/// `.git`, `node_modules` and `target` are skipped whole: they hold thousands of names nobody is
+/// looking for, and a cap spent inside them is a cap the project's own files never reach.
+pub fn find_names(root: &Path, query: &str, limit: usize) -> Result<Vec<Value>, ErrorObject> {
+    guard(root)?;
+
+    let needle = query.to_lowercase();
+    let mut found = Vec::new();
+
+    if !needle.trim().is_empty() {
+        walk_names(root, &needle, 6, limit, &mut found);
+    }
+
+    Ok(found)
+}
+
+fn walk_names(root: &Path, needle: &str, depth: usize, limit: usize, found: &mut Vec<Value>) {
+    if depth == 0 || found.len() >= limit {
+        return;
+    }
+
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
+
+    for entry in entries.flatten() {
+        if found.len() >= limit {
+            return;
+        }
+
+        let path = entry.path();
+
+        if blocked_reason(&path).is_some() {
+            continue;
+        }
+
+        let name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default()
+            .to_lowercase();
+        let dir = path.is_dir();
+
+        if dir && matches!(name.as_str(), ".git" | "node_modules" | "target" | ".pnpm-store") {
+            continue;
+        }
+
+        if name.contains(needle) {
+            found.push(serde_json::json!({ "path": path.display().to_string(), "dir": dir }));
+
+            if found.len() >= limit {
+                return;
+            }
+        }
+
+        if dir {
+            walk_names(&path, needle, depth - 1, limit, found);
+        }
+    }
+}
+
 fn walk(root: &Path, query: &str, glob: Option<&str>, depth: usize, limit: usize, hits: &mut Vec<Value>) {
     if depth == 0 || hits.len() >= limit {
         return;

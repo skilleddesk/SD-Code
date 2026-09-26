@@ -247,6 +247,13 @@ impl CliAdapter {
 
                 command.args(&args);
 
+                /* A connected Google API key reaches a local Gemini turn as `GEMINI_API_KEY` (0.11.0),
+                   so Gemini works with no browser sign-in at all - see `gemini::auth_plan` for the
+                   measured matrix. Every other CLI gets nothing extra. */
+                for (name, value) in crate::engines::gemini::turn_env_for(self.spec.program) {
+                    command.env(name, value);
+                }
+
                 command
             }
         };
