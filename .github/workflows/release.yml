@@ -112,6 +112,9 @@ jobs:
 
       - name: Checks (cargo test)
         working-directory: sdc
+        # The suite takes about two minutes everywhere. 0.9.0's first Windows run hung here for four
+        # hours with no log to read (a running job has none); a bounded step fails fast and keeps one.
+        timeout-minutes: 20
         # `bash` on every platform, because the failure summary below is built with a pipe and a status array.
         shell: bash
         run: |

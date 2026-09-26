@@ -178,7 +178,11 @@ async fn main() -> Result<()> {
 
     state.shutdown();
 
-    Ok(())
+    /* Leave now. Returning from `main` drops the runtime, and a runtime drop **waits** for every
+       `spawn_blocking` task still running - since 0.9.0 that includes the catalogue refresh, an HTTP
+       call a slow provider can hold for minutes. A daemon asked to stop must stop: the children are
+       already killed above and every event is already on disk (the log writes as it appends). */
+    std::process::exit(0);
 }
 /// Serves one connection: read a line, answer it, and forward everything the handler pushes.
 ///

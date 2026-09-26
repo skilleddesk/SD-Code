@@ -132,19 +132,48 @@ pub fn is_open(ssh: &Ssh) -> bool {
         return false;
     };
 
+    /* No socket on disk, no master - and no process started. This is the common case (every host that
+       never signed in, every test), and it is why a machine where `ssh` itself misbehaves cannot be
+       made to wait here: 0.9.0's first Windows CI run sat in `cargo test` for four hours. Cygwin's
+       emulated Unix socket is a real file, so the check holds on Windows too. */
+    if !path.exists() {
+        return false;
+    }
+
     let mut command = std::process::Command::new(program);
 
     command
         .args(ssh.target.port_args())
         .args(["-o", &format!("ControlPath={}", ssh_path(&path)), "-O", "check"])
-        .arg(&ssh.target.user_host)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
+        .arg(&ssh.target.user_host);
 
+    bounded(command, CHECK_BUDGET).unwrap_or(false)
+}
+
+/// How long `-O check` / `-O exit` may take. Measured at ~30 ms; anything near this is a stuck `ssh`.
+const CHECK_BUDGET: Duration = Duration::from_secs(3);
+
+/// Runs a control command with no stdio and a hard deadline: `Some(success)`, or `None` when it had to
+/// be killed. A control command talks to a local socket only, so it never has a reason to wait.
+fn bounded(mut command: std::process::Command, budget: Duration) -> Option<bool> {
+    command.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
     hide_window(&mut command);
 
-    command.status().map(|status| status.success()).unwrap_or(false)
+    let mut child = command.spawn().ok()?;
+    let deadline = Instant::now() + budget;
+
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return Some(status.success()),
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(10)),
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+
+                return None;
+            }
+        }
+    }
 }
 
 /// Closes this host's master, if there is one (a removed host, a sign-out).
@@ -153,19 +182,18 @@ pub fn close(ssh: &Ssh) {
         return;
     };
 
+    if !path.exists() {
+        return;
+    }
+
     let mut command = std::process::Command::new(program);
 
     command
         .args(ssh.target.port_args())
         .args(["-o", &format!("ControlPath={}", ssh_path(&path)), "-O", "exit"])
-        .arg(&ssh.target.user_host)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
+        .arg(&ssh.target.user_host);
 
-    hide_window(&mut command);
-
-    let _ = command.status();
+    let _ = bounded(command, CHECK_BUDGET);
 }
 
 /// Why a sign-in did not finish.
@@ -584,6 +612,18 @@ mod tests {
         server.join().unwrap();
 
         assert!(seen.lock().unwrap().code_missing);
+    }
+
+    /// A host that never signed in is answered from the disk alone - no `ssh` is started, so nothing
+    /// about the machine's `ssh` can make this wait (the 0.9.0 Windows CI hang).
+    #[test]
+    fn a_host_with_no_socket_is_not_open_and_starts_nothing() {
+        let ssh = Ssh::parse("nobody@203.0.113.77 -p 2").unwrap();
+        let started = Instant::now();
+
+        assert!(!is_open(&ssh));
+        assert!(mux_options(&ssh).unwrap().is_empty());
+        assert!(started.elapsed() < Duration::from_millis(500), "{:?}", started.elapsed());
     }
 
     #[test]
