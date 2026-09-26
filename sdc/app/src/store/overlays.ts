@@ -86,6 +86,12 @@ export interface OverlayState {
    * which host it is about.
    */
   remoteFolderHostId: string | null;
+  /**
+   * The chat the chosen remote folder should re-point (0.10.0), or `null` when the browser was opened
+   * to land in a new or empty chat. `Change folder` on a VPS chat sets it: the chip's promise is
+   * "this chat, another folder", so the choice must bind *this* chat rather than open another one.
+   */
+  remoteFolderSessionId: string | null;
   /** Start-from-scratch dialog (0.9.0). */
   newProjectOpen: boolean;
 }
@@ -114,7 +120,7 @@ export interface OverlayActions {
   openNewChat: (anchor: Anchor) => void;
   closeNewChat: () => void;
   /** The remote folder browser, for a host that has no native picker (0.7.13). */
-  openRemoteFolder: (hostId: string) => void;
+  openRemoteFolder: (hostId: string, sessionId?: string) => void;
   closeRemoteFolder: () => void;
   /** Start from scratch (0.9.0): one dialog that makes the folder, the project and the first turn. */
   openNewProject: () => void;
@@ -141,6 +147,7 @@ const initialOverlayState: OverlayState = {
   hostSwitcher: null,
   newChat: null,
   remoteFolderHostId: null,
+  remoteFolderSessionId: null,
 };
 
 export const useOverlayStore = create<OverlayState & OverlayActions>()((set) => ({
@@ -186,11 +193,12 @@ export const useOverlayStore = create<OverlayState & OverlayActions>()((set) => 
 
   closeNewChat: () => set({ newChat: null }),
 
-  openRemoteFolder: (hostId) => set({ remoteFolderHostId: hostId }),
+  openRemoteFolder: (hostId, sessionId) =>
+    set({ remoteFolderHostId: hostId, remoteFolderSessionId: sessionId ?? null }),
   openNewProject: () => set({ newProjectOpen: true }),
   closeNewProject: () => set({ newProjectOpen: false }),
 
-  closeRemoteFolder: () => set({ remoteFolderHostId: null }),
+  closeRemoteFolder: () => set({ remoteFolderHostId: null, remoteFolderSessionId: null }),
 
   closeAll: () => set({ ...initialOverlayState }),
 }));

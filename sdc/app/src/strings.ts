@@ -246,6 +246,8 @@ export const strings = {
     answer: {
       title: 'Answer',
       streaming: 'streaming…',
+      /** Between Send and the first token (0.10.0), so a slow start never reads as a dead turn. */
+      waiting: (model: string): string => `Waiting for ${model}’s first word…`,
       code: 'code',
       copy: 'Copy',
       copied: 'Copied',
@@ -405,6 +407,8 @@ export const strings = {
         : `Closed ${name} · ${chats} chat${chats === 1 ? '' : 's'} kept their conversation`,
     couldNotOpen: 'Could not open that folder',
     couldNotChange: 'Could not change this chat’s folder',
+    /** The prompt named a saved host (0.10.0), so the turn is routed to a chat on that machine. */
+    routed: (host: string): string => `That prompt names ${host} — running it there`,
   },
 
   /** Prompt area and model dropdown - spec sections 7.6 and 9.3. */

@@ -176,6 +176,12 @@ export interface Turn {
   plan: PlanStepData[];
   /** Still running - the plan card's current step spins only while it is. */
   running: boolean;
+  /**
+   * Running, and nothing has arrived yet (0.10.0): no thinking, no tool card, no first word. The
+   * stream shows a small pulse for it, because until now this state drew *nothing* between the meta
+   * line and the footer and a slow first token read as a dead turn.
+   */
+  waiting?: boolean;
   /** The live line's facts, present only while the turn runs (0.9.0). */
   stats?: TurnStatsData;
   /** Who wrote the turn: the default reviewer is someone else. */

@@ -233,8 +233,9 @@ export function PromptArea({ sessionId }: PromptAreaProps = {}) {
 
           <ModelSelector />
 
-          {/* Which folder this chat works in (0.7.6) - and the way to change it. */}
-          <FolderChip />
+          {/* Which folder this chat works in (0.7.6) - and the way to change it. The pane's own
+              chat, so split view's second box never shows the first box's folder (0.10.0). */}
+          <FolderChip sessionId={sessionId} />
 
           {/*
             The two context chips, and the reason they are conditional.

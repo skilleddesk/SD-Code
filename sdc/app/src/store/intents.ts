@@ -342,6 +342,57 @@ export function emptySessionOn(
   return focused?.id ?? empty.at(-1)?.id ?? null;
 }
 
+/**
+ * The saved host a prompt names, if any - the matcher behind "type the domain, work on the machine"
+ * (0.10.0).
+ *
+ * A person who saved `root@skilleddesk.com:22` as a host and then types *"I want to work on my
+ * skilleddesk.com files"* means that machine, and until now they had to switch to it by hand first.
+ * The match is deliberately narrow so a prompt is never hijacked: only **saved, non-local** hosts are
+ * candidates, the needle is the host part of the address (or the host's name), it must be at least
+ * four characters, and it must sit on word boundaries - `skilleddesk.com` in a sentence matches,
+ * `com` in `become` never can.
+ *
+ * Pure and exported for `intents.test.ts`, like `emptySessionOn` above.
+ */
+export function hostMentionedIn(text: string, hosts: readonly HostView[]): HostView | null {
+  const lowered = text.toLowerCase();
+
+  for (const host of hosts) {
+    if (host.type === 'local') {
+      continue;
+    }
+
+    const domain = host.address.split('@').pop()?.split(':')[0]?.toLowerCase() ?? '';
+    const needles = [domain, host.name.toLowerCase()].filter((needle) => needle.length >= 4);
+
+    for (const needle of needles) {
+      const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+      if (new RegExp(`(^|[^a-z0-9])${escaped}([^a-z0-9]|$)`).test(lowered)) {
+        return host;
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
+ * A chat to run a routed prompt in: the host's newest chat that already has a folder (the person's
+ * working chat there), else its newest chat at all, else a fresh one. The daemon provisions a
+ * workspace for an agent turn in a folderless chat since 0.10.0, so every branch ends somewhere the
+ * agent can work.
+ */
+async function sessionOnHost(host: HostView): Promise<string | null> {
+  const sessions = [...host.sessions].reverse();
+  const working = sessions.find(
+    (session) => session.projectRoot !== null && session.projectRoot !== undefined,
+  );
+
+  return working?.id ?? sessions[0]?.id ?? newChatOnHost(host.id);
+}
+
 /** Create an empty session on a host and focus its prompt (spec sections 7.3, 9.5). */
 export async function newChatOnHost(hostId: string): Promise<string | null> {
   const state = useAppStore.getState();
@@ -1229,6 +1280,17 @@ export async function changeFolder(sessionId: string): Promise<boolean> {
   const host = state.hosts.find((candidate) =>
     candidate.sessions.some((session) => session.id === sessionId),
   );
+
+  /* A VPS chat's folders are on the VPS. The native picker shows *this* machine's filesystem, so it
+     used to offer local paths for a chat whose files are an ocean away - `project.add` then refused
+     every one of them with "not a folder on <host>". The remote browser is the picker that can
+     answer, and it re-points this chat when it closes (0.10.0). */
+  if (host !== undefined && host.type !== 'local') {
+    useOverlayStore.getState().openRemoteFolder(host.id, sessionId);
+
+    return false;
+  }
+
   let root: string | null;
 
   try {
@@ -1243,8 +1305,21 @@ export async function changeFolder(sessionId: string): Promise<boolean> {
     return false;
   }
 
+  return rebindFolder(sessionId, host?.id ?? 'local', root);
+}
+
+/**
+ * The half of `Change folder` that runs after something chose a path: `project.add` on the machine
+ * that has it, then `session.update` so *this* chat follows. Shared by the native picker (above) and
+ * the remote browser (`modals/RemoteFolder.tsx`), so both change the same chat the same way.
+ */
+export async function rebindFolder(
+  sessionId: string,
+  hostId: string,
+  root: string,
+): Promise<boolean> {
   try {
-    const { projectId, name } = await sdcpCall('project.add', { hostId: host?.id ?? 'local', root });
+    const { projectId, name } = await sdcpCall('project.add', { hostId, root });
 
     await sdcpCall('session.update', { sessionId, projectId });
     await loadProjects();
@@ -1657,6 +1732,28 @@ export async function sendPrompt(prompt: string, target?: string): Promise<strin
 
   /* The pane's own chat when it says which (split view has two boxes), else the active one. */
   let sessionId = target ?? selectActiveSession()?.session.id ?? null;
+
+  /* "ami skilleddesk.com er file e kaj korte chai" - a prompt that names a saved host runs **on that
+     host** (0.10.0). The chat moves before the turn starts, so the folder, the files and the shell
+     are the machine the person meant, without a manual host switch first. The words outrank the box
+     they were typed in: naming another machine *is* the instruction to go there. */
+  {
+    const state = useAppStore.getState();
+    const mentioned = hostMentionedIn(prompt, state.hosts);
+    const currentHost = state.hosts.find((host) =>
+      host.sessions.some((session) => session.id === sessionId),
+    );
+
+    if (mentioned !== null && mentioned.id !== currentHost?.id) {
+      const routed = await sessionOnHost(mentioned);
+
+      if (routed !== null) {
+        sessionId = routed;
+        landIn(routed);
+        toast(strings.folder.routed(mentioned.name));
+      }
+    }
+  }
 
   if (sessionId === null) {
     sessionId = await newChatOnHost(usePrefsStore.getState().activeHostId);

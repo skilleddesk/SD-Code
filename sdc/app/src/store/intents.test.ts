@@ -20,7 +20,7 @@ const sdcpCall = vi.hoisted(() => vi.fn());
 
 vi.mock('../lib/sdcp', () => ({ sdcpCall }));
 
-const { validName, renamePath, deletePath, createFolder, searchFolder, defaultReviewer, runVerify, autonomyFor, sendPrompt, interruptTurn, chooseModel, closeDiff, closeFolder, forkSession, loadCliRecipe, loadGitStatus, saveFile, emptySessionOn, newChatOnHost, openDiff, openFolderIn, loadDirectory, toggleDirectory, openFile, closeFile, addHost, hostKey, trustHost, listRemoteDirectory, runDoctor, runCommand, runInBackground, pollBackground, stopBackground, openTerminalForHost, installHostKey } = await import('./intents');
+const { validName, renamePath, deletePath, createFolder, searchFolder, defaultReviewer, runVerify, autonomyFor, sendPrompt, interruptTurn, chooseModel, closeDiff, closeFolder, forkSession, loadCliRecipe, loadGitStatus, saveFile, emptySessionOn, hostMentionedIn, newChatOnHost, openDiff, openFolderIn, loadDirectory, toggleDirectory, openFile, closeFile, addHost, hostKey, trustHost, listRemoteDirectory, runDoctor, runCommand, runInBackground, pollBackground, stopBackground, openTerminalForHost, installHostKey } = await import('./intents');
 const { useTerminalStore } = await import('./terminal');
 const { tabForSession } = await import('./rightPanel');
 const { engineForProvider, useModelStore } = await import('./model');
@@ -134,6 +134,46 @@ describe('emptySessionOn', () => {
 
   it('answers nothing for a host that is not in the tree', () => {
     expect(emptySessionOn(host(['s1']), turns(), 'vps-1', null)).toBeNull();
+  });
+});
+
+/**
+ * The matcher behind "type the domain, work on the machine" (0.10.0): a prompt that names a saved
+ * VPS is routed to a chat on it. The rules under test are the ones that keep a prompt from being
+ * hijacked - saved non-local hosts only, word boundaries, nothing shorter than four characters.
+ */
+describe('hostMentionedIn', () => {
+  const vps = (over: Partial<Parameters<typeof hostMentionedIn>[1][number]> = {}) => ({
+    id: 'h2',
+    name: 'skilleddesk',
+    type: 'vps' as const,
+    status: 'connected' as const,
+    sdcd: '',
+    platform: '',
+    detail: '',
+    hostKey: '',
+    address: 'root@skilleddesk.com:22',
+    pinned: '',
+    sessions: [],
+    ...over,
+  });
+  const local = { ...vps({ id: 'local', name: 'Local', address: '' }), type: 'local' as const };
+
+  it('finds the host whose domain the prompt names', () => {
+    expect(hostMentionedIn('ami skilleddesk.com er file e kaj korte chai', [local, vps()])?.id).toBe('h2');
+    expect(hostMentionedIn('deploy this to SKILLEDDESK.COM please', [local, vps()])?.id).toBe('h2');
+  });
+
+  it('matches the host by its saved name too', () => {
+    expect(hostMentionedIn('fix the cron on skilleddesk', [local, vps()])?.id).toBe('h2');
+  });
+
+  it('never matches inside another word, a short name, or the local host', () => {
+    /* `skilleddesk.communications` contains the letters of the domain but not the domain as a word. */
+    expect(hostMentionedIn('my skilleddesk.communications file', [local, vps({ name: 'server-a' })])).toBeNull();
+    expect(hostMentionedIn('this becomes a problem', [local, vps({ name: 'com' })])).toBeNull();
+    expect(hostMentionedIn('work on Local files', [local])).toBeNull();
+    expect(hostMentionedIn('nothing about any host', [local, vps()])).toBeNull();
   });
 });
 

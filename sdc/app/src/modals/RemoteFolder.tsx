@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { CornerLeftUp, Folder, FolderOpen, Loader, Plug } from 'lucide-react';
 
 import { strings } from '../strings';
-import { listRemoteDirectory, openRemoteFolder } from '../store/intents';
+import { listRemoteDirectory, openRemoteFolder, rebindFolder } from '../store/intents';
 import { useOverlayStore } from '../store/overlays';
 import { useAppStore } from '../store/store';
 import { BTN, BTN_PRIMARY, BTN_SECONDARY } from '../panels/ui/button';
@@ -31,6 +31,7 @@ interface Listing {
  */
 export function RemoteFolder() {
   const hostId = useOverlayStore((state) => state.remoteFolderHostId);
+  const sessionId = useOverlayStore((state) => state.remoteFolderSessionId);
   const close = useOverlayStore((state) => state.closeRemoteFolder);
   const host = useAppStore((state) => state.hosts.find((candidate) => candidate.id === hostId));
 
@@ -94,10 +95,17 @@ export function RemoteFolder() {
 
     setBusy(true);
 
-    void openRemoteFolder(hostId, root).then((sessionId) => {
+    /* Opened from a chat's folder chip, the choice re-points that chat (0.10.0); opened from
+       anywhere else, it lands in a chat on the host the way `Open folder` always has. */
+    const landed =
+      sessionId === null
+        ? openRemoteFolder(hostId, root).then((opened) => opened !== null)
+        : rebindFolder(sessionId, hostId, root);
+
+    void landed.then((done) => {
       setBusy(false);
 
-      if (sessionId !== null) {
+      if (done !== false) {
         close();
       }
     });

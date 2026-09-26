@@ -762,6 +762,82 @@ impl Daemon {
             .and_then(|project| project.get("root").and_then(Value::as_str).map(str::to_string)))
     }
 
+    /// A workspace for a chat that has none - the folder an agent turn gets instead of a refusal.
+    ///
+    /// The folder is `~/SDC Workspaces/<title>-<session id>` on the machine the chat lives on (the
+    /// session id keeps two chats called "New chat" out of each other's files), created if it is not
+    /// there, added as a project (reusing the row when it already is one) and bound to the session.
+    /// The `SessionUpdated` at the end is what moves the window's folder chip, so the person sees
+    /// where the agent is working the moment the turn starts.
+    fn provision_workspace(
+        &self,
+        session_id: &str,
+        remote: Option<&crate::ssh::Ssh>,
+        out: &dyn Notifier,
+    ) -> Result<String, ErrorObject> {
+        let session = self.store().session(session_id).map_err(ErrorObject::internal)?;
+        let host_id = session
+            .as_ref()
+            .and_then(|session| session["hostId"].as_str().map(str::to_string))
+            .unwrap_or_else(|| "local".to_string());
+        let title = session
+            .as_ref()
+            .and_then(|session| session["title"].as_str().map(str::to_string))
+            .unwrap_or_default();
+        let name = workspace_name(&title, session_id);
+
+        let root = match remote {
+            Some(ssh) => {
+                let home = crate::ssh::ops::home(ssh)?;
+                let root = format!("{}/SDC Workspaces/{name}", home.trim_end_matches('/'));
+
+                crate::ssh::ops::mkdir(ssh, &root)?;
+
+                root
+            }
+            None => {
+                let home = std::env::var_os("USERPROFILE")
+                    .or_else(|| std::env::var_os("HOME"))
+                    .ok_or_else(|| ErrorObject::internal("no home directory to put a workspace in"))?;
+                let path = std::path::PathBuf::from(home).join("SDC Workspaces").join(&name);
+
+                std::fs::create_dir_all(&path)
+                    .map_err(|error| ErrorObject::internal(format!("{}: {error}", path.display())))?;
+
+                /* One separator on both machines - the same rule `project.scaffold` follows. */
+                path.to_string_lossy().replace('\\', "/")
+            }
+        };
+
+        let project_id = match self.store().project_at(&host_id, &root).map_err(ErrorObject::internal)? {
+            Some(existing) => existing,
+            None => {
+                let id = self.store().next_project_id().map_err(ErrorObject::internal)?;
+
+                self.store().add_project(&id, &host_id, &root, &name).map_err(ErrorObject::internal)?;
+
+                id
+            }
+        };
+
+        self.store()
+            .update_session(session_id, None, None, None, None, Some(&project_id))
+            .map_err(ErrorObject::internal)?;
+
+        out.push(
+            event::session_updated(json!({
+                "sessionId": session_id,
+                "minutesAgo": 0,
+                "projectId": project_id,
+                "projectRoot": root,
+            })),
+            Some(session_id.to_string()),
+            None,
+        );
+
+        Ok(root)
+    }
+
     fn session_update(&self, envelope: &Envelope, out: &dyn Notifier) -> Result<Value, ErrorObject> {
         let session_id = envelope.require_str("sessionId")?;
         let title = envelope.opt_str("title");
@@ -1134,6 +1210,18 @@ impl Daemon {
         /* And **which machine** that folder is on (0.7.13): with a host here, the adapter runs the CLI
            over `ssh` in that folder rather than locally (see `engines::cli::remote_command`). */
         let remote = self.remote_for(envelope)?;
+        /* An agent turn in a chat with no folder used to end in a refusal ("Agent mode works inside a
+           folder, and this chat has none"). 0.10.0 provisions one instead - a workspace under the
+           person's home, on whichever machine the chat lives on, bound to the chat exactly the way
+           `Open folder` binds one - so typing is enough. A provisioning that fails falls back to the
+           old refusal, whose sentence still says what to do by hand. */
+        let project_root = match project_root {
+            Some(root) => Some(root),
+            None if agent_mode => {
+                self.provision_workspace(&session_id, remote.as_ref(), out.as_ref()).ok()
+            }
+            None => None,
+        };
 
         /*
          * An agent takes its own checkpoint, synchronously, before its first change (agent::tools::Checkpointer):
@@ -2988,6 +3076,33 @@ fn folder_name(root: &str) -> String {
         .unwrap_or_else(|| root.to_string())
 }
 
+/// The folder name a provisioned workspace gets: the chat's title as a slug, with the session id
+/// stapled on so two chats called "New chat" never share files. `Fix the login page` and session
+/// `n42` become `fix-the-login-page-n42`; a title with nothing usable in it leaves just `chat-n42`.
+fn workspace_name(title: &str, session_id: &str) -> String {
+    let mut slug = String::new();
+
+    for character in title.to_lowercase().chars() {
+        if character.is_ascii_alphanumeric() {
+            slug.push(character);
+        } else if !slug.ends_with('-') && !slug.is_empty() {
+            slug.push('-');
+        }
+
+        if slug.len() >= 40 {
+            break;
+        }
+    }
+
+    let slug = slug.trim_matches('-');
+
+    if slug.is_empty() {
+        format!("chat-{session_id}")
+    } else {
+        format!("{slug}-{session_id}")
+    }
+}
+
 /// The first non-empty line of a program's output - a sentence, not a wall of stderr.
 ///
 /// (0.7.13 moved the refusal sentences to `ssh::ops`, which reads `ssh`'s own words itself, so this
@@ -3006,6 +3121,21 @@ fn first_line(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 0.10.0: an agent turn in a folderless chat gets a provisioned workspace instead of a refusal,
+    /// and the folder's name is the chat's, sluggified, with the session id keeping two "New chat"s
+    /// apart.
+    #[test]
+    fn a_workspace_is_named_after_the_chat_and_the_session() {
+        assert_eq!(workspace_name("Fix the login page", "n42"), "fix-the-login-page-n42");
+        assert_eq!(workspace_name("New chat", "n7"), "new-chat-n7");
+        assert_eq!(workspace_name("New chat", "n8"), "new-chat-n8");
+        assert_eq!(workspace_name("!!!", "n9"), "chat-n9");
+        assert_eq!(workspace_name("", "n10"), "chat-n10");
+
+        /* A very long title stays a folder name, not a path problem. */
+        assert!(workspace_name(&"word ".repeat(30), "n11").len() <= 48);
+    }
 
     /// The VPS in the bug report: `ssh` refused because the host wants a password or a one-time
     /// verification code - the user logs in from a terminal every day, so "unreachable" is the wrong
