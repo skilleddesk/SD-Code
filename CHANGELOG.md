@@ -15,6 +15,76 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [0.11.5] — the window asks again: providers after an update, a sign-in after a drop, a site by its name
+
+Three reports, and all three came down to a window that asked once and then stopped asking.
+
+### Fixed — "all my CLI and API providers were removed"
+
+Nothing had been removed: asked directly, the daemon still answered Claude, OpenAI and Gemini signed in
+and a DeepSeek key saved. The window had asked for them **once**. `connectDaemon()` ran when the window
+mounted, and the first launch after an update is exactly when the daemon is still being replaced - the
+call failed, and nothing asked again. The heartbeat saw the daemon come up and said `back online`, while
+the Provider Hub, the model menu and the sidebar stayed empty until the app was relaunched.
+
+* **The heartbeat loads the lists** whenever the window does not have them yet, and again whenever the
+  daemon comes back (a new daemon is a new answer). The retries are quiet - the banner already says the
+  daemon is away - and only one load runs at a time.
+* **A socket that failed is a socket that is gone.** The desktop bridge only cleared its `connected`
+  flag on end-of-file, so a daemon replaced under the window left a dead stream behind and every later
+  call failed with `os error 10054`. A write or read error now clears it, and the next call connects
+  again (which also starts a daemon that is not running).
+
+### Fixed — "SSH suddenly drops, and nothing asks me to reconnect"
+
+The VPS in the report signs in with a password and a verification code, and SDC holds that sign-in
+open as one master connection. When the master goes - an update replaced the daemon, the laptop slept,
+the network dropped - nothing said so: the log shows the row `connected` from 12:26 to 16:21 (seq 22483
+→ 35235) with no connection behind it, and `Reconnect` measured, said `offline`, and stopped there.
+
+* **The daemon notices** (`ssh::watch`, new). Every 45 s each VPS row that says `connected` is probed
+  again; a failure is confirmed by a second probe three seconds later, and only then is the row written
+  `offline` and a `HostStatus` pushed. A verdict that did not change pushes nothing.
+* **The window asks for the sign-in** (`watchHosts`, new). A VPS that turns `offline` from `connected`
+  or `connecting` - a drop, or a `Reconnect` that measured it down - opens that host's card, which is
+  where the password and the code are typed, with `Lost the connection to … - sign in again to
+  reconnect`. It is armed after the boot replay, so yesterday's drop does not open a dialog today, and it
+  never opens over Settings, Connect or itself.
+
+### Fixed — "I said I want deskvoy.com's files, and nothing happened"
+
+The domain matchers only knew what had been saved: a project by its name, or a host by the domain in
+its address. A VPS added by its **IP** has no domain to match, so a prompt naming one of its sites ran
+in whatever chat was open and the engine - any engine - was never given the site's folder.
+
+* **`domainMentionedIn`** (new) finds a domain in the words when neither saved matcher did - and never
+  takes `index.php`, `app.tsx`, `0.11.5` or an IP address for one.
+* **The machines are asked** (`project.locate`): the VPS the prompt was typed on first, then every other
+  connected VPS. The first whose web server config - or a conventional web folder - serves the domain
+  wins. A folderless chat is bound in place; a chat already working on another folder is left alone and
+  the site gets a chat of its own, so two sites are two chats that can both run.
+* **Saved under the domain.** The project is called `deskvoy.com`, not `public_html`, so the sidebar
+  lists it by the name the person used and the next prompt that names it is routed without asking a
+  machine again.
+
+### Changed — the Gemini card says what Google says
+
+Measured again on 2026-09-26 with Gemini CLI 0.60.0 and a finished sign-in: every turn still ends
+`IneligibleTierError: This client is no longer supported for Gemini Code Assist for individuals`. That
+is Google's decision about the CLI and personal accounts, and no sign-in in SDC can change it. The
+card used to say only `Connected`; it now says the CLI is not served to personal accounts and names the
+route that works - **Google Gemini API** with a key, the same models over `generativelanguage.googleapis.com`.
+
+### Tests
+
+* `a_connected_host_that_went_away_is_reported_once` (`sdcd/src/ssh/watch.rs`) - a `connected` row at
+  `127.0.0.1:1` turns `offline` once, keeps its platform line, and an `offline` row is never probed.
+* `store/reconnect.test.ts` (new) - the heartbeat that reaches the daemon after a failed launch loads the
+  providers; a VPS that turns `offline` opens its sign-in card, including after a `Reconnect`; the card
+  does not open over Settings.
+* `store/domain.test.ts` (new) - the domain matcher's yes and no cases, a folderless chat bound in place,
+  a working chat left alone with a new chat for the site, and a domain no machine serves.
+
 ## [0.11.4] — the 0.11.3 tree, re-cut
 
 No behaviour changed between `20cdef9` (v0.11.3) and this tag: the five version files moved, and nothing

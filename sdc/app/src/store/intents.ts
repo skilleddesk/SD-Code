@@ -68,7 +68,30 @@ function reportFailure(error: unknown, fallback: string): void {
  * not a toast per action (principle P4). It is deliberately not retried here - every intent retries
  * on its own, so the next click is the retry.
  */
-export async function connectDaemon(): Promise<boolean> {
+export function connectDaemon(quiet = false): Promise<boolean> {
+  /* One load at a time: the mount and the heartbeat can both ask for it in the same second. */
+  connecting ??= loadFromDaemon(quiet).finally(() => {
+    connecting = null;
+  });
+
+  return connecting;
+}
+
+/**
+ * Whether the window has the daemon's lists - the providers, the hosts and chats, the models (0.11.5).
+ *
+ * The report: *"amr CLI API providers sob kisu remove hoye gese"*. Nothing had been removed - the daemon
+ * still answered four connected providers. The window had asked **once**: `connectDaemon()` ran on mount,
+ * and the first launch after an update is the one where the daemon is still being replaced when that
+ * call is made. It failed, and nothing asked again - the heartbeat saw the daemon come up and said
+ * `back online`, while the Hub, the model menu and the sidebar stayed empty until the app was relaunched.
+ * The heartbeat now loads the lists whenever the window does not have them, and again whenever the
+ * daemon comes back (a new daemon is a new answer).
+ */
+let loaded = false;
+let connecting: Promise<boolean> | null = null;
+
+async function loadFromDaemon(quiet: boolean): Promise<boolean> {
   try {
     await sdcpCall('host.status', {});
 
@@ -106,9 +129,15 @@ export async function connectDaemon(): Promise<boolean> {
      */
     await refreshCatalog();
 
+    loaded = true;
+
     return true;
   } catch (error) {
-    toast(isSdcpError(error) ? error.message : strings.daemon.offline);
+    /* Said once. The heartbeat retries every few seconds while the daemon is away, and the banner
+       already says so - a toast per retry would be noise. */
+    if (!quiet) {
+      toast(isSdcpError(error) ? error.message : strings.daemon.offline);
+    }
 
     return false;
   }
@@ -402,6 +431,113 @@ export function projectMentionedIn(
       if (new RegExp(`(^|[^a-z0-9])${escaped}([^a-z0-9]|$)`).test(lowered)) {
         return project;
       }
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Endings that make `app.tsx` or `index.php` look like a domain. A prompt that names a file must never
+ * be taken for one that names a site.
+ */
+const FILE_ENDINGS = new Set([
+  'php', 'js', 'mjs', 'cjs', 'ts', 'tsx', 'jsx', 'html', 'htm', 'css', 'scss', 'json', 'md', 'py', 'rs',
+  'go', 'rb', 'java', 'kt', 'txt', 'yml', 'yaml', 'toml', 'xml', 'sh', 'env', 'lock', 'log', 'sql',
+  'vue', 'svelte', 'png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'ico', 'zip', 'tar', 'gz', 'conf', 'ini',
+  'csv', 'pdf', 'exe', 'dll', 'map', 'twig', 'blade', 'tpl', 'bak', 'old', 'swp', 'db', 'sqlite',
+]);
+
+/**
+ * A domain a prompt names, when it is not a saved host or project (0.11.5): `deskvoy.com` in *"ami
+ * deskvoy.com ar project file access nite cai"*.
+ *
+ * The two matchers above only know what was saved: a host added by its **IP** has no domain to match,
+ * so a prompt naming one of the sites on it went to whatever chat was open and the engine - any engine -
+ * was never given the site's folder. This is the third question: is there a domain in the words at all?
+ * The caller then asks the machines whether they serve it (`project.locate`).
+ *
+ * Pure and exported for the tests.
+ */
+export function domainMentionedIn(text: string): string | null {
+  const pattern = /(?:^|[^a-z0-9.@-])((?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+([a-z]{2,24}))(?=$|[^a-z0-9-])/gi;
+
+  for (const match of text.matchAll(pattern)) {
+    const domain = match[1].toLowerCase();
+    const ending = match[2].toLowerCase();
+
+    if (!FILE_ENDINGS.has(ending) && domain.length >= 4) {
+      return domain;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * A chat on the machine that serves `domain` (0.11.5), bound to the site's own folder.
+ *
+ * The machines asked, in order: the host the prompt was typed on (when it is a VPS), then every other
+ * connected VPS. The first one whose web server - or conventional web folder - names the domain wins.
+ * The folder is saved as a project called by the domain, so the sidebar lists it under that name and
+ * the next prompt that names it is routed by `projectMentionedIn` without asking a machine again. A chat
+ * that has no folder yet is bound in place; one that is already working somewhere else is left alone,
+ * and the domain gets a chat of its own - two sites, two chats, both able to run.
+ *
+ * `null` when nobody serves it: the prompt then runs where it was typed, exactly as before.
+ */
+async function sessionOnDomain(
+  domain: string,
+  currentHost: HostView | undefined,
+  sessionId: string | null,
+): Promise<string | null> {
+  const vps = useAppStore
+    .getState()
+    .hosts.filter((host) => host.type === 'vps' && host.status === 'connected');
+  const ordered =
+    currentHost?.type === 'vps'
+      ? [currentHost, ...vps.filter((host) => host.id !== currentHost.id)]
+      : vps;
+
+  for (const host of ordered) {
+    let candidates: { root: string; source: string }[];
+
+    try {
+      ({ candidates } = await sdcpCall('project.locate', { hostId: host.id, query: domain }));
+    } catch {
+      /* A host that cannot be asked is not the one serving it; the next one may be. */
+      continue;
+    }
+
+    const root = candidates[0]?.root;
+
+    if (root === undefined) {
+      continue;
+    }
+
+    const here = sessionId === null ? null : findSession(useAppStore.getState().hosts, sessionId);
+
+    if (sessionId !== null && here?.host.id === host.id && (here.session.projectRoot ?? null) === null) {
+      return (await rebindFolder(sessionId, host.id, root)) ? sessionId : null;
+    }
+
+    try {
+      const { projectId } = await sdcpCall('project.add', { hostId: host.id, root, name: domain });
+
+      await loadProjects();
+
+      const routed = await sessionOnProject({ id: projectId, hostId: host.id, name: domain });
+
+      if (routed !== null) {
+        landIn(routed);
+        toast(strings.folder.routed(domain));
+      }
+
+      return routed;
+    } catch (error) {
+      reportFailure(error, strings.folder.couldNotChange);
+
+      return null;
     }
   }
 
@@ -715,12 +851,96 @@ export async function reconnectHost(hostId: string, name: string): Promise<boole
 
     toast(strings.main.degraded.reconnecting(name));
 
+    /* The verdict arrives as a `HostStatus` - and when it is `offline`, `watchHosts` opens the host's
+       card, which is where the password and the code are typed (0.11.5). */
     return true;
   } catch (error) {
     reportFailure(error, strings.main.degraded.reconnectFailed(name));
 
     return false;
   }
+}
+
+/**
+ * A VPS that was working and stopped answering asks to be signed in again (0.11.5).
+ *
+ * The report: *"reconnect ar jonno clash hole request korse nah. aita must be dorkar reconnect ar pop up
+ * jodi clash hoi."* A host that signs in with a password and a verification code is held open by one
+ * master connection, and when that goes (an update replaced the daemon, the laptop slept, the network
+ * dropped) the only way back is to type them again. The card that takes them existed - `AddHost`, opened
+ * about the host, runs its doctor and shows `Sign in` - but nothing opened it: the banner's `Reconnect`
+ * measured, said `offline`, and stopped there.
+ *
+ * So every VPS row that moves from `connected` or `connecting` to `offline` **while this window watches**
+ * opens that card. Rows that arrive already offline (the list at launch) do not: that is a host the
+ * person has not touched yet, and the banner's `Reconnect` is one click away - which ends here too. The
+ * card is not reopened over itself, nor over another dialog the person is using.
+ *
+ * It is armed only once the daemon's lists are in and the boot replay has settled: the window folds the
+ * whole event log on launch, and a host that dropped *yesterday* is history, not a reason to open a
+ * dialog today.
+ *
+ * Returns the stop function, like the other watchers.
+ */
+export function watchHosts(): () => void {
+  let stop: (() => void) | null = null;
+  let settledAt: number | null = null;
+
+  const arm = globalThis.setInterval(() => {
+    if (!loaded) {
+      return;
+    }
+
+    settledAt ??= Date.now();
+
+    if (Date.now() - settledAt < HOST_WATCH_SETTLE_MS) {
+      return;
+    }
+
+    globalThis.clearInterval(arm);
+    stop = followHosts();
+  }, 500);
+
+  return () => {
+    globalThis.clearInterval(arm);
+    stop?.();
+  };
+}
+
+/** How long after the lists arrive the replay is given to settle before a drop means a dialog. */
+const HOST_WATCH_SETTLE_MS = 3000;
+
+function followHosts(): () => void {
+  const seen = new Map<string, HostView['status']>();
+
+  for (const host of useAppStore.getState().hosts) {
+    seen.set(host.id, host.status);
+  }
+
+  return useAppStore.subscribe((state) => {
+    for (const host of state.hosts) {
+      const before = seen.get(host.id);
+
+      seen.set(host.id, host.status);
+
+      if (
+        host.type !== 'vps' ||
+        host.status !== 'offline' ||
+        (before !== 'connected' && before !== 'connecting')
+      ) {
+        continue;
+      }
+
+      const overlays = useOverlayStore.getState();
+
+      if (overlays.addHostOpen || overlays.settingsOpen || overlays.connectOpen) {
+        continue;
+      }
+
+      toast(strings.main.degraded.signInAgain(host.name));
+      overlays.openAddHost(host.id);
+    }
+  });
 }
 
 /**
@@ -1644,6 +1864,12 @@ export async function heartbeat(): Promise<boolean> {
       toast(strings.daemon.backOnline);
     }
 
+    /* The lists the window may never have had, or had from a daemon that is no longer the one
+       answering (0.11.5 - see `loaded`). */
+    if (!loaded || !wasOnline) {
+      void connectDaemon(true);
+    }
+
     return true;
   } catch (error) {
     beat.beat(false, isSdcpError(error) ? error.message : strings.daemon.offline);
@@ -1982,6 +2208,14 @@ export async function sendPrompt(prompt: string, target?: string): Promise<strin
         if (candidates !== null && candidates.length > 0) {
           await rebindFolder(sessionId, mentioned.id, candidates[0].root);
         }
+      }
+    } else {
+      /* Neither a saved project nor a saved host - but the words may still name a site, and a VPS
+         added by its IP serves it without ever having been told its name (0.11.5). */
+      const domain = domainMentionedIn(prompt);
+
+      if (domain !== null) {
+        sessionId = (await sessionOnDomain(domain, currentHost, sessionId)) ?? sessionId;
       }
     }
   }

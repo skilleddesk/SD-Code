@@ -292,11 +292,18 @@ pub async fn call(
     let mut guard = bridge.call.lock().await;
     let stream = guard.as_mut().ok_or_else(|| "the daemon connection was closed".to_string())?;
 
-    stream
-        .write_all(format!("{envelope}\n").as_bytes())
-        .await
-        .map_err(|error| error.to_string())?;
-    stream.flush().await.map_err(|error| error.to_string())?;
+    /* A socket that failed is a socket that is gone (0.11.5). Only an end-of-file used to clear
+       `connected`, so a daemon that was replaced under the window - an update, a crash - left a dead
+       stream here and every later call failed with `os error 10054` until the app was relaunched. The
+       next call now connects again, which is also what starts a daemon that is not running. */
+    let dead = |error: std::io::Error| {
+        bridge.connected.store(false, Ordering::SeqCst);
+
+        error.to_string()
+    };
+
+    stream.write_all(format!("{envelope}\n").as_bytes()).await.map_err(dead)?;
+    stream.flush().await.map_err(dead)?;
 
     /* Read until *this* id answers. Notifications that arrive first are skipped rather than dropped:
        the daemon may legitimately push an event before answering (`TurnStarted` can win the race
@@ -305,7 +312,7 @@ pub async fn call(
 
     loop {
         let mut line = String::new();
-        let read = reader.read_line(&mut line).await.map_err(|error| error.to_string())?;
+        let read = reader.read_line(&mut line).await.map_err(dead)?;
 
         if read == 0 {
             bridge.connected.store(false, Ordering::SeqCst);

@@ -43,6 +43,7 @@ use crate::sdcp::envelope::ErrorObject;
 pub mod hostkey;
 pub mod ops;
 pub mod session;
+pub mod watch;
 
 /// The `ssh` every call runs: the one that can hold a sign-in open ([`session::program`]) when this
 /// machine has it, otherwise the one on PATH.

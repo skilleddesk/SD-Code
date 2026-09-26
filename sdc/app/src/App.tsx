@@ -17,7 +17,7 @@ import { NewChatPopover } from './overlays/NewChatPopover';
 import { Palette } from './overlays/Palette';
 import { SearchOverlay } from './overlays/SearchOverlay';
 import { Toast } from './overlays/Toast';
-import { connectDaemon, watchBackground, watchDaemon } from './store/intents';
+import { connectDaemon, watchBackground, watchDaemon, watchHosts } from './store/intents';
 import { useLayoutStore, workspaceClassName } from './store/layout';
 import { usePrefixHint } from './store/prefs';
 import { useRightPanelStore } from './store/rightPanel';
@@ -82,6 +82,12 @@ export function App() {
    * what it collected. The poll reads nothing and returns immediately when there is no process.
    */
   useEffect(() => watchBackground(), []);
+
+  /*
+   * A VPS whose connection died asks to be signed in again (0.11.5): the sign-in card opens when a
+   * working host turns `offline`, instead of the chat quietly failing to reach it.
+   */
+  useEffect(() => watchHosts(), []);
 
   const layout = useLayoutStore();
   const rightPanelWidth = useRightPanelStore((state) => state.width);
