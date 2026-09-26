@@ -43,6 +43,18 @@ pub struct LoginRecipe {
     pub program: &'static str,
     pub args: &'static [&'static str],
     pub pump: &'static [&'static str],
+    /// Questions the CLI asks before its sign-in starts, as `(what it prints, what to type)`, answered
+    /// **when the question appears** rather than on a timer (0.11.2).
+    ///
+    /// Gemini is the reason: over pipes it is headless, and headless it asks `Opening authentication
+    /// page in your browser. Do you want to continue? [Y/n]:` and reads the answer from stdin - which
+    /// nothing ever wrote, so every Gemini sign-in from the app sat on that question until it was
+    /// cancelled. Answered, it starts its loopback callback server and opens the Google page in the
+    /// browser itself (measured on 0.60.0: a `node` listener on 127.0.0.1 and a new Chrome window).
+    pub answers: &'static [(&'static str, &'static str)],
+    /// True when the CLI opens the sign-in page itself and prints no link to copy - the window then
+    /// says "approve it in your browser" instead of waiting for a URL that will never arrive.
+    pub opens_browser: bool,
     /// A line that means the CLI finished signing in, matched case-insensitively.
     pub success: &'static [&'static str],
     /// What the UI says about this recipe, including anything the user has to know first.
@@ -162,6 +174,8 @@ pub const RECIPES: &[LoginRecipe] = &[
         program: "claude",
         args: &["auth", "login"],
         pump: &[],
+        answers: &[],
+        opens_browser: false,
         success: &["successfully logged in", "login successful", "logged in as", "you are now logged in"],
         note: "Claude Code opens the approval page itself; the link is also printed here so it can be copied.",
         prepare: Prepare::Nothing,
@@ -172,6 +186,8 @@ pub const RECIPES: &[LoginRecipe] = &[
         program: "codex",
         args: &["login"],
         pump: &[],
+        answers: &[],
+        opens_browser: false,
         success: &["successfully logged in", "login successful", "authenticated"],
         note: "Codex waits for its browser callback; if the browser cannot reach it, paste the code from the page instead.",
         prepare: Prepare::Nothing,
@@ -186,6 +202,8 @@ pub const RECIPES: &[LoginRecipe] = &[
            model action. */
         args: &["--skip-trust"],
         pump: &[],
+        answers: &[("[Y/n]", "Y")],
+        opens_browser: true,
         success: &["successfully logged in", "login successful", "authenticated", "signed in"],
         note: "Gemini opens the Google sign-in page in the browser by itself; approve it there and this card follows on its own - SDC watches for the credential Gemini's CLI writes (`~/.gemini/oauth_creds.json`). No sign-in needed at all when a Google Gemini API key is connected: a turn hands it to the CLI automatically.",
         prepare: Prepare::GeminiOauth,
@@ -284,6 +302,7 @@ impl LoginManager {
         pump: Option<Vec<String>>,
     ) -> Result<Value, ErrorObject> {
         let known = recipe(provider_id);
+        let overridden = program.is_some();
         let (program, recipe_args, recipe_pump) = match (program, known) {
             (Some(program), _) => (program.to_string(), Vec::new(), Vec::new()),
             (None, Some(recipe)) => (
@@ -299,6 +318,12 @@ impl LoginManager {
         };
         let args = args.unwrap_or(recipe_args);
         let pump = pump.unwrap_or(recipe_pump);
+        /* A caller that overrides the program is running its own CLI; the recipe's questions are
+           not its questions. */
+        let answers: &'static [(&'static str, &'static str)] = match known {
+            Some(recipe) if !overridden => recipe.answers,
+            _ => &[],
+        };
         let opened = self.pty.open(&program, &args, None, None, None).map_err(|error| {
             /* A CLI that is not installed is the common case, and it deserves the doctor's wording
                rather than "internal". */
@@ -352,6 +377,16 @@ impl LoginManager {
             });
         }
 
+        /* The questions, answered as they appear (see `LoginRecipe::answers`). The thread watches the
+           output the dialog also reads - partial lines included - and types each reply once. It gives
+           up with the process, or after two minutes of never seeing the question. */
+        if !answers.is_empty() {
+            let pty = self.pty.clone();
+            let pty_id = pty_id.clone();
+
+            std::thread::spawn(move || answer_questions(&pty, &pty_id, answers, std::time::Duration::from_secs(120)));
+        }
+
         Ok(json!({ "loginId": id, "ptyId": pty_id, "program": program, "providerId": provider_id }))
     }
 
@@ -383,6 +418,13 @@ impl LoginManager {
         let authenticated = recipe.map(|recipe| is_authenticated(&text, recipe)).unwrap_or(false)
             || (snapshot.provider_id == "gemini"
                 && crate::providers::gemini_credentials().map(|path| path.exists()).unwrap_or(false));
+        /* Signed in through the browser, headless Gemini keeps running - it goes on to wait for a
+           prompt on stdin that will never come. The credential is written, so the process has done
+           its one job and is closed rather than left behind as a stray `node`. */
+        if authenticated && alive && recipe.map(|recipe| recipe.opens_browser).unwrap_or(false) {
+            self.pty.close(&snapshot.pty_id);
+        }
+
         let url = snapshot.url.clone().or_else(|| extract_url(&text));
         let state = if authenticated {
             "authenticated"
@@ -396,6 +438,11 @@ impl LoginManager {
             }
         } else if url.is_some() {
             "waiting_for_code"
+        } else if recipe.map(|recipe| recipe.opens_browser && recipe.answers.iter().any(|(question, _)| text.contains(question))).unwrap_or(false) {
+            /* The CLI was asked, answered, and opened the sign-in page itself: there is no link to
+               show and no code to paste - the person approves in the browser and the credential
+               check above turns this into `authenticated`. */
+            "waiting_for_browser"
         } else {
             "waiting_for_url"
         };
@@ -508,6 +555,43 @@ impl LoginManager {
         };
 
         Ok(json!({ "cancelled": self.pty.close(&pty_id), "loginId": id }))
+    }
+}
+
+/// Types each `(question, reply)` once, the moment the question shows up in the process's output.
+///
+/// Its own function so a test can hold it against a stand-in CLI that asks a question without a
+/// newline - the shape that made every Gemini sign-in from the app hang.
+pub fn answer_questions(
+    pty: &PtyManager,
+    pty_id: &str,
+    answers: &[(&str, &str)],
+    patience: std::time::Duration,
+) {
+    let started = Instant::now();
+    let mut answered = vec![false; answers.len()];
+
+    while started.elapsed() < patience && answered.iter().any(|done| !done) {
+        let Ok(output) = pty.output(pty_id) else {
+            return;
+        };
+
+        let text = output["lines"]
+            .as_array()
+            .map(|lines| lines.iter().filter_map(Value::as_str).collect::<Vec<_>>().join("\n"))
+            .unwrap_or_default();
+
+        for (index, (question, reply)) in answers.iter().enumerate() {
+            if !answered[index] && text.contains(question) {
+                answered[index] = pty.write(pty_id, &format!("{reply}\n")).is_ok();
+            }
+        }
+
+        if output["state"].as_str().unwrap_or("gone") != "running" {
+            return;
+        }
+
+        std::thread::sleep(std::time::Duration::from_millis(250));
     }
 }
 
@@ -707,6 +791,71 @@ mod tests {
 
         assert_eq!(status["authenticated"], serde_json::json!(true), "tail: {:?}", status["lines"]);
         assert!(status["lines"].as_array().unwrap().iter().any(|line| line.as_str().unwrap_or_default().contains("Successfully logged in")));
+    }
+
+    /// The Gemini hang, end to end against a stand-in (0.11.2): a CLI that prints its question with
+    /// **no newline** and waits for the answer on stdin. The question must become visible in the
+    /// output (it never did - the reader waited for a newline), and `answer_questions` must type the
+    /// reply, after which the CLI finishes.
+    #[test]
+    fn a_question_without_a_newline_is_seen_and_answered() {
+        let pty = Arc::new(PtyManager::new());
+        let (program, args) = if cfg!(windows) {
+            (
+                "powershell".to_string(),
+                vec![
+                    "-NoProfile".to_string(),
+                    "-Command".to_string(),
+                    "[Console]::Out.Write('Do you want to continue? [Y/n]: '); [Console]::Out.Flush(); $a = [Console]::In.ReadLine(); if ($a -eq 'Y') { 'answered yes' } else { 'no answer' }".to_string(),
+                ],
+            )
+        } else {
+            (
+                "sh".to_string(),
+                vec!["-c".to_string(), "printf 'Do you want to continue? [Y/n]: '; read a; [ \"$a\" = Y ] && echo 'answered yes' || echo 'no answer'".to_string()],
+            )
+        };
+        let opened = pty.open(&program, &args, None, None, None).unwrap();
+        let pty_id = opened["ptyId"].as_str().unwrap().to_string();
+
+        answer_questions(&pty, &pty_id, &[("[Y/n]", "Y")], std::time::Duration::from_secs(20));
+
+        let mut text = String::new();
+
+        for _ in 0..100 {
+            let output = pty.output(&pty_id).unwrap();
+
+            text = output["lines"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter_map(Value::as_str)
+                .collect::<Vec<_>>()
+                .join("\n");
+
+            if text.contains("answered yes") {
+                break;
+            }
+
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+
+        assert!(text.contains("[Y/n]"), "the newline-less question must be visible: {text:?}");
+        assert!(text.contains("answered yes"), "the question must be answered: {text:?}");
+
+        pty.close(&pty_id);
+    }
+
+    /// Gemini's recipe answers its own consent question and says it opens the browser itself; the
+    /// other two recipes answer nothing, because nobody measured a question there.
+    #[test]
+    fn only_gemini_answers_a_question_and_opens_the_browser() {
+        let gemini = recipe("gemini").unwrap();
+
+        assert_eq!(gemini.answers, &[("[Y/n]", "Y")]);
+        assert!(gemini.opens_browser);
+        assert!(recipe("claude").unwrap().answers.is_empty());
+        assert!(recipe("openai").unwrap().answers.is_empty());
     }
 
     #[test]

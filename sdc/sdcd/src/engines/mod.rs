@@ -394,11 +394,33 @@ pub fn parse_stream_line(line: &str) -> Vec<EngineEvent> {
         }],
         "turn.failed" => vec![EngineEvent::Failed(error_message(&value))],
 
-        /* Gemini's stream-json: one message per delta. */
-        "message" => text_of(&value).map(EngineEvent::Delta).into_iter().collect(),
+        /* Gemini's stream-json: one message per delta - **the assistant's only**. Gemini also emits
+           `{"type":"message","role":"user","content":<the prompt>}` first, echoing what it was sent
+           (read from its source, 0.60.0); printed, the person's own question - with the whole
+           replayed history - opened every answer. `content` carries the text; `delta` is a bool. */
+        "message" => {
+            if value.get("role").and_then(Value::as_str).is_some_and(|role| role != "assistant") {
+                return Vec::new();
+            }
+
+            text_of(&value).map(EngineEvent::Delta).into_iter().collect()
+        }
+
+        /* Gemini's terminal line says how it went in `status`, not `is_error`: a failed turn must
+           not end as a green Done. */
+        "result" if value.get("status").and_then(Value::as_str) == Some("error") => {
+            vec![EngineEvent::Failed(error_message(&value))]
+        }
 
         /* Claude's and Gemini's terminal line - and the shape the VCR fixtures spell. */
         "result" | "done" => result_event(&value),
+
+        /* Gemini's tool calls (0.11.2): `tool_name`/`tool_id`/`parameters`, and a `tool_result`
+           that carries the outcome. The generic arms below read `name`/`id`, which Gemini never
+           sends - so every Gemini tool became one card called "Tool" with id `call`, and none of
+           them ever finished. */
+        "tool_use" if value.get("tool_name").is_some() => vec![gemini_tool_started(&value)],
+        "tool_result" if value.get("tool_id").is_some() => gemini_tool_result(&value),
 
         "error" => vec![EngineEvent::Failed(error_message(&value))],
 
@@ -439,6 +461,59 @@ pub fn parse_stream_line(line: &str) -> Vec<EngineEvent> {
 }
 
 /// A string field with a fallback, so a missing key never panics a turn.
+/// A Gemini `tool_use` line as the card it opens: the kind from the tool's own name, the target
+/// from the parameter that names what it touches.
+fn gemini_tool_started(value: &Value) -> EngineEvent {
+    let name = string_of(value, "tool_name", "tool");
+    let parameters = value.get("parameters").cloned().unwrap_or(Value::Null);
+    let tool = match name.as_str() {
+        "write_file" | "replace" | "edit" | "edit_file" => "edit",
+        "run_shell_command" | "shell" => "run",
+        _ => "read",
+    };
+    let target = ["file_path", "absolute_path", "path", "command", "pattern", "dir_path", "url", "query"]
+        .iter()
+        .find_map(|key| parameters.get(*key).and_then(Value::as_str))
+        .unwrap_or_default()
+        .to_string();
+
+    EngineEvent::ToolStarted {
+        call_id: string_of(value, "tool_id", "call"),
+        tool: tool.to_string(),
+        name,
+        target,
+    }
+}
+
+/// A Gemini `tool_result` line: its output (when there is any) and the card's end.
+fn gemini_tool_result(value: &Value) -> Vec<EngineEvent> {
+    let call_id = string_of(value, "tool_id", "call");
+    let failed = value.get("status").and_then(Value::as_str) == Some("error");
+    let text = if failed {
+        error_message(value)
+    } else {
+        string_of(value, "output", "")
+    };
+    let mut events = Vec::new();
+
+    if !text.trim().is_empty() {
+        events.push(EngineEvent::ToolOutput {
+            call_id: call_id.clone(),
+            level: if failed { "error" } else { "dim" }.to_string(),
+            text,
+        });
+    }
+
+    events.push(EngineEvent::ToolCompleted {
+        diff: None,
+        call_id,
+        status: if failed { "failed" } else { "done" }.to_string(),
+        meta: if failed { "failed" } else { "done" }.to_string(),
+    });
+
+    events
+}
+
 fn string_of(value: &Value, key: &str, fallback: &str) -> String {
     value.get(key).and_then(Value::as_str).unwrap_or(fallback).to_string()
 }
@@ -724,6 +799,53 @@ pub fn collect_stream<I: IntoIterator<Item = String>>(lines: I) -> Vec<EngineEve
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A whole Gemini `stream-json` turn, in the shapes its own source emits (0.60.0,
+    /// `JsonStreamEventType`): the prompt echo is dropped, the assistant deltas become the answer,
+    /// the tool call is one card with its own id that finishes, and the result ends the turn.
+    #[test]
+    fn a_gemini_turn_reads_the_way_gemini_writes_it() {
+        let lines = [
+            r#"{"type":"init","timestamp":"t","session_id":"s","model":"gemini-2.5-pro"}"#,
+            r#"{"type":"message","timestamp":"t","role":"user","content":"fix the footer"}"#,
+            r#"{"type":"message","timestamp":"t","role":"assistant","content":"Reading ","delta":true}"#,
+            r#"{"type":"tool_use","timestamp":"t","tool_name":"read_file","tool_id":"r-1","parameters":{"file_path":"src/footer.html"}}"#,
+            r#"{"type":"tool_result","timestamp":"t","tool_id":"r-1","status":"success","output":"<footer>"}"#,
+            r#"{"type":"tool_use","timestamp":"t","tool_name":"replace","tool_id":"r-2","parameters":{"file_path":"src/footer.html"}}"#,
+            r#"{"type":"tool_result","timestamp":"t","tool_id":"r-2","status":"error","error":{"type":"X","message":"old_string not found"}}"#,
+            r#"{"type":"message","timestamp":"t","role":"assistant","content":"done.","delta":true}"#,
+            r#"{"type":"result","timestamp":"t","status":"success","stats":{}}"#,
+        ];
+        let events: Vec<EngineEvent> = lines.iter().flat_map(|line| parse_stream_line(line)).collect();
+        let answer: String = events
+            .iter()
+            .filter_map(|event| match event {
+                EngineEvent::Delta(text) => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(answer, "Reading done.", "the prompt echo must not open the answer");
+        assert!(events.contains(&EngineEvent::ToolStarted {
+            call_id: "r-1".into(),
+            tool: "read".into(),
+            name: "read_file".into(),
+            target: "src/footer.html".into(),
+        }));
+        assert!(events.iter().any(|event| matches!(event, EngineEvent::ToolStarted { call_id, tool, .. } if call_id == "r-2" && tool == "edit")));
+        assert!(events.iter().any(|event| matches!(event, EngineEvent::ToolCompleted { call_id, status, .. } if call_id == "r-1" && status == "done")));
+        assert!(events.iter().any(|event| matches!(event, EngineEvent::ToolCompleted { call_id, status, .. } if call_id == "r-2" && status == "failed")));
+        assert!(events.iter().any(|event| matches!(event, EngineEvent::ToolOutput { text, .. } if text.contains("old_string not found"))));
+        assert!(matches!(events.last(), Some(EngineEvent::Done { .. })));
+    }
+
+    /// Gemini's failed turn says so in `status`; it must not end as a green Done.
+    #[test]
+    fn a_gemini_result_with_an_error_status_is_a_failure() {
+        let events = parse_stream_line(r#"{"type":"result","status":"error","error":{"type":"Api","message":"quota exceeded"}}"#);
+
+        assert_eq!(events, vec![EngineEvent::Failed("quota exceeded".into())]);
+    }
 
     #[test]
     fn parses_the_five_event_kinds() {

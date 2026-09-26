@@ -22,7 +22,7 @@
 //! sense of safety.
 
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{Read, Write};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -44,6 +44,34 @@ pub const DENIED: &[(&str, &str)] = &[
     (":(){:|:&};:", "it is a fork bomb"),
     ("git push --force", "it rewrites published history"),
 ];
+
+/// Kills a process **and everything it started** (0.11.2).
+///
+/// On Windows an npm-installed CLI runs as `cmd.exe /c gemini.cmd …`, and the program that does the
+/// work is a `node` *grandchild*. `Child::kill` ends only the `cmd` - so every cancelled sign-in and
+/// every stopped Gemini turn left its `node` running, holding its OAuth callback port (twelve of
+/// them were found on the machine this was measured on). `taskkill /T` ends the whole tree. On Unix
+/// the direct child is the program itself and `Child::kill` is enough, so this does nothing there.
+pub fn kill_tree(pid: u32) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+
+        /* CREATE_NO_WINDOW: a console flash for every Stop would be its own small bug. */
+        let _ = Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .creation_flags(0x0800_0000)
+            .status();
+    }
+
+    #[cfg(not(windows))]
+    {
+        let _ = pid;
+    }
+}
 
 /// Why a command line is refused, or `None` when it is allowed through.
 ///
@@ -193,6 +221,13 @@ pub struct Session {
     /// The host this process runs on, and the pid file that stops it, when it is not this machine.
     pub remote: Option<(crate::ssh::Ssh, String)>,
     pub lines: Vec<String>,
+    /// What each stream (stdout, stderr) has printed since its last newline (0.11.2).
+    ///
+    /// A process that asks a question prints it **without a newline** and waits: Gemini's `Do you
+    /// want to continue? [Y/n]:` is exactly that. A line reader never yields such a line, so the
+    /// question was invisible to everything reading this ring - the login dialog, and the code that
+    /// should have answered it. Output now includes these tails after the complete lines.
+    pub partials: [String; 2],
     pub state: String,
     pub started: Instant,
 }
@@ -204,6 +239,7 @@ impl Session {
             label: label.unwrap_or(program).to_string(),
             remote,
             lines: Vec::new(),
+            partials: [String::new(), String::new()],
             state: "running".to_string(),
             started: Instant::now(),
         }
@@ -220,7 +256,22 @@ impl Session {
 
     /// Everything printed so far, which is what a URL search and a log view both read.
     pub fn text(&self) -> String {
-        self.lines.join("\n")
+        self.visible_lines().join("\n")
+    }
+
+    /// The complete lines, then any half-written tail a stream is still sitting on.
+    pub fn visible_lines(&self) -> Vec<String> {
+        let mut lines = self.lines.clone();
+
+        for partial in &self.partials {
+            let tail = partial.trim_end_matches('\r');
+
+            if !tail.trim().is_empty() {
+                lines.push(tail.to_string());
+            }
+        }
+
+        lines
     }
 }
 
@@ -380,38 +431,58 @@ impl PtyManager {
             sessions.insert(id.clone(), Session::new(command, label, remote));
         }
 
-        let mut readers: Vec<Box<dyn BufRead + Send>> = Vec::new();
+        let mut readers: Vec<(usize, Box<dyn Read + Send>)> = Vec::new();
 
         if let Some(stdout) = child.stdout.take() {
-            readers.push(Box::new(BufReader::new(stdout)));
+            readers.push((0, Box::new(stdout)));
         }
 
         if let Some(stderr) = child.stderr.take() {
-            readers.push(Box::new(BufReader::new(stderr)));
+            readers.push((1, Box::new(stderr)));
         }
 
         /* One reader per stream, both appending into the session's ring. They end when the process
-           closes its streams, which is also when the state flips to `exited`. */
-        for mut reader in readers {
+           closes its streams, which is also when the state flips to `exited`. Bytes, not lines: a
+           question printed without a newline is kept as that stream's partial, visible at once. */
+        for (stream, mut reader) in readers {
             let sessions = self.sessions.clone();
             let session_id = id.clone();
 
             std::thread::spawn(move || {
-                let mut line = String::new();
+                let mut chunk = [0u8; 4096];
+                let mut pending: Vec<u8> = Vec::new();
 
                 loop {
-                    line.clear();
-
-                    match reader.read_line(&mut line) {
+                    let read = match reader.read(&mut chunk) {
                         Ok(0) | Err(_) => break,
-                        Ok(_) => {
-                            let text = line.trim_end_matches(['\r', '\n']).to_string();
+                        Ok(read) => read,
+                    };
 
-                            if let Ok(mut sessions) = sessions.lock() {
-                                if let Some(session) = sessions.get_mut(&session_id) {
-                                    session.push_line(text);
-                                }
-                            }
+                    pending.extend_from_slice(&chunk[..read]);
+
+                    let Ok(mut sessions) = sessions.lock() else {
+                        break;
+                    };
+                    let Some(session) = sessions.get_mut(&session_id) else {
+                        continue;
+                    };
+
+                    while let Some(end) = pending.iter().position(|byte| *byte == b'\n') {
+                        let raw: Vec<u8> = pending.drain(..=end).collect();
+
+                        session.push_line(String::from_utf8_lossy(&raw).trim_end_matches(['\r', '\n']).to_string());
+                    }
+
+                    session.partials[stream] = String::from_utf8_lossy(&pending).to_string();
+                }
+
+                /* A last line with no newline at exit is still a line. */
+                if let Ok(mut sessions) = sessions.lock() {
+                    if let Some(session) = sessions.get_mut(&session_id) {
+                        let tail = std::mem::take(&mut session.partials[stream]);
+
+                        if !tail.trim().is_empty() {
+                            session.push_line(tail.trim_end_matches('\r').to_string());
                         }
                     }
                 }
@@ -438,12 +509,14 @@ impl PtyManager {
             .get(id)
             .ok_or_else(|| ErrorObject::not_found(format!("{id} is not a process this daemon started")))?;
 
+        let lines = session.visible_lines();
+
         Ok(json!({
             "ptyId": id,
             "command": session.label,
             "state": state,
-            "lines": session.lines,
-            "lineCount": session.lines.len(),
+            "lineCount": lines.len(),
+            "lines": lines,
             "ms": session.started.elapsed().as_millis() as u64,
         }))
     }
@@ -509,6 +582,7 @@ impl PtyManager {
 
         match children.remove(id) {
             Some(mut child) => {
+                kill_tree(child.id());
                 let _ = child.kill();
                 let _ = child.wait();
 

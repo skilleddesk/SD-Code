@@ -128,7 +128,7 @@ export interface CliLoginView {
   providerId: string;
   providerLabel: string;
   url: string | null;
-  state: 'starting' | 'waiting_for_url' | 'waiting_for_code' | 'authenticated' | 'exited' | 'failed' | 'cancelled';
+  state: 'starting' | 'waiting_for_url' | 'waiting_for_code' | 'waiting_for_browser' | 'authenticated' | 'exited' | 'failed' | 'cancelled';
   note: string | null;
   lines: string[];
   authenticated: boolean;
