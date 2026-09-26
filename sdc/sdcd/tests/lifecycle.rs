@@ -210,6 +210,71 @@ fn request_collect(
     (answer.expect("sdcd never answered; see the notifications collected"), seen)
 }
 
+/// One request, read until a notification satisfies `wanted`.
+///
+/// `request_collect` stops at the first quiet moment after the answer, and for most calls that is right:
+/// the answer *is* the news. `host.probe`'s is not. The daemon answers `connecting` immediately and
+/// measures on a background task, so the verdict that lands on the host's row is a push that arrives
+/// *after* the answer - and only a wait for that push can tell a probe that measured from a probe that
+/// forgot to. The deadline is the caller's, because how long an `ssh` takes to give up is not this
+/// helper's business.
+fn request_until(
+    port: u16,
+    id: &str,
+    method: &str,
+    params: serde_json::Value,
+    wanted: impl Fn(&serde_json::Value) -> bool,
+    within: Duration,
+) -> (serde_json::Value, Vec<serde_json::Value>) {
+    let stream = TcpStream::connect(("127.0.0.1", port)).expect("connecting to sdcd");
+
+    stream.set_read_timeout(Some(Duration::from_secs(2))).expect("a read timeout");
+
+    let mut stream = stream;
+    let mut seen = Vec::new();
+    let mut answer: Option<serde_json::Value> = None;
+
+    writeln!(
+        stream,
+        "{}",
+        serde_json::json!({ "v": "0.1", "id": id, "method": method, "params": params })
+    )
+    .expect("writing the request");
+    stream.flush().expect("flushing the request");
+
+    let mut reader = BufReader::new(stream);
+    let deadline = Instant::now() + within;
+
+    while Instant::now() < deadline {
+        let mut line = String::new();
+
+        match reader.read_line(&mut line) {
+            Ok(0) => break,
+            Ok(_) => {}
+            /* Nothing yet, and on this call that is expected: the measurement is still running. */
+            Err(_) => continue,
+        }
+
+        let Ok(message) = serde_json::from_str::<serde_json::Value>(line.trim()) else {
+            continue;
+        };
+
+        if message.get("id").and_then(serde_json::Value::as_str) == Some(id) {
+            answer = Some(message);
+        } else {
+            let settled = wanted(&message);
+
+            seen.push(message);
+
+            if settled {
+                break;
+            }
+        }
+    }
+
+    (answer.expect("sdcd never answered; see the notifications collected"), seen)
+}
+
 #[test]
 fn a_turn_carries_the_prompt_the_user_sent_and_no_invented_price() {
     let directory = TempDir::new().expect("a temporary directory");
@@ -994,6 +1059,173 @@ fn a_host_is_added_once_and_can_be_removed_again() {
         refused.pointer("/error/code").and_then(serde_json::Value::as_str),
         Some("bad_request"),
         "removing `local` must be refused with a reason: {refused}"
+    );
+
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+/// `host.probe` - the daemon's half of the degraded banner's `Reconnect` button (0.11.3).
+///
+/// The button had nothing behind it: the window said `Reconnected` while nothing was measured, and a
+/// host that had come back - a VPS rebooted, a route repaired, a laptop reopened - stayed `offline` in
+/// the sidebar until the app was relaunched. Three answers are asserted here, and all three are why the
+/// button exists:
+///
+/// * `local` is where the daemon runs, so it is `connected` without dialing anything;
+/// * a row SDC has no address for is refused with a reason, rather than being called reachable or
+///   unreachable - there is nothing to measure;
+/// * a real address is pushed `connecting` **and then** a verdict on the host's own row. The second one
+///   arrives after the answer, which is the point of the background task: a synchronous probe would hold
+///   the dispatcher for as long as `ssh` takes to time out.
+///
+/// The address is `127.0.0.1:1`: nothing can be listening on a privileged port without root having put
+/// it there, no network is involved, and the wait is for an `ssh` that is refused rather than for DNS, so
+/// the verdict is `offline` on any runner - including one with no `ssh` installed at all.
+#[test]
+fn a_probe_measures_a_host_again_and_says_so_on_its_row() {
+    let directory = TempDir::new().expect("a temporary directory");
+    let (mut child, port) = start(&["--idle-exit", "60"], &directory);
+
+    /* `local`: connected, and nothing was dialed. */
+    let (local, local_events) = request_collect(
+        port,
+        "probe-local",
+        "host.probe",
+        serde_json::json!({ "hostId": "local" }),
+    );
+
+    assert_eq!(
+        local.pointer("/result/status").and_then(serde_json::Value::as_str),
+        Some("connected"),
+        "a probe of `local` must answer `connected`: {local}"
+    );
+    assert!(
+        local_events
+            .iter()
+            .any(|message| message.pointer("/event/status").and_then(serde_json::Value::as_str)
+                == Some("connected")),
+        "a probe of `local` pushed no `HostStatus`, so its row would still say whatever it said before: \
+         {local_events:?}"
+    );
+
+    /* A row with no address: nothing to measure, and the refusal says which. */
+    let (absent, _) = request_collect(
+        port,
+        "probe-absent",
+        "host.probe",
+        serde_json::json!({ "hostId": "h-absent" }),
+    );
+
+    assert_eq!(
+        absent.pointer("/error/code").and_then(serde_json::Value::as_str),
+        Some("bad_request"),
+        "a probe of a host SDC has no address for must be refused with a reason: {absent}"
+    );
+
+    /* A real address, so there is something to dial. */
+    let (added, _) = request_collect(
+        port,
+        "add-1",
+        "host.add",
+        serde_json::json!({ "type": "ssh", "target": "root@127.0.0.1 -p 1", "label": "Nowhere" }),
+    );
+
+    let host_id = added
+        .pointer("/result/hostId")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+
+    assert!(!host_id.is_empty(), "host.add answered no id: {added}");
+
+    let (answer, events) = request_until(
+        port,
+        "probe-1",
+        "host.probe",
+        serde_json::json!({ "hostId": host_id.clone() }),
+        |message| {
+            let is_status = message.pointer("/event/type").and_then(serde_json::Value::as_str)
+                == Some("HostStatus");
+            let same_host = message
+                .pointer("/event/hostId")
+                .and_then(serde_json::Value::as_str)
+                == Some(host_id.as_str());
+            /* `connecting` is the *start*; these two are the verdict. */
+            let settled = matches!(
+                message.pointer("/event/status").and_then(serde_json::Value::as_str),
+                Some("connected") | Some("offline")
+            );
+
+            is_status && same_host && settled
+        },
+        Duration::from_secs(60),
+    );
+
+    assert_eq!(
+        answer.pointer("/result/status").and_then(serde_json::Value::as_str),
+        Some("connecting"),
+        "the probe must answer before it has measured anything: {answer}"
+    );
+
+    let started = events
+        .iter()
+        .find(|message| {
+            message.pointer("/event/status").and_then(serde_json::Value::as_str) == Some("connecting")
+        })
+        .and_then(|message| message.pointer("/event/detail"))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+
+    assert!(
+        started.starts_with("reconnecting to"),
+        "the probe pushed no `connecting` sentence, so nothing said the dot was moving: {events:?}"
+    );
+
+    /* The verdict - and it carries a *sentence*, because the host's row renders this. */
+    let verdict = events
+        .iter()
+        .find(|message| {
+            matches!(
+                message.pointer("/event/status").and_then(serde_json::Value::as_str),
+                Some("connected") | Some("offline")
+            )
+        })
+        .expect("the probe never pushed a verdict; the send died with the request");
+
+    assert_eq!(
+        verdict.pointer("/event/status").and_then(serde_json::Value::as_str),
+        Some("offline"),
+        "nothing answers on `127.0.0.1:1`, so the verdict must be `offline`: {verdict}"
+    );
+    assert!(
+        verdict
+            .pointer("/event/detail")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|detail| !detail.trim().is_empty()),
+        "an `offline` with no sentence is the one thing this feature must not produce: {verdict}"
+    );
+
+    /* The same fact on the row, which is where the next window reads it from. */
+    let (listed, _) = request_collect(port, "list-1", "session.list", serde_json::json!({}));
+    let rows = listed
+        .pointer("/result/hosts")
+        .and_then(serde_json::Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let row = rows.iter().find(|host| host["hostId"] == serde_json::json!(host_id));
+
+    assert_eq!(
+        row.and_then(|host| host["status"].as_str()),
+        Some("offline"),
+        "the probe's verdict never reached the host's row: {listed}"
+    );
+    /* And the address it was measured against is still the one the person typed, port and all. */
+    assert_eq!(
+        row.and_then(|host| host["target"].as_str()),
+        Some("root@127.0.0.1"),
+        "the probe rewrote the host's own row: {listed}"
     );
 
     let _ = child.kill();

@@ -63,6 +63,7 @@ impl Daemon {
             "host.doctor" => self.host_doctor(envelope),
             "host.add" => self.host_add(envelope, out),
             "host.trust" => self.host_trust(envelope, out),
+            "host.probe" => self.host_probe(envelope, out),
             "host.key" => self.host_key(envelope, &*out),
             "ssh.key" => self.ssh_key(envelope),
             "host.remove" => self.host_remove(envelope, &*out),
@@ -468,6 +469,119 @@ impl Daemon {
         spawn_finish(state, notifier, host_id.clone(), name, ssh, Secrets { password, code }, None);
 
         Ok(json!({ "trusted": true, "hostId": host_id, "fingerprint": fingerprint }))
+    }
+
+    /// `host.probe` - measure a host again, and say the result on its own row (0.11.3).
+    ///
+    /// The window's `Reconnect` button had nothing behind it: it was a `toast` saying `Reconnected`
+    /// while nothing was measured, so a machine that had come back - a VPS rebooted, a route repaired, a
+    /// laptop reopened - stayed `offline` in the sidebar until the whole app was relaunched and
+    /// `host.add` ran again. This is the daemon's half of that button.
+    ///
+    /// It is deliberately the **probe** and not the whole [`finish_connection`]: a reconnect has no
+    /// password to spend and no key to install (the key is already in the host's `authorized_keys`), and
+    /// a button that asked for one would be a sign-in card wearing a different label.
+    ///
+    /// Three answers, decided in this order:
+    ///
+    /// * `local` - the daemon's own machine, `connected` without dialing anything;
+    /// * a row with no address - a bad request, because there is nothing to measure. An *unreachable*
+    ///   host is not this case: it has an address, and this probe is what turns a failed dial into the
+    ///   sentence its row shows;
+    /// * a real address - `connecting` first, so the dot moves while `ssh` dials, then the probe's
+    ///   verdict, stored on the row and pushed as the same `HostStatus` the add/trust path pushes.
+    ///
+    /// The measurement answers as an *event* rather than as this call's result, which is how `host.add`
+    /// does it and for the same two reasons: a synchronous probe would hold the dispatcher for as long as
+    /// `ssh` takes to time out, and a fact about a host belongs on the host's row, not in a `Toast` that
+    /// the next launch replays (the sentence would be replayed about a machine that is fine by then).
+    fn host_probe(&self, envelope: &Envelope, out: Arc<dyn Notifier>) -> Result<Value, ErrorObject> {
+        let host_id = envelope.require_str("hostId")?;
+
+        let row = self.store().host(&host_id).map_err(ErrorObject::internal)?;
+        let name = row.as_ref().and_then(|row| row["name"].as_str().map(str::to_string));
+        /*
+         * The machine line the row already carries, kept next to the name so the verdict's upsert below
+         * writes it back.
+         *
+         * `upsert_host` sets `platform = ?6` on conflict, so the `None` the add path passes is correct
+         * there (the row is new) and wrong here: re-measuring a host that is already on screen would
+         * erase the `Debian 12 · x64` line from a row that is merely being looked at again.
+         */
+        let platform = row.as_ref().and_then(|row| row["platform"].as_str().map(str::to_string));
+
+        if host_id == "local" {
+            let name = name.unwrap_or_else(|| "Local".to_string());
+            let detail = "this machine is where the daemon runs";
+
+            out.push(
+                event::host_status(&host_id, &name, "local", "connected", None, Some(detail), None),
+                None,
+                None,
+            );
+
+            return Ok(json!({ "hostId": host_id, "status": "connected", "detail": detail }));
+        }
+
+        let Some(ssh) = self.ssh_for(&host_id)? else {
+            return Err(ErrorObject::bad_request(format!(
+                "`{host_id}` has no SSH address stored, so there is nothing to measure"
+            )));
+        };
+
+        let name = name.unwrap_or_else(|| ssh.label());
+        let target = ssh.target.user_host.clone();
+
+        out.push(
+            event::host_status(
+                &host_id,
+                &name,
+                "vps",
+                "connecting",
+                None,
+                Some(&format!("reconnecting to {}…", ssh.label())),
+                None,
+            ),
+            None,
+            None,
+        );
+
+        let state = self.state.clone();
+        let notifier = out.clone();
+        let probing = ssh.clone();
+        /* The id the answer needs, taken before the task takes its own copy of everything else. */
+        let answer_host_id = host_id.clone();
+
+        tokio::spawn(async move {
+            let (status, detail) = tokio::task::spawn_blocking(move || crate::ssh::ops::probe(&probing))
+                .await
+                .unwrap_or_else(|_| {
+                    (
+                        "offline".to_string(),
+                        format!("{target} could not be measured; check the daemon's log"),
+                    )
+                });
+
+            let _ = state
+                .store
+                .upsert_host(&host_id, &name, "ssh", Some(&target), &status, platform.as_deref());
+
+            notifier.push(
+                event::host_status(
+                    &host_id,
+                    &name,
+                    "vps",
+                    &status,
+                    platform.as_deref(),
+                    Some(&detail),
+                    None,
+                ),
+                None,
+                None,
+            );
+        });
+
+        Ok(json!({ "hostId": answer_host_id, "status": "connecting" }))
     }
 
     /// `host.doctor` - the environment checks, about the machine the caller names (0.7.13).

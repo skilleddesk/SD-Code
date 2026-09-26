@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SdcpCallError } from '../lib/transport';
-import type { SessionView } from './types';
+import type { SessionView, TurnView } from './types';
 
 /**
  * `chooseModel`'s acceptance test - the regression behind *"connect hoy claude but chat e kisu likhle kaj
@@ -20,7 +20,7 @@ const sdcpCall = vi.hoisted(() => vi.fn());
 
 vi.mock('../lib/sdcp', () => ({ sdcpCall }));
 
-const { validName, renamePath, deletePath, createFolder, searchFolder, defaultReviewer, runVerify, autonomyFor, sendPrompt, interruptTurn, chooseModel, closeDiff, closeFolder, forkSession, loadCliRecipe, loadGitStatus, saveFile, emptySessionOn, hostMentionedIn, projectMentionedIn, newChatOnHost, openDiff, openFolderIn, loadDirectory, toggleDirectory, openFile, closeFile, addHost, hostKey, trustHost, listRemoteDirectory, runDoctor, runCommand, runInBackground, pollBackground, stopBackground, openTerminalForHost, installHostKey } = await import('./intents');
+const { validName, renamePath, deletePath, createFolder, searchFolder, defaultReviewer, runVerify, autonomyFor, sendPrompt, interruptTurn, chooseModel, closeDiff, closeFolder, forkSession, loadCliRecipe, loadGitStatus, saveFile, emptySessionOn, hostMentionedIn, projectMentionedIn, newChatOnHost, openDiff, openFolderIn, loadDirectory, toggleDirectory, openFile, closeFile, addHost, hostKey, trustHost, reconnectHost, listRemoteDirectory, runDoctor, runCommand, runInBackground, pollBackground, stopBackground, openTerminalForHost, installHostKey } = await import('./intents');
 const { useTerminalStore } = await import('./terminal');
 const { tabForSession } = await import('./rightPanel');
 const { engineForProvider, useModelStore } = await import('./model');
@@ -233,6 +233,117 @@ describe('newChatOnHost', () => {
       hostId: 'local',
       title: 'New chat',
       prompt: 'Describe what you want to build…',
+    });
+  });
+
+  /** A turn in the log - the one fact that makes a chat *not* the empty one `+ New chat` reuses. */
+  const turnOn = (sessionId: string): TurnView => ({
+    id: `t-${sessionId}`,
+    sessionId,
+    turnNumber: 1,
+    engine: 'claude_code',
+    model: 'sonnet',
+    tier: 'Balanced',
+    prompt: 'fix the 500',
+    text: 'done',
+    thinking: '',
+    thinkingMs: 0,
+    thinkingSince: null,
+    plan: [],
+    startedAt: '2026-09-26T10:00:00Z',
+    status: 'done',
+    stuckForMs: 0,
+    tools: [],
+    summary: '',
+    meta: '',
+    pass: null,
+  });
+
+  it('starts the new chat in the folder the person is working in, on that host', async () => {
+    /* One chat, bound to a project, with a turn behind it - so this click has to *create* the next
+       chat, which is exactly the case that used to arrive folderless (0.11.3). */
+    useAppStore.setState({
+      hosts: [
+        {
+          id: 'local',
+          name: 'Local',
+          type: 'local',
+          status: 'connected',
+          sdcd: '0.11.3',
+          platform: 'Windows 11 · x64',
+          detail: '',
+          hostKey: '',
+          address: '',
+          pinned: '',
+          sessions: [
+            { id: 's1', title: 'Rate limiting', prompt: 'Add rate limiting', state: 'success', minutesAgo: 9, unread: 0, projectId: 'p1', projectRoot: '/srv/app' },
+          ],
+        },
+      ],
+      turns: [turnOn('s1')],
+    });
+    usePrefsStore.setState({ activeTab: 's1' });
+
+    await expect(newChatOnHost('local')).resolves.toBe('s9');
+
+    /* `projectId` is what makes the engines run in `/srv/app`: the daemon resolves the folder from the
+       project row, so a chat that is merely *shown* a chip in the prompt area is not the same thing. */
+    expect(sdcpCall).toHaveBeenCalledWith('session.open', {
+      hostId: 'local',
+      title: 'New chat',
+      prompt: 'Describe what you want to build…',
+      projectId: 'p1',
+    });
+  });
+
+  it('takes that folder from the newest chat on the host, and never from another host', async () => {
+    useAppStore.setState({
+      hosts: [
+        {
+          id: 'local',
+          name: 'Local',
+          type: 'local',
+          status: 'connected',
+          sdcd: '0.11.3',
+          platform: '',
+          detail: '',
+          hostKey: '',
+          address: '',
+          pinned: '',
+          sessions: [
+            { id: 's1', title: 'Rate limiting', prompt: 'Add rate limiting', state: 'success', minutesAgo: 9, unread: 0, projectId: 'p1', projectRoot: '/srv/app' },
+            { id: 's2', title: 'Notes', prompt: 'Write notes', state: 'success', minutesAgo: 2, unread: 0, projectId: null, projectRoot: null },
+          ],
+        },
+        {
+          id: 'h7',
+          name: 'prod-1',
+          type: 'vps',
+          status: 'connected',
+          sdcd: '0.11.3',
+          platform: '',
+          detail: '',
+          hostKey: '',
+          address: 'root@vps.example:8443',
+          pinned: '',
+          sessions: [
+            { id: 's7', title: 'Deploy', prompt: 'Deploy', state: 'success', minutesAgo: 1, unread: 0, projectId: 'p9', projectRoot: '/var/www/deskvoy.com' },
+          ],
+        },
+      ],
+      turns: [turnOn('s1'), turnOn('s2'), turnOn('s7')],
+    });
+    /* The caret is in the chat that has *no* folder: the newest one on the host that has one is where
+       the next chat belongs, and `p9` is prod-1's folder - it must not travel to `local`. */
+    usePrefsStore.setState({ activeTab: 's2' });
+
+    await newChatOnHost('local');
+
+    expect(sdcpCall).toHaveBeenCalledWith('session.open', {
+      hostId: 'local',
+      title: 'New chat',
+      prompt: 'Describe what you want to build…',
+      projectId: 'p1',
     });
   });
 });
@@ -787,6 +898,59 @@ describe('addHost and trustHost', () => {
     sdcpCall.mockRejectedValueOnce(new SdcpCallError({ code: 'bad_request', message: 'the key changed' }));
 
     await expect(trustHost('h7', 'SHA256:abc123')).resolves.toBe(false);
+  });
+});
+
+/**
+ * The degraded banner's `Reconnect` (0.11.3) - the regression behind *"host offline theke gele ar
+ * connect hoy nah"*.
+ *
+ * The button was a `toast(strings.main.degraded.reconnected)` and nothing else: one word, said before
+ * anything had been measured, while the host stayed `offline` in the sidebar until the app was
+ * relaunched - and a machine that was *still* down was told `Reconnected` just the same. It now asks
+ * the daemon to dial the host again (`host.probe`); the verdict arrives afterwards as a `HostStatus`
+ * event, which is why what is asserted here is the half the window owns: which call the click makes,
+ * and which sentence it says while the daemon measures.
+ */
+describe('reconnectHost', () => {
+  beforeEach(() => {
+    sdcpCall.mockReset();
+    sdcpCall.mockResolvedValue({});
+  });
+
+  it('asks the daemon to dial the host, and says it is happening rather than that it happened', async () => {
+    await expect(reconnectHost('h7', 'prod-1')).resolves.toBe(true);
+
+    expect(sdcpCall).toHaveBeenCalledWith('host.probe', { hostId: 'h7' });
+
+    /* The old copy was the single word `Reconnected`. The tense is the fix: the measurement has been
+       started, not finished, and the host's row is where the answer lands. */
+    expect(useAppStore.getState().toasts.at(-1)?.message).toBe('Reconnecting to prod-1…');
+  });
+
+  it('names what the daemon would not measure, when it refuses', async () => {
+    sdcpCall.mockRejectedValueOnce(
+      new SdcpCallError({
+        code: 'bad_request',
+        message: '`h7` has no SSH address stored, so there is nothing to measure',
+      }),
+    );
+
+    await expect(reconnectHost('h7', 'prod-1')).resolves.toBe(false);
+
+    /* The daemon's sentence names what is missing; a generic `Could not reconnect` on top of it would
+       be a worse sentence than the one already in hand. */
+    expect(useAppStore.getState().toasts.at(-1)?.message).toBe(
+      '`h7` has no SSH address stored, so there is nothing to measure',
+    );
+  });
+
+  it('has something to say when the call never reached the daemon', async () => {
+    sdcpCall.mockRejectedValueOnce(new Error('the socket is gone'));
+
+    await expect(reconnectHost('h7', 'prod-1')).resolves.toBe(false);
+
+    expect(useAppStore.getState().toasts.at(-1)?.message).toBe('Could not reconnect to prod-1');
   });
 });
 

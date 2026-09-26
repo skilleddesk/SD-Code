@@ -80,6 +80,15 @@ export type SdcpMethod =
    */
   | 'host.trust'
   /**
+   * Measure a host again, and say the result on its own row (0.11.3).
+   *
+   * The window's `Reconnect` button had nothing behind it: it said `Reconnected` and measured nothing, so
+   * a host that had come back stayed `offline` until the app was relaunched. This is the probe that
+   * answered the *first* question (`host.add`), asked again on demand - and it is the probe alone, because
+   * a reconnect has no password to spend and no key to install.
+   */
+  | 'host.probe'
+  /**
    * What a host presents **now** (0.7.13) - the read that makes the trust question answerable again.
    *
    * `host.add` asks it once and pushes the answer as a `HostStatus`; a window that was not open at that
@@ -835,6 +844,17 @@ export interface SdcpMethodMap {
   'host.trust': {
     params: { hostId: string; fingerprint: string; password?: string; code?: string };
     result: { trusted: boolean; hostId: string; fingerprint: string };
+  };
+  /**
+   * One more probe of a host SDC already knows (0.11.3) - what `Reconnect` in the degraded banner calls.
+   *
+   * `status` is `connecting` while `ssh` dials and the probe's own verdict once it answers, which is the
+   * same `HostStatus` the add/trust path pushes. `detail` carries the daemon's sentence either way, so the
+   * host's row explains itself without a toast that the next launch would replay.
+   */
+  'host.probe': {
+    params: { hostId: string };
+    result: { hostId: string; status: string; detail?: string };
   };
   /**
    * The scan `host.add` does once, as a call (0.7.13).

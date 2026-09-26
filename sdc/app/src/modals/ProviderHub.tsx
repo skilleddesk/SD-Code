@@ -11,7 +11,6 @@ import {
   ShieldCheck,
   Stethoscope,
   TriangleAlert,
-  X,
   Zap,
   type LucideIcon,
 } from 'lucide-react';
@@ -132,20 +131,20 @@ export function ProviderHub() {
       </nav>
 
       <div className="flex min-w-0 flex-1 flex-col">
+        {/*
+          One `✕`, not two.
+
+          This header used to carry its own close button *and* `Modal` renders the frame's - so the hub
+          showed two crosses a few pixels apart, one from each implementation, with two different labels
+          (`strings.hub.close` and `strings.modal.close`). The frame's is the one that stays: it is the
+          same button every other modal shows, it is inside the focus trap, and its `Esc`/backdrop
+          behaviour is already tested there.
+        */}
         <div className="flex items-start gap-[10px] border-b border-border-subtle px-[18px] py-[14px]">
           <div className="flex-1">
             <div className="text-[14px] font-semibold text-text-primary">{titles[0]}</div>
             <div className="mt-[2px] text-[11.5px] text-text-muted">{titles[1]}</div>
           </div>
-          <button
-            type="button"
-            className="grid h-[28px] w-[28px] place-items-center rounded-md text-text-secondary hover:bg-bg-hover hover:text-text-primary"
-            title={strings.hub.close}
-            aria-label={strings.hub.close}
-            onClick={close}
-          >
-            <X size={16} aria-hidden="true" />
-          </button>
         </div>
 
         <div

@@ -24,11 +24,12 @@ use crate::engines::{Engine, EngineStatus, EventSink, Prompt};
 /// `--skip-trust` answers the trusted-folder one, and `stream-json` is one of the three values its
 /// `-o` accepts.
 ///
-/// The stream shape below is Gemini's published `stream-json` contract, **not** a capture: this machine
-/// has no Gemini account signed in, and guessing which of its lines matter would be the same mistake
-/// this file was written to fix. What is certain is the failure path - not signed in, it prints a plain
-/// sentence on stdout (`Opening authentication page in your browser. Do you want to continue?`) and
-/// exits 42, and `explain_failure` puts that sentence in the transcript instead of an empty answer.
+/// The stream shape below is Gemini's published `stream-json` contract, **not** a capture: no account
+/// signed in on this machine can produce one any more - Google refuses the CLI itself, and
+/// [`refusal_sentence`] below has that sentence word for word. What *is* measured is the failure path:
+/// signed out, it prints a plain sentence on stdout (`Opening authentication page in your browser. Do
+/// you want to continue?`) and exits 42, and `explain_failure` puts that sentence in the transcript
+/// instead of an empty answer.
 pub const GEMINI_SPEC: CliSpec = CliSpec {
     program: "gemini",
     args: &["-p", "{prompt}", "--output-format", "stream-json", "--skip-trust"],
@@ -111,6 +112,46 @@ pub fn turn_env_for(program: &str) -> Vec<(&'static str, String)> {
             vec![("GEMINI_API_KEY", key)]
         }
     }
+}
+
+/// Google's own refusal of this CLI, turned into the way out (0.11.3).
+///
+/// Measured on 2026-09-26, with a sign-in that is **finished** - `~/.gemini/oauth_creds.json` is there,
+/// `gemini --version` answers `0.60.0`, `settings.json` names `oauth-personal` - so this is not the
+/// signed-out case [`auth_plan`] handles:
+///
+/// ```text
+/// $ gemini -p OK --output-format stream-json --skip-trust
+/// Error authenticating: IneligibleTierError: This client is no longer supported for Gemini Code Assist
+/// for individuals. To continue using Gemini, please migrate to the Antigravity suite of products:
+/// https://antigravity.google                            (exit 1, empty stdout, that line on stderr)
+/// ```
+///
+/// Google has cut this client off for individual accounts. Nothing SDC can send changes that: the
+/// *subscription* route is closed from the far end, and the sentence the transcript would otherwise
+/// carry (`` `gemini` said: Error authenticating: … ``) names no way out of an account SDC is not
+/// allowed to touch. The route that does work is the API, which SDC has had since 0.9.0 - the `google`
+/// provider on `native_api`, the same models over `generativelanguage.googleapis.com`.
+///
+/// `None` for every other sentence, deliberately: a failure this function does not know is left in the
+/// CLI's own words rather than rewritten into a story about Google.
+pub fn refusal_sentence(program: &str, said: &str) -> Option<String> {
+    if program != GEMINI_SPEC.program {
+        return None;
+    }
+
+    let lowered = said.to_lowercase();
+    let refused_by_google = lowered.contains("ineligibletiererror")
+        || lowered.contains("no longer supported for gemini code assist")
+        || lowered.contains("migrate to the antigravity suite");
+
+    if !refused_by_google {
+        return None;
+    }
+
+    Some(format!(
+        "Google refused the `{program}` CLI itself: `{said}` - this is not a sign-in SDC can finish, and signing in again will not change it. The same models are reachable with a key instead, which is a different route to the same place: Providers → Google Gemini API (a Google AI Studio key), then pick a Gemini model from that row - every turn runs over `generativelanguage.googleapis.com` rather than through the CLI."
+    ))
 }
 
 pub struct Gemini {
@@ -207,5 +248,25 @@ mod tests {
     fn no_other_cli_gets_a_key() {
         assert!(turn_env_for("claude").is_empty());
         assert!(turn_env_for("codex").is_empty());
+    }
+
+    /// Google's refusal, word for word from the capture in `refusal_sentence`'s doc. Two properties,
+    /// and both matter: the sentence names the route that still works (the `google` API key), and it
+    /// keeps Google's own words - a failure quietly rewritten would be the same lie in the other
+    /// direction, and this one is the *only* failure that is allowed to be rewritten at all.
+    #[test]
+    fn googles_refusal_names_the_route_that_still_works() {
+        let captured = "Error authenticating: IneligibleTierError: This client is no longer supported for Gemini Code Assist for individuals. To continue using Gemini, please migrate to the Antigravity suite of products: https://antigravity.google";
+
+        let sentence = refusal_sentence("gemini", captured).expect("the measured refusal is recognised");
+
+        assert!(sentence.contains("IneligibleTierError"), "{sentence}");
+        assert!(sentence.contains("Google Gemini API"), "{sentence}");
+        assert!(sentence.contains("generativelanguage.googleapis.com"), "{sentence}");
+
+        /* Another CLI, and any other Gemini failure, stay in their own words. */
+        assert_eq!(refusal_sentence("claude", captured), None);
+        assert_eq!(refusal_sentence("codex", captured), None);
+        assert_eq!(refusal_sentence("gemini", "Unknown argument: output"), None);
     }
 }
