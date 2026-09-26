@@ -321,7 +321,7 @@ fn prints(program: &str, args: &[&str]) -> Option<String> {
 }
 
 /// Where the Gemini CLI keeps the credential its Google sign-in wrote.
-fn gemini_credentials() -> Option<std::path::PathBuf> {
+pub fn gemini_credentials() -> Option<std::path::PathBuf> {
     let home = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME"))?;
 
     Some(std::path::PathBuf::from(home).join(".gemini").join("oauth_creds.json"))

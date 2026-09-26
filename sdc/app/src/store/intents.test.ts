@@ -20,7 +20,7 @@ const sdcpCall = vi.hoisted(() => vi.fn());
 
 vi.mock('../lib/sdcp', () => ({ sdcpCall }));
 
-const { validName, renamePath, deletePath, createFolder, searchFolder, defaultReviewer, runVerify, autonomyFor, sendPrompt, interruptTurn, chooseModel, closeDiff, closeFolder, forkSession, loadCliRecipe, loadGitStatus, saveFile, emptySessionOn, hostMentionedIn, newChatOnHost, openDiff, openFolderIn, loadDirectory, toggleDirectory, openFile, closeFile, addHost, hostKey, trustHost, listRemoteDirectory, runDoctor, runCommand, runInBackground, pollBackground, stopBackground, openTerminalForHost, installHostKey } = await import('./intents');
+const { validName, renamePath, deletePath, createFolder, searchFolder, defaultReviewer, runVerify, autonomyFor, sendPrompt, interruptTurn, chooseModel, closeDiff, closeFolder, forkSession, loadCliRecipe, loadGitStatus, saveFile, emptySessionOn, hostMentionedIn, projectMentionedIn, newChatOnHost, openDiff, openFolderIn, loadDirectory, toggleDirectory, openFile, closeFile, addHost, hostKey, trustHost, listRemoteDirectory, runDoctor, runCommand, runInBackground, pollBackground, stopBackground, openTerminalForHost, installHostKey } = await import('./intents');
 const { useTerminalStore } = await import('./terminal');
 const { tabForSession } = await import('./rightPanel');
 const { engineForProvider, useModelStore } = await import('./model');
@@ -1337,10 +1337,47 @@ describe('the tree changes things through the daemon, inside the chat', () => {
     expect(sdcpCall).not.toHaveBeenCalledWith('fs.mkdir', expect.anything());
   });
 
-  it('searches the chat folder', async () => {
-    sdcpCall.mockResolvedValue({ hits: [{ path: '/srv/app/x.ts', line: 3, text: 'needle' }] });
+  it('searches the chat folder for names and contents', async () => {
+    sdcpCall.mockResolvedValue({
+      hits: [{ path: '/srv/app/x.ts', line: 3, text: 'needle' }],
+      files: [{ path: '/srv/app/needle.ts', dir: false }],
+    });
 
-    await expect(searchFolder('needle')).resolves.toEqual([{ path: '/srv/app/x.ts', line: 3, text: 'needle' }]);
+    await expect(searchFolder('needle')).resolves.toEqual({
+      hits: [{ path: '/srv/app/x.ts', line: 3, text: 'needle' }],
+      files: [{ path: '/srv/app/needle.ts', dir: false }],
+    });
     expect(sdcpCall).toHaveBeenCalledWith('fs.search', expect.objectContaining({ query: 'needle', sessionId: 's1' }));
+  });
+
+  /* A daemon one release behind answers `fs.search` without `files`; the window must not crash on it. */
+  it('treats a missing files list as empty', async () => {
+    sdcpCall.mockResolvedValue({ hits: [] });
+
+    await expect(searchFolder('needle')).resolves.toEqual({ hits: [], files: [] });
+  });
+});
+
+/**
+ * The matcher that makes two domains on one VPS two working chats (0.11.0): a prompt that names a
+ * saved project routes to the chat bound to *its* folder, before the host matcher gets a say.
+ */
+describe('projectMentionedIn', () => {
+  const projects = [
+    { id: 'p1', hostId: 'h2', root: '/var/www/skilleddesk.com', name: 'skilleddesk.com' },
+    { id: 'p2', hostId: 'h2', root: '/var/www/deskvoy.com', name: 'deskvoy.com' },
+    { id: 'p3', hostId: 'local', root: 'H:/SDC', name: 'SDC' },
+  ];
+
+  it('routes each domain to its own project on the shared host', () => {
+    expect(projectMentionedIn('deskvoy.com er nav thik koro', projects)?.id).toBe('p2');
+    expect(projectMentionedIn('fix the footer on skilleddesk.com please', projects)?.id).toBe('p1');
+  });
+
+  it('matches the folder basename too, on word boundaries only', () => {
+    expect(projectMentionedIn('open deskvoy.com now', projects)?.id).toBe('p2');
+    expect(projectMentionedIn('my deskvoy.communications file', projects)).toBeNull();
+    /* `SDC` is three characters: too short to claim a word. */
+    expect(projectMentionedIn('run sdc here', projects)).toBeNull();
   });
 });

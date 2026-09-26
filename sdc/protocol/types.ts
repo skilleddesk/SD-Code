@@ -104,6 +104,7 @@ export type SdcpMethod =
   /** The folder a chat works in (0.7.6). */
   | 'project.add'
   | 'project.scaffold'
+  | 'project.locate'
   | 'project.list'
   | 'project.remove'
   | 'engine.start'
@@ -335,6 +336,12 @@ export interface FsHit {
   path: string;
   line: number;
   text: string;
+}
+
+/** One name match of `fs.search` (0.11.0): a file or folder whose name contains the query. */
+export interface FsFound {
+  path: string;
+  dir: boolean;
 }
 
 /**
@@ -894,6 +901,17 @@ export interface SdcpMethodMap {
     params: { hostId?: string; parent: string; name: string };
     result: { projectId: string; hostId: string; root: string; name: string };
   };
+  /**
+   * Where a named thing lives on a machine (0.11.0) - the answer to *"give me my skilleddesk.com
+   * project files"* when no project is bound yet. For a domain it reads the web server's own answer
+   * first (an nginx `root` / Apache `DocumentRoot` whose server name matches), then the conventional
+   * homes (`/var/www/<q>`, `/srv/<q>`, `~/<q>`, …); locally it looks through the usual code folders.
+   * Candidates are ordered best-first and every one is a real directory on that machine.
+   */
+  'project.locate': {
+    params: { hostId?: string; query: string };
+    result: { candidates: { root: string; source: string }[] };
+  };
   'project.list': { params: Record<string, never>; result: { projects: ProjectRecord[] } };
   'project.remove': { params: { projectId: string }; result: { removed: boolean; chats: number } };
 
@@ -998,7 +1016,8 @@ export interface SdcpMethodMap {
   'fs.stat': { params: { path: string; hostId?: string }; result: { size: number; sha256: string } };
   'fs.search': {
     params: { query: string; glob?: string; root?: string; sessionId?: string; hostId?: string; limit?: number };
-    result: { hits: FsHit[] };
+    /** `hits` are lines inside files; `files` (0.11.0) are files and folders whose *name* matches. */
+    result: { hits: FsHit[]; files: FsFound[] };
   };
 
   'git.status': {

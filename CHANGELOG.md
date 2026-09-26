@@ -15,6 +15,57 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [0.11.0] — the domain finds its files, the sidebar finds anything, and Gemini finally answers
+
+The release behind *"ami domain a project file access cai"*: naming a site is now enough to be
+working **in that site's own folder**, two sites on one VPS are two chats working at once, and the
+sidebar's search answers "where is index.php" as fast as it is typed. Plus the real end of the
+Gemini story: a connected Google API key now reaches the CLI, and the browser sign-in is detected
+when it finishes.
+
+### Added — type the domain, get the site's files
+
+* **`project.locate`** (new method): where a named thing lives on a machine. On a host it reads the
+  web server's own answer first - an nginx `root` or Apache `DocumentRoot` whose server name matches
+  the domain - then the conventional homes (`/var/www/<domain>`, `/srv/<domain>`, `~/<domain>`, a
+  vhost layout, `/home/*/public_html`); locally it checks the usual code folders. Every candidate is
+  a real directory on that machine, best-first, never a guess.
+* **The prompt binds the chat to the site.** *"skilleddesk.com er file e kaj korte chai"* routes to
+  the host (0.10.0) and now also **finds and binds the site's folder** when the chat has none: the
+  agent starts inside `/var/www/skilleddesk.com`, not inside a blank workspace, and the sidebar's
+  tree is the site the person meant.
+* **Two domains, one VPS, two chats at once.** A prompt that names a saved *project* now routes to
+  the chat bound to **that project** (`projectMentionedIn`) before the host matcher gets a say - so
+  skilleddesk.com and deskvoy.com on the same machine each get their own chat, bound to their own
+  folder, running turns at the same time. A fresh chat opened this way is titled after the project,
+  so the tab strip reads like the work. Works the same across several VPSes and locally.
+
+### Added — the sidebar's search bar
+
+* **Always there, answers as you type.** The Files section's search is no longer an icon toggle: a
+  search bar sits above the tree, debounced at 300ms, and one `fs.search` now answers with **names
+  and contents both** - files and folders whose name matches come first (click a file to open it, a
+  folder to unfold the tree down to it - `revealFolder` loads and expands every level between), then
+  the lines that contain the words. Stale answers are dropped by sequence, the box clears when the
+  folder changes, and a daemon one release behind (no `files` in the answer) degrades to contents
+  only instead of crashing.
+* `fs.search` gained the `files` half on both machines: a bounded name walk locally, two pruned
+  bounded `find`s over `ssh` on a host - `.git`, `node_modules` and `target` are skipped whole.
+
+### Fixed — Gemini, the last mile
+
+* **A connected Google API key now reaches the CLI.** `provider.save` stored the key and the Gemini
+  CLI never saw it; a local Gemini turn now hands it over as `GEMINI_API_KEY`, so Gemini answers with
+  **no browser sign-in at all**. The measured trap (0.60.0): `selectedType: oauth-personal` - which
+  SDC's own sign-in prepare step writes - makes the CLI *ignore* the key and hang on its auth
+  question; when that choice never produced a credential and a key exists, the turn rewrites it to
+  `gemini-api-key` (`gemini::auth_plan` holds the whole measured matrix). Someone's own Vertex or
+  GCA setup is never touched, and the key never travels to a remote turn.
+* **The browser sign-in is detected when it finishes.** Gemini never prints a "logged in" sentence -
+  it opens the browser itself and writes `~/.gemini/oauth_creds.json` when the person approves. The
+  sign-in dialog watched for a sentence, so it sat at `waiting_for_url` over a login that had
+  finished; it now watches for the credential file, the same fact `provider.list` reads.
+
 ## [0.10.1] — the Intel Mac build is back
 
 Same app as 0.10.0. The 0.10.0 release published Windows, Linux and Apple Silicon installers but no

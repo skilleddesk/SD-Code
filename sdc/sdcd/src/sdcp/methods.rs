@@ -79,6 +79,7 @@ impl Daemon {
                toast, because closing a folder that had chats in it is a thing the person should see. */
             "project.add" => self.project_add(envelope),
             "project.scaffold" => self.project_scaffold(envelope),
+            "project.locate" => self.project_locate(envelope),
             "project.list" => Ok(json!({ "projects": self.store().projects().map_err(ErrorObject::internal)? })),
             "project.remove" => self.project_remove(envelope, &*out),
 
@@ -1801,12 +1802,42 @@ impl Daemon {
                 None => crate::ssh::ops::home(&ssh)?,
             };
 
-            return Ok(json!({ "hits": crate::ssh::ops::search(&ssh, &root, &query, glob.as_deref(), limit)? }));
+            return Ok(json!({
+                "hits": crate::ssh::ops::search(&ssh, &root, &query, glob.as_deref(), limit)?,
+                /* Names too (0.11.0): the sidebar's search finds `index.php` by its name, not only
+                   the lines inside it. */
+                "files": crate::ssh::ops::find_names(&ssh, &root, &query, limit)?,
+            }));
         }
 
         let root = root.unwrap_or_else(|| std::path::PathBuf::from("."));
 
-        Ok(json!({ "hits": crate::fs::search(&root, &query, glob.as_deref(), limit)? }))
+        Ok(json!({
+            "hits": crate::fs::search(&root, &query, glob.as_deref(), limit)?,
+            "files": crate::fs::find_names(&root, &query, limit)?,
+        }))
+    }
+
+    /// `project.locate` (0.11.0): where a named thing - a domain, a project - lives on a machine.
+    ///
+    /// This is the daemon half of *"ami skilleddesk.com er project file access chai"*: the window
+    /// routes the prompt to the host, and this answers **which folder** on it holds the site, so the
+    /// chat can be bound there without anyone browsing for it. On a host the web server's config is
+    /// read first (`ssh::ops::locate_project`); locally the usual code folders are checked.
+    fn project_locate(&self, envelope: &Envelope) -> Result<Value, ErrorObject> {
+        let query = envelope.require_str("query")?.trim().to_string();
+
+        if query.is_empty() {
+            return Err(ErrorObject::bad_request("`query` is empty: a domain or a folder name finds a project"));
+        }
+
+        let host_id = envelope.opt_str("hostId").unwrap_or_else(|| "local".into());
+        let candidates = match self.ssh_for(&host_id)? {
+            Some(ssh) => crate::ssh::ops::locate_project(&ssh, &query)?,
+            None => locate_local(&query),
+        };
+
+        Ok(json!({ "candidates": candidates }))
     }
 
     /// `git.status` - which branch, and how many files the working tree has changed.
@@ -3076,6 +3107,63 @@ fn folder_name(root: &str) -> String {
         .unwrap_or_else(|| root.to_string())
 }
 
+/// `project.locate` on this machine (0.11.0): the usual places a project sits, checked rather than
+/// guessed. `<base>/<query>` exactly first, then one level of each base for a folder whose name
+/// contains the query (or the domain's first label - `skilleddesk.com` finds `skilleddesk-site`).
+fn locate_local(query: &str) -> Vec<Value> {
+    let Some(home) = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")) else {
+        return Vec::new();
+    };
+    let home = std::path::PathBuf::from(home);
+    let bases: Vec<std::path::PathBuf> = ["", "Projects", "projects", "code", "dev", "src", "www", "sites", "htdocs", "SDC Workspaces"]
+        .iter()
+        .map(|base| if base.is_empty() { home.clone() } else { home.join(base) })
+        .collect();
+    let label = query.split('.').next().unwrap_or(query).to_lowercase();
+    let mut candidates = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let mut push = |path: std::path::PathBuf, source: &str, candidates: &mut Vec<Value>| {
+        let text = path.to_string_lossy().replace('\\', "/");
+
+        if seen.insert(text.clone()) {
+            candidates.push(json!({ "root": text, "source": source }));
+        }
+    };
+
+    for base in &bases {
+        let exact = base.join(query);
+
+        if exact.is_dir() {
+            push(exact, "an exact folder name", &mut candidates);
+        }
+    }
+
+    for base in &bases {
+        if candidates.len() >= 6 {
+            break;
+        }
+
+        let Ok(entries) = std::fs::read_dir(base) else {
+            continue;
+        };
+
+        for entry in entries.flatten() {
+            if candidates.len() >= 6 {
+                break;
+            }
+
+            let path = entry.path();
+            let name = path.file_name().and_then(|name| name.to_str()).unwrap_or_default().to_lowercase();
+
+            if path.is_dir() && label.len() >= 4 && name.contains(&label) {
+                push(path, "a folder named like it", &mut candidates);
+            }
+        }
+    }
+
+    candidates
+}
+
 /// The folder name a provisioned workspace gets: the chat's title as a slug, with the session id
 /// stapled on so two chats called "New chat" never share files. `Fix the login page` and session
 /// `n42` become `fix-the-login-page-n42`; a title with nothing usable in it leaves just `chat-n42`.
@@ -3135,6 +3223,42 @@ mod tests {
 
         /* A very long title stays a folder name, not a path problem. */
         assert!(workspace_name(&"word ".repeat(30), "n11").len() <= 48);
+    }
+
+    /// `project.locate` on this machine finds a folder that really exists and never invents one:
+    /// the exact name wins, a containing name follows, and an empty home answers with nothing.
+    #[test]
+    fn locate_local_finds_the_exact_folder_first() {
+        let home = std::env::temp_dir().join("sdc-locate-test-home");
+        let projects = home.join("Projects");
+
+        std::fs::create_dir_all(projects.join("skilleddesk.com")).unwrap();
+        std::fs::create_dir_all(projects.join("skilleddesk-old")).unwrap();
+
+        /* The helper reads the home from the environment, so the test lends it one. */
+        let saved = std::env::var_os("USERPROFILE");
+
+        std::env::set_var("USERPROFILE", &home);
+
+        let candidates = locate_local("skilleddesk.com");
+
+        match saved {
+            Some(value) => std::env::set_var("USERPROFILE", value),
+            None => std::env::remove_var("USERPROFILE"),
+        }
+
+        assert!(!candidates.is_empty(), "the exact folder exists and must be found");
+        assert!(
+            candidates[0]["root"].as_str().unwrap().ends_with("skilleddesk.com"),
+            "exact name first: {candidates:?}"
+        );
+        assert_eq!(candidates[0]["source"], json!("an exact folder name"));
+        assert!(
+            candidates.iter().any(|candidate| candidate["root"].as_str().unwrap().ends_with("skilleddesk-old")),
+            "the containing name follows: {candidates:?}"
+        );
+
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     /// The VPS in the bug report: `ssh` refused because the host wants a password or a one-time

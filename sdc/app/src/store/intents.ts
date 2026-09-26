@@ -379,6 +379,73 @@ export function hostMentionedIn(text: string, hosts: readonly HostView[]): HostV
 }
 
 /**
+ * The saved **project** a prompt names, if any (0.11.0) - the matcher that makes two domains on one
+ * VPS two working chats. `hostMentionedIn` alone routed every mention of skilleddesk.com *and* of
+ * deskvoy.com to the same host's newest chat, because both live on the same machine; matching the
+ * project first sends each domain to the chat that is bound to *its* folder. The same word-boundary
+ * and four-character rules apply, against the project's name and its folder's basename.
+ */
+export function projectMentionedIn(
+  text: string,
+  projects: readonly { id: string; hostId: string; root: string; name: string }[],
+): { id: string; hostId: string; root: string; name: string } | null {
+  const lowered = text.toLowerCase();
+
+  for (const project of projects) {
+    const needles = [project.name.toLowerCase(), baseName(project.root).toLowerCase()].filter(
+      (needle) => needle.length >= 4,
+    );
+
+    for (const needle of needles) {
+      const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+      if (new RegExp(`(^|[^a-z0-9])${escaped}([^a-z0-9]|$)`).test(lowered)) {
+        return project;
+      }
+    }
+  }
+
+  return null;
+}
+
+/** The host part of a saved address: `root@skilleddesk.com:22` → `skilleddesk.com`. */
+function hostDomain(host: HostView): string {
+  return host.address.split('@').pop()?.split(':')[0] ?? '';
+}
+
+/**
+ * A chat to run a prompt that named a project (0.11.0): the newest chat already bound to it, else a
+ * fresh chat opened *with* it - titled after the project, so the tab strip reads like the work.
+ */
+async function sessionOnProject(project: { id: string; hostId: string; name: string }): Promise<string | null> {
+  const state = useAppStore.getState();
+  const host = state.hosts.find((candidate) => candidate.id === project.hostId);
+  const bound =
+    host === undefined
+      ? undefined
+      : [...host.sessions].reverse().find((session) => session.projectId === project.id);
+
+  if (bound !== undefined) {
+    return bound.id;
+  }
+
+  try {
+    const opened = await sdcpCall('session.open', {
+      hostId: project.hostId,
+      projectId: project.id,
+      title: project.name,
+      prompt: strings.sidebar.sessions.newChat.prompt,
+    });
+
+    return opened.sessionId;
+  } catch (error) {
+    reportFailure(error, 'Could not start that chat');
+
+    return null;
+  }
+}
+
+/**
  * A chat to run a routed prompt in: the host's newest chat that already has a folder (the person's
  * working chat there), else its newest chat at all, else a fresh one. The daemon provisions a
  * workspace for an agent turn in a folderless chat since 0.10.0, so every branch ends somewhere the
@@ -878,20 +945,85 @@ export interface SearchHit {
   text: string;
 }
 
-/** A literal search of the chat's folder (`fs.search`), here or on the host. */
-export async function searchFolder(query: string): Promise<SearchHit[] | null> {
+/** A name match of the folder search (0.11.0): a file or folder called something like the query. */
+export interface FileHit {
+  path: string;
+  dir: boolean;
+}
+
+export interface FolderSearchResult {
+  /** Lines inside files that contain the query. */
+  hits: SearchHit[];
+  /** Files and folders whose *name* contains the query - what "where is index.php" wants. */
+  files: FileHit[];
+}
+
+/** A literal search of the chat's folder (`fs.search`), here or on the host: names and contents. */
+export async function searchFolder(query: string): Promise<FolderSearchResult | null> {
   const sessionId = usePrefsStore.getState().activeTab;
 
   if (sessionId === null || query.trim() === '') {
-    return [];
+    return { hits: [], files: [] };
   }
 
   try {
-    const { hits } = await sdcpCall('fs.search', { query: query.trim(), sessionId, hostId: hostIdOf(sessionId), limit: 200 });
+    const { hits, files } = await sdcpCall('fs.search', { query: query.trim(), sessionId, hostId: hostIdOf(sessionId), limit: 200 });
 
-    return hits.map((hit) => ({ path: hit.path, line: hit.line, text: hit.text }));
+    return {
+      hits: hits.map((hit) => ({ path: hit.path, line: hit.line, text: hit.text })),
+      files: (files ?? []).map((found) => ({ path: found.path, dir: found.dir })),
+    };
   } catch (error) {
     reportFailure(error, strings.files.searchFailed);
+
+    return null;
+  }
+}
+
+/**
+ * Opens the tree down to `path` (0.11.0): every folder between the root and it is loaded and
+ * expanded, so a folder found by the search is *shown*, not merely known about. The prefixes are cut
+ * out of the path itself rather than rebuilt, so `/` and `\` both survive.
+ */
+export async function revealFolder(path: string): Promise<void> {
+  const files = useFilesStore.getState();
+  const root = files.root;
+
+  if (root === null || !path.startsWith(root) || path.length <= root.length) {
+    return;
+  }
+
+  for (let index = root.length + 1; index <= path.length; index += 1) {
+    const boundary = index === path.length || path[index] === '/' || path[index] === '\\';
+    const prefix = path.slice(0, index);
+
+    if (!boundary || prefix.length <= root.length || prefix.endsWith('/') || prefix.endsWith('\\')) {
+      continue;
+    }
+
+    useFilesStore.getState().setExpanded(prefix, true);
+
+    if (useFilesStore.getState().directories[prefix] === undefined) {
+      await loadDirectory(prefix);
+    }
+  }
+}
+
+/**
+ * `project.locate` (0.11.0): where a named thing - a domain, mostly - lives on a machine. The answer
+ * is best-first and every candidate is a real directory there; an empty list means the daemon looked
+ * and found nothing, which the caller should say rather than guess around.
+ */
+export async function locateProject(
+  hostId: string,
+  query: string,
+): Promise<{ root: string; source: string }[] | null> {
+  try {
+    const { candidates } = await sdcpCall('project.locate', { hostId, query });
+
+    return candidates;
+  } catch (error) {
+    reportFailure(error, strings.folder.couldNotOpen);
 
     return null;
   }
@@ -1733,24 +1865,50 @@ export async function sendPrompt(prompt: string, target?: string): Promise<strin
   /* The pane's own chat when it says which (split view has two boxes), else the active one. */
   let sessionId = target ?? selectActiveSession()?.session.id ?? null;
 
-  /* "ami skilleddesk.com er file e kaj korte chai" - a prompt that names a saved host runs **on that
-     host** (0.10.0). The chat moves before the turn starts, so the folder, the files and the shell
-     are the machine the person meant, without a manual host switch first. The words outrank the box
-     they were typed in: naming another machine *is* the instruction to go there. */
+  /* "ami skilleddesk.com er file e kaj korte chai" - a prompt that names a saved **project** or
+     **host** runs where it points (0.10.0, widened in 0.11.0). The project is matched first, because
+     two domains on one VPS are two folders on one machine: each gets its own chat, bound to its own
+     folder, and both can run at once. A host with no matching project still routes, and the domain
+     then *finds* its folder (`project.locate` reads the web server's own config there) so the chat
+     is bound to the real site files rather than to a blank workspace. The words outrank the box
+     they were typed in: naming another machine or project *is* the instruction to go there. */
   {
     const state = useAppStore.getState();
-    const mentioned = hostMentionedIn(prompt, state.hosts);
+    const project = projectMentionedIn(prompt, state.projects);
+    const mentioned = project === null ? hostMentionedIn(prompt, state.hosts) : null;
     const currentHost = state.hosts.find((host) =>
       host.sessions.some((session) => session.id === sessionId),
     );
 
-    if (mentioned !== null && mentioned.id !== currentHost?.id) {
-      const routed = await sessionOnHost(mentioned);
+    if (project !== null) {
+      const routed = await sessionOnProject(project);
 
-      if (routed !== null) {
+      if (routed !== null && routed !== sessionId) {
         sessionId = routed;
         landIn(routed);
-        toast(strings.folder.routed(mentioned.name));
+        toast(strings.folder.routed(project.name));
+      }
+    } else if (mentioned !== null) {
+      if (mentioned.id !== currentHost?.id) {
+        const routed = await sessionOnHost(mentioned);
+
+        if (routed !== null) {
+          sessionId = routed;
+          landIn(routed);
+          toast(strings.folder.routed(mentioned.name));
+        }
+      }
+
+      /* The domain names a site; a chat that still has no folder gets the site's own (0.11.0). */
+      const landed = sessionId === null ? null : findSession(useAppStore.getState().hosts, sessionId);
+
+      if (landed !== null && sessionId !== null && (landed.session.projectRoot ?? null) === null) {
+        const domain = hostDomain(mentioned) || mentioned.name;
+        const candidates = await locateProject(mentioned.id, domain);
+
+        if (candidates !== null && candidates.length > 0) {
+          await rebindFolder(sessionId, mentioned.id, candidates[0].root);
+        }
       }
     }
   }

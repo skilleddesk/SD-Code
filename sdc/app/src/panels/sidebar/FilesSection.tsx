@@ -31,8 +31,10 @@ import {
   openFile,
   refreshDirectory,
   renamePath,
+  revealFolder,
   searchFolder,
   toggleDirectory,
+  type FolderSearchResult,
   type SearchHit,
 } from '../../store/intents';
 import { useOverlayStore } from '../../store/overlays';
@@ -101,7 +103,6 @@ export function FilesSection() {
   const [renaming, setRenaming] = useState<string | null>(null);
   const [creating, setCreating] = useState<Editing['creating']>(null);
   const [armed, setArmed] = useState<string | null>(null);
-  const [searching, setSearching] = useState(false);
   const editing = useMemo<Editing>(
     () => ({ renaming, creating, armed, setRenaming, setCreating, setArmed }),
     [renaming, creating, armed],
@@ -170,9 +171,6 @@ export function FilesSection() {
         <div className="files-title mb-[4px] flex items-center gap-[4px] text-[11px] font-semibold uppercase tracking-wide text-text-muted">
           <FolderOpen size={12} aria-hidden="true" />
           <span className="mr-auto">{strings.files.title}</span>
-          <button type="button" className={HEADER_BUTTON} title={strings.files.search} aria-label={strings.files.search} aria-pressed={searching} onClick={() => setSearching((current) => !current)}>
-            <Search size={11} aria-hidden="true" />
-          </button>
           <button type="button" className={HEADER_BUTTON} title={strings.files.newFile} aria-label={strings.files.newFile} onClick={() => setCreating({ directory: top, kind: 'file' })}>
             <FilePlus size={11} aria-hidden="true" />
           </button>
@@ -220,7 +218,10 @@ export function FilesSection() {
           )}
         </div>
 
-        {searching ? <FolderSearch root={root} onClose={() => setSearching(false)} /> : null}
+        {/* The search bar lives above the tree, always (0.11.0): "where is index.php" is the first
+            question a project's sidebar is asked, and an icon-toggle hid the answer's door. It
+            searches names *and* contents as you type; empty, it costs one quiet row. */}
+        <FolderSearch root={root} />
 
         <div className="files-tree" role="tree" aria-label={strings.files.title}>
           {creating !== null && creating.directory === top ? <NameInput depth={0} kind={creating.kind} /> : null}
@@ -501,37 +502,64 @@ function NameInput({ depth, kind, renaming }: { depth: number; kind: 'file' | 'f
   );
 }
 
-/** Search in folder: a literal search of every file, grouped by file; a hit opens its line. */
-function FolderSearch({ root, onClose }: { root: string; onClose: () => void }) {
+/**
+ * The folder's search bar (0.11.0) - always above the tree, searching **as you type**.
+ *
+ * Two kinds of answer, in the order a person wants them: files and folders whose *name* matches
+ * (click a file to open it, a folder to unfold the tree down to it), then the lines inside files
+ * that contain the words. Both come from one `fs.search`, debounced 300ms so a fast typist asks
+ * once; a stale answer is dropped by sequence number rather than trusted by luck. Escape clears.
+ */
+function FolderSearch({ root }: { root: string }) {
   const [query, setQuery] = useState('');
-  const [hits, setHits] = useState<SearchHit[] | null>(null);
+  const [result, setResult] = useState<FolderSearchResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [asked, setAsked] = useState('');
+  const sequence = useRef(0);
 
-  const run = (event: FormEvent): void => {
-    event.preventDefault();
+  useEffect(() => {
+    const trimmed = query.trim();
 
-    if (query.trim() === '') {
+    if (trimmed.length < 2) {
+      sequence.current += 1;
+      setResult(null);
+      setBusy(false);
+
       return;
     }
 
-    setBusy(true);
-    setAsked(query.trim());
-    void searchFolder(query).then((found) => {
-      setBusy(false);
-      setHits(found ?? []);
-    });
-  };
+    const mine = (sequence.current += 1);
+    const timer = window.setTimeout(() => {
+      setBusy(true);
+      void searchFolder(trimmed).then((found) => {
+        if (sequence.current !== mine) {
+          return;
+        }
+
+        setBusy(false);
+        setAsked(trimmed);
+        setResult(found);
+      });
+    }, 300);
+
+    return () => window.clearTimeout(timer);
+  }, [query]);
+
+  /* The search clears with the folder it searched: a stale hit list over a new root would lie. */
+  useEffect(() => {
+    setQuery('');
+    setResult(null);
+  }, [root]);
 
   const groups = useMemo(() => {
     const byFile = new Map<string, SearchHit[]>();
 
-    for (const hit of hits ?? []) {
+    for (const hit of result?.hits ?? []) {
       byFile.set(hit.path, [...(byFile.get(hit.path) ?? []), hit]);
     }
 
     return [...byFile.entries()];
-  }, [hits]);
+  }, [result]);
 
   const relative = (path: string): string => {
     const trimmed = path.startsWith(root) ? path.slice(root.length).replace(/^[\\/]/, '') : path;
@@ -539,55 +567,96 @@ function FolderSearch({ root, onClose }: { root: string; onClose: () => void }) 
     return trimmed === '' ? baseName(path) : trimmed;
   };
 
+  const empty = result !== null && result.files.length === 0 && result.hits.length === 0;
+
   return (
-    <div className="files-search mb-[6px] rounded-md border border-border-subtle bg-bg-raised p-[6px]">
-      <form className="flex items-center gap-[4px]" onSubmit={run}>
+    <div className="files-search mb-[6px]">
+      <div className="flex h-[24px] items-center gap-[5px] rounded-md border border-border-subtle bg-bg-input px-[6px] transition-colors duration-fast ease-ease focus-within:border-border-focus">
         <Search size={11} aria-hidden="true" className="shrink-0 text-text-muted" />
         <input
-          className="h-[22px] min-w-0 flex-1 bg-transparent text-[11.5px] text-text-primary placeholder:text-text-muted"
+          className="h-full min-w-0 flex-1 bg-transparent text-[11.5px] text-text-primary placeholder:text-text-muted"
           placeholder={strings.files.searchPlaceholder}
           aria-label={strings.files.search}
           value={query}
-          autoFocus
           spellCheck={false}
           onChange={(event) => setQuery(event.target.value)}
           onKeyDown={(event) => {
-            if (event.key === 'Escape') {
+            if (event.key === 'Escape' && query !== '') {
               event.preventDefault();
               event.stopPropagation();
-              onClose();
+              setQuery('');
             }
           }}
         />
         {busy ? <Loader size={10} className="shrink-0 animate-spin text-text-muted" aria-hidden="true" /> : null}
-        <button type="button" className={HEADER_BUTTON} aria-label={strings.files.closeSearch} title={strings.files.closeSearch} onClick={onClose}>
-          <X size={10} aria-hidden="true" />
-        </button>
-      </form>
+        {query === '' ? null : (
+          <button type="button" className={HEADER_BUTTON} aria-label={strings.files.closeSearch} title={strings.files.closeSearch} onClick={() => setQuery('')}>
+            <X size={10} aria-hidden="true" />
+          </button>
+        )}
+      </div>
 
-      {hits === null ? null : hits.length === 0 ? (
+      {result === null ? null : empty ? (
         <div className="px-[2px] pt-[6px] text-[11px] text-text-muted">{strings.files.noHits(asked)}</div>
       ) : (
-        <div className="mt-[4px] max-h-[260px] overflow-y-auto">
-          <div className="px-[2px] pb-[3px] font-mono text-[10px] text-text-muted">{strings.files.hits(hits.length)}</div>
-          {groups.map(([path, fileHits]) => (
-            <div key={path} className="mb-[4px]">
-              <div className="truncate px-[2px] font-mono text-[10.5px] text-text-secondary" title={path}>
-                {relative(path)}
+        <div className="mt-[4px] max-h-[300px] overflow-y-auto rounded-md border border-border-subtle bg-bg-raised p-[4px]">
+          {result.files.length === 0 ? null : (
+            <div className="mb-[4px]">
+              <div className="px-[2px] pb-[2px] text-[10px] font-semibold uppercase tracking-wide text-text-muted">
+                {strings.files.nameHits(result.files.length)}
               </div>
-              {fileHits.map((hit) => (
+              {result.files.map((found) => (
                 <button
-                  key={`${hit.path}:${hit.line}`}
+                  key={found.path}
                   type="button"
-                  className="flex w-full items-baseline gap-[6px] rounded-sm px-[4px] py-[1px] text-left hover:bg-bg-hover"
-                  onClick={() => void openFile(hit.path, baseName(hit.path), hit.line)}
+                  className="flex w-full items-center gap-[5px] rounded-sm px-[4px] py-[2px] text-left hover:bg-bg-hover"
+                  title={found.path}
+                  onClick={() => {
+                    if (found.dir) {
+                      void revealFolder(found.path);
+
+                      return;
+                    }
+
+                    void openFile(found.path, baseName(found.path));
+                  }}
                 >
-                  <span className="shrink-0 font-mono text-[10px] tabular-nums text-text-muted">{hit.line}</span>
-                  <span className="min-w-0 truncate font-mono text-[10.5px] text-text-primary">{hit.text}</span>
+                  {found.dir ? (
+                    <Folder size={11} aria-hidden="true" className="shrink-0 text-accent" />
+                  ) : (
+                    <FileIcon size={11} aria-hidden="true" className="shrink-0 text-text-muted" />
+                  )}
+                  <span className="min-w-0 truncate font-mono text-[10.5px] text-text-primary">{relative(found.path)}</span>
                 </button>
               ))}
             </div>
-          ))}
+          )}
+
+          {result.hits.length === 0 ? null : (
+            <>
+              <div className="px-[2px] pb-[2px] text-[10px] font-semibold uppercase tracking-wide text-text-muted">
+                {strings.files.hits(result.hits.length)}
+              </div>
+              {groups.map(([path, fileHits]) => (
+                <div key={path} className="mb-[4px]">
+                  <div className="truncate px-[2px] font-mono text-[10.5px] text-text-secondary" title={path}>
+                    {relative(path)}
+                  </div>
+                  {fileHits.map((hit) => (
+                    <button
+                      key={`${hit.path}:${hit.line}`}
+                      type="button"
+                      className="flex w-full items-baseline gap-[6px] rounded-sm px-[4px] py-[1px] text-left hover:bg-bg-hover"
+                      onClick={() => void openFile(hit.path, baseName(hit.path), hit.line)}
+                    >
+                      <span className="shrink-0 font-mono text-[10px] tabular-nums text-text-muted">{hit.line}</span>
+                      <span className="min-w-0 truncate font-mono text-[10.5px] text-text-primary">{hit.text}</span>
+                    </button>
+                  ))}
+                </div>
+              ))}
+            </>
+          )}
         </div>
       )}
     </div>

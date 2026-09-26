@@ -324,10 +324,12 @@ export const strings = {
     deleted: (name: string): string => `Deleted ${name} · a checkpoint was taken first`,
     deleteFailed: 'Could not delete it',
     search: 'Search in folder',
-    searchPlaceholder: 'Find text in every file…',
+    searchPlaceholder: 'Search files and text…',
+    /** The name-match group of the sidebar search (0.11.0). */
+    nameHits: (count: number): string => (count === 1 ? '1 file or folder' : `${count} files & folders`),
     searching: 'Searching…',
     searchFailed: 'The search did not run',
-    noHits: (query: string): string => `No file contains “${query}”`,
+    noHits: (query: string): string => `Nothing here matches “${query}”`,
     hits: (count: number): string => (count === 1 ? '1 match' : `${count} matches`),
     closeSearch: 'Close the search',
     /** The open-files strip (v4). */

@@ -90,10 +90,27 @@ pub fn prepare(recipe: &LoginRecipe) -> Result<Option<String>, String> {
 }
 
 /// Sets `security.auth.selectedType` to `oauth-personal`, keeping every other key the file has.
+pub fn merge_gemini_oauth(path: &std::path::Path) -> Result<(), String> {
+    merge_gemini_auth(path, "oauth-personal")
+}
+
+/// The auth method Gemini's own settings currently name, or `None` when the file or the key is absent.
+pub fn gemini_selected_type() -> Option<String> {
+    let path = gemini_settings_path()?;
+    let settings: Value = serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()?;
+
+    settings["security"]["auth"]["selectedType"].as_str().map(str::to_string)
+}
+
+/// Sets `security.auth.selectedType` to `selected_type`, keeping every other key the file has.
 ///
 /// Merging rather than overwriting matters: this is the user's Gemini CLI configuration, which also
-/// holds their theme, their MCP servers and their trusted folders.
-pub fn merge_gemini_oauth(path: &std::path::Path) -> Result<(), String> {
+/// holds their theme, their MCP servers and their trusted folders. Two values pass through here:
+/// `oauth-personal` (the sign-in flow's prepare step - Gemini's name for *Login with Google*) and
+/// `gemini-api-key` (0.11.0 - what a turn writes when SDC holds a Google API key and the oauth choice
+/// never produced a credential, because `oauth-personal` makes the CLI **ignore** `GEMINI_API_KEY`,
+/// measured on 0.60.0).
+pub fn merge_gemini_auth(path: &std::path::Path, selected_type: &str) -> Result<(), String> {
     let mut settings: Value = std::fs::read_to_string(path)
         .ok()
         .and_then(|text| serde_json::from_str(&text).ok())
@@ -113,7 +130,7 @@ pub fn merge_gemini_oauth(path: &std::path::Path) -> Result<(), String> {
         return Err(format!("security.auth in {} is not an object, so it was left alone", path.display()));
     };
 
-    auth.insert("selectedType".to_string(), json!("oauth-personal"));
+    auth.insert("selectedType".to_string(), json!(selected_type));
 
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|error| format!("{}: {error}", parent.display()))?;
@@ -170,7 +187,7 @@ pub const RECIPES: &[LoginRecipe] = &[
         args: &["--skip-trust"],
         pump: &[],
         success: &["successfully logged in", "login successful", "authenticated", "signed in"],
-        note: "Gemini CLI asks how to sign in the first time it runs, and that menu needs a terminal. SDC writes `security.auth.selectedType = oauth-personal` (Gemini's own name for Login with Google) into `~/.gemini/settings.json` so the browser sign-in can run here; the CLI's own menu can change it back.",
+        note: "Gemini opens the Google sign-in page in the browser by itself; approve it there and this card follows on its own - SDC watches for the credential Gemini's CLI writes (`~/.gemini/oauth_creds.json`). No sign-in needed at all when a Google Gemini API key is connected: a turn hands it to the CLI automatically.",
         prepare: Prepare::GeminiOauth,
     },
 ];
@@ -359,7 +376,13 @@ impl LoginManager {
         let text = lines.join("\n");
         let alive = output["state"].as_str().unwrap_or("gone") == "running";
         let recipe = recipe(&snapshot.provider_id);
-        let authenticated = recipe.map(|recipe| is_authenticated(&text, recipe)).unwrap_or(false);
+        /* Gemini never prints a "logged in" sentence: with `oauth-personal` chosen it opens the
+           browser itself, and the proof that the person approved is the credential file its own
+           store writes (`~/.gemini/oauth_creds.json`) - the same fact `provider.list` reads. Without
+           this check the dialog sat at `waiting_for_url` forever over a sign-in that had finished. */
+        let authenticated = recipe.map(|recipe| is_authenticated(&text, recipe)).unwrap_or(false)
+            || (snapshot.provider_id == "gemini"
+                && crate::providers::gemini_credentials().map(|path| path.exists()).unwrap_or(false));
         let url = snapshot.url.clone().or_else(|| extract_url(&text));
         let state = if authenticated {
             "authenticated"
@@ -570,6 +593,32 @@ mod tests {
                 vec!["-c".to_string(), "echo https://example.com/authorize?code=abc123; read answer; echo Successfully logged in".to_string()],
             )
         }
+    }
+
+    /// The rewrite that rescues a stored key from the `oauth-personal` dead end (0.11.0): the auth
+    /// method changes, and everything else in the person's Gemini settings survives the merge.
+    #[test]
+    fn the_auth_method_is_rewritten_without_touching_anything_else() {
+        let directory = std::env::temp_dir().join("sdc-gemini-merge-test");
+
+        std::fs::create_dir_all(&directory).unwrap();
+
+        let path = directory.join("settings.json");
+
+        std::fs::write(
+            &path,
+            r#"{ "theme": "dark", "security": { "auth": { "selectedType": "oauth-personal" } } }"#,
+        )
+        .unwrap();
+
+        merge_gemini_auth(&path, "gemini-api-key").unwrap();
+
+        let written: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+
+        assert_eq!(written["security"]["auth"]["selectedType"], json!("gemini-api-key"));
+        assert_eq!(written["theme"], json!("dark"), "the person's own keys survive");
+
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]
