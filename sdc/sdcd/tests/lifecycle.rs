@@ -20,6 +20,37 @@ use std::time::{Duration, Instant};
 
 use tempfile::TempDir;
 
+/// A test's daemon, killed when the test ends - **including when it panics**.
+///
+/// On Windows a child inherits every inheritable handle of the test process, the harness's stdout pipe
+/// among them. A test that panicked before its `kill()` left its daemon running, and that daemon kept
+/// CI's `cargo test | tee` pipe open: 0.9.0's first Windows run sat in the step for four hours after a
+/// failure it had already printed. Dropping this is the kill every test used to have to remember.
+struct Daemon(Child);
+
+impl std::ops::Deref for Daemon {
+    type Target = Child;
+
+    fn deref(&self) -> &Child {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for Daemon {
+    fn deref_mut(&mut self) -> &mut Child {
+        &mut self.0
+    }
+}
+
+impl Drop for Daemon {
+    fn drop(&mut self) {
+        if let Ok(None) = self.0.try_wait() {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+}
+
 /// A free loopback port. Bound and released: the daemon takes it a moment later, which is soon enough
 /// for a test and avoids hard-coding a number another test could be using.
 fn free_port() -> u16 {
@@ -38,7 +69,7 @@ fn free_port() -> u16 {
 /// because that hand-over is exactly what the lint cannot see through, and the failure path below
 /// kills and reaps the process itself so a test that cannot start a daemon leaves nothing running.
 #[allow(clippy::zombie_processes)]
-fn start(arguments: &[&str], directory: &TempDir) -> (Child, u16) {
+fn start(arguments: &[&str], directory: &TempDir) -> (Daemon, u16) {
     let port = free_port();
     let database: PathBuf = directory.path().join("sdc.db");
     let runtime: PathBuf = directory.path().join("run");
@@ -64,7 +95,7 @@ fn start(arguments: &[&str], directory: &TempDir) -> (Child, u16) {
 
     while Instant::now() < deadline {
         if TcpStream::connect(("127.0.0.1", port)).is_ok() {
-            return (child, port);
+            return (Daemon(child), port);
         }
 
         std::thread::sleep(Duration::from_millis(100));

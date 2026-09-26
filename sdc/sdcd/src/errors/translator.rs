@@ -196,6 +196,21 @@ mod tests {
     }
 
     #[test]
+    fn a_rate_limit_is_explained_as_the_provider_stopping_the_turn() {
+        let translated = translate("claude_code", "429: rate limit exceeded, please retry later");
+
+        assert_eq!(translated.rule, "budget");
+        assert!(!translated.fixable);
+        assert!(translated.title.contains("provider stopped the turn"));
+    }
+
+    /// The other wording a provider uses for the same thing - a token or spend cap, not a request rate.
+    #[test]
+    fn a_budget_cap_matches_the_same_rule_as_a_rate_limit() {
+        assert_eq!(translate("claude_code", "monthly budget exceeded").rule, "budget");
+    }
+
+    #[test]
     fn an_unknown_failure_still_produces_a_sentence() {
         let translated = translate("mystery", "something nobody has seen before");
 
