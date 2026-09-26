@@ -460,7 +460,45 @@ async function sessionOnHost(host: HostView): Promise<string | null> {
   return working?.id ?? sessions[0]?.id ?? newChatOnHost(host.id);
 }
 
-/** Create an empty session on a host and focus its prompt (spec sections 7.3, 9.5). */
+/** The folder a brand-new chat on `hostId` starts in (0.11.3).
+ *
+ * A chat is a conversation and the project is the place it happens, so `+ New chat` on a host begins in
+ * the folder the person is already working in **on that host**: the active chat's own folder first, then
+ * the newest chat on the host that has one - the same order `sessionOnHost` routes by, so opening a chat
+ * and pressing `+` lands in the same place rather than in none. `null` when that host has no folder yet;
+ * a chat without one still works, and `Open folder` binds it.
+ *
+ * The host half is not decoration: `session.open { projectId }` resolves the folder on the daemon and
+ * does not check that the project belongs to that host, so inheriting a local path onto a VPS would
+ * point a remote chat at a directory that is not there. This reads one host's own chats and nothing
+ * else.
+ */
+function projectOn(hosts: readonly HostView[], hostId: string, activeTab: string | null): string | null {
+  const host = hosts.find((candidate) => candidate.id === hostId);
+
+  if (host === undefined) {
+    return null;
+  }
+
+  const active = host.sessions.find((session) => session.id === activeTab);
+
+  if (active?.projectId != null) {
+    return active.projectId;
+  }
+
+  const working = [...host.sessions].reverse().find((session) => session.projectId != null);
+
+  return working?.projectId ?? null;
+}
+
+/**
+ * Create an empty session on a host and focus its prompt (spec sections 7.3, 9.5).
+ *
+ * It is **scoped to the project the person is already in** on that host (`projectOn`). Until 0.11.3 it
+ * was created with no folder at all, so a second chat next to a bound one arrived folderless and the
+ * engines would have run in the daemon's own directory - which is the same bug 0.7.6 fixed for the first
+ * chat, still there for every chat after it.
+ */
 export async function newChatOnHost(hostId: string): Promise<string | null> {
   const state = useAppStore.getState();
   const existing = emptySessionOn(
@@ -476,11 +514,14 @@ export async function newChatOnHost(hostId: string): Promise<string | null> {
     return existing;
   }
 
+  const projectId = projectOn(state.hosts, hostId, usePrefsStore.getState().activeTab);
+
   try {
     const { sessionId } = await sdcpCall('session.open', {
       hostId,
       title: strings.sidebar.sessions.newChat.title,
       prompt: strings.sidebar.sessions.newChat.prompt,
+      ...(projectId === null ? {} : { projectId }),
     });
 
     toast(strings.sidebar.newChatOn(hostId));
@@ -647,6 +688,36 @@ export async function trustHost(
     return true;
   } catch (error) {
     reportFailure(error, strings.addHost.trust.refused);
+
+    return false;
+  }
+}
+
+/**
+ * `host.probe` - what the degraded banner's `Reconnect` button asks for (0.11.3).
+ *
+ * The button used to be `toast(strings.main.degraded.reconnected)`: one word, said before anything had
+ * been measured, and the whole of its behaviour. A machine that had come back - a VPS rebooted, a route
+ * repaired, a laptop reopened - stayed `offline` in the sidebar until the app was relaunched, because
+ * nothing asked the daemon to dial it again; and a machine that was *still* down was told `Reconnected`
+ * just the same, which is the worse half of the bug.
+ *
+ * The return value says only whether the daemon accepted the call. The measurement itself is
+ * asynchronous - `host_probe` in `sdcd/src/sdcp/methods.rs` says why, and it is the same reason
+ * `host.add` probes in the background: a synchronous measurement would hold the dispatcher for as long
+ * as `ssh` takes to time out. The verdict arrives as a `HostStatus` event and `store/reducer.ts` folds
+ * it onto the host's row, which is where a person looks; the `Toast` here only marks that the attempt
+ * started.
+ */
+export async function reconnectHost(hostId: string, name: string): Promise<boolean> {
+  try {
+    await sdcpCall('host.probe', { hostId });
+
+    toast(strings.main.degraded.reconnecting(name));
+
+    return true;
+  } catch (error) {
+    reportFailure(error, strings.main.degraded.reconnectFailed(name));
 
     return false;
   }

@@ -154,7 +154,17 @@ export const strings = {
       message: (host: string): string =>
         `Not connected to ${host}. Files and history are still available.`,
       reconnect: 'Reconnect',
-      reconnected: 'Reconnected',
+      /**
+       * What the Reconnect button says while it is happening (0.11.3).
+       *
+       * The old copy was a single word - `Reconnected` - said before anything had been measured, and it
+       * was the whole of the button: a host that was still down said `Reconnected` too. The sentence now
+       * names the host and its tense matches the daemon's work (`reconnecting`), because the verdict
+       * arrives afterwards, on the host's own row.
+       */
+      reconnecting: (host: string): string => `Reconnecting to ${host}…`,
+      /** When the daemon refuses the call itself (an address it has nothing to dial). */
+      reconnectFailed: (host: string): string => `Could not reconnect to ${host}`,
     },
     empty: {
       title: 'No chat open',
@@ -919,7 +929,11 @@ export const strings = {
       ],
       doctor: ['Environment doctor', 'Checks runtime versions, missing dependencies, ports, and disk.'],
     },
-    close: 'Close',
+    /*
+     * No `close` label here any more (0.11.3): the hub's header used to carry its own `✕` next to
+     * `Modal`'s, so the dialog showed two crosses with two different labels and only one of them was in
+     * the focus trap. The frame's button is the one that stayed, and `strings.modal.close` is its label.
+     */
     connectedCount: (n: number): string => `${n} connected`,
     availableTitle: 'Available to connect',
     noneYet: 'None yet',

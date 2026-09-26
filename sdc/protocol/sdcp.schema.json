@@ -82,7 +82,7 @@
       "items": {
         "type": "string",
         "enum": [
-          "host.status", "host.doctor", "host.add", "host.trust", "host.key", "host.remove", "host.shutdown", "ssh.key",
+          "host.status", "host.doctor", "host.add", "host.trust", "host.probe", "host.key", "host.remove", "host.shutdown", "ssh.key",
           "session.open", "session.close", "session.list", "session.update", "session.fork",
           "project.add", "project.scaffold", "project.locate", "project.list", "project.remove",
           "engine.start", "engine.cancel", "engine.kill", "engine.status", "engine.switch", "verify.run",
@@ -158,6 +158,7 @@
         "host.doctor": { "params": { "hostId": "string?", "sessionId": "string?" }, "result": { "checks": [{ "id": "string", "label": "string", "state": "ok|warn|fail", "detail": "string", "fix": "string?" }] } },
         "host.add": { "params": { "type": "local|ssh", "target": "string?", "label": "string?", "password": "string?", "code": "string?" }, "result": { "hostId": "string", "reused": "boolean" } },
         "host.trust": { "params": { "hostId": "string", "fingerprint": "string", "password": "string?", "code": "string?" }, "result": { "trusted": "boolean", "hostId": "string", "fingerprint": "string" } },
+        "host.probe": { "params": { "hostId": "string" }, "result": { "hostId": "string", "status": "string", "detail": "string?" } },
         "host.key": { "params": { "hostId": "string" }, "result": { "hostId": "string", "hostKey": "string", "keyType": "string", "pinned": "boolean", "matches": "boolean|null", "pinnedKey": "string|null" } },
         "ssh.key": { "params": {}, "result": { "publicKey": "string|null", "path": "string|null", "exists": "boolean" } },
         "host.remove": { "params": { "hostId": "string" }, "result": { "removed": "boolean", "name": "string", "sessions": "number" } },

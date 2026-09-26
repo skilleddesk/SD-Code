@@ -601,7 +601,14 @@ pub fn explain_failure(
         return;
     };
 
-    let sentence = format!("`{program}` said: {said}");
+    /*
+     * One refusal is not the person's to fix, and it is the only one this function rewrites:
+     * `gemini::refusal_sentence` recognises Google's `IneligibleTierError` - the CLI is cut off for
+     * individual accounts - and answers with the route that still works (the `google` API key) instead
+     * of a sentence nobody can act on. Everything else keeps the CLI's own words.
+     */
+    let sentence = crate::engines::gemini::refusal_sentence(program, &said)
+        .unwrap_or_else(|| format!("`{program}` said: {said}"));
 
     match events.last_mut() {
         /* The generic ending is the one this function exists to replace. */

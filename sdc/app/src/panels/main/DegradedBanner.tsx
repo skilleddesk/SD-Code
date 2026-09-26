@@ -2,8 +2,7 @@ import { WifiOff } from 'lucide-react';
 
 import { strings } from '../../strings';
 import { STALE_MISSES, useDaemonStore } from '../../store/daemon';
-import { heartbeat } from '../../store/intents';
-import { toast } from '../../store/toast';
+import { heartbeat, reconnectHost } from '../../store/intents';
 import { unreachableHosts, useSessionsStore } from '../../store/sessions';
 
 /**
@@ -19,7 +18,8 @@ import { unreachableHosts, useSessionsStore } from '../../store/sessions';
  *    said - with `Retry now`, because a person who sees this wants to act, not to wait.
  * 2. **one host of several** - the daemon is answering but cannot reach that machine. The copy is
  *    the design's and it is the important part: it says what is missing (the connection) and what is
- *    not (your files, your history).
+ *    not (your files, your history). Its `Reconnect` button used to be a `Toast` and nothing else - see
+ *    `reconnectHost` in `store/intents.ts` - so this is the case that now ends in a measurement.
  *
  * The daemon case is checked first because it makes the host case meaningless: when the daemon is
  * gone, every host is unreachable *including* `local`, and a banner naming one of them would be
@@ -73,7 +73,14 @@ export function DegradedBanner() {
       <button
         type="button"
         className="rounded-sm px-[8px] py-[3px] font-semibold text-state-waiting transition-colors duration-fast ease-ease hover:bg-[rgba(245,165,36,.15)]"
-        onClick={() => toast(strings.main.degraded.reconnected)}
+        data-action="reconnect-host"
+        onClick={() => {
+          const host = broken[0];
+
+          if (host !== undefined) {
+            void reconnectHost(host.id, host.name);
+          }
+        }}
       >
         {strings.main.degraded.reconnect}
       </button>

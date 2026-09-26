@@ -15,6 +15,85 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [0.11.3] — `Reconnect` now measures, and the Hub shows one `✕`
+
+Four reports, and three of them were about something that only *looked* like it did the job: the degraded
+banner's `Reconnect` button was a `Toast` and nothing else, the Provider Hub carried two close buttons a
+few pixels apart, a new chat arrived with no folder, and a Gemini turn failed with Google's own sentence
+and no way out of it.
+
+### Fixed — the banner's `Reconnect` said `Reconnected` without measuring anything
+
+* **`host.probe` (new method): measure this host again, and put the answer on its row.** The button was
+  `toast('Reconnected')` - one word, said before anything had been dialed. A machine that had come back
+  (a VPS rebooted, a route repaired, a laptop reopened) stayed `offline` in the sidebar until the whole
+  app was relaunched, and a machine that was *still* down was told `Reconnected` just the same, which is
+  the worse half of the bug. The daemon now dials it: `connecting` at once so the dot moves, `ssh` on a
+  background task, then the verdict as a `HostStatus` event on the host's own row.
+* **The verdict is an event, not the call's result** - the shape `host.add` already uses, for the same
+  two reasons: a synchronous probe would hold the dispatcher for as long as `ssh` takes to time out, and
+  a fact about a host belongs on the host rather than in a `Toast` that the next launch replays.
+* **Three answers, decided in this order.** `local` is `connected` without dialing anything; a row SDC
+  has no address for is refused (`bad_request` - there is nothing to measure); a real address gets the
+  measurement. It is deliberately the *probe* and not `finish_connection`: a reconnect has no password to
+  spend and no key to install, because the key is already in that host's `authorized_keys`.
+* **The machine line survives a look.** `upsert_host` writes `platform` unconditionally, which is right
+  for the add path (that row is new) and wrong here - so a re-probe carries the host's existing
+  `Debian 12 · x64` through, and looking at a host again cannot erase what it says about itself.
+* **The copy moved with the behaviour.** `Reconnecting to prod-1…` while the daemon measures, and
+  `Could not reconnect to prod-1` only when the call itself failed; a refusal from the daemon is reported
+  in the daemon's own words, which name what is missing. `strings.main.degraded.reconnected` is gone.
+
+### Fixed — the Provider Hub showed two `✕`
+
+`Modal` renders the frame's close button, and the hub's header carried one of its own: the dialog showed
+two crosses a few pixels apart, with two different labels (`strings.hub.close` and `strings.modal.close`)
+and only one of them inside the focus trap. The header's is gone, `strings.hub.close` with it; the
+frame's stays, which is the same button Settings, Add host and Permission show.
+
+### Fixed — a Gemini that Google has cut off, and the route that still works
+
+Measured on 2026-09-26 against a **finished** sign-in (`~/.gemini/oauth_creds.json` is there, `gemini
+--version` answers 0.60.0, its settings name `oauth-personal`), so this is not the signed-out case: every
+turn ends
+
+```text
+Error authenticating: IneligibleTierError: This client is no longer supported for Gemini Code Assist
+for individuals. To continue using Gemini, please migrate to the Antigravity suite of products
+                                                        (exit 1, empty stdout, that line on stderr)
+```
+
+Google has cut this client off for individual accounts, so the *subscription* route cannot work at all -
+and the transcript showed that sentence with nothing to do about it. `gemini::refusal_sentence` recognises
+the refusal (and only that one, and only for `gemini`) and answers with the route that does work: the same
+models reached with a key instead, the `google` provider on `native_api`
+(`generativelanguage.googleapis.com`), which SDC has had since 0.9.0. Every other failure keeps the CLI's
+own words, unchanged.
+
+### Fixed — a new chat arrived with no folder
+
+`+ New chat` created a session with no project, so the chat *next to* the one you were working in started
+folderless - and the engines would have run wherever the daemon was started, which is exactly the bug
+0.7.6 fixed for the first chat and left in place for every chat after it. A new chat now inherits the
+project you are working in **on that host** (`intents.ts` → `projectOn`): the active chat's folder first,
+then the newest chat on that host that has one. The host half is deliberate - `session.open { projectId }`
+resolves the folder on the daemon and does not check that the project belongs to that host, so a local
+path can never travel to a VPS.
+
+### Tests
+
+* `a_probe_measures_a_host_again_and_says_so_on_its_row` (new, `sdcd/tests/lifecycle.rs`) starts the real
+  daemon and asserts all three answers - including the verdict that arrives *after* the answer, which is
+  what `request_until` exists for: a helper that waits for a notification instead of for the first quiet
+  moment. The address is `127.0.0.1:1`, so the verdict is `offline` on any runner, with no network and no
+  `ssh` required to make the point.
+* `reconnectHost` has three tests of its own in `app/src/store/intents.test.ts`: which call the click
+  makes, which sentence it says while the daemon measures, and both failure sentences.
+* `googles_refusal_names_the_route_that_still_works` holds that captured sentence and asserts the two
+  properties that matter: the way out is named, and Google's own words are kept rather than rewritten.
+* Two more `newChatOnHost` tests: the folder comes from the chat you are in, and from the newest chat on
+  that host when the caret's chat has none - never from another host's project.
+
 ## [0.11.2] — Gemini, researched to the bottom: the sign-in completes and the answer reads right
 
 The report was "Gemini still does not work". This release is what running the app's own sign-in
