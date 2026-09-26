@@ -61,6 +61,14 @@ export function toTurns(
       tools: turn.tools.map(toToolCard),
       plan: turn.plan.map((step) => ({ text: step.text, status: step.status })),
       running: turn.status === 'running' || turn.status === 'stuck',
+      /* Running with nothing on screen yet: the pulse that stands in for the answer until the first
+         event arrives, so a slow first token never reads as a dead turn (0.10.0). */
+      waiting:
+        turn.status === 'running' &&
+        turn.text === '' &&
+        turn.thinking === '' &&
+        turn.tools.length === 0 &&
+        turn.plan.length === 0,
       stats:
         turn.status === 'running' || turn.status === 'stuck'
           ? {

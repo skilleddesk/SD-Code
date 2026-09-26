@@ -136,6 +136,17 @@ pub fn translate(tool: &str, output: &str) -> Translation {
         );
     }
 
+    /* The CLI adapter's own sentence for a CLI that stopped on an interactive question (a sign-in
+       prompt, mostly). The sentence already names the fix, so it is kept whole. */
+    if haystack.contains("stopped to ask") {
+        return rule(
+            if haystack.contains("not signed in") { "A sign-in is needed first" } else { "The engine stopped to ask a question" },
+            first_line,
+            false,
+            "needs-person",
+        );
+    }
+
     rule(
         &format!("{tool} failed"),
         format!("`{first_line}`. This failure has no rule yet, so it is shown as the tool reported it."),
@@ -208,6 +219,23 @@ mod tests {
     #[test]
     fn a_budget_cap_matches_the_same_rule_as_a_rate_limit() {
         assert_eq!(translate("claude_code", "monthly budget exceeded").rule, "budget");
+    }
+
+    /// The adapter's sentence for a CLI stuck on its sign-in question (0.10.0) keeps its own words -
+    /// they already name the fix - under a title that says what kind of problem this is.
+    #[test]
+    fn a_cli_waiting_for_a_sign_in_gets_its_own_rule() {
+        let translated = translate(
+            "gemini",
+            &crate::engines::cli::waiting_for_a_person(
+                "gemini",
+                "Opening authentication page in your browser. Do you want to continue? [Y/n]:",
+            ),
+        );
+
+        assert_eq!(translated.rule, "needs-person");
+        assert!(translated.title.contains("sign-in"), "{}", translated.title);
+        assert!(translated.explanation.contains("Settings"), "{}", translated.explanation);
     }
 
     #[test]

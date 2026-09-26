@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use std::process::Stdio;
 use std::sync::{Arc, Mutex};
 
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::{Child, Command};
 
 use crate::engines::{parse_stream_line, EngineEvent, EventSink, Prompt, GENERIC_ENDING};
@@ -300,17 +300,13 @@ impl CliAdapter {
             drop(stdin);
         }
 
-        let mut lines = Vec::new();
-        let mut ended = false;
+        let (lines, ended, question) = match child.stdout.take() {
+            Some(stdout) => read_structured(stdout, sink).await,
+            None => (Vec::new(), false, None),
+        };
 
-        if let Some(stdout) = child.stdout.take() {
-            let mut reader = BufReader::new(stdout).lines();
-
-            while let Ok(Some(line)) = reader.next_line().await {
-                push_stream_line(&line, &mut ended, sink);
-
-                lines.push(line);
-            }
+        if question.is_some() {
+            let _ = child.kill().await;
         }
 
         let _ = child.wait().await;
@@ -327,6 +323,16 @@ impl CliAdapter {
             Some(task) => task.await.unwrap_or_default(),
             None => String::new(),
         };
+
+        /* A CLI that stopped on a question gets the one sentence that says what to do about it,
+           instead of `explain_failure`'s generic one - the question itself is the explanation. */
+        if let Some(asked) = question {
+            if !ended {
+                sink.send(EngineEvent::Failed(waiting_for_a_person(self.spec.program, &asked)));
+            }
+
+            return;
+        }
 
         /* A stream that never reached a result ends with the CLI's own sentence, in the CLI's own
            words when it has any - the rule `explain_failure` stated for a collected stream, applied
@@ -420,6 +426,115 @@ pub fn model_args(flag: Option<&'static str>, model: &str) -> Vec<String> {
             vec![flag.to_string(), model.to_string()]
         }
         _ => Vec::new(),
+    }
+}
+
+/// How long a half-written line may sit unchanged before it is treated as a question. Fifteen seconds
+/// of *nothing new* behind a partial non-JSON line is a prompt, not thinking: a structured stream
+/// writes whole lines, and a model's silence has no half-line in front of it.
+const INTERACTIVE_STALL: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// Reads a CLI's structured stream **in bytes, not lines** - pushing each complete line's events as
+/// it arrives, and watching the half-written tail for a question.
+///
+/// Bytes matter because a CLI that is talking to a person prints its question *without a newline*
+/// and waits forever. Gemini's `Opening authentication page in your browser. Do you want to
+/// continue? [Y/n]:` when nobody is signed in is exactly that, measured on 0.60.0: a line reader
+/// never yields, the child never exits, and the turn hangs with nothing on screen - even with stdin
+/// closed. Reading bytes lets the half-written line be *seen*, so the turn can end with a kill and a
+/// sentence instead of with silence.
+///
+/// Answers `(the complete lines, whether a terminal event was pushed, the question it stopped on)`.
+/// A known question (`interactive_prompt`) is recognised the moment it arrives; any other
+/// half-written non-JSON line is given `INTERACTIVE_STALL` of silence first, because a chunk
+/// boundary can split an honest JSON line anywhere.
+async fn read_structured(
+    mut stdout: impl tokio::io::AsyncRead + Unpin,
+    sink: &EventSink,
+) -> (Vec<String>, bool, Option<String>) {
+    let mut lines = Vec::new();
+    let mut ended = false;
+    let mut pending: Vec<u8> = Vec::new();
+    let mut chunk = [0u8; 8192];
+
+    loop {
+        match tokio::time::timeout(INTERACTIVE_STALL, stdout.read(&mut chunk)).await {
+            Ok(Ok(0)) | Ok(Err(_)) => break,
+            Ok(Ok(read)) => {
+                pending.extend_from_slice(&chunk[..read]);
+
+                while let Some(end) = pending.iter().position(|byte| *byte == b'\n') {
+                    let raw: Vec<u8> = pending.drain(..=end).collect();
+                    let line = String::from_utf8_lossy(&raw).trim_end().to_string();
+
+                    push_stream_line(&line, &mut ended, sink);
+                    lines.push(line);
+                }
+
+                let tail = String::from_utf8_lossy(&pending).trim().to_string();
+
+                if let Some(asked) = interactive_prompt(&tail) {
+                    return (lines, ended, Some(asked));
+                }
+            }
+            Err(_) => {
+                /* Silence alone is fine - thinking time is silent. Silence *behind* a half-written
+                   line that is not JSON is a prompt waiting for a keyboard this turn does not have. */
+                let tail = String::from_utf8_lossy(&pending).trim().to_string();
+
+                if !tail.is_empty() && !tail.starts_with('{') {
+                    return (lines, ended, Some(tail));
+                }
+            }
+        }
+    }
+
+    (lines, ended, None)
+}
+
+/// The half-written line that means a CLI has stopped to talk to a person, when it has.
+///
+/// These phrases were measured, not imagined: signed out, `gemini -p … --output-format stream-json`
+/// prints `Opening authentication page in your browser. Do you want to continue? [Y/n]:` - no
+/// newline - and waits forever, even with stdin closed (Gemini CLI 0.60.0). The known phrases are
+/// caught the moment they arrive; anything else half-written is left to the stall timer, because a
+/// partial JSON line mid-flight must never be mistaken for a question.
+pub fn interactive_prompt(tail: &str) -> Option<String> {
+    if tail.is_empty() || tail.starts_with('{') {
+        return None;
+    }
+
+    const QUESTIONS: &[&str] = &[
+        "do you want to continue",
+        "[y/n]",
+        "opening authentication page",
+        "please set an auth method",
+        "waiting for auth",
+        "press enter to",
+    ];
+
+    let lowered = tail.to_lowercase();
+
+    QUESTIONS
+        .iter()
+        .any(|question| lowered.contains(question))
+        .then(|| tail.to_string())
+}
+
+/// The sentence a turn ends with when its CLI stopped on a question. A sign-in question names the
+/// fix (the app's own sign-in flow); any other question says where a keyboard is.
+pub fn waiting_for_a_person(program: &str, question: &str) -> String {
+    let lowered = question.to_lowercase();
+    let sign_in = lowered.contains("auth") || lowered.contains("sign in") || lowered.contains("log in");
+
+    if sign_in {
+        format!(
+            "`{program}` is not signed in - it stopped to ask \"{question}\", and a turn cannot answer that. Sign in first (Settings → Providers → {program} → Sign in), then send the prompt again."
+        )
+    } else {
+        format!(
+            "`{program}` stopped to ask \"{question}\", and a turn has no keyboard to answer it. Run `{program}` once in a terminal to answer it, then send the prompt again."
+        )
     }
 }
 
@@ -690,6 +805,71 @@ mod tests {
 
         explain_failure(&mut failed, "codex", "something else entirely", None);
         assert_eq!(failed, vec![EngineEvent::Failed("rate limit exceeded".into())]);
+    }
+
+    /// The hang itself, end to end against the reader: a stream that carries one honest JSON line and
+    /// then Gemini's sign-in question **without a newline**, the way a signed-out `gemini` writes it.
+    /// The reader must hand the question back at once - not wait for a newline that will never come -
+    /// while keeping the line that did arrive.
+    #[tokio::test]
+    async fn a_question_without_a_newline_ends_the_read_instead_of_hanging_it() {
+        let (mut writer, reader) = tokio::io::duplex(1024);
+        let recorder = crate::engines::Recorder::new();
+        let sink = recorder.sink();
+        let read = tokio::spawn(async move { read_structured(reader, &sink).await });
+
+        writer
+            .write_all(
+                b"{\"type\":\"init\"}\nOpening authentication page in your browser. Do you want to continue? [Y/n]:",
+            )
+            .await
+            .unwrap();
+
+        /* The writer stays open - the real child never exits - so a reader that waits for EOF or for
+           a newline hangs here, which is exactly the defect. The timeout is the assertion. */
+        let (lines, ended, question) =
+            tokio::time::timeout(std::time::Duration::from_secs(5), read).await.expect("the reader hung on a question").unwrap();
+
+        assert_eq!(lines, vec![r#"{"type":"init"}"#.to_string()]);
+        assert!(!ended);
+        assert!(question.unwrap().contains("Do you want to continue?"));
+
+        drop(writer);
+    }
+
+    /// The hang this release fixes: signed out, Gemini prints its auth question **without a newline**
+    /// and never exits, so the old line reader waited forever and the turn showed nothing. The
+    /// question is recognised in the partial buffer and the turn ends with a sentence that names the
+    /// fix.
+    #[test]
+    fn a_signed_out_gemini_is_a_sentence_not_a_hang() {
+        let tail = "Opening authentication page in your browser. Do you want to continue? [Y/n]:";
+
+        assert_eq!(interactive_prompt(tail), Some(tail.to_string()));
+
+        let message = waiting_for_a_person("gemini", tail);
+
+        assert!(message.contains("not signed in"), "{message}");
+        assert!(message.contains("Settings"), "{message}");
+    }
+
+    /// A partial JSON line mid-flight is the normal case while a chunk boundary splits a line; it is
+    /// never a question, whatever words it happens to contain.
+    #[test]
+    fn a_half_written_json_line_is_not_a_question() {
+        assert_eq!(interactive_prompt(r#"{"type":"delta","text":"do you want to continue"#), None);
+        assert_eq!(interactive_prompt(""), None);
+        assert_eq!(interactive_prompt("plain progress text with no question"), None);
+    }
+
+    /// A question that is not about signing in still ends the turn with words rather than a hang,
+    /// and points at a terminal instead of at Settings.
+    #[test]
+    fn any_other_question_points_at_a_terminal() {
+        let message = waiting_for_a_person("codex", "Overwrite existing config? [y/N]");
+
+        assert!(message.contains("no keyboard"), "{message}");
+        assert!(message.contains("terminal"), "{message}");
     }
 
     #[test]

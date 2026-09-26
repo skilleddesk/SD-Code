@@ -22,9 +22,19 @@ import { findSession, useSessionsStore } from '../../store/sessions';
  * It renders nothing when no chat is open: there is no chat whose folder could be shown, and the empty
  * state has the button that matters in that moment.
  */
-export function FolderChip() {
+export interface FolderChipProps {
+  /**
+   * The pane's own chat (0.10.0). The chip used to read the *active tab*, which in split view is the
+   * other pane half the time - so the label named one chat's folder while the button re-pointed it.
+   * The pane knows which chat its prompt box belongs to, and passes it down.
+   */
+  sessionId?: string;
+}
+
+export function FolderChip({ sessionId }: FolderChipProps = {}) {
   const { hosts, activeTab } = useSessionsStore();
-  const found = activeTab === null ? null : findSession(hosts, activeTab);
+  const shown = sessionId ?? activeTab;
+  const found = shown === null || shown === undefined ? null : findSession(hosts, shown);
 
   if (found === null) {
     return null;

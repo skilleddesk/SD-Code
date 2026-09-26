@@ -15,6 +15,56 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [0.10.0] — type and it works: no mandatory folder, the domain routes the chat, and Gemini stops hanging
+
+The release the screenshot forced: `native_api failed · Agent mode works inside a folder, and this
+chat has none` on a fresh chat, a Gemini turn that never answered at all, and the ask behind both -
+*"just promt or chat korlai ai sokol kisu kore dai"*. An agent turn now works from the very first
+prompt, on this machine or on a saved VPS, with nothing to set up first.
+
+### Fixed — the two failures in the report
+
+* **Agent mode no longer demands a folder.** A folderless chat's agent turn used to end in a refusal
+  before it started. The daemon now **provisions a workspace** instead: `~/SDC Workspaces/<chat>-<id>`
+  on whichever machine the chat lives on (over `ssh` for a VPS chat), created, added as a project and
+  bound to the chat in one step - the folder chip moves the moment the turn starts
+  (`methods::provision_workspace`). Opening a folder by hand still works and still wins; the refusal
+  survives only as the fallback for a provisioning that itself failed, and its sentence still says
+  what to do.
+* **A signed-out Gemini is a sentence, not a hang.** Signed out, `gemini -p … --output-format
+  stream-json` prints `Opening authentication page in your browser. Do you want to continue? [Y/n]:`
+  **without a newline** and waits forever - measured on Gemini CLI 0.60.0, even with stdin closed. The
+  adapter read lines, so it never saw the question, never got EOF, and the turn hung with nothing on
+  screen. The stream is now read **in bytes** (`engines::cli::read_structured`): a known sign-in
+  question is recognised the moment it arrives, any other half-written non-JSON line gets fifteen
+  seconds of silence first, and then the child is killed and the turn ends with the CLI's own question
+  and the fix - *"Sign in first (Settings → Providers → gemini → Sign in)"*. The translator gives it
+  its own card (`needs-person`) instead of "no rule yet".
+
+### Added — the domain routes the chat
+
+* **Name a saved host, work on it.** *"ami skilleddesk.com er file e kaj korte chai"* now runs the turn
+  **on that host**: a prompt that names a saved VPS - by the host part of its address or by its label,
+  on word boundaries, four characters or more, never the local host - is routed to that host's newest
+  chat with a folder (else its newest chat, else a fresh one) before the engine starts
+  (`hostMentionedIn`, `sendPrompt`). The window switches to the chat it routed to and says so in a
+  toast. Combined with the workspace provisioning above, "type the domain, get the machine" is one
+  step.
+* **The stream says it is alive before the first token.** Between Send and the first event a turn drew
+  nothing at all, and a slow first token read as a dead turn. Three pulsing dots and *"Waiting for
+  <model>'s first word…"* now stand in until anything arrives (`Turn.waiting`), claiming no progress -
+  only that the turn is waiting on the engine.
+
+### Fixed — two chips that lied in split view or on a VPS
+
+* **`Change folder` on a VPS chat opens the remote browser.** It used to open the *native* picker -
+  this machine's filesystem - so every choice was refused with "not a folder on <host>". The chip now
+  opens the same `fs.list` browser the Files panel uses, and the chosen folder re-points **this chat**
+  (`rebindFolder`, `remoteFolderSessionId`) rather than landing in another one.
+* **The folder chip reads its own pane.** In split view the chip read the active tab, so the second
+  pane's chip named the first pane's folder - and re-pointed the wrong chat. The pane now passes its
+  own session down (`FolderChip sessionId`).
+
 ## [0.9.0] — signs in to a hardened VPS, every big model maker, and a project from one command
 
 The release the report "kono vabai vps a connect hoi nah" forced, plus the widening it asked for:
