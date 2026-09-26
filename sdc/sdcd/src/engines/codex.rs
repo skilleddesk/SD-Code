@@ -34,6 +34,13 @@ pub const CODEX_SPEC: CliSpec = CliSpec {
     prompt: PromptPlacement::Stdin,
     model_flag: Some("-m"),
     env: &[("NO_COLOR", "1")],
+    /* `codex exec` defaults to a read-only sandbox; `workspace-write` opens the chat's folder,
+       `--full-auto` is its own named middle level, and the long flag is its full-autonomy switch. */
+    autonomy: [
+        &["--sandbox", "workspace-write"],
+        &["--full-auto"],
+        &["--dangerously-bypass-approvals-and-sandbox"],
+    ],
 };
 
 pub struct Codex {

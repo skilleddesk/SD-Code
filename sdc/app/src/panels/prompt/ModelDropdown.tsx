@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { strings } from '../../strings';
 import { refreshCatalog } from '../../store/intents';
 import {
+  filterGroups,
   groupCatalog,
   tierLabel,
   TIERS,
@@ -99,6 +100,8 @@ export function ModelDropdown() {
   const openHub = useOverlayStore((state) => state.openHub);
   /* Which groups have their older versions open. Local: it is a view choice, not a fact. */
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
+  /** The search line (0.9.0). Local: a filter is a view choice, and it resets when the menu closes. */
+  const [query, setQuery] = useState('');
 
   /*
    * Opening the dropdown re-reads the catalogue.
@@ -112,6 +115,8 @@ export function ModelDropdown() {
   }, []);
 
   const { groups, disconnected } = useMemo(() => groupCatalog(catalog, providers), [catalog, providers]);
+  const searching = query.trim() !== '';
+  const shown = useMemo(() => filterGroups(groups, query), [groups, query]);
 
   const manage = (): void => {
     useModelStore.getState().closeDropdown();
@@ -164,6 +169,20 @@ export function ModelDropdown() {
       role="dialog"
       aria-label={strings.prompt.model.groupTitles.model}
     >
+      {/* The search line (0.9.0): filters by model name, id or provider. While it is in use the tier
+          block steps aside - the list is the answer to what was typed. */}
+      <div className="mdd-search px-[4px] pb-[2px] pt-[4px]">
+        <input
+          type="text"
+          className="w-full rounded-md border border-border-subtle bg-bg-input px-[10px] py-[6px] text-[12px] text-text-primary placeholder:text-text-muted focus:border-border-strong"
+          placeholder={strings.prompt.model.search}
+          value={query}
+          data-model-search
+          onChange={(event) => setQuery(event.target.value)}
+        />
+      </div>
+
+      {searching ? null : (
       <div className="mdd-group mb-[4px]">
         <div className={GROUP_TITLE}>{strings.prompt.model.groupTitles.tier}</div>
         {TIERS.map((candidate) => {
@@ -186,6 +205,7 @@ export function ModelDropdown() {
           );
         })}
       </div>
+      )}
 
       <div className="mdd-divider mx-[4px] my-[6px] h-px bg-border-subtle" />
 
@@ -198,13 +218,19 @@ export function ModelDropdown() {
         </span>
       </div>
 
+      {searching && shown.length === 0 ? (
+        <div className="mdd-none px-[10px] py-[8px] text-[12px] text-text-secondary" data-no-matches>
+          {strings.prompt.model.noMatches(query.trim())}
+        </div>
+      ) : null}
+
       {groups.length === 0 && catalog.length > 0 ? (
         <div className="mdd-none px-[10px] py-[8px] text-[12px] leading-[1.5] text-text-secondary" data-none-connected>
           {strings.prompt.model.noneConnected}
         </div>
       ) : null}
 
-      {groups.map((group) => {
+      {shown.map((group) => {
         const open = expanded.has(group.providerId);
 
         return (

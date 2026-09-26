@@ -82,6 +82,11 @@ pub struct Prompt {
     /// network call from this daemon, not a process on a folder. A provider that answered text is not a
     /// provider whose tools ran anywhere.
     pub remote: Option<crate::ssh::Ssh>,
+    /// How much the turn may do without asking (0.9.0): the session's autonomy, as `engine.start`
+    /// received it. The three CLIs run their own agents, and in `--print` mode a CLI **cannot ask** -
+    /// a tool that would need permission simply fails - so the level a person chose has to travel to
+    /// the flags each CLI takes (`cli::autonomy_args`). SDC's own gate keeps using it unchanged.
+    pub autonomy: crate::agent::gate::Autonomy,
 }
 
 /// Who said a message of the conversation.

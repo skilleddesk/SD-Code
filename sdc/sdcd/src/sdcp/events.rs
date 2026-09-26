@@ -169,6 +169,12 @@ pub mod event {
     pub fn provider_status(fields: Value) -> Value {
         base("ProviderStatus", fields)
     }
+    /// The catalogue was refreshed from the providers' own endpoints (0.9.0). Carries counts, not
+    /// rows: a window that cares asks `models.list`, which answers from the fresh cache.
+    pub fn models_updated(providers: &[String], models: usize) -> Value {
+        base("ModelsUpdated", json!({ "providers": providers, "models": models }))
+    }
+
     pub fn registry_loaded(models: Value) -> Value {
         base("RegistryLoaded", json!({ "models": models }))
     }

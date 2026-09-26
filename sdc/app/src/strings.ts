@@ -190,6 +190,14 @@ export const strings = {
 
   /** Turn stream - spec section 7.5. */
   turns: {
+    /** The measured line under a running turn (0.9.0). Every value is measured; `~` marks estimates. */
+    stats: {
+      elapsed: (time: string): string => time,
+      thinking: (time: string): string => `thinking ${time}`,
+      tokens: (count: number): string => `~${count.toLocaleString()} tok`,
+      pace: (perSecond: number): string => `~${perSecond} tok/s`,
+      tools: (count: number): string => (count === 1 ? '1 tool call' : `${count} tool calls`),
+    },
     /** The label above a user's message. The prototype's `You · 14:02` fixed the clock this app does
      *  not have on the turn: the log carries the prompt, not the minute it was typed. */
     who: 'You',
@@ -356,6 +364,28 @@ export const strings = {
   },
 
   /** Folders - the directory a chat works in (spec section 7.13's `No project`, v0.7.6). */
+  /** Start from scratch (0.9.0): one dialog - the folder is made, the project added, the agent started. */
+  scaffold: {
+    title: 'Start from scratch',
+    sub: 'One step: SDC makes the folder, opens a chat in it, and — if you say what to build — starts building.',
+    host: 'Where',
+    parent: 'Inside this folder',
+    parentPlaceholder: 'e.g. C:\\Projects — or ~/projects on a host',
+    parentHelp: 'The new folder is created inside this one. `~` works on a host.',
+    browse: 'Browse…',
+    name: 'Project name',
+    namePlaceholder: 'my-app',
+    nameHelp: 'One plain folder name — it becomes the folder and the chat’s title.',
+    prompt: 'What should be built? (optional)',
+    promptPlaceholder: 'e.g. A REST API in Express with a /health route and tests',
+    promptHelp: 'Leave it empty to just get the folder and the chat. With a prompt, the agent starts building right away.',
+    create: 'Create project',
+    creating: 'Creating…',
+    made: (name: string, root: string): string => `${name} created at ${root}`,
+    failed: 'The project could not be created',
+    needName: 'Give the project a name first',
+    needParent: 'Say where the folder should be made',
+  },
   folder: {
     /** The chip in the prompt area: `No folder` when the chat has none. */
     none: 'No folder',
@@ -429,6 +459,9 @@ export const strings = {
     /** Spec section 16.5: the Session Bridge toast when a mid-turn engine switch succeeds. */
     bridged: (from: string, to: string): string => `Switched ${from} → ${to}, context replayed`,
     model: {
+      /** The dropdown's search field (0.9.0). */
+      search: 'Search models…',
+      noMatches: (query: string): string => `Nothing matches “${query}”`,
       groupTitles: {
         tier: 'Tier',
         engine: 'Engine',
@@ -968,9 +1001,12 @@ export const strings = {
     sshTargetHelp:
       'Paste what you would type in your own terminal — `ssh -p 8443 user@host` works, and so does `user@host`.',
     password: 'Password (optional)',
-    passwordPlaceholder: 'Only used once, to copy SDC’s key',
+    passwordPlaceholder: 'Used to sign in, never stored',
     passwordHelp:
-      'SDC copies its own key (`~/.ssh/sdc_ed25519`) to that machine with this password, then drops the password. Every connection after that is passwordless — and you can revoke the key by deleting one line from `authorized_keys`. A host that only accepts a verification code cannot be set up this way, and SDC will say so.',
+      'SDC signs in once with this password and keeps that connection open, so nothing asks again until it closes. The password is not stored anywhere.',
+    code: 'Verification code (if your server asks)',
+    codePlaceholder: '6-digit code from your authenticator',
+    codeHelp: 'Type the code shown right now — codes expire in about 30 seconds.',
     sshTargetPlaceholder: 'user@vps.example.com',
     labelField: 'Label (optional)',
     labelPlaceholder: 'prod-1',
@@ -1030,6 +1066,12 @@ export const strings = {
      * only the surface that can reach it *after* the fact - the missing half that made "VPS connect
      * hocche nah" permanent for a host whose pin was already in place.
      */
+    signIn: {
+      title: (label: string): string => `Sign in to ${label}`,
+      sub: 'Its host key is pinned. Sign in once with the password — and the verification code, if the server asks for one — and SDC keeps that connection open.',
+      button: 'Sign in',
+      signingIn: 'Signing in…',
+    },
     keyInstall: {
       title: (label: string): string => `SDC cannot sign in to ${label} yet`,
       sub: 'Its host key is pinned. The one thing left is copying SDC’s key over, which needs your password once.',

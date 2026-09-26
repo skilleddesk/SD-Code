@@ -179,6 +179,10 @@ pub fn live(provider: &ProviderBlock) -> Result<Vec<Value>, String> {
                 .or_else(|| row.get("name").and_then(Value::as_str))?
                 .to_string();
 
+            /* Google's OpenAI-compatible list spells every id `models/gemini-2.5-pro`; the plain id is
+               what its chat endpoint takes and what a person recognises. */
+            let id = id.strip_prefix("models/").unwrap_or(&id).to_string();
+
             Some(json!({ "id": id, "providerId": provider.id }))
         })
         .collect())
@@ -273,6 +277,70 @@ pub fn list_blocks(
     }))
 }
 
+
+/// Refreshes every provider that can be asked without a pointless failure, and says which moved.
+///
+/// "Can be asked" is decided the way a person would: an API-key provider is asked when its key is
+/// stored (a 401 for a provider nobody connected is noise, not news), OpenRouter is asked always (its
+/// list is public), and Ollama is asked when its daemon answers on this machine. This is what makes
+/// "the model list updates the moment the provider updates theirs" true without a Refresh button:
+/// `main` runs it at start and every twelve hours, and `provider.save` runs it for a key that was
+/// just added. The answer is the ids whose lists were fetched **live** just now.
+pub fn refresh_connected(store: &Arc<Store>) -> Vec<String> {
+    let mut refreshed = Vec::new();
+
+    for block in blocked() {
+        let askable = match block.protocol.as_str() {
+            "ollama" => crate::engines::ollama::daemon_running(),
+            _ => {
+                block.id == "openrouter"
+                    || crate::auth::keychain::get(&crate::providers::key_ref(&block.id))
+                        .filter(|key| !key.trim().is_empty())
+                        .is_some()
+            }
+        };
+
+        if !askable {
+            continue;
+        }
+
+        if let Ok(answer) = list_blocks(store, vec![block.clone()], true) {
+            let live_now = answer["models"]
+                .as_array()
+                .map(|rows| rows.iter().any(|row| row["source"] == "live"))
+                .unwrap_or(false);
+
+            if live_now {
+                refreshed.push(block.id);
+            }
+        }
+    }
+
+    refreshed
+}
+
+/// [`refresh_connected`], then the event that tells every window - on its own blocking thread, because
+/// each ask is a synchronous HTTP call.
+pub fn refresh_and_tell(store: Arc<Store>, notifier: std::sync::Arc<dyn crate::sdcp::notifications::Notifier>) {
+    tokio::task::spawn_blocking(move || {
+        let refreshed = refresh_connected(&store);
+
+        if refreshed.is_empty() {
+            return;
+        }
+
+        let models = list(&store, None, false)
+            .ok()
+            .and_then(|answer| answer["models"].as_array().map(Vec::len))
+            .unwrap_or(0);
+
+        notifier.push(
+            crate::sdcp::events::event::models_updated(&refreshed, models),
+            None,
+            None,
+        );
+    });
+}
 
 /// The live (or cached) rows, with the bundle's curated fields filled in where it knows the id.
 fn merge(rows: &[Value], curated: &[Value], source: &str, fetched_at: Option<&str>) -> Vec<Value> {

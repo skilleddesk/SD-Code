@@ -78,6 +78,7 @@ impl Daemon {
             /* The folder a chat works in (0.7.6). `add` and `list` are answers; `remove` also pushes a
                toast, because closing a folder that had chats in it is a thing the person should see. */
             "project.add" => self.project_add(envelope),
+            "project.scaffold" => self.project_scaffold(envelope),
             "project.list" => Ok(json!({ "projects": self.store().projects().map_err(ErrorObject::internal)? })),
             "project.remove" => self.project_remove(envelope, &*out),
 
@@ -142,7 +143,7 @@ impl Daemon {
                 &envelope.require_str("id")?,
                 envelope.opt_str("key").as_deref(),
             )),
-            "provider.save" => self.provider_save(envelope, &*out),
+            "provider.save" => self.provider_save(envelope, out.clone()),
             /* Provider, checkpoint and rewind the session inherits, then its turns. */
             "provider.remove" => self.provider_remove(envelope, &*out),
             "provider.oauth.open" => Ok(providers::oauth_open(&envelope.require_str("id")?)),
@@ -260,6 +261,9 @@ impl Daemon {
         /* Used for one install and dropped. It is never stored, never logged, and never part of a
            sentence the UI shows. */
         let password = envelope.opt_str("password").unwrap_or_default().trim().to_string();
+        /* The host's one-time code, for a host that asks for one (0.8.1). Spent with the password, kept
+           nowhere. */
+        let code = envelope.opt_str("code").unwrap_or_default().trim().to_string();
 
         let label = envelope
             .opt_str("label")
@@ -349,7 +353,7 @@ impl Daemon {
 
             match seen {
                 Ok(crate::ssh::hostkey::Trust::Pinned(_)) => {
-                    finish_connection(state, notifier, host_id, name, ssh, password, key_note).await;
+                    finish_connection(state, notifier, host_id, name, ssh, Secrets { password, code }, key_note).await;
                 }
                 Ok(crate::ssh::hostkey::Trust::Unknown(keys)) => {
                     let fingerprint = crate::ssh::hostkey::primary(&keys)
@@ -420,6 +424,7 @@ impl Daemon {
         let host_id = envelope.require_str("hostId")?;
         let fingerprint = envelope.require_str("fingerprint")?;
         let password = envelope.opt_str("password").unwrap_or_default().trim().to_string();
+        let code = envelope.opt_str("code").unwrap_or_default().trim().to_string();
 
         let Some(ssh) = self.ssh_for(&host_id)? else {
             return Err(ErrorObject::bad_request(format!(
@@ -459,7 +464,7 @@ impl Daemon {
         let state = self.state.clone();
         let notifier = out.clone();
 
-        spawn_finish(state, notifier, host_id.clone(), name, ssh, password, None);
+        spawn_finish(state, notifier, host_id.clone(), name, ssh, Secrets { password, code }, None);
 
         Ok(json!({ "trusted": true, "hostId": host_id, "fingerprint": fingerprint }))
     }
@@ -697,6 +702,11 @@ impl Daemon {
         };
 
         let name = row["name"].as_str().unwrap_or(&host_id).to_string();
+        /* A removed host keeps no signed-in connection behind it. */
+        if let Some(ssh) = self.ssh_for(&host_id)? {
+            crate::ssh::session::close(&ssh);
+        }
+
         let sessions = self.store().delete_host(&host_id).map_err(ErrorObject::internal)?;
 
         out.push(event::host_removed(&host_id, &name, sessions), None, None);
@@ -939,6 +949,82 @@ impl Daemon {
         Ok(json!({ "projectId": id, "hostId": host_id, "root": root, "name": name }))
     }
 
+    /// `project.scaffold` - a project from nothing (0.9.0).
+    ///
+    /// "Scratch thake kaj suru korbe tokhon sudu command dilai jano kora jai": starting from an empty
+    /// folder was four surfaces (a file manager to make the folder, Add project, a new chat, the
+    /// prompt). This is the daemon half of making it one step: the folder is **created** - on this
+    /// machine or on a host - and added as a project in the same call. The window then opens a chat on
+    /// it and, when the person typed what to build, starts the agent turn.
+    ///
+    /// `name` becomes the folder, so it must be a plain name: separators and `..` are refused rather
+    /// than resolved, because "make me a folder" must never mean "write outside `parent`".
+    fn project_scaffold(&self, envelope: &Envelope) -> Result<Value, ErrorObject> {
+        let host_id = envelope.opt_str("hostId").unwrap_or_else(|| "local".into());
+        let parent = envelope.require_str("parent")?.trim().to_string();
+        let name = envelope.require_str("name")?.trim().to_string();
+
+        if parent.is_empty() {
+            return Err(ErrorObject::bad_request("`parent` is required: where should the folder be made?"));
+        }
+
+        if name.is_empty()
+            || name == ".."
+            || name == "."
+            || name.contains(['/', '\\'])
+            || name.contains("..")
+        {
+            return Err(ErrorObject::bad_request(format!(
+                "`{name}` cannot be a folder name here: one plain name, no separators"
+            )));
+        }
+
+        let remote = self.ssh_for(&host_id)?;
+        /* One separator for both machines: Windows' own APIs take `/`, and a root spelled
+           `C:/parent\name` (what `Path::join` writes after a forward-slash parent) reads as broken. */
+        let root = format!("{}/{name}", parent.trim_end_matches(['/', '\\']));
+
+        match &remote {
+            Some(ssh) => {
+                if !crate::ssh::ops::is_dir(ssh, &parent)? {
+                    return Err(ErrorObject::bad_request(format!(
+                        "`{parent}` is not a folder on {}",
+                        ssh.label()
+                    )));
+                }
+
+                crate::ssh::ops::mkdir(ssh, &root)?;
+            }
+            None => {
+                if !std::path::Path::new(&parent).is_dir() {
+                    return Err(ErrorObject::bad_request(format!("`{parent}` is not a folder")));
+                }
+
+                crate::fs::mkdir(std::path::Path::new(&root))?;
+            }
+        }
+
+        /* The same row `project.add` writes - including the "same folder twice is one project" rule,
+           which `mkdir`'s idempotence extends to the scaffold: running it twice is one folder, one row. */
+        if let Some(existing) = self.store().project_at(&host_id, &root).map_err(ErrorObject::internal)? {
+            return Ok(self
+                .store()
+                .project(&existing)
+                .map_err(ErrorObject::internal)?
+                .unwrap_or_else(|| json!({ "projectId": existing, "hostId": host_id, "root": root })));
+        }
+
+        self.store()
+            .ensure_host(&host_id, if host_id == "local" { "Local" } else { host_id.as_str() }, "local", "connected")
+            .map_err(ErrorObject::internal)?;
+
+        let id = self.store().next_project_id().map_err(ErrorObject::internal)?;
+
+        self.store().add_project(&id, &host_id, &root, &name).map_err(ErrorObject::internal)?;
+
+        Ok(json!({ "projectId": id, "hostId": host_id, "root": root, "name": name, "created": true }))
+    }
+
     /// `project.remove`: closes the folder. Its chats are **unbound**, not deleted - a chat is a
     /// conversation, and a folder is a place to have it. The answer says how many chats were unbound.
     fn project_remove(&self, envelope: &Envelope, out: &dyn Notifier) -> Result<Value, ErrorObject> {
@@ -1000,6 +1086,7 @@ impl Daemon {
          * autonomy level the person chose, on the same turn pipeline (events, checkpoint, Stop).
          */
         let agent_mode = envelope.params.get("agent").and_then(Value::as_bool).unwrap_or(false);
+        let autonomy = crate::agent::gate::Autonomy::parse(&envelope.opt_str("autonomy").unwrap_or_default());
         let backend = match engine_id.as_str() {
             "native_api" => Some(crate::agent::Backend::Api),
             "ollama" => Some(crate::agent::Backend::Ollama),
@@ -1008,7 +1095,7 @@ impl Daemon {
         let agent = backend.filter(|_| agent_mode).map(|backend| {
             crate::agent::SdcAgent::new(
                 backend,
-                crate::agent::gate::Autonomy::parse(&envelope.opt_str("autonomy").unwrap_or_default()),
+                autonomy,
                 envelope
                     .opt_i64("maxSteps")
                     .map(|steps| steps.max(1) as usize)
@@ -1105,6 +1192,7 @@ impl Daemon {
             project_root,
             remote,
             self_checkpointing,
+            autonomy,
         };
 
         tokio::spawn(async move {
@@ -1231,7 +1319,7 @@ impl Daemon {
      * Providers, permission, checkpoints, rewind, duel, console and the event replay
      * -------------------------------------------------------------------------------------- */
 
-    fn provider_save(&self, envelope: &Envelope, out: &dyn Notifier) -> Result<Value, ErrorObject> {
+    fn provider_save(&self, envelope: &Envelope, out: Arc<dyn Notifier>) -> Result<Value, ErrorObject> {
         let id = envelope.require_str("id")?;
         let kind = envelope.opt_str("kind").unwrap_or_else(|| "api-key".into());
         let saved = providers::save(
@@ -1255,6 +1343,10 @@ impl Daemon {
             None,
             None,
         );
+
+        /* A key that was just saved is a provider that can be asked now: its live list lands in the
+           cache and every window hears about it - the moment "connect korlei model gula chole ashe". */
+        crate::providers::models::refresh_and_tell(self.state.store.clone(), out.clone());
 
         Ok(saved)
     }
@@ -1701,7 +1793,7 @@ impl Daemon {
     /// `pty.open` - a long-running process, here or **on a host** (0.7.13).
     ///
     /// With a `hostId` (or a session whose folder is on one) the child is an `ssh` whose remote command
-    /// is `cd <cwd> && sh -c 'echo $$ > <pid>; exec setsid … <command> …'`, which makes the far side of
+    /// is `cd <cwd> && sh -c 'echo $$ > <pid>; setsid … <command> …'`, which makes the far side of
     /// this method behave exactly like the near side: `pty.output` reads the process's output tail,
     /// `pty.write` sends bytes to its stdin (that is what an `ssh` forwards), and `pty.close` signals its
     /// **process group** there through the pid file rather than only closing the connection.
@@ -1767,7 +1859,11 @@ impl Daemon {
         ssh_args.push(remote_line);
 
         let label = format!("{display} on {}", ssh.label());
-        let opened = self.state.pty.open("ssh", &ssh_args, None, Some(&label), Some((ssh, pid_file)))?;
+        /* The same `ssh` every other call uses, so the signed-in connection carries this one too. */
+        let program = crate::ssh::program()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| "ssh".to_string());
+        let opened = self.state.pty.open(&program, &ssh_args, None, Some(&label), Some((ssh, pid_file)))?;
 
         Ok(json!({ "ptyId": opened["ptyId"], "command": display, "tty": false, "hostId": self.host_id_for(envelope)? }))
     }
@@ -2407,6 +2503,8 @@ struct RunPlan {
     /// The engine takes its own checkpoint before its first change (the SDC Agent), so the loop below
     /// must not take a second, late one when it sees the ToolStarted.
     self_checkpointing: bool,
+    /// The autonomy the person chose, for the engines that run their own agent (the CLIs).
+    autonomy: crate::agent::gate::Autonomy,
 }
 
 /// Runs one turn and pushes its events - including the checkpoint that must exist *before* a mutating
@@ -2431,6 +2529,7 @@ async fn run_turn(
         history: plan.history.clone(),
         project_root: plan.project_root.clone(),
         remote: plan.remote.clone(),
+        autonomy: plan.autonomy,
     };
     let mut answer = String::new();
     let mut checkpoint_written = false;
@@ -2659,15 +2758,23 @@ impl Subject {
 /// the probe is `ssh` with `BatchMode=yes`, which by design cannot answer a prompt, so the install is
 /// what makes every later connection passwordless. `install_key` runs on the daemon's PTY (the one
 /// terminal it has) and types the password into `ssh`'s own prompt.
+/// What a person typed to sign in to a host: used once by [`finish_connection`], kept nowhere.
+struct Secrets {
+    password: String,
+    /// The verification code, for a host that asks for one (0.8.1).
+    code: String,
+}
+
 async fn finish_connection(
     state: Arc<DaemonState>,
     notifier: Arc<dyn Notifier>,
     host_id: String,
     name: String,
     ssh: crate::ssh::Ssh,
-    password: String,
+    secrets: Secrets,
     key_note: Option<String>,
 ) {
+    let Secrets { password, code } = secrets;
     let target = ssh.target.user_host.clone();
 
     if let Some(note) = &key_note {
@@ -2678,7 +2785,69 @@ async fn finish_connection(
         );
     }
 
-    if !password.is_empty() {
+    /*
+     * Sign in first (0.8.1): one authenticated connection, kept open, that every later call goes through.
+     * This is the only way into a host that has public-key login switched off and asks for a
+     * verification code and a password on every session - the host in the report. A machine without an
+     * `ssh` that can hold a connection open falls back to the 0.7.13 key install below.
+     */
+    let mut install_key = !password.is_empty();
+
+    if !password.is_empty() || !code.is_empty() {
+        notifier.push(
+            event::host_status(
+                &host_id,
+                &name,
+                "vps",
+                "connecting",
+                None,
+                Some(&format!("signing in to {}…", ssh.label())),
+                None,
+            ),
+            None,
+            None,
+        );
+
+        let signing = ssh.clone();
+        let (secret, one_time) = (password.clone(), code.clone());
+        let signed = tokio::task::spawn_blocking(move || crate::ssh::session::sign_in(&signing, &secret, &one_time))
+            .await
+            .unwrap_or_else(|_| Err(crate::ssh::session::SignInError::Failed("the sign-in could not be run".into())));
+
+        let refused = match signed {
+            Ok(sentence) => {
+                install_key = false;
+
+                notifier.push(
+                    event::host_status(&host_id, &name, "vps", "connecting", None, Some(&sentence), None),
+                    None,
+                    None,
+                );
+
+                None
+            }
+            Err(crate::ssh::session::SignInError::Unsupported) => None,
+            Err(crate::ssh::session::SignInError::NeedsCode) => Some(format!(
+                "{} asks for a verification code. Open Sign in, type the password and the code your authenticator shows right now, and press Sign in.",
+                ssh.label()
+            )),
+            Err(crate::ssh::session::SignInError::Failed(sentence)) => Some(sentence),
+        };
+
+        if let Some(sentence) = refused {
+            let _ = state.store.upsert_host(&host_id, &name, "ssh", Some(&target), "offline", None);
+
+            notifier.push(
+                event::host_status(&host_id, &name, "vps", "offline", None, Some(&sentence), None),
+                None,
+                None,
+            );
+
+            return;
+        }
+    }
+
+    if install_key {
         notifier.push(
             event::host_status(
                 &host_id,
@@ -2757,10 +2926,10 @@ fn spawn_finish(
     host_id: String,
     name: String,
     ssh: crate::ssh::Ssh,
-    password: String,
+    secrets: Secrets,
     key_note: Option<String>,
 ) {
-    tokio::spawn(finish_connection(state, notifier, host_id, name, ssh, password, key_note));
+    tokio::spawn(finish_connection(state, notifier, host_id, name, ssh, secrets, key_note));
 }
 
 /// The sentence for a host whose key SDC has never seen: it is a **question**, and it says so.
@@ -3035,6 +3204,7 @@ mod tests {
             project_root: None,
             remote: None,
             self_checkpointing: false,
+            autonomy: Default::default(),
         };
         let engine: Arc<dyn crate::engines::Engine> = Arc::new(Halfway {
             release: std::sync::Mutex::new(Some(gated)),
@@ -3111,6 +3281,7 @@ mod tests {
             project_root: None,
             remote: None,
             self_checkpointing: false,
+            autonomy: Default::default(),
         };
 
         run_turn(state.clone(), Arc::new(Worker), plan, Arc::new(Quiet)).await;

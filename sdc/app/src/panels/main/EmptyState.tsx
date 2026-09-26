@@ -61,6 +61,14 @@ export function EmptyState() {
         <button
           type="button"
           className="empty-chip inline-flex items-center gap-[6px] rounded-full border border-border-subtle bg-bg-raised px-[12px] py-[6px] text-[12px] text-text-secondary transition-all duration-fast ease-ease hover:-translate-y-px hover:border-border-default hover:bg-bg-hover hover:text-text-primary"
+          onClick={() => useOverlayStore.getState().openNewProject()}
+        >
+          <Sparkles size={12} aria-hidden="true" />
+          {strings.scaffold.title}
+        </button>
+        <button
+          type="button"
+          className="empty-chip inline-flex items-center gap-[6px] rounded-full border border-border-subtle bg-bg-raised px-[12px] py-[6px] text-[12px] text-text-secondary transition-all duration-fast ease-ease hover:-translate-y-px hover:border-border-default hover:bg-bg-hover hover:text-text-primary"
           onClick={(event) => openNewChat(anchorBelow(event.currentTarget))}
         >
           <Plus size={12} aria-hidden="true" />

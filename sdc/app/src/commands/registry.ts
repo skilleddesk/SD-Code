@@ -258,6 +258,7 @@ export const COMMANDS: readonly Command[] = [
 
   /* ---------------------------------------------------------------- Actions (palette only) */
   { id: 'host.add', label: strings.sidebar.addHost, icon: 'serverPlus', group: 'actions', run: () => useOverlayStore.getState().openAddHost() },
+  { id: 'project.new', label: strings.scaffold.title, icon: 'folder', group: 'actions', run: () => useOverlayStore.getState().openNewProject() },
   { id: 'providers.open', label: 'Connect a provider / model', icon: 'plug', group: 'actions', run: () => useOverlayStore.getState().openHub() },
   { id: 'doctor.open', label: 'Run environment doctor', icon: 'stethoscope', group: 'actions', run: () => useOverlayStore.getState().openHub('doctor') },
   { id: 'folder.open', label: strings.main.noProject.action, icon: 'folder', group: 'actions', run: () => void openFolder() },

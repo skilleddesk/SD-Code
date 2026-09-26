@@ -26,7 +26,13 @@ use crate::auth::keychain;
 use crate::sdcp::envelope::ErrorObject;
 use crate::store::sqlite::Store;
 
-/// The nine providers the app ships with: `(id, name, kind, logo, initial, detail)`.
+/// The provider cards the app ships with: `(id, name, kind, logo, initial, detail)`.
+///
+/// 0.9.0 widened this list to the original model makers ("sokol AI provider der add korte cassi jara
+/// … orginal AI model provider"): Google, xAI, Moonshot, Mistral, Qwen and Z.ai, all API-key cards
+/// whose model lists refresh from the provider's own endpoint - a new model shows up here the day the
+/// provider lists it, with no build. Each one also has a block in `protocol/models.json`, which is
+/// what routes its chat traffic (`native_api::endpoint_for`).
 pub const CATALOG: &[(&str, &str, &str, &str, &str, &str)] = &[
     ("claude", "Claude", "subscription", "claude", "C", "Claude Pro / Max subscription · uses your own login"),
     ("openai", "OpenAI", "subscription", "openai", "O", "ChatGPT Plus · Codex CLI subscription"),
@@ -38,6 +44,12 @@ pub const CATALOG: &[(&str, &str, &str, &str, &str, &str)] = &[
     ("openai-api", "OpenAI API", "api-key", "openai", "O", "Direct API key · pay per token"),
     ("deepseek", "DeepSeek", "api-key", "deepseek", "D", "Direct API · cheap, fast"),
     ("groq", "Groq", "api-key", "groq", "G", "Ultra-fast inference"),
+    ("google", "Google Gemini API", "api-key", "gemini", "G", "Direct API key · pay per token"),
+    ("xai", "xAI Grok", "api-key", "xai", "X", "Direct API key · pay per token"),
+    ("moonshot", "Moonshot Kimi", "api-key", "moonshot", "K", "Direct API key · pay per token"),
+    ("mistral", "Mistral", "api-key", "mistral", "M", "Direct API key · pay per token"),
+    ("qwen", "Qwen (Alibaba)", "api-key", "qwen", "Q", "DashScope API key · pay per token"),
+    ("zai", "Z.ai GLM", "api-key", "zai", "Z", "Direct API key · pay per token"),
     ("openrouter", "OpenRouter", "api-key", "openrouter", "O", "One key · 200+ models"),
     ("ollama", "Ollama", "local", "ollama", "O", "Local models · auto-detected on this machine"),
 ];
@@ -91,6 +103,12 @@ const KEY_CHECK: &[(&str, &str)] = &[
     ("deepseek", "https://api.deepseek.com/models"),
     ("groq", "https://api.groq.com/openai/v1/models"),
     ("openrouter", "https://openrouter.ai/api/v1/models"),
+    ("google", "https://generativelanguage.googleapis.com/v1beta/openai/models"),
+    ("xai", "https://api.x.ai/v1/models"),
+    ("moonshot", "https://api.moonshot.ai/v1/models"),
+    ("mistral", "https://api.mistral.ai/v1/models"),
+    ("qwen", "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/models"),
+    ("zai", "https://api.z.ai/api/paas/v4/models"),
 ];
 
 /// The request that checks a key: `(url, headers)`. Pure, so a test can hold the shape.
@@ -432,7 +450,17 @@ mod tests {
 
     #[test]
     fn the_catalog_and_the_registry_match_the_apps_seed() {
-        assert_eq!(CATALOG.len(), 9);
+        assert_eq!(CATALOG.len(), 15);
+        /* Every card whose models come from an endpoint has a block in the bundle, so its chat can be
+           routed and its list can refresh - a card without one would show models it cannot run. */
+        let blocks = models::blocked();
+
+        for (id, _, kind, ..) in CATALOG {
+            if *kind == "api-key" || *kind == "local" {
+                assert!(blocks.iter().any(|block| block.id == *id), "{id} has no bundle block");
+            }
+        }
+
         assert_eq!(MODELS.len(), 12);
         assert_eq!(registry(&[]).len(), 12);
         assert_eq!(registry(&["deepseek/deepseek-chat".to_string()])[7]["enabled"], json!(false));

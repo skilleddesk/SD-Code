@@ -1,5 +1,5 @@
 import { ChevronRight, FilePen, FileText, Loader, Play } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import { strings } from '../../strings';
 import type { ToolCardData, ToolStatus } from './types';
@@ -55,6 +55,28 @@ function runLineLabel(level: 'ok' | 'fail' | 'dim'): string {
 
 export interface ToolCardProps {
   tool: ToolCardData;
+}
+
+/**
+ * `3.2s` next to a running pill (0.9.0): how long the call has been going, against the log's own
+ * stamp. Its own component so only running cards pay for a timer, and it unmounts with the pill.
+ */
+function RunningFor({ since }: { since: string }) {
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 500);
+
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const started = Date.parse(since);
+
+  if (!Number.isFinite(started)) {
+    return null;
+  }
+
+  return <span data-running-for>{` · ${Math.max(0, (now - started) / 1000).toFixed(1)}s`}</span>;
 }
 
 export function ToolCard({ tool }: ToolCardProps) {
@@ -116,6 +138,7 @@ export function ToolCard({ tool }: ToolCardProps) {
           }
         >
           {tool.meta}
+          {spinning ? <RunningFor since={tool.startedAt} /> : null}
         </span>
 
         {spinning ? (

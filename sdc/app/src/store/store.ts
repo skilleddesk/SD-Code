@@ -69,7 +69,59 @@ export const useAppStore = create<AppStoreState>()((set, get) => ({
  * The log's only subscriber. It is registered at module scope rather than from an effect so that an
  * event accepted before React mounts (a daemon handshake, a replay) still lands in the store.
  */
-eventLog.subscribe((entry) => {
+/*
+ * ## Deltas are folded per frame, not per event (0.9.0)
+ *
+ * A fast model streams hundreds of `TurnDelta`s a second, and each one used to be its own
+ * `setState` - a render per token, which is where "the writing feels slow" actually lived: the text
+ * was here, the main thread was busy drawing it one delta at a time. The three high-frequency stream
+ * events are buffered and folded in **one** `setState` on the next animation frame (~16 ms, under any
+ * screen's refresh), so the stream draws at the display's own pace with no backlog. Everything else
+ * still lands synchronously - and flushes the buffer first, so the log's order is the store's order.
+ */
+const streamed: AppEvent[] = [];
+let frame: number | null = null;
+
+const flushStreamed = (): void => {
+  frame = null;
+
+  if (streamed.length === 0) {
+    return;
+  }
+
+  const batch = streamed.splice(0);
+
+  useAppStore.setState((state) => batch.reduce(applyEvent, state));
+};
+
+/* Idempotent across dev hot-reloads: re-evaluating this module must not leave the old subscriber
+   folding next to the new one (seen live: every delta applied N times after N edits of this file). A
+   packaged build evaluates this once, so there it is a no-op. */
+const already = (globalThis as { __sdcFoldStop?: () => void }).__sdcFoldStop;
+
+if (already !== undefined) {
+  already();
+}
+
+(globalThis as { __sdcFoldStop?: () => void }).__sdcFoldStop = eventLog.subscribe((entry) => {
+  const kind = entry.event.type;
+
+  if (kind === 'TurnDelta' || kind === 'ThinkingDelta' || kind === 'ToolCallOutput') {
+    streamed.push(entry);
+
+    if (frame === null) {
+      frame =
+        typeof requestAnimationFrame === 'function'
+          ? requestAnimationFrame(flushStreamed)
+          : (setTimeout(flushStreamed, 16) as unknown as number);
+    }
+
+    return;
+  }
+
+  /* A terminal event (TurnCompleted, ToolCallCompleted…) must see every delta before it. */
+  flushStreamed();
+
   useAppStore.setState((state) => applyEvent(state, entry));
 });
 

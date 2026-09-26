@@ -443,6 +443,7 @@ function reduce(state: AppState, entry: AppEvent): AppState {
           ...turn.tools,
           {
             callId: event.callId,
+            startedAt: entry.ts,
             tool: event.tool,
             name: event.name,
             target: event.target,
@@ -604,6 +605,11 @@ function reduce(state: AppState, entry: AppEvent): AppState {
           ...state.bridges,
         ],
       };
+
+    /* The catalogue rows live in the model store, not here: `lib/sdcp.ts` answers this event by
+       calling `refreshCatalog()`, because the reducer must stay a pure fold with no I/O in it. */
+    case 'ModelsUpdated':
+      return state;
   }
 
   /* Exhaustiveness: every catalogue entry has an arm above, so this is unreachable. */

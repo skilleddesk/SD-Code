@@ -9,6 +9,7 @@ import { Connect } from './modals/Connect';
 import { HostSwitcherPopover } from './modals/HostSwitcherPopover';
 import { Permission } from './modals/Permission';
 import { ProviderHub } from './modals/ProviderHub';
+import { NewProject } from './modals/NewProject';
 import { RemoteFolder } from './modals/RemoteFolder';
 import { Settings } from './modals/Settings';
 import { KeymapReference } from './overlays/KeymapReference';
@@ -112,6 +113,7 @@ export function App() {
       <Settings />
       <AddHost />
       <RemoteFolder />
+      <NewProject />
       <Permission />
       <Connect />
 

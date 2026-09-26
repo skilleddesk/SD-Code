@@ -35,6 +35,12 @@ pub const GEMINI_SPEC: CliSpec = CliSpec {
     prompt: PromptPlacement::Argument,
     model_flag: Some("-m"),
     env: &[("NO_COLOR", "1")],
+    /* `--approval-mode auto_edit` accepts edits only; `--yolo` is Gemini's full-autonomy switch. */
+    autonomy: [
+        &["--approval-mode", "auto_edit"],
+        &["--approval-mode", "auto_edit"],
+        &["--yolo"],
+    ],
 };
 
 pub struct Gemini {

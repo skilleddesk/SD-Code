@@ -36,6 +36,8 @@ export interface RunLine {
 /** `Read` - file-text icon, a target path, and a `done · 42 ln` pill. No body. */
 export interface ReadToolData {
   kind: 'read';
+  /** The log's `ToolCallStarted` stamp - the running pill ticks against it (0.9.0). */
+  startedAt: string;
   name: string;
   target: string;
   status: ToolStatus;
@@ -46,6 +48,7 @@ export interface ReadToolData {
 /** `Edit` - file-pen icon, a target path, `done · +18 −2`, and a diff body. */
 export interface EditToolData {
   kind: 'edit';
+  startedAt: string;
   name: string;
   target: string;
   status: ToolStatus;
@@ -56,6 +59,7 @@ export interface EditToolData {
 /** `Run` - play icon, a command, `running`, and a live 5-line output window. */
 export interface RunToolData {
   kind: 'run';
+  startedAt: string;
   name: string;
   target: string;
   status: ToolStatus;
@@ -172,12 +176,27 @@ export interface Turn {
   plan: PlanStepData[];
   /** Still running - the plan card's current step spins only while it is. */
   running: boolean;
+  /** The live line's facts, present only while the turn runs (0.9.0). */
+  stats?: TurnStatsData;
   /** Who wrote the turn: the default reviewer is someone else. */
   author: { engine: string; model: string };
   /** The newest verify run for this turn, when there is one (v4). */
   verify?: TurnVerifyData;
   error?: ErrorCardData;
   footer: TurnFooterData;
+}
+
+/**
+ * The live line of a running turn (0.9.0): elapsed, thinking, output size and pace, all measured -
+ * elapsed against the log's own `TurnStarted` stamp, size from the streamed text itself. It exists
+ * only while the turn runs; a finished turn's real totals arrive on its footer.
+ */
+export interface TurnStatsData {
+  startedAt: string;
+  chars: number;
+  thinkingMs: number;
+  thinkingSince: string | null;
+  tools: number;
 }
 
 /** The one-line block at the top of a stream longer than five turns (spec section 7.5). */

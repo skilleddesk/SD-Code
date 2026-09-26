@@ -84,7 +84,7 @@
         "enum": [
           "host.status", "host.doctor", "host.add", "host.trust", "host.key", "host.remove", "host.shutdown", "ssh.key",
           "session.open", "session.close", "session.list", "session.update", "session.fork",
-          "project.add", "project.list", "project.remove",
+          "project.add", "project.scaffold", "project.list", "project.remove",
           "engine.start", "engine.cancel", "engine.kill", "engine.status", "engine.switch", "verify.run",
           "fs.read", "fs.write", "fs.list", "fs.stat", "fs.search", "fs.rename", "fs.delete", "fs.mkdir",
           "git.status", "git.diff", "git.checkpoint", "git.worktree",
@@ -112,7 +112,7 @@
           "TurnStarted", "TurnDelta", "TurnCompleted", "ToolCallStarted", "ToolCallOutput",
           "ToolCallCompleted", "ThinkingDelta", "ErrorRaised", "PermissionRequested",
           "PermissionResolved", "CheckpointSaved", "RewindApplied", "Toast", "ToastDismissed",
-          "StuckDetected", "ConsoleError", "DuelStarted", "DuelResolved", "SessionBridged", "PlanUpdated", "VerifyUpdated"
+          "StuckDetected", "ConsoleError", "DuelStarted", "DuelResolved", "SessionBridged", "PlanUpdated", "VerifyUpdated", "ModelsUpdated"
         ]
       }
     },
@@ -156,8 +156,8 @@
       "properties": {
         "host.status": { "params": {}, "result": { "hostId": "string", "name": "string", "type": "local|vps", "status": "connected|untrusted|degraded|offline|connecting", "sdcd": "string" } },
         "host.doctor": { "params": { "hostId": "string?", "sessionId": "string?" }, "result": { "checks": [{ "id": "string", "label": "string", "state": "ok|warn|fail", "detail": "string", "fix": "string?" }] } },
-        "host.add": { "params": { "type": "local|ssh", "target": "string?", "label": "string?", "password": "string?" }, "result": { "hostId": "string", "reused": "boolean" } },
-        "host.trust": { "params": { "hostId": "string", "fingerprint": "string", "password": "string?" }, "result": { "trusted": "boolean", "hostId": "string", "fingerprint": "string" } },
+        "host.add": { "params": { "type": "local|ssh", "target": "string?", "label": "string?", "password": "string?", "code": "string?" }, "result": { "hostId": "string", "reused": "boolean" } },
+        "host.trust": { "params": { "hostId": "string", "fingerprint": "string", "password": "string?", "code": "string?" }, "result": { "trusted": "boolean", "hostId": "string", "fingerprint": "string" } },
         "host.key": { "params": { "hostId": "string" }, "result": { "hostId": "string", "hostKey": "string", "keyType": "string", "pinned": "boolean", "matches": "boolean|null", "pinnedKey": "string|null" } },
         "ssh.key": { "params": {}, "result": { "publicKey": "string|null", "path": "string|null", "exists": "boolean" } },
         "host.remove": { "params": { "hostId": "string" }, "result": { "removed": "boolean", "name": "string", "sessions": "number" } },
@@ -167,6 +167,7 @@
         "session.update": { "params": { "sessionId": "string", "title": "string?", "state": "string?", "projectId": "string?" }, "result": { "projectId": "string?", "projectRoot": "string?" } },
         "session.list": { "params": {}, "result": { "hosts": [{ "hostId": "string", "sessions": "object[]" }] } },
         "session.fork": { "params": { "sessionId": "string", "atTurn": "integer?" }, "result": { "sessionId": "string", "turns": "integer", "title": "string" } },
+        "project.scaffold": { "params": { "hostId": "string?", "parent": "string", "name": "string" }, "result": { "projectId": "string", "hostId": "string", "root": "string", "name": "string" } },
         "project.add": { "params": { "hostId": "string?", "root": "string", "name": "string?" }, "result": { "projectId": "string", "hostId": "string", "root": "string", "name": "string" } },
         "project.list": { "params": {}, "result": { "projects": [{ "projectId": "string", "hostId": "string", "root": "string", "name": "string", "chats": "integer" }] } },
         "project.remove": { "params": { "projectId": "string" }, "result": { "removed": "boolean", "chats": "integer" } },

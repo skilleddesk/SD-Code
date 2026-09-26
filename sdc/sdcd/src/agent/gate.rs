@@ -23,8 +23,9 @@ use std::time::Duration;
 
 use crate::engines::{EngineEvent, EventSink};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Autonomy {
+    #[default]
     Ask,
     Pro,
     Auto,

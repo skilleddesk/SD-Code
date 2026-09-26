@@ -61,6 +61,16 @@ export function toTurns(
       tools: turn.tools.map(toToolCard),
       plan: turn.plan.map((step) => ({ text: step.text, status: step.status })),
       running: turn.status === 'running' || turn.status === 'stuck',
+      stats:
+        turn.status === 'running' || turn.status === 'stuck'
+          ? {
+              startedAt: turn.startedAt,
+              chars: turn.text.length + turn.thinking.length,
+              thinkingMs: turn.thinkingMs,
+              thinkingSince: turn.thinkingSince,
+              tools: turn.tools.length,
+            }
+          : undefined,
       author: { engine: turn.engine, model: turn.model },
       ...verifyOf(verifies, turn.id),
       checkpoints: checkpoints
@@ -120,7 +130,13 @@ function verifyOf(verifies: readonly VerifyView[], turnId: string): { verify?: T
 
 /** One tool call, in the card variant that matches what it did. */
 function toToolCard(tool: TurnView['tools'][number]): ToolCardData {
-  const base = { name: tool.name, target: tool.target, status: tool.status, meta: tool.meta };
+  const base = {
+    name: tool.name,
+    startedAt: tool.startedAt,
+    target: tool.target,
+    status: tool.status,
+    meta: tool.meta,
+  };
 
   if (tool.tool === 'edit') {
     return { kind: 'edit', ...base, diff: tool.diff };

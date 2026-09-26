@@ -86,6 +86,8 @@ export interface OverlayState {
    * which host it is about.
    */
   remoteFolderHostId: string | null;
+  /** Start-from-scratch dialog (0.9.0). */
+  newProjectOpen: boolean;
 }
 
 export interface OverlayActions {
@@ -114,11 +116,15 @@ export interface OverlayActions {
   /** The remote folder browser, for a host that has no native picker (0.7.13). */
   openRemoteFolder: (hostId: string) => void;
   closeRemoteFolder: () => void;
+  /** Start from scratch (0.9.0): one dialog that makes the folder, the project and the first turn. */
+  openNewProject: () => void;
+  closeNewProject: () => void;
   /** Esc: every overlay closes at once (spec section 8.6). */
   closeAll: () => void;
 }
 
 const initialOverlayState: OverlayState = {
+  newProjectOpen: false,
   settingsOpen: false,
   settingsTab: 'general',
   hubOpen: false,
@@ -181,6 +187,8 @@ export const useOverlayStore = create<OverlayState & OverlayActions>()((set) => 
   closeNewChat: () => set({ newChat: null }),
 
   openRemoteFolder: (hostId) => set({ remoteFolderHostId: hostId }),
+  openNewProject: () => set({ newProjectOpen: true }),
+  closeNewProject: () => set({ newProjectOpen: false }),
 
   closeRemoteFolder: () => set({ remoteFolderHostId: null }),
 

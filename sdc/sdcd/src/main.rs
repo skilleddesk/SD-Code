@@ -29,6 +29,14 @@ use sdcd::{DaemonState, SDCP_VERSION, VERSION};
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    /* Started by `ssh` as its `SSH_ASKPASS` during a sign-in (`ssh::session`): answer the one prompt and
+       leave. Nothing of the daemon is started. */
+    if let Ok(spec) = std::env::var(sdcd::ssh::session::ASKPASS_ENV) {
+        let prompt = std::env::args().nth(1).unwrap_or_default();
+
+        std::process::exit(sdcd::ssh::session::answer_prompt(&spec, &prompt));
+    }
+
     let mut port = paths::DEFAULT_PORT;
     let mut database = None;
     /* 0 means "never leave on my own", which is right for a daemon a human started: a terminal you
@@ -70,6 +78,24 @@ async fn main() -> Result<()> {
         .with_context(|| format!("binding 127.0.0.1:{port}"))?;
 
     println!("  loopback   127.0.0.1:{}", tcp.local_addr()?.port());
+
+    /* The catalogue keeps itself fresh (0.9.0): the connected providers are asked at start and every
+       twelve hours, and every window hears `ModelsUpdated` when a list moved. A model a provider ships
+       tomorrow is in the dropdown tomorrow, with no button pressed and no build. */
+    {
+        let store = state.store.clone();
+        let notifier: Arc<dyn Notifier> =
+            Arc::new(ChannelNotifier::new(state.events.clone(), state.fanout.clone()));
+
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+
+            loop {
+                sdcd::providers::models::refresh_and_tell(store.clone(), notifier.clone());
+                tokio::time::sleep(std::time::Duration::from_secs(12 * 60 * 60)).await;
+            }
+        });
+    }
 
     #[cfg(unix)]
     {

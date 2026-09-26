@@ -58,6 +58,24 @@ pub struct CliSpec {
     pub model_flag: Option<&'static str>,
     /// Extra environment the CLI needs to be quiet: `NO_COLOR` and friends.
     pub env: &'static [(&'static str, &'static str)],
+    /// The flags that carry the person's autonomy to the CLI's own agent (0.9.0): `[ask, pro, auto]`.
+    ///
+    /// In `--print` mode none of the three CLIs can ask a question, so a tool that would need
+    /// permission does not wait - it **fails**, silently from the transcript's point of view: the model
+    /// says "I'll create the file", the write is refused, and the turn ends `Done` with nothing on
+    /// disk. That was measured, not imagined (`greet.txt`, local and on a host, 0.8.1). The folder is
+    /// checkpointed before every change and Rewind exists, so the careful level maps to "edits inside
+    /// the folder are fine, anything wider is not", not to "fail everything without saying so".
+    pub autonomy: [&'static [&'static str]; 3],
+}
+
+/// The autonomy flags of `spec` for `level` - its own function so the tests can hold the mapping.
+pub fn autonomy_args(spec: &CliSpec, level: crate::agent::gate::Autonomy) -> &'static [&'static str] {
+    match level {
+        crate::agent::gate::Autonomy::Ask => spec.autonomy[0],
+        crate::agent::gate::Autonomy::Pro => spec.autonomy[1],
+        crate::agent::gate::Autonomy::Auto => spec.autonomy[2],
+    }
 }
 
 /// The running children, so a cancel can kill one: the local pid, and - for a turn on a host - the
@@ -115,7 +133,7 @@ impl CliAdapter {
             self.spec.env,
             &pid_file,
         )?;
-        let launcher = crate::host::program::command("ssh").ok_or_else(|| {
+        let launcher = crate::ssh::program().map(|path| crate::host::program::command_for(&path)).ok_or_else(|| {
             ErrorObject::not_found("`ssh` is not on this machine's PATH, so no turn can run on a host")
         })?;
         let mut command = Command::new(launcher.get_program());
@@ -207,6 +225,7 @@ impl CliAdapter {
                 }
             })
             .chain(model_args(self.spec.model_flag, &prompt.model))
+            .chain(autonomy_args(&self.spec, prompt.autonomy).iter().map(|arg| (*arg).to_string()))
             .collect();
 
         /* `host::program` resolves the name the way the shell does - which is what makes an
@@ -487,7 +506,32 @@ mod tests {
             history: Vec::new(),
             project_root: folder.map(str::to_string),
             remote: None,
+            autonomy: Default::default(),
         }
+    }
+
+    /// 0.9.0: the autonomy level travels to each CLI's own permission flags - measured first on
+    /// `claude -p`, where a Write without them is silently refused (`greet.txt` stayed missing while
+    /// the turn ended `Done`). The careful level accepts edits only: the folder is checkpointed.
+    #[test]
+    fn the_autonomy_level_reaches_the_clis_own_flags() {
+        use crate::agent::gate::Autonomy;
+        use crate::engines::claude_code::CLAUDE_SPEC;
+
+        assert_eq!(
+            autonomy_args(&CLAUDE_SPEC, Autonomy::Ask),
+            &["--permission-mode", "acceptEdits"]
+        );
+        assert!(autonomy_args(&CLAUDE_SPEC, Autonomy::Pro).contains(&"--allowedTools"));
+        assert_eq!(autonomy_args(&CLAUDE_SPEC, Autonomy::Auto), &["--dangerously-skip-permissions"]);
+        assert_eq!(
+            autonomy_args(&crate::engines::codex::CODEX_SPEC, Autonomy::Ask),
+            &["--sandbox", "workspace-write"]
+        );
+        assert_eq!(
+            autonomy_args(&crate::engines::gemini::GEMINI_SPEC, Autonomy::Auto),
+            &["--yolo"]
+        );
     }
 
     /// 0.7.13: a turn on a **host** runs the CLI over `ssh`, in the chat's folder *there*.

@@ -242,6 +242,13 @@ binary is on `PATH`; both read the same `tauri.conf.json`.
 Nothing here is a stub that pretends: each gap below is a boundary the code states at the point where
 it is reached.
 
+* **A hardened VPS is reached by signing in once (0.9.0), and the code is asked for, never stored.** A host
+  that only offers `keyboard-interactive` (password + verification code per connection) is signed in
+  through one kept-open connection (`sdcd/src/ssh/session.rs`, ControlMaster + `-O proxy`, 10-hour
+  persist); every later call rides it. What is deliberately absent: the daemon never stores the password
+  or a code, so after the persist window (or a reboot) the person signs in again - that is the design,
+  not a gap. Windows needs the `ssh` Git for Windows ships (multiplexing); without it the key-install
+  path of 0.7.13 remains the fallback and the doctor says so.
 * **SDC is an agent now, for API and local models (0.8.0) - and it stays the workbench around the CLIs.**
   With **Agent** chosen, a native-API or Ollama model runs inside the daemon's own loop (`sdcd/src/agent`):
   eight tools on the daemon's existing `fs.*` / `shell.run` / `git.*` paths, so it works in a folder on a
@@ -351,10 +358,13 @@ it is reached.
 
 ## Next step
 
-1. **Drive the VPS path against the owner's server**: `Install key` needs its password once; after that,
-   the agent, Verify, the tree and the Terminal all use the same host code the tests cover.
-2. **A paid live turn in the Anthropic dialect** (thinking with its signature, tool results), to go with the
-   recorded stream the tests replay.
+1. **A paid live turn in the Anthropic dialect** (thinking with its signature, tool results), to go with the
+   recorded stream the tests replay. The VPS path itself was driven end to end against the owner's own
+   server in 0.9.0: sign-in with a password and a verification code, the tree, remote file ops, and a
+   Claude Code agent turn that edited a file there.
+2. **A key for one of the six new providers** (Google, xAI, Moonshot, Mistral, Qwen, Z.ai), to exercise
+   their live list and a chat turn from here; their blocks follow the same OpenAI shape the measured
+   providers use, but none of the six has been contacted from this machine.
 3. **A terminal emulator** - `xterm.js` in the window and `-tt` on a host - for full-screen programs; the
    Terminal tab runs commands and long-running processes today, but it is not a PTY.
 4. The provider OAuth token exchange, which needs a client registration with each provider.

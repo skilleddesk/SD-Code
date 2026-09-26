@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  filterGroups,
   MAX_QUEUED_PROMPTS,
   useModelStore,
   engineConnected,
@@ -141,6 +142,37 @@ describe('nextEngine', () => {
   it('keeps the plain order when nothing is connected', () => {
     expect(nextEngine('claude_code', () => false)).toBe('codex');
     expect(nextEngine('claude_code')).toBe('codex');
+  });
+});
+
+describe('filterGroups', () => {
+  const catalog = [
+    row('claude-sonnet-5', 'anthropic-api'),
+    row('claude-sonnet-4-6', 'anthropic-api'),
+    row('claude-sonnet-4-5', 'anthropic-api'),
+    { ...row('gpt-5', 'openai-api'), providerLabel: 'OpenAI API' },
+  ];
+  const { groups } = groupCatalog(catalog, connected('anthropic-api', 'openai-api'));
+
+  it('is the identity for an empty query', () => {
+    expect(filterGroups(groups, '  ')).toEqual(groups);
+  });
+
+  it('narrows to matching rows and unfolds the older versions', () => {
+    /* `claude-sonnet-4-5` sits behind the Older toggle; a person searching for it must see it. */
+    const found = filterGroups(groups, 'sonnet-4-5');
+
+    expect(found).toHaveLength(1);
+    expect(found[0].models.map((model) => model.id)).toEqual(['claude-sonnet-4-5']);
+    expect(found[0].older).toHaveLength(0);
+  });
+
+  it('matches a whole provider by its label, and drops groups with nothing', () => {
+    const anthropic = filterGroups(groups, 'anthropic');
+
+    expect(anthropic).toHaveLength(1);
+    expect(anthropic[0].models.length).toBeGreaterThanOrEqual(2);
+    expect(filterGroups(groups, 'no-such-model')).toHaveLength(0);
   });
 });
 

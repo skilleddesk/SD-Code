@@ -427,6 +427,8 @@ async fn review(state: &Arc<DaemonState>, workspace: &Arc<Workspace>, request: &
         history: Vec::new(),
         project_root: Some(request.root.clone()),
         remote: request.remote.clone(),
+        /* A review only reads; the careful level is the right one for it. */
+        autonomy: crate::agent::gate::Autonomy::Ask,
     };
     let recorder = Recorder::new();
 
