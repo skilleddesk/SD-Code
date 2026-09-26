@@ -15,6 +15,23 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [0.11.4] — the 0.11.3 tree, re-cut
+
+No behaviour changed between `20cdef9` (v0.11.3) and this tag: the five version files moved, and nothing
+else did. The entry is here so the number is not a mystery in the record - `0.11.4` exists to give the
+0.11.3 source a downloadable build whose number can be read back off a fresh install.
+
+### Changed
+
+* **One number, five files.** `sdc/package.json`, `sdc/app/package.json`, `sdc/app/src-tauri/tauri.conf.json`,
+  `sdc/sdcd/Cargo.toml` and `sdc/app/src-tauri/Cargo.toml` all say `0.11.4`, so the status bar's
+  `v0.11.4 · sdcd 0.11.4` cell, Settings → About, `sdcd --version`, `host.status` and the installer names
+  (`SDC_0.11.4_x64-setup.exe`) agree - the thing `node _verify/version-report.mjs` exists to check.
+* **Nothing else changed.** Everything 0.11.3 shipped is in this build unchanged: the `Reconnect` that
+  measures before it claims, the Provider Hub's single `✕`, the new chat that keeps its folder, and the
+  Gemini refusal that names a route which works. The release pipeline keeps one release at a time
+  ("Keep only this release"), so a fresh download gets this build.
+
 ## [0.11.3] — `Reconnect` now measures, and the Hub shows one `✕`
 
 Four reports, and three of them were about something that only *looked* like it did the job: the degraded
