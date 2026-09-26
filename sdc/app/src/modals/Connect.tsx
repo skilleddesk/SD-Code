@@ -414,7 +414,11 @@ export function Connect() {
                             aria-hidden="true"
                           />
                           <span className="text-text-secondary">
-                            {login.state === 'waiting_for_code' ? strings.connect.waitingForCode : strings.connect.waiting}
+                            {login.state === 'waiting_for_code'
+                              ? strings.connect.waitingForCode
+                              : login.state === 'waiting_for_browser'
+                                ? strings.connect.waitingForBrowser
+                                : strings.connect.waiting}
                           </span>
                         </>
                       )}

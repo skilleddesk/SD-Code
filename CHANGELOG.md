@@ -15,6 +15,51 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [0.11.2] — Gemini, researched to the bottom: the sign-in completes and the answer reads right
+
+The report was "Gemini still does not work". This release is what running the app's own sign-in
+flow against the installed Gemini CLI (0.60.0) and reading its source found - five defects, each
+measured before it was fixed, and the whole sign-in verified end to end through a real `sdcd`.
+
+### Fixed — the sign-in that could never finish
+
+* **Nobody answered Gemini's question.** Over pipes Gemini is headless, and headless it asks
+  `Opening authentication page in your browser. Do you want to continue? [Y/n]:` and waits on stdin.
+  The Gemini recipe typed nothing, so every sign-in from the app sat on that question until it was
+  cancelled - which is why `~/.gemini/oauth_creds.json` was never written. Recipes now carry
+  `answers` - `(question, reply)` pairs typed **when the question appears** - and Gemini's answers
+  `Y`. Answered, Gemini starts its loopback callback server and opens the Google page in the browser
+  itself. Verified through the daemon: the question is answered in 1.5 s, a `node` listener opens on
+  127.0.0.1, and the dialog reads `waiting_for_browser`.
+* **The question was invisible.** The process ring read output with `read_line`, and a question has
+  no newline - so neither the dialog nor anything else could ever see it. Each stream now keeps its
+  half-written tail, and output includes it (`Session::partials`).
+* **A new state for a CLI that opens the browser itself.** `waiting_for_browser`: no link to copy, no
+  code box to paste into - the card says *"A Google sign-in page opened in your browser. Approve it
+  there"* and turns to Signed in by itself when the credential appears. The finished login's
+  leftover `node` (headless Gemini waits for a prompt that never comes) is closed.
+
+### Fixed — processes that outlived their Stop
+
+* **Windows killed the wrapper, not the CLI.** An npm CLI runs as `cmd /c gemini.cmd`, the work is
+  a `node` grandchild, and `Child::kill` ended only the `cmd`: twelve Gemini processes were found
+  still running, each holding an OAuth callback port. A cancelled sign-in and a stopped CLI turn now
+  end the whole tree (`pty::kill_tree`, `taskkill /T`), and `CliAdapter::kill` - which only forgot
+  the pid - now kills it. Verified: after cancel, zero Gemini processes remain.
+
+### Fixed — a Gemini answer that read wrong once it arrived
+
+Read from Gemini's `JsonStreamEventType` source, and held by a test written in its exact shapes:
+
+* **The prompt opened every answer.** Gemini echoes the prompt as `{"type":"message","role":"user"}`
+  first; the parser printed it, so each answer began with the person's own question and the whole
+  replayed history. Only `role: "assistant"` messages are the answer now.
+* **Every tool was one card that never finished.** Gemini names tools `tool_name`/`tool_id` with
+  `parameters`; the parser read `name`/`id`, so every call became a card called "Tool" with id
+  `call`. Tool cards now carry Gemini's own id, name, kind (edit / run / read) and target, and a
+  `tool_result` finishes its card - failed ones red, with Gemini's error.
+* **A failed turn ended green.** Gemini's `result` says `status: "error"`; it is a failure now.
+
 ## [0.11.1] — the freshest chat gets the located folder too
 
 Same release as 0.11.0 plus one ordering fix caught right after tagging: a chat created *by* the

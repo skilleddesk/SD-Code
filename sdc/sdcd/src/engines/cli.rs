@@ -313,6 +313,10 @@ impl CliAdapter {
         };
 
         if question.is_some() {
+            if let Some(pid) = child.id() {
+                crate::pty::kill_tree(pid);
+            }
+
             let _ = child.kill().await;
         }
 
@@ -383,7 +387,15 @@ impl CliAdapter {
             return false;
         };
 
-        children.remove(turn_id).is_some()
+        /* The pid is the `cmd` shim's on Windows; the tree kill reaches the CLI under it. */
+        match children.remove(turn_id) {
+            Some(pid) => {
+                crate::pty::kill_tree(pid);
+
+                true
+            }
+            None => false,
+        }
     }
 
     /// True while a turn's child is alive - the input to the `Running`/`Stuck` decision.

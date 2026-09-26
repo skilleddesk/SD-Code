@@ -1099,7 +1099,7 @@ export interface SdcpMethodMap {
       program: string;
       /** The page to approve, once the CLI has printed it. */
       url: string | null;
-      state: 'starting' | 'waiting_for_url' | 'waiting_for_code' | 'authenticated' | 'exited' | 'failed' | 'cancelled';
+      state: 'starting' | 'waiting_for_url' | 'waiting_for_code' | 'waiting_for_browser' | 'authenticated' | 'exited' | 'failed' | 'cancelled';
       /** What this recipe expects the user to know, from the daemon's own table. */
       note: string | null;
       /** The CLI's output tail, so a recipe that goes stale is visible instead of silent. */

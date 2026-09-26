@@ -808,6 +808,9 @@ export const strings = {
     openLink: 'Open in browser',
     waiting: 'Waiting for the CLI…',
     waitingForCode: 'Approve the page, then paste the code below.',
+    /** Gemini opens the Google page itself and prints no link (0.11.2). */
+    waitingForBrowser:
+      'A Google sign-in page opened in your browser. Approve it there - this card turns to Signed in by itself.',
     codeLabel: 'Code from the page',
     codePlaceholder: 'Paste the code or the whole redirect URL',
     submitCode: 'Submit code',
