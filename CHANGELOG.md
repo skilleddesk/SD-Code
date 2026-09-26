@@ -15,6 +15,13 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [0.11.1] — the freshest chat gets the located folder too
+
+Same release as 0.11.0 plus one ordering fix caught right after tagging: a chat created *by* the
+routing itself is not folded into the window's state yet when the locate step asks about it, so the
+step treated "not found yet" as "has a folder" and skipped the bind - on exactly the chat that needed
+it most. A session the window cannot see yet is a session with no folder, and it now locates.
+
 ## [0.11.0] — the domain finds its files, the sidebar finds anything, and Gemini finally answers
 
 The release behind *"ami domain a project file access cai"*: naming a site is now enough to be

@@ -1899,10 +1899,12 @@ export async function sendPrompt(prompt: string, target?: string): Promise<strin
         }
       }
 
-      /* The domain names a site; a chat that still has no folder gets the site's own (0.11.0). */
+      /* The domain names a site; a chat that still has no folder gets the site's own (0.11.0).
+         A chat so new that the window has not folded its `SessionOpened` yet is exactly a chat
+         with no folder, which is why `landed === null` locates rather than skips. */
       const landed = sessionId === null ? null : findSession(useAppStore.getState().hosts, sessionId);
 
-      if (landed !== null && sessionId !== null && (landed.session.projectRoot ?? null) === null) {
+      if (sessionId !== null && (landed === null || (landed.session.projectRoot ?? null) === null)) {
         const domain = hostDomain(mentioned) || mentioned.name;
         const candidates = await locateProject(mentioned.id, domain);
 
