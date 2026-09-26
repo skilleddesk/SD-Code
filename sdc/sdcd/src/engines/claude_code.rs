@@ -42,6 +42,13 @@ pub const CLAUDE_SPEC: CliSpec = CliSpec {
     prompt: PromptPlacement::Stdin,
     model_flag: Some("--model"),
     env: &[("NO_COLOR", "1"), ("CLAUDE_NO_UPDATE_CHECK", "1")],
+    /* `--permission-mode acceptEdits` lets the checkpointed folder be edited; `--allowedTools Bash`
+       adds commands; `--dangerously-skip-permissions` is the CLI's own full-autonomy switch. */
+    autonomy: [
+        &["--permission-mode", "acceptEdits"],
+        &["--permission-mode", "acceptEdits", "--allowedTools", "Bash"],
+        &["--dangerously-skip-permissions"],
+    ],
 };
 
 pub struct ClaudeCode {

@@ -3,6 +3,7 @@ import { ChevronRight } from 'lucide-react';
 import { strings } from '../../strings';
 import { toast } from '../../store/toast';
 import { ErrorCard } from './ErrorCard';
+import { LiveStats } from './LiveStats';
 import { AnswerBlock } from './AnswerBlock';
 import { CheckpointRail } from './CheckpointRail';
 import { PlanCard } from './PlanCard';
@@ -90,6 +91,9 @@ function TurnBlock({ turn, sessionId }: { turn: Turn; sessionId: string }) {
           </span>
         )}
       </div>
+
+      {/* The measured live line (0.9.0): only while the turn runs; the footer carries real totals. */}
+      {turn.stats === undefined ? null : <LiveStats stats={turn.stats} />}
 
       {/* The plan first: it is the map of everything below it. */}
       <PlanCard steps={turn.plan} running={turn.running} />

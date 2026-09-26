@@ -342,6 +342,33 @@ export function latestVersions(
  * bundled where it did not - and nothing is invented here. What this function adds is the connected
  * filter, the version split, and the *engine* each group runs on, all facts about the provider.
  */
+/**
+ * The dropdown's search (0.9.0): the groups, narrowed to the rows whose name, id or provider matches.
+ *
+ * A match folds the group's older versions into the visible list - a person typing `sonnet 4` is
+ * looking for that model, and "it exists but is hidden behind a toggle" is a worse answer than showing
+ * it. Empty query returns the groups untouched, so the search costs nothing while it is not used.
+ */
+export function filterGroups(groups: readonly CatalogGroup[], query: string): CatalogGroup[] {
+  const needle = query.trim().toLowerCase();
+
+  if (needle === '') {
+    return [...groups];
+  }
+
+  const matches = (row: CatalogModel): boolean =>
+    row.id.toLowerCase().includes(needle) || row.name.toLowerCase().includes(needle);
+
+  return groups
+    .map((group) => {
+      const wholeProvider = group.providerLabel.toLowerCase().includes(needle);
+      const rows = [...group.models, ...group.older].filter((row) => wholeProvider || matches(row));
+
+      return { ...group, models: rows, older: [] };
+    })
+    .filter((group) => group.models.length > 0);
+}
+
 export function groupCatalog(
   catalog: readonly CatalogModel[],
   providers: readonly { id: string; name: string; status: string }[],

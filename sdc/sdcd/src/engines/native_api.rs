@@ -707,6 +707,7 @@ mod tests {
                folder is on a host is still answered from here (0.7.13). */
             project_root: None,
             remote: None,
+                    autonomy: Default::default(),
         }
     }
 

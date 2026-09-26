@@ -103,6 +103,7 @@ export type SdcpMethod =
   | 'session.fork'
   /** The folder a chat works in (0.7.6). */
   | 'project.add'
+  | 'project.scaffold'
   | 'project.list'
   | 'project.remove'
   | 'engine.start'
@@ -543,6 +544,19 @@ export interface VerifyReview {
   issues?: VerifyIssue[];
 }
 
+/**
+ * The model catalogue moved (0.9.0): a provider's live list was fetched and cached - on a schedule, or
+ * because a key was just saved. The rows are NOT in the event (OpenRouter alone lists hundreds); a
+ * window that cares asks `models.list`, which now answers from the fresh cache.
+ */
+export interface ModelsUpdatedEvent {
+  type: 'ModelsUpdated';
+  /** The providers whose lists were refreshed live, by id. */
+  providers: string[];
+  /** How many models the catalogue holds across them, after the refresh. */
+  models: number;
+}
+
 /** A verify run (v4), whole each time: the checks, then the review by a different engine. */
 export interface VerifyUpdatedEvent {
   type: 'VerifyUpdated';
@@ -727,7 +741,8 @@ export type SdcpEvent =
   | DuelResolvedEvent
   | SessionBridgedEvent
   | PlanUpdatedEvent
-  | VerifyUpdatedEvent;
+  | VerifyUpdatedEvent
+  | ModelsUpdatedEvent;
 
 /** The `type` literals, in catalogue order — used by tests and by the reducer's exhaustiveness. */
 export const SDCP_EVENT_TYPES = [
@@ -759,6 +774,7 @@ export const SDCP_EVENT_TYPES = [
   'SessionBridged',
   'PlanUpdated',
   'VerifyUpdated',
+  'ModelsUpdated',
 ] as const satisfies readonly SdcpEvent['type'][];
 
 /** Every event as a `Record` keyed by `type`, handy for a switch's exhaustiveness check. */
@@ -790,10 +806,13 @@ export interface SdcpMethodMap {
       /**
        * The password for a host that asks for one, when the user chooses to give it.
        *
-       * It is used for a single `ssh` call - the one that copies SDC's public key into
-       * `~/.ssh/authorized_keys` - and is stored nowhere. See `auth::remote::install_key`.
+       * Since 0.8.1 it signs in once and that connection is kept open (`ssh::session::sign_in`); on a
+       * machine without an `ssh` that can hold one, it copies SDC's public key instead
+       * (`auth::remote::install_key`). Either way it is stored nowhere.
        */
       password?: string;
+      /** The verification code a two-factor host asks for (0.8.1), spent with the password, kept nowhere. */
+      code?: string;
     };
     /** `reused` is true when that `user@host` was already in the list - the row is returned as-is. */
     result: { hostId: string; reused: boolean };
@@ -807,7 +826,7 @@ export interface SdcpMethodMap {
    * one-time key install safe on a host whose identity was never checked.
    */
   'host.trust': {
-    params: { hostId: string; fingerprint: string; password?: string };
+    params: { hostId: string; fingerprint: string; password?: string; code?: string };
     result: { trusted: boolean; hostId: string; fingerprint: string };
   };
   /**
@@ -864,6 +883,15 @@ export interface SdcpMethodMap {
 
   'project.add': {
     params: { hostId?: string; root: string; name?: string };
+    result: { projectId: string; hostId: string; root: string; name: string };
+  };
+  /**
+   * A project from nothing (0.9.0): the folder `<parent>/<name>` is created - locally or on the host -
+   * and added as a project in the same call, so starting from scratch is one step. `name` must be a
+   * plain folder name; separators and `..` are refused.
+   */
+  'project.scaffold': {
+    params: { hostId?: string; parent: string; name: string };
     result: { projectId: string; hostId: string; root: string; name: string };
   };
   'project.list': { params: Record<string, never>; result: { projects: ProjectRecord[] } };

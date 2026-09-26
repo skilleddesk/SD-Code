@@ -170,6 +170,12 @@ export function getTransport(): SdcpTransport {
   const admit = (notification: Notification): void => {
     daemonSeq = Math.max(daemonSeq, notification.seq);
 
+    /* The daemon refreshed a provider's live list (0.9.0). The rows are not in the event; this is the
+       one place a daemon event is allowed to trigger a call, because the reducer is a pure fold. */
+    if (notification.event.type === 'ModelsUpdated' && !catchingUp) {
+      void import('../store/intents').then(({ refreshCatalog }) => refreshCatalog());
+    }
+
     if (notification.event.type === 'Toast' || notification.event.type === 'ToastDismissed') {
       /* The envelope carries the moment the daemon wrote the event, so "old" is a fact rather than a
          guess about how long the backlog takes: a notification about something that happened half a

@@ -742,7 +742,7 @@ function DoctorRow({
              * password input that finishes it, which is exactly what used to be missing for a host that
              * was already added.
              */
-            if (fix === 'Trust' || fix === 'Re-pin' || fix === 'Install key') {
+            if (fix === 'Trust' || fix === 'Re-pin' || fix === 'Install key' || fix === 'Sign in') {
               openAddHostForLabel(label);
               return;
             }

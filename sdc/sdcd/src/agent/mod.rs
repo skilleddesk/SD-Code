@@ -449,6 +449,7 @@ mod tests {
             history: Vec::new(),
             project_root: None,
             remote: None,
+                    autonomy: Default::default(),
         };
 
         run(Backend::Ollama, Autonomy::Ask, 5, None, &prompt, &recorder.sink());
@@ -568,6 +569,7 @@ mod end_to_end {
             history: vec![crate::engines::Message::user("earlier"), crate::engines::Message::assistant("ok")],
             project_root: Some(root.to_str().unwrap().to_string()),
             remote: None,
+                    autonomy: Default::default(),
         };
         let recorder = crate::engines::Recorder::new();
 
@@ -645,6 +647,7 @@ mod end_to_end {
             history: Vec::new(),
             project_root: Some(root.to_str().unwrap().to_string()),
             remote: None,
+                    autonomy: Default::default(),
         };
         let recorder = crate::engines::Recorder::new();
 

@@ -144,6 +144,9 @@ pub fn remote_checks(ssh: &crate::ssh::Ssh, root: Option<&str>) -> Vec<Value> {
         (_, "connected") => None,
         (Ok(crate::ssh::hostkey::Trust::Unknown(_)), _) => Some("Trust"),
         (Ok(crate::ssh::hostkey::Trust::Changed { .. }), _) => Some("Re-pin"),
+        /* With an `ssh` that can hold a connection open, the card signs in (0.8.1); without one it can
+           only copy SDC's key over. */
+        (Ok(crate::ssh::hostkey::Trust::Pinned(_)), _) if crate::ssh::session::program().is_some() => Some("Sign in"),
         (Ok(crate::ssh::hostkey::Trust::Pinned(_)), _) => Some("Install key"),
         (Err(_), _) => None,
     };

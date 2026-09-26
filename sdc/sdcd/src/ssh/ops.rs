@@ -542,12 +542,17 @@ pub fn pid_file(turn_id: &str) -> String {
 ///   point of a remote chat;
 /// * `sh -c 'echo $$ > <pid file>; exec env … <cli> …'` - the shell writes its own pid and then `exec`s
 ///   the CLI, so the pid in the file *is* the CLI's pid;
-/// * `if command -v setsid …; then exec setsid sh -c …; else sh -c …; fi` - with `setsid` the CLI becomes
+/// * `if command -v setsid …; then setsid sh -c …; else sh -c …; fi` - with `setsid` the CLI becomes
 ///   the leader of a **new process group**, so the kill line signals the group (`kill -TERM -<pid>`) and
 ///   not just one process. That is the difference between stopping a turn and leaving whatever it spawned
 ///   behind - a test runner, a compiler, a dev server - running on somebody's server. The **host** answers
 ///   whether `setsid` exists, in the same round trip: one less probe for the daemon to cache, one less
-///   state to go stale, and a stripped container still gets a working turn;
+///   state to go stale, and a stripped container still gets a working turn. **Not** `exec setsid`
+///   (0.8.1, measured on the report's VPS): the shell sshd starts is its own group's leader, an
+///   `exec`ed `setsid` inherits that and therefore *forks*, and its parent exits at once with 0 - the
+///   prompt on stdin, the whole answer and the exit code were lost (`claude` said `Input must be
+///   provided either through stdin`). Run as a child it is not a leader, so it does not fork, and the
+///   shell waits for it;
 /// * `env …` - the quiet flags the adapter sets locally (`NO_COLOR`, `TERM`) travel as environment for
 ///   the remote process rather than being set on the local `ssh`, where they would do nothing.
 ///
@@ -597,7 +602,7 @@ fn wrap_line(text: &str, root: Option<&str>, pid_file: &str) -> Result<String, E
     let inner = format!("mkdir -p {}/run 2>/dev/null; echo $$ > {pid_path}; {text}", state_dir());
     let quoted = sh_quote(&inner);
     let runner = format!(
-        "if command -v setsid >/dev/null 2>&1; then exec setsid sh -c {quoted}; else sh -c {quoted}; fi"
+        "if command -v setsid >/dev/null 2>&1; then setsid sh -c {quoted}; else sh -c {quoted}; fi"
     );
 
     match root {
@@ -891,6 +896,14 @@ pub fn refusal(label: &str, reason: &str) -> String {
         );
     }
 
+    /* A host that only takes `keyboard-interactive` - public-key login off, a password and often a
+       verification code on every session - is reached by signing in once (0.8.1, `ssh::session`). */
+    if lowered.contains("(keyboard-interactive)") && super::session::program().is_some() {
+        return format!(
+            "{label} is not signed in. It asks for a password (and a verification code, if it uses one) on every connection, so SDC signs in once and keeps that connection open: open the host's Sign in card and type them there."
+        );
+    }
+
     if lowered.contains("keyboard-interactive") || lowered.contains("permission denied") {
         return format!(
             "{label} answered, but it does not accept SDC's key yet. Add this host again with its password filled in (Add a host → SSH / VPS) and SDC copies its key over once, after which every connection is passwordless - or add a key to `~/.ssh/authorized_keys` yourself."
@@ -1015,7 +1028,9 @@ mod tests {
         let line = turn_line("claude", &args, Some("/srv/app"), &[("NO_COLOR", "1")], "run/turn-9.pid").unwrap();
 
         assert!(line.contains("cd '/srv/app' &&"), "{line}");
-        assert!(line.contains("if command -v setsid >/dev/null 2>&1; then exec setsid sh -c "), "{line}");
+        assert!(line.contains("if command -v setsid >/dev/null 2>&1; then setsid sh -c "), "{line}");
+        /* Never `exec setsid`: an exec'd setsid forks and returns at once (see `turn_line`). */
+        assert!(!line.contains("exec setsid"), "{line}");
         assert!(line.contains("; else sh -c "), "the host without setsid still runs the turn: {line}");
         assert!(line.contains("mkdir -p "), "the pid file needs its folder to exist: {line}");
         assert!(line.contains("echo $$ >"), "the pid comes from the shell that execs the CLI: {line}");

@@ -170,6 +170,173 @@
       ]
     },
     {
+      "id": "google",
+      "label": "Google Gemini API",
+      "live": "https://generativelanguage.googleapis.com/v1beta/openai/models",
+      "protocol": "openai",
+      "models": [
+        {
+          "id": "gemini-3-pro-preview",
+          "tier": "deep",
+          "ctx": 1000000,
+          "cost": "$2 / $12",
+          "name": "Gemini 3 Pro (preview)"
+        },
+        {
+          "id": "gemini-2.5-pro",
+          "tier": "deep",
+          "ctx": 1000000,
+          "cost": "$1.25 / $10",
+          "name": "Gemini 2.5 Pro"
+        },
+        {
+          "id": "gemini-2.5-flash",
+          "tier": "fast",
+          "ctx": 1000000,
+          "cost": "$0.30 / $2.50",
+          "name": "Gemini 2.5 Flash"
+        }
+      ]
+    },
+    {
+      "id": "xai",
+      "label": "xAI Grok",
+      "live": "https://api.x.ai/v1/models",
+      "protocol": "openai",
+      "models": [
+        {
+          "id": "grok-4",
+          "tier": "deep",
+          "ctx": 256000,
+          "cost": "$3 / $15",
+          "name": "Grok 4"
+        },
+        {
+          "id": "grok-4-fast",
+          "tier": "fast",
+          "ctx": 2000000,
+          "cost": "$0.20 / $0.50",
+          "name": "Grok 4 Fast"
+        },
+        {
+          "id": "grok-code-fast-1",
+          "tier": "fast",
+          "ctx": 256000,
+          "cost": "$0.20 / $1.50",
+          "name": "Grok Code Fast"
+        }
+      ]
+    },
+    {
+      "id": "moonshot",
+      "label": "Moonshot Kimi",
+      "live": "https://api.moonshot.ai/v1/models",
+      "protocol": "openai",
+      "models": [
+        {
+          "id": "kimi-k2-0905-preview",
+          "tier": "balanced",
+          "ctx": 256000,
+          "cost": "$0.60 / $2.50",
+          "name": "Kimi K2"
+        },
+        {
+          "id": "kimi-k2-turbo-preview",
+          "tier": "fast",
+          "ctx": 256000,
+          "cost": "$1.15 / $8",
+          "name": "Kimi K2 Turbo"
+        },
+        {
+          "id": "kimi-latest",
+          "tier": "balanced",
+          "ctx": 128000,
+          "cost": "$0.60 / $2.50",
+          "name": "Kimi (latest)"
+        }
+      ]
+    },
+    {
+      "id": "mistral",
+      "label": "Mistral",
+      "live": "https://api.mistral.ai/v1/models",
+      "protocol": "openai",
+      "models": [
+        {
+          "id": "mistral-large-latest",
+          "tier": "deep",
+          "ctx": 128000,
+          "cost": "$2 / $6",
+          "name": "Mistral Large"
+        },
+        {
+          "id": "codestral-latest",
+          "tier": "fast",
+          "ctx": 256000,
+          "cost": "$0.30 / $0.90",
+          "name": "Codestral"
+        },
+        {
+          "id": "devstral-medium-latest",
+          "tier": "balanced",
+          "ctx": 128000,
+          "cost": "$0.40 / $2",
+          "name": "Devstral Medium"
+        }
+      ]
+    },
+    {
+      "id": "qwen",
+      "label": "Qwen (Alibaba)",
+      "live": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/models",
+      "protocol": "openai",
+      "models": [
+        {
+          "id": "qwen3-max",
+          "tier": "deep",
+          "ctx": 256000,
+          "cost": "$1.20 / $6",
+          "name": "Qwen3 Max"
+        },
+        {
+          "id": "qwen3-coder-plus",
+          "tier": "balanced",
+          "ctx": 1000000,
+          "cost": "$1 / $5",
+          "name": "Qwen3 Coder Plus"
+        },
+        {
+          "id": "qwen-plus",
+          "tier": "fast",
+          "ctx": 1000000,
+          "cost": "$0.40 / $1.20",
+          "name": "Qwen Plus"
+        }
+      ]
+    },
+    {
+      "id": "zai",
+      "label": "Z.ai GLM",
+      "live": "https://api.z.ai/api/paas/v4/models",
+      "protocol": "openai",
+      "models": [
+        {
+          "id": "glm-4.6",
+          "tier": "deep",
+          "ctx": 200000,
+          "cost": "$0.60 / $2.20",
+          "name": "GLM-4.6"
+        },
+        {
+          "id": "glm-4.5-air",
+          "tier": "fast",
+          "ctx": 128000,
+          "cost": "$0.20 / $1.10",
+          "name": "GLM-4.5 Air"
+        }
+      ]
+    },
+    {
       "id": "custom",
       "label": "Custom endpoint",
       "live": "http://127.0.0.1:8080/v1/models",

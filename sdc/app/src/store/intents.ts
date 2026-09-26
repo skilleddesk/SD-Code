@@ -404,7 +404,7 @@ export async function closeSession(sessionId: string): Promise<void> {
  * The password travels with this one call and is kept nowhere: not in the store, not in the event log,
  * and not in the sentence that comes back.
  */
-export async function installHostKey(hostId: string, password: string): Promise<boolean> {
+export async function installHostKey(hostId: string, password: string, code = ''): Promise<boolean> {
   const host = useAppStore.getState().hosts.find((candidate) => candidate.id === hostId);
 
   if (host === undefined || host.address === '') {
@@ -416,6 +416,7 @@ export async function installHostKey(hostId: string, password: string): Promise<
     target: host.address,
     label: host.name,
     ...(password === '' ? {} : { password }),
+    ...(code.trim() === '' ? {} : { code: code.trim() }),
   });
 
   return answer !== null && answer.hostId === hostId;
@@ -443,6 +444,8 @@ export async function addHost(input: {
    * password never reaches a machine whose identity SDC has not been asked about.
    */
   password?: string;
+  /** The verification code a two-factor host asks for (0.8.1), sent with the password. */
+  code?: string;
 }): Promise<{ hostId: string; reused: boolean } | null> {
   if (input.type === 'local') {
     toast(strings.addHost.localAlready);
@@ -511,12 +514,14 @@ export async function trustHost(
   hostId: string,
   fingerprint: string,
   password?: string,
+  code?: string,
 ): Promise<boolean> {
   try {
     await sdcpCall('host.trust', {
       hostId,
       fingerprint,
       ...(password === undefined || password === '' ? {} : { password }),
+      ...(code === undefined || code.trim() === '' ? {} : { code: code.trim() }),
     });
 
     toast(strings.addHost.trust.pinned(fingerprint));
@@ -2191,3 +2196,60 @@ export function openTerminalForHost(hostId: string): void {
   toast(strings.terminal.openForHost(host.name));
 }
 
+
+/**
+ * Start from scratch (0.9.0): the folder, the project, the chat and - when a prompt was given - the
+ * first agent turn, in one call.
+ *
+ * The daemon's `project.scaffold` makes `<parent>/<name>` on the chosen machine and adds it as a
+ * project; the rest is the same landing `Open folder` does. The turn is started in **agent** mode on
+ * purpose: a person who typed "build me X" into a dialog called *Start from scratch* asked for the
+ * work, not for a chat about it.
+ */
+export async function scaffoldProject(input: {
+  hostId: string;
+  parent: string;
+  name: string;
+  prompt: string;
+}): Promise<string | null> {
+  try {
+    const made = await sdcpCall('project.scaffold', {
+      hostId: input.hostId,
+      parent: input.parent.trim(),
+      name: input.name.trim(),
+    });
+
+    await loadProjects();
+
+    const opened = await sdcpCall('session.open', {
+      hostId: input.hostId,
+      projectId: made.projectId,
+      title: made.name,
+      prompt: strings.sidebar.sessions.newChat.prompt,
+    });
+
+    toast(strings.scaffold.made(made.name, made.root));
+    landIn(opened.sessionId);
+
+    if (input.prompt.trim() !== '') {
+      const { engine, model, providerId, tier } = useModelStore.getState();
+
+      await startTurn({
+        sessionId: opened.sessionId,
+        prompt: input.prompt.trim(),
+        engine,
+        model,
+        tier: tierName(tier),
+        ...(providerId === null ? {} : { provider: providerId }),
+        agent: true,
+        autonomy: autonomyFor(useLayoutStore.getState().mode),
+      });
+    }
+
+    return opened.sessionId;
+  } catch (error) {
+    reportFailure(error, strings.scaffold.failed);
+
+    return null;
+  }
+}

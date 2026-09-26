@@ -45,6 +45,8 @@ export function AddHost() {
   const [target, setTarget] = useState('');
   const [label, setLabel] = useState('');
   const [password, setPassword] = useState('');
+  /** The verification code for a two-factor host (0.8.1): typed with the password, sent once. */
+  const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
   /** The host this dialog is watching, once `host.add` has answered with one - or the one it opened on. */
   const [pending, setPending] = useState<{ hostId: string; label: string } | null>(null);
@@ -77,12 +79,19 @@ export function AddHost() {
    * card only renders what it is told.
    */
   const needsKeyInstall =
-    openFor !== null && openFor !== 'local' && (doctor?.some((row) => row.fix === 'Install key') ?? false);
+    openFor !== null &&
+    openFor !== 'local' &&
+    (doctor?.some((row) => row.fix === 'Install key' || row.fix === 'Sign in') ?? false);
+  /**
+   * The daemon can hold a signed-in connection open (0.8.1), so the card signs in - password, and the
+   * verification code when the host asks - instead of copying a key the host may not accept at all.
+   */
+  const signIn = doctor?.some((row) => row.fix === 'Sign in') ?? false;
 
   /* SDC's public key, for the manual line under the button: asked once, and only when there is a use for
      it. `ssh.key` is a read, so opening the card creates nothing. */
   useEffect(() => {
-    if (!needsKeyInstall || sdcKey !== null) {
+    if (!needsKeyInstall || signIn || sdcKey !== null) {
       return;
     }
 
@@ -90,12 +99,13 @@ export function AddHost() {
       (answer) => setSdcKey(answer.publicKey),
       () => setSdcKey(null),
     );
-  }, [needsKeyInstall, sdcKey]);
+  }, [needsKeyInstall, signIn, sdcKey]);
 
   const reset = (): void => {
     setTarget('');
     setLabel('');
     setPassword('');
+    setCode('');
     setType('local');
     setPending(null);
     setTrusting(false);
@@ -150,6 +160,7 @@ export function AddHost() {
       target: target.trim(),
       label: label.trim(),
       ...(password === '' ? {} : { password }),
+      ...(code.trim() === '' ? {} : { code: code.trim() }),
     }).then((answer) => {
       setBusy(false);
 
@@ -188,8 +199,9 @@ export function AddHost() {
     setTrusting(true);
 
     /* The password from the field is re-sent here, and only here: it is spent after the pin lands. */
-    void trustHost(pending.hostId, fingerprint, password).then((trusted) => {
+    void trustHost(pending.hostId, fingerprint, password, code).then((trusted) => {
       setTrusting(false);
+      setCode('');
 
       /* Ask again so the card can say `pinned` rather than leaving the old verdict on screen - and on a
          re-pin the answer is also what the host's own row will show. */
@@ -288,6 +300,21 @@ export function AddHost() {
                 onChange={(event) => setPassword(event.target.value)}
               />
               <span className="text-[11px] text-text-muted">{strings.addHost.passwordHelp}</span>
+            </label>
+
+            <label className="flex flex-col gap-[5px]">
+              <span className="text-[11.5px] font-medium text-text-secondary">{strings.addHost.code}</span>
+              <input
+                type="text"
+                id="sshCode"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                className="rounded-md border border-border-default bg-bg-input px-[10px] py-[7px] font-mono text-[12.5px] text-text-primary placeholder:text-text-muted focus:border-border-strong"
+                placeholder={strings.addHost.codePlaceholder}
+                value={code}
+                onChange={(event) => setCode(event.target.value)}
+              />
+              <span className="text-[11px] text-text-muted">{strings.addHost.codeHelp}</span>
             </label>
 
             <label className="flex flex-col gap-[5px]">
@@ -410,9 +437,11 @@ export function AddHost() {
               {openFor !== null && openFor !== 'local' && needsKeyInstall ? (
                 <div className="mt-[10px] flex flex-col gap-[8px]" data-ssh-key-install={pending.hostId}>
                   <div className="text-[12px] font-semibold text-text-primary">
-                    {strings.addHost.keyInstall.title(pending.label)}
+                    {signIn ? strings.addHost.signIn.title(pending.label) : strings.addHost.keyInstall.title(pending.label)}
                   </div>
-                  <p className="text-[11px] leading-[1.5] text-text-secondary">{strings.addHost.keyInstall.sub}</p>
+                  <p className="text-[11px] leading-[1.5] text-text-secondary">
+                    {signIn ? strings.addHost.signIn.sub : strings.addHost.keyInstall.sub}
+                  </p>
 
                   <label className="flex flex-col gap-[5px]">
                     <span className="text-[11px] font-medium text-text-secondary">
@@ -429,6 +458,23 @@ export function AddHost() {
                     />
                   </label>
 
+                  {signIn ? (
+                    <label className="flex flex-col gap-[5px]">
+                      <span className="text-[11px] font-medium text-text-secondary">{strings.addHost.code}</span>
+                      <input
+                        type="text"
+                        id="sshSignInCode"
+                        inputMode="numeric"
+                        autoComplete="one-time-code"
+                        className="rounded-md border border-border-default bg-bg-input px-[10px] py-[7px] font-mono text-[12.5px] text-text-primary placeholder:text-text-muted focus:border-border-strong"
+                        placeholder={strings.addHost.codePlaceholder}
+                        value={code}
+                        onChange={(event) => setCode(event.target.value)}
+                      />
+                      <span className="text-[11px] text-text-muted">{strings.addHost.codeHelp}</span>
+                    </label>
+                  ) : null}
+
                   <div className="flex items-center gap-[8px]">
                     <button
                       type="button"
@@ -438,9 +484,10 @@ export function AddHost() {
                       onClick={() => {
                         setInstalling(true);
 
-                        void installHostKey(pending.hostId, password).then(() => {
+                        void installHostKey(pending.hostId, password, code).then(() => {
                           setInstalling(false);
                           setPassword('');
+                          setCode('');
                           /* The daemon measured the host; ask it again so the card and the rows move to
                              the truth (`connected`, or the sentence that says what the host refused). */
                           void runDoctor(pending.hostId);
@@ -452,16 +499,24 @@ export function AddHost() {
                       ) : (
                         <Key size={12} aria-hidden="true" />
                       )}
-                      {installing ? strings.addHost.keyInstall.installing : strings.addHost.keyInstall.button}
+                      {installing
+                        ? signIn
+                          ? strings.addHost.signIn.signingIn
+                          : strings.addHost.keyInstall.installing
+                        : signIn
+                          ? strings.addHost.signIn.button
+                          : strings.addHost.keyInstall.button}
                     </button>
                   </div>
 
                   {/* A host that only offers a verification code cannot be finished from here, and this
                       is the one line that is enough to do it by hand. */}
-                  <p className="text-[11px] leading-[1.5] text-text-muted">
-                    {strings.addHost.keyInstall.manual}
-                  </p>
-                  {sdcKey === null ? null : (
+                  {signIn ? null : (
+                    <p className="text-[11px] leading-[1.5] text-text-muted">
+                      {strings.addHost.keyInstall.manual}
+                    </p>
+                  )}
+                  {signIn || sdcKey === null ? null : (
                     <code className="break-all rounded-sm border border-border-subtle bg-bg-input px-[8px] py-[6px] font-mono text-[10.5px] text-text-secondary">
                       {strings.addHost.keyInstall.publicKey(sdcKey)}
                     </code>
@@ -565,7 +620,7 @@ export function AddHost() {
                           return;
                         }
 
-                        if (fix === 'Install key') {
+                        if (fix === 'Install key' || fix === 'Sign in') {
                           /* The password field that finishes this *is on this card* (see the block below):
                              the button's job is to put the caret in it, not to open another surface. */
                           document.getElementById('sshKeyInstallPassword')?.focus();

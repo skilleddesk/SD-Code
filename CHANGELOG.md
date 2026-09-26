@@ -15,6 +15,79 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [0.9.0] — signs in to a hardened VPS, every big model maker, and a project from one command
+
+The release the report "kono vabai vps a connect hoi nah" forced, plus the widening it asked for:
+every original model provider connectable, model lists that update themselves, and a project started
+from nothing with one dialog. Verified against the report's own VPS (keyboard-interactive with a
+verification code on every session) and in the desktop window against an isolated daemon.
+
+### Fixed — the VPS that could not be reached at all
+
+* **Sign in once, work all day.** A host with public-key login switched off - a password and a one-time
+  verification code on every connection - could never be reached by the key-install design: there was no
+  key it would accept, and every `fs.list` would have needed a fresh code. `sdcd` now signs in **once**
+  through a kept-open connection (`ssh::session`, ControlMaster with a 10-hour persist) and routes every
+  later call through it with `-O proxy`; nothing asks again until it closes. The password and the code
+  are typed into `ssh`'s own prompt through a loopback askpass helper (the daemon's own binary), used
+  once, stored nowhere.
+* **The window can ask for the code.** `host.add` / `host.trust` take an optional `code`; the Add-host
+  form has the field, and a host that turns out to need one gets the **Sign in** card (password + code)
+  instead of the key-install card - the doctor's `ssh` row says which. `host.remove` closes the host's
+  signed-in connection.
+* **A changed host key still refuses the sign-in.** The one-time connection pins against SDC's own
+  `known_hosts` exactly like every other call; a machine presenting a different key never sees the
+  password.
+* **Remote turns lost their stdin.** `exec setsid` on the far side forks when the login shell is already
+  a group leader, so the prompt on stdin, the answer and the exit code were all lost (`claude` said
+  "Input must be provided either through stdin"). Run as a child (`setsid sh -c …`) it holds the pipe
+  and the shell waits for it - measured on the report's VPS, and the reason a remote agent turn now
+  edits files there.
+
+### Fixed — a CLI agent that said Done and had written nothing
+
+* In `--print` mode none of the three CLIs can ask a permission question, so a Write was silently
+  refused: the turn ended `Done`, the transcript said "created", and the folder was empty (measured
+  locally and on the host). The session's autonomy now travels to each CLI's own flags - Claude Code
+  `--permission-mode acceptEdits` (Simple), `+ --allowedTools Bash` (Pro), its own full-autonomy switch
+  (Auto); Codex `--sandbox workspace-write` / `--full-auto` / its bypass flag; Gemini
+  `--approval-mode auto_edit` / `--yolo`. The folder is checkpointed before every change either way.
+
+### Added — every original model provider, and a list that updates itself
+
+* **Six new API providers**: Google Gemini API, xAI Grok, Moonshot Kimi, Mistral, Qwen (DashScope) and
+  Z.ai GLM - cards in the Hub, curated models in the bundle, live `…/models` refresh, key test, and chat
+  routing derived from the same block (`native_api::endpoint_for`), so a key is all a new provider needs.
+* **The catalogue keeps itself fresh.** The daemon refreshes every provider that can be asked (a stored
+  key, Ollama running, OpenRouter's public list) at start and every twelve hours, and the moment a key is
+  saved - and pushes the new `ModelsUpdated` event, on which every open window re-reads the list. A model
+  a provider ships tomorrow is in the dropdown tomorrow, with no build and no Refresh button.
+
+### Added — start from scratch with one command
+
+* **`project.scaffold`** makes `<parent>/<name>` on this machine or on a host and adds it as a project in
+  one call (a plain name only - separators and `..` are refused). The **Start from scratch** dialog
+  (empty state, palette) takes where, a name and - optionally - what to build, then opens the chat and
+  starts the **agent** turn on it: folder, project, chat and first build from one button.
+
+### Changed — the stream you watch
+
+* **A live measured line under a running turn**: elapsed, thinking time, ~tokens and ~tokens/s (marked as
+  the estimates they are), and the tool-call count - and a running tool card's pill now ticks its own
+  seconds. The finished footer still carries the daemon's real totals.
+* **Deltas fold once per frame.** `TurnDelta`/`ThinkingDelta`/`ToolCallOutput` are batched into one
+  store update per animation frame instead of a render per token - the stream draws at the display's
+  pace however fast the model talks. Order is kept: any other event flushes the buffer first.
+* **The model menu searches.** A search line filters by model name, id or provider across every connected
+  group - and a hit that was folded behind "Older versions" is shown, not hinted at.
+
+### Internal
+
+* `Prompt`/`RunPlan` carry the turn's autonomy; `providers::CATALOG` grew to 15 cards with a test that
+  every API card has a bundle block; Google's `models/` id prefix is normalised; the app store's fold
+  subscriber is idempotent across dev hot-reloads (two subscribers interleaved every delta twice - dev
+  only, but now guarded).
+
 ## [0.8.0] — an agent that finishes the job, a second AI that checks it, and a Time Machine that restores
 
 The v4 direction (`sdc/docs/ROADMAP-v4.md`): describe the task, and the window gets it built, run and

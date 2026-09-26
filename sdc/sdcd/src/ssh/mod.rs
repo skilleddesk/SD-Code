@@ -42,6 +42,13 @@ use crate::sdcp::envelope::ErrorObject;
 
 pub mod hostkey;
 pub mod ops;
+pub mod session;
+
+/// The `ssh` every call runs: the one that can hold a sign-in open ([`session::program`]) when this
+/// machine has it, otherwise the one on PATH.
+pub fn program() -> Option<std::path::PathBuf> {
+    session::program().or_else(|| crate::host::program::resolve("ssh"))
+}
 
 /// How much of one remote stream is kept. A remote `find` on `/` must not become 256 MB in memory:
 /// the rest is drained (so the child never blocks on a full pipe) and reported as truncated.
@@ -180,14 +187,20 @@ impl Ssh {
         }
 
         args.push("-o".to_string());
-        args.push(format!("UserKnownHostsFile={}", pins.display()));
+        args.push(format!("UserKnownHostsFile={}", session::ssh_path(&pins)));
+
+        /* Through the signed-in connection when there is one (0.8.1). Not for the key install: that call
+           runs on the PTY with the platform's own `ssh`, which has no multiplexing. */
+        if !interactive {
+            args.extend(session::mux_options(self)?);
+        }
 
         /* The key SDC owns, when it exists. `ensure_key` is what makes one, and it is called on the
            path that adds a host - never here, because reading a remote folder must not create a key
            as a side effect. */
         if let Some(key) = key_path().filter(|path| path.exists()) {
             args.push("-i".to_string());
-            args.push(key.display().to_string());
+            args.push(session::ssh_path(&key));
         }
 
         args.push(self.target.user_host.clone());
@@ -211,7 +224,7 @@ impl Ssh {
     }
 
     fn execute(&self, script: &str, input: Option<&str>, timeout: Duration) -> Result<SshOutput, ErrorObject> {
-        let mut command = crate::host::program::command("ssh").ok_or_else(|| {
+        let mut command = program().map(|path| crate::host::program::command_for(&path)).ok_or_else(|| {
             ErrorObject::not_found(
                 "`ssh` is not on this machine's PATH, so SDC cannot reach another host. Install the OpenSSH client (Windows: Settings → Optional features → OpenSSH Client).",
             )

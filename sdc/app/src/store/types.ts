@@ -119,6 +119,8 @@ export interface ProviderView {
 
 export interface ToolView {
   callId: string;
+  /** The log's stamp of `ToolCallStarted` - what the card's live "running for" ticks against (0.9.0). */
+  startedAt: string;
   tool: 'read' | 'edit' | 'run';
   name: string;
   target: string;
