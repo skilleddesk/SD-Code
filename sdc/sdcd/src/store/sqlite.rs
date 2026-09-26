@@ -412,7 +412,11 @@ impl Store {
 
     /// Replaces a provider's cached model rows with what its endpoint just said.
     pub fn replace_models(&self, provider_id: &str, rows: &[Value], fetched_at: &str) -> Result<()> {
-        let connection = self.connection.lock().unwrap();
+        let mut connection = self.connection.lock().unwrap();
+        /* One transaction, one sync to disk. Row by row, OpenRouter's 458 models were 458 autocommits
+           under the store's lock - seconds on a slow disk, during which every other request waited (the
+           0.9.0 Windows CI run: three lifecycle tests' 3 s reads timed out behind the startup refresh). */
+        let connection = connection.transaction()?;
 
         /* The provider row is what the foreign key points at, and a provider that has never been saved
            still has a catalogue row - `models.list` runs before any provider is connected. */
@@ -436,6 +440,8 @@ impl Store {
                 params![format!("{provider_id}/{id}"), provider_id, fetched_at],
             )?;
         }
+
+        connection.commit()?;
 
         Ok(())
     }

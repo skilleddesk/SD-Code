@@ -88,7 +88,8 @@ async fn main() -> Result<()> {
             Arc::new(ChannelNotifier::new(state.events.clone(), state.fanout.clone()));
 
         tokio::spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            /* After the window's first burst of requests, not during it. */
+            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
 
             loop {
                 sdcd::providers::models::refresh_and_tell(store.clone(), notifier.clone());
