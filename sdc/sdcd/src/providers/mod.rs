@@ -48,7 +48,7 @@ pub const CATALOG: &[(&str, &str, &str, &str, &str, &str)] = &[
     ("xai", "xAI Grok", "api-key", "xai", "X", "Direct API key · pay per token"),
     ("moonshot", "Moonshot Kimi", "api-key", "moonshot", "K", "Direct API key · pay per token"),
     ("mistral", "Mistral", "api-key", "mistral", "M", "Direct API key · pay per token"),
-    ("qwen", "Qwen (Alibaba)", "api-key", "qwen", "Q", "DashScope API key · pay per token"),
+    ("qwen", "Qwen (Alibaba)", "api-key", "qwen", "Q", "Alibaba Cloud Model Studio · Qwen, Kimi, DeepSeek, GLM, MiniMax"),
     ("zai", "Z.ai GLM", "api-key", "zai", "Z", "Direct API key · pay per token"),
     ("openrouter", "OpenRouter", "api-key", "openrouter", "O", "One key · 200+ models"),
     ("ollama", "Ollama", "local", "ollama", "O", "Local models · auto-detected on this machine"),
@@ -378,6 +378,15 @@ pub fn save(
 
     if !secret.is_empty() {
         keychain::set(&key_ref(id), secret)?;
+    }
+
+    /* A catalogue provider with its own base URL (0.12): an Alibaba Model Studio workspace answers at its
+       workspace host, and a key made there is refused anywhere else. The custom endpoint keeps its URL on
+       its own row, as before. */
+    if id != "custom" {
+        if let Some(base) = url {
+            crate::providers::models::set_endpoint_override(id, Some(base)).map_err(ErrorObject::bad_request)?;
+        }
     }
 
     let account = if secret.is_empty() {

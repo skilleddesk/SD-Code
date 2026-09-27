@@ -14,6 +14,7 @@ import type {
   ToastRecord,
   TurnView,
 } from './types';
+import { applyKernel, EMPTY_KERNEL, KERNEL_EVENTS } from './kernel';
 
 /**
  * The reducer: `(state, event) → state`, pure, and the only writer of what the UI shows
@@ -64,6 +65,7 @@ export const EMPTY_STATE: AppState = {
   resolvedPermissions: {},
   doctor: {},
   verifies: [],
+  kernel: EMPTY_KERNEL,
 };
 
 
@@ -122,7 +124,27 @@ function endThinking(turn: TurnView, ts: string): TurnView {
 function reduce(state: AppState, entry: AppEvent): AppState {
   const { event } = entry;
 
+  /* The Trust Kernel's events fold into their own slice (0.12, store/kernel.ts). */
+  if (KERNEL_EVENTS.has(event.type)) {
+    const kernel = applyKernel(state.kernel, event, entry.ts);
+
+    return kernel === state.kernel ? state : { ...state, kernel };
+  }
+
   switch (event.type) {
+    case 'CheckpointUpdated': {
+      const record = event.checkpoint;
+
+      return {
+        ...state,
+        checkpoints: state.checkpoints.map((checkpoint) =>
+          checkpoint.id === record.id
+            ? { ...checkpoint, label: record.label ?? null, irreversible: record.irreversible ?? null, title: record.title ?? checkpoint.title }
+            : checkpoint,
+        ),
+      };
+    }
+
     case 'HostStatus': {
       const existing = state.hosts.find((host) => host.id === event.hostId);
       const host: HostView = {
@@ -352,6 +374,8 @@ function reduce(state: AppState, entry: AppEvent): AppState {
         title: event.checkpoint.title ?? '',
         thumbnail: event.checkpoint.thumbnail ?? null,
         filesHash: event.checkpoint.filesHash,
+        label: event.checkpoint.label ?? null,
+        irreversible: event.checkpoint.irreversible ?? null,
       };
 
       const others = state.checkpoints.filter((entryPoint) => entryPoint.id !== checkpoint.id);
@@ -401,6 +425,8 @@ function reduce(state: AppState, entry: AppEvent): AppState {
         tier: event.tier,
         prompt: event.prompt,
         ...(event.reading === undefined ? {} : { reading: event.reading }),
+        ...(event.estimate === undefined ? {} : { estimate: event.estimate }),
+        ...(event.intentId === undefined ? {} : { intentId: event.intentId }),
         text: '',
         thinking: '',
         thinkingMs: 0,

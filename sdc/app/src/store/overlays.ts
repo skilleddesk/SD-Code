@@ -28,6 +28,9 @@ export type SettingsTab =
   | 'safety'
   | 'notifications'
   | 'backup'
+  | 'language'
+  | 'team'
+  | 'updates'
   | 'about';
 
 /** The Provider Hub's seven nav items, in order (spec section 9.10). */

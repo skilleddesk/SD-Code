@@ -30,7 +30,10 @@ const root = join(here, '..');
 
 const schema = JSON.parse(readFileSync(join(here, 'sdcp.schema.json'), 'utf8'));
 const types = readFileSync(join(here, 'types.ts'), 'utf8');
-const methods_rs = readFileSync(join(root, 'sdcd', 'src', 'sdcp', 'methods.rs'), 'utf8');
+/* The dispatch spans methods.rs and, since 0.12, its three child modules (the kernel, the Intent Engine, the agency). */
+const methods_rs = ['methods.rs', 'kernel.rs', 'intent_methods.rs', 'ops_methods.rs']
+  .map((file) => readFileSync(join(root, 'sdcd', 'src', 'sdcp', file), 'utf8'))
+  .join('\n');
 
 const schemaMethods = new Set(schema.$defs.methodNames.items?.enum ?? schema.$defs.methodNames.enum);
 const schemaMethodSchemas = new Set(Object.keys(schema.$defs.methods.properties ?? {}));

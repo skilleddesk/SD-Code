@@ -1,0 +1,61 @@
+import type { StringsPack } from './index';
+
+/** 中文（0.12）：窗口和新界面中最常见的文字；其余显示英文。 */
+export const zh: StringsPack = {
+  modal: { close: '关闭' },
+  topbar: {
+    palette: { label: '搜索或跳转…', title: '命令面板' },
+    providers: { title: '服务商与模型' },
+    theme: { title: '切换主题' },
+    settings: { title: '设置' },
+    modes: { simple: '简单', pro: '专业', auto: '自动' },
+  },
+  prompt: { placeholder: '用任何语言写下或说出你想构建或修复的内容…', send: '发送', stop: '停止' },
+  statusBar: { connection: { ready: '就绪', degraded: '降级', offline: '离线' } },
+  rightPanel: { tabs: { preview: '预览', console: '控制台', terminal: '终端', timemachine: '时光机', duel: '对决', verify: '验证', proof: '证明', analytics: '统计' } },
+  settings: {
+    nav: [
+      { id: 'general', label: '通用', icon: 'sliders' },
+      { id: 'appearance', label: '外观', icon: 'palette' },
+      { id: 'keymap', label: '键盘', icon: 'keyboard' },
+      { id: 'safety', label: '安全', icon: 'shield' },
+      { id: 'notifications', label: '通知', icon: 'bell' },
+      { id: 'backup', label: '备份', icon: 'databaseBackup' },
+      { id: 'language', label: '语言', icon: 'languages' },
+      { id: 'team', label: '团队', icon: 'users' },
+      { id: 'updates', label: '更新', icon: 'download' },
+      { id: 'about', label: '关于', icon: 'info' },
+    ],
+  },
+  kernel: {
+    kill: { label: '全部停止', title: '急停开关：立即停止所有运行中的轮次、验证、部署和命令（Ctrl Shift .）' },
+    trust: { chip: (score: number, level: string): string => `信任 ${score} · ${level}`, level: { high: '高', medium: '中', low: '低' } },
+    cost: { meter: (today: string): string => `今日 ${today}`, title: '费用中心', today: '今日', month: '本月', saved: '已节省', budgets: '预算' },
+    intent: {
+      title: 'SDC 的理解',
+      reading: '正在阅读你的请求…',
+      readAs: (label: string): string => `识别为 ${label}`,
+      backTitle: '用你的话说——对吗？',
+      target: '位置',
+      goal: '你想要的',
+      conditions: '完成的标准',
+      outOfScope: '不会改动',
+      questions: '需要确认一件事',
+      confirm: '确认并运行',
+      asTyped: '按原文运行',
+      cancel: '取消',
+      showPrompt: '查看生成的提示词',
+    },
+    timeline: { rewind: '回到这里', compare: '比较', label: '标签', restoreFile: '只恢复此文件', branches: '分支', switchTo: '切换到' },
+    proof: { trust: '信任分数', verification: '验证', cost: '费用', rollback: '回滚点', export: '导出证明包' },
+    agency: { title: '代理机构', tabs: { sites: '站点', deploys: '部署', approvals: '审批', playbooks: '剧本', xray: '接管 X 光', guardian: '夜间守护' }, deploy: '安全部署' },
+    language: { title: '语言', ui: '窗口语言', contract: '确认 SDC 的理解' },
+    onboarding: {
+      title: '欢迎使用 SDC',
+      steps: ['你想做什么', '一个模型', '这台电脑', '安全第一', '你的第一个任务'],
+      skip: '跳过',
+      back: '上一步',
+      next: '下一步',
+    },
+  },
+};

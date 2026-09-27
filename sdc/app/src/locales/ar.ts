@@ -1,0 +1,61 @@
+import type { StringsPack } from './index';
+
+/** العربية (0.12): أهم كلمات النافذة والأقسام الجديدة؛ الباقي بالإنجليزية. النافذة تنعكس من اليمين لليسار. */
+export const ar: StringsPack = {
+  modal: { close: 'إغلاق' },
+  topbar: {
+    palette: { label: 'ابحث أو انتقل…', title: 'لوحة الأوامر' },
+    providers: { title: 'المزوّدون والنماذج' },
+    theme: { title: 'تبديل السمة' },
+    settings: { title: 'الإعدادات' },
+    modes: { simple: 'بسيط', pro: 'محترف', auto: 'تلقائي' },
+  },
+  prompt: { placeholder: 'اكتب أو قل بأي لغة ما تريد بناءه أو إصلاحه…', send: 'إرسال', stop: 'إيقاف' },
+  statusBar: { connection: { ready: 'جاهز', degraded: 'ضعيف', offline: 'غير متصل' } },
+  rightPanel: { tabs: { preview: 'معاينة', console: 'وحدة التحكم', terminal: 'الطرفية', timemachine: 'آلة الزمن', duel: 'مبارزة', verify: 'تحقق', proof: 'إثبات', analytics: 'إحصاءات' } },
+  settings: {
+    nav: [
+      { id: 'general', label: 'عام', icon: 'sliders' },
+      { id: 'appearance', label: 'المظهر', icon: 'palette' },
+      { id: 'keymap', label: 'لوحة المفاتيح', icon: 'keyboard' },
+      { id: 'safety', label: 'الأمان', icon: 'shield' },
+      { id: 'notifications', label: 'الإشعارات', icon: 'bell' },
+      { id: 'backup', label: 'النسخ الاحتياطي', icon: 'databaseBackup' },
+      { id: 'language', label: 'اللغة', icon: 'languages' },
+      { id: 'team', label: 'الفريق', icon: 'users' },
+      { id: 'updates', label: 'التحديثات', icon: 'download' },
+      { id: 'about', label: 'حول', icon: 'info' },
+    ],
+  },
+  kernel: {
+    kill: { label: 'أوقف الكل', title: 'مفتاح الإيقاف: أوقف كل الأدوار والفحوص والنشر والأوامر الآن (Ctrl Shift .)' },
+    trust: { chip: (score: number, level: string): string => `الثقة ${score} · ${level}`, level: { high: 'عالية', medium: 'متوسطة', low: 'منخفضة' } },
+    cost: { meter: (today: string): string => `اليوم ${today}`, title: 'مركز التكلفة', today: 'اليوم', month: 'هذا الشهر', saved: 'المُوفَّر', budgets: 'الميزانيات' },
+    intent: {
+      title: 'ما فهمه SDC',
+      reading: 'جارٍ قراءة طلبك…',
+      readAs: (label: string): string => `قُرئ على أنه: ${label}`,
+      backTitle: 'بكلماتك — هل هذا صحيح؟',
+      target: 'أين',
+      goal: 'ما تريده',
+      conditions: 'الانتهاء يعني',
+      outOfScope: 'لن يُلمس',
+      questions: 'أمر واحد للتأكد',
+      confirm: 'أكّد وشغّل',
+      asTyped: 'شغّل كما كُتب',
+      cancel: 'إلغاء',
+      showPrompt: 'اعرض الموجّه المُجمَّع',
+    },
+    timeline: { rewind: 'ارجع إلى هنا', compare: 'قارن', label: 'تسمية', restoreFile: 'استعد هذا الملف فقط', branches: 'الفروع', switchTo: 'انتقل إلى' },
+    proof: { trust: 'درجة الثقة', verification: 'التحقق', cost: 'التكلفة', rollback: 'نقطة الاستعادة', export: 'صدّر حزمة الإثبات' },
+    agency: { title: 'الوكالة', tabs: { sites: 'المواقع', deploys: 'النشر', approvals: 'الموافقات', playbooks: 'الخطط', xray: 'أشعة الاستلام', guardian: 'الحارس الليلي' }, deploy: 'نشر آمن' },
+    language: { title: 'اللغة', ui: 'لغة النافذة', contract: 'أكّد ما فهمه SDC' },
+    onboarding: {
+      title: 'مرحبًا بك في SDC',
+      steps: ['ما الذي تريد فعله', 'نموذج', 'هذا الجهاز', 'الأمان أولًا', 'مهمتك الأولى'],
+      skip: 'تخطٍّ',
+      back: 'رجوع',
+      next: 'التالي',
+    },
+  },
+};

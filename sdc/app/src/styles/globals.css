@@ -404,3 +404,14 @@
     scroll-behavior: auto !important;
   }
 }
+
+/* Right-to-left languages (0.12, Global UI): the layout mirrors, but code, diffs, paths and terminals stay
+   left to right - a command read backwards is a different command. */
+[dir='rtl'] pre,
+[dir='rtl'] code,
+[dir='rtl'] .font-mono,
+[dir='rtl'] .cm-editor,
+[dir='rtl'] .term-output {
+  direction: ltr;
+  unicode-bidi: isolate;
+}

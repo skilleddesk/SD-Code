@@ -27,6 +27,12 @@ pub fn history_for(store: &Store, session_id: &str) -> Result<Vec<Message>, Erro
     let mut history = Vec::new();
 
     for turn in turns {
+        /* A rewound turn's work was undone on disk; telling the next engine about it would make it build
+           on changes that are no longer there (TM-1, 0.12). A redo puts the turn back. */
+        if turn.get("state").and_then(Value::as_str) == Some("rewound") {
+            continue;
+        }
+
         if let Some(prompt) = turn.get("prompt").and_then(Value::as_str) {
             if !prompt.is_empty() {
                 history.push(Message::user(prompt));

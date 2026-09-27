@@ -175,7 +175,7 @@ export const VERSIONS_PER_FAMILY = 2;
  * run a coding turn, so they are left out of the menu rather than labelled.
  */
 const NOT_A_CHAT_MODEL =
-  /(embed|tts|whisper|dall-e|davinci|babbage|moderation|image|audio|realtime|transcribe|search|speech|vision-preview|guard)/i;
+  /(embed|tts|whisper|dall-e|davinci|babbage|moderation|image|audio|realtime|transcribe|search|speech|vision-preview|guard|^wan[0-9.]|wanx|happyhorse|t2i|t2v|i2v)/i;
 
 /** A model id taken apart: the family it belongs to, and where it sits in that family. */
 export interface ModelVersion {

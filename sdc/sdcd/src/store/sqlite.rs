@@ -101,11 +101,78 @@ ALTER TABLE hosts ADD COLUMN host_key TEXT;
 ALTER TABLE rewind_stack ADD COLUMN frame TEXT;
 "#,
     ),
+    (
+        /* 0.12 - the Trust Kernel (docs/MASTER-PLAN-v3-TRUST-KERNEL.md).
+         *
+         * `audit` is the hash-chained ledger: every row carries the hash of the row before it, so a row
+         * edited after the fact breaks the chain at that row and `audit.verify` names it. `usage` is the
+         * cost governor's record, one row per turn, `cost_source` saying whether the number came from the
+         * provider or from the price table. `trust_scores` is each turn's score with its reasons.
+         * `restore_journal` makes a restore atomic across a crash: the row is written before the folder
+         * moves and closed after, so a daemon that starts with an open row knows a restore was cut off.
+         * `glossary` and `intents` are the Intent Engine's memory. A checkpoint gains a label a person
+         * gave it and the reason it cannot fully undo what came after it. */
+        "0005-trust-kernel",
+        r#"
+CREATE TABLE IF NOT EXISTS audit (
+  seq INTEGER PRIMARY KEY, ts TEXT NOT NULL, session_id TEXT, turn_id TEXT, actor TEXT NOT NULL,
+  kind TEXT NOT NULL, summary TEXT NOT NULL, detail TEXT NOT NULL, prev_hash TEXT NOT NULL, hash TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS audit_session ON audit(session_id, seq);
+CREATE TABLE IF NOT EXISTS usage (
+  turn_id TEXT PRIMARY KEY, session_id TEXT NOT NULL, project_root TEXT, site_id TEXT,
+  engine TEXT NOT NULL, model TEXT NOT NULL, provider TEXT,
+  input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0,
+  cost_usd REAL NOT NULL DEFAULT 0, cost_source TEXT NOT NULL DEFAULT 'none',
+  estimate_usd REAL, baseline_usd REAL, day TEXT NOT NULL, created_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS usage_day ON usage(day);
+CREATE TABLE IF NOT EXISTS trust_scores (
+  turn_id TEXT PRIMARY KEY, session_id TEXT NOT NULL, score INTEGER NOT NULL, level TEXT NOT NULL,
+  reasons TEXT NOT NULL, created_at TEXT NOT NULL);
+ALTER TABLE checkpoints ADD COLUMN label TEXT;
+ALTER TABLE checkpoints ADD COLUMN irreversible TEXT;
+ALTER TABLE checkpoints ADD COLUMN turn_id TEXT;
+CREATE TABLE IF NOT EXISTS restore_journal (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL, root TEXT NOT NULL, host_id TEXT,
+  target_sha TEXT NOT NULL, before_sha TEXT, scope TEXT NOT NULL DEFAULT 'all', state TEXT NOT NULL,
+  started_at TEXT NOT NULL, finished_at TEXT);
+CREATE TABLE IF NOT EXISTS glossary (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, scope TEXT NOT NULL, term TEXT NOT NULL, meaning TEXT NOT NULL,
+  created_at TEXT NOT NULL, UNIQUE(scope, term));
+CREATE TABLE IF NOT EXISTS intents (
+  id TEXT PRIMARY KEY, session_id TEXT, text TEXT NOT NULL, spec TEXT NOT NULL,
+  state TEXT NOT NULL DEFAULT 'parsed', corrections INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL);
+"#,
+    ),
+    (
+        /* 0.12 - the agency half: sites, their deploys and their health. A site is a folder on a host that
+         * serves something at a URL; its `config` is the deploy recipe and the health checks as JSON. A
+         * deploy row keeps every step's log and the backup it made, which is what a one-click rollback
+         * restores. `approvals` is who said yes to what, for a production deploy or a client sign-off. */
+        "0006-sites",
+        r#"
+CREATE TABLE IF NOT EXISTS sites (
+  id TEXT PRIMARY KEY, name TEXT NOT NULL, host_id TEXT NOT NULL, root TEXT NOT NULL,
+  url TEXT NOT NULL DEFAULT '', config TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS deploys (
+  id TEXT PRIMARY KEY, site_id TEXT NOT NULL, kind TEXT NOT NULL, state TEXT NOT NULL,
+  steps TEXT NOT NULL, backup TEXT, note TEXT NOT NULL DEFAULT '', started_at TEXT NOT NULL, finished_at TEXT);
+CREATE INDEX IF NOT EXISTS deploys_site ON deploys(site_id, started_at);
+CREATE TABLE IF NOT EXISTS health (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, site_id TEXT NOT NULL, ts TEXT NOT NULL, report TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS health_site ON health(site_id, id);
+CREATE TABLE IF NOT EXISTS approvals (
+  id TEXT PRIMARY KEY, subject TEXT NOT NULL, kind TEXT NOT NULL, state TEXT NOT NULL,
+  requested_by TEXT NOT NULL, decided_by TEXT, note TEXT NOT NULL DEFAULT '', token TEXT,
+  created_at TEXT NOT NULL, decided_at TEXT);
+"#,
+    ),
 ];
 
 /// The daemon's database handle.
 pub struct Store {
-    connection: Mutex<Connection>,
+    /// Crate-visible so the Trust Kernel's tables (`store::trust`) are one more `impl Store` block
+    /// rather than a second connection to the same file.
+    pub(crate) connection: Mutex<Connection>,
     path: Option<PathBuf>,
 }
 /// Rows of one shape, collected - every query in this file ends this way.
@@ -134,7 +201,7 @@ fn host_type(kind: &str) -> &'static str {
     }
 }
 
-/// One checkpoint row, as every checkpoint query maps it: the seven columns in schema order.
+/// One checkpoint row, as every checkpoint query maps it: the columns of `CHECKPOINT_COLUMNS`, in order.
 fn row_to_checkpoint(row: &rusqlite::Row<'_>) -> rusqlite::Result<Value> {
     Ok(serde_json::json!({
         "id": row.get::<_, String>(0)?,
@@ -144,8 +211,14 @@ fn row_to_checkpoint(row: &rusqlite::Row<'_>) -> rusqlite::Result<Value> {
         "title": row.get::<_, String>(4)?,
         "thumbnail": row.get::<_, Option<String>>(5)?,
         "filesHash": row.get::<_, String>(6)?,
+        "label": row.get::<_, Option<String>>(7)?,
+        "irreversible": row.get::<_, Option<String>>(8)?,
+        "turnId": row.get::<_, Option<String>>(9)?,
     }))
 }
+
+/// The columns `row_to_checkpoint` reads.
+const CHECKPOINT_COLUMNS: &str = "id, session_id, turn, created_at, title, thumbnail, files_hash, label, irreversible, turn_id";
 
 
 impl Store {
@@ -292,8 +365,7 @@ impl Store {
     pub fn checkpoints(&self, session_id: &str) -> Result<Vec<Value>> {
         let connection = self.connection.lock().unwrap();
         let mut statement = connection.prepare(
-            "SELECT id, session_id, turn, created_at, title, thumbnail, files_hash FROM checkpoints
-             WHERE session_id = ?1 ORDER BY turn DESC",
+            &format!("SELECT {CHECKPOINT_COLUMNS} FROM checkpoints WHERE session_id = ?1 ORDER BY turn DESC"),
         )?;
         let rows = statement.query_map(params![session_id], row_to_checkpoint)?;
 
@@ -304,8 +376,7 @@ impl Store {
     pub fn checkpoint(&self, id: &str) -> Result<Option<Value>> {
         let connection = self.connection.lock().unwrap();
         let mut statement = connection.prepare(
-            "SELECT id, session_id, turn, created_at, title, thumbnail, files_hash FROM checkpoints
-             WHERE id = ?1",
+            &format!("SELECT {CHECKPOINT_COLUMNS} FROM checkpoints WHERE id = ?1"),
         )?;
         let mut rows = statement.query_map(params![id], row_to_checkpoint)?;
 
@@ -368,8 +439,8 @@ impl Store {
 
         for row in frame["rows"].as_array().cloned().unwrap_or_default() {
             connection.execute(
-                "INSERT OR REPLACE INTO checkpoints (id, session_id, turn, title, thumbnail, files_hash, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                "INSERT OR REPLACE INTO checkpoints (id, session_id, turn, title, thumbnail, files_hash, created_at, label, irreversible, turn_id)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
                 params![
                     row["id"].as_str().unwrap_or_default(),
                     session_id,
@@ -378,6 +449,9 @@ impl Store {
                     row["thumbnail"].as_str(),
                     row["filesHash"].as_str().unwrap_or_default(),
                     row["ts"].as_str().unwrap_or_default(),
+                    row["label"].as_str(),
+                    row["irreversible"].as_str(),
+                    row["turnId"].as_str(),
                 ],
             )?;
         }

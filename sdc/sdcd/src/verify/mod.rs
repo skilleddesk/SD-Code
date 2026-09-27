@@ -17,6 +17,17 @@
 //!
 //! The whole run travels as one `VerifyUpdated` snapshot per change, so a window that joins late draws
 //! the same thing as one that watched it start.
+//!
+//! 0.12 (the Trust Kernel's Verify engine) adds, between the two:
+//!
+//!   * **scans** - the change's added lines through the secret scanner and the SAST rules
+//!     (`trust::scan`), always, and the project's dependency audit (`npm audit`, `composer audit`,
+//!     `pip-audit`, `cargo audit`) when its tool is there;
+//!   * **a verdict with four words** - `PASS` (checks ran and passed, scans clean, the review found
+//!     nothing), `FAIL`, `NO_CHECKS` (the folder has nothing to run and nothing changed), `UNPROVEN`
+//!     (nothing contradicts the change, but no test proved it either);
+//!   * **the acceptance criteria** of a confirmed Intent Contract, which the reviewer judges one by one;
+//!   * a **security focus** for the role pipeline's SecReview step.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -65,6 +76,10 @@ pub struct Request {
     pub remote: Option<crate::ssh::Ssh>,
     pub reviewer: Option<Reviewer>,
     pub review_failing: bool,
+    /// The confirmed Intent Contract's conditions: the reviewer says for each whether the change meets it.
+    pub acceptance: Vec<String>,
+    /// `security` makes the review a security review (the role pipeline's SecReview step).
+    pub focus: Option<String>,
 }
 
 /// The checks a folder's manifests promise, in the order a person would run them: fast and loud first.
@@ -149,6 +164,46 @@ fn non_interactive(command: &str, posix: bool) -> String {
     }
 }
 
+/// The reviewer's instructions with the Trust Kernel's additions: the acceptance criteria to judge one by
+/// one, and - for a security review - what to look at first.
+pub fn review_prompt_with(task: &str, diff: &str, acceptance: &[String], focus: Option<&str>) -> String {
+    let mut prompt = review_prompt(task, diff);
+
+    if focus == Some("security") {
+        prompt.push_str(
+            "\n\nThis is a SECURITY review. Look first for: injection (SQL, shell, template), cross-site scripting, broken \
+             authentication or authorization, secrets in code, unsafe deserialisation, path traversal, SSRF, missing input \
+             validation, and dangerous defaults. Mark anything exploitable as severity high.",
+        );
+    }
+
+    if !acceptance.is_empty() {
+        let list: Vec<String> = acceptance.iter().enumerate().map(|(index, text)| format!("{}. {text}", index + 1)).collect();
+
+        prompt.push_str(&format!(
+            "\n\nThe person agreed that the task is done when all of these hold:\n{}\n\
+             Add to your JSON a \"criteria\" list with one entry per condition, in order: {{\"met\": true or false, \"why\": \"one sentence\"}}.",
+            list.join("\n")
+        ));
+    }
+
+    prompt
+}
+
+/// The review prompt with the checks SDC ran and their results, stated as facts. The diff shows only what
+/// changed; files that were already there (a test script, a config) are not in it, and a reviewer must not
+/// judge a condition unmet for want of seeing them when a check has already proved it.
+pub fn with_facts(prompt: String, facts: &[String]) -> String {
+    if facts.is_empty() {
+        return prompt;
+    }
+
+    format!(
+        "{prompt}\n\nFacts, measured by SDC just now in the project folder - do not contradict them; the project has files that are not in the diff. A condition about the project's tests, build, lint or types is MET when the matching check below PASSED:\n{}",
+        facts.iter().map(|fact| format!("- {fact}")).collect::<Vec<_>>().join("\n")
+    )
+}
+
 /// The reviewer's instructions: what to look for, and the one JSON shape to answer in.
 pub fn review_prompt(task: &str, diff: &str) -> String {
     format!(
@@ -211,11 +266,149 @@ pub fn parse_review(text: &str) -> Value {
        a person could act on. */
     let verdict = if issues.is_empty() { "pass" } else { "issues" };
 
+    let criteria: Vec<Value> = parsed["criteria"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .iter()
+        .map(|criterion| json!({ "met": criterion["met"].as_bool(), "why": criterion["why"].as_str().unwrap_or_default() }))
+        .collect();
+    /* An unmet condition the person agreed to is an issue, whatever else the reviewer found. */
+    let verdict = if criteria.iter().any(|criterion| criterion["met"] == false) { "issues" } else { verdict };
+
     json!({
         "verdict": verdict,
         "summary": parsed["summary"].as_str().unwrap_or_default(),
         "issues": issues,
+        "criteria": criteria,
     })
+}
+
+/// A condition the person agreed to that a check SDC ran has **measured** is decided by the measurement,
+/// not by a reviewer's reading of the diff (P3). A condition about the tests, the build, the lint or the
+/// types whose matching check passed is met; the reason says it was measured. Found live: a reviewer that
+/// saw only `math.js` in the diff said "npm test cannot pass" twice, right after it had passed.
+pub fn measured_criteria(review: &mut Value, acceptance: &[String], checks: &[Value]) {
+    let Some(criteria) = review["criteria"].as_array_mut() else {
+        return;
+    };
+    let passed = |names: &[&str]| -> Option<String> {
+        checks
+            .iter()
+            .find(|check| check["status"] == "pass" && names.iter().any(|name| check["name"].as_str().is_some_and(|check_name| check_name.contains(name))))
+            .and_then(|check| check["command"].as_str().map(str::to_string))
+    };
+
+    for (index, criterion) in criteria.iter_mut().enumerate() {
+        if criterion["met"] != false {
+            continue;
+        }
+
+        let Some(text) = acceptance.get(index).map(|text| text.to_lowercase()) else {
+            continue;
+        };
+        let measured = if text.contains("test") {
+            passed(&["test", "pytest"])
+        } else if text.contains("build") || text.contains("compile") {
+            passed(&["build", "cargo check"])
+        } else if text.contains("lint") {
+            passed(&["lint", "vet"])
+        } else if text.contains("type") {
+            passed(&["typecheck"])
+        } else {
+            None
+        };
+
+        if let Some(command) = measured {
+            criterion["met"] = json!(true);
+            criterion["why"] = json!(format!("Measured by SDC: `{command}` passed. (The reviewer judged it from the diff alone.)"));
+            criterion["measured"] = json!(true);
+        }
+    }
+
+    let unmet = criteria.iter().any(|criterion| criterion["met"] == false);
+    let high = review["issues"].as_array().is_some_and(|issues| issues.iter().any(|issue| issue["severity"] == "high"));
+
+    if !unmet && !high && review["verdict"] == "issues" {
+        /* What is left are observations, not blockers: the review passes, and the issues stay listed. */
+        review["verdict"] = json!("pass");
+    }
+}
+
+/// The dependency audit a folder's manifests allow: `(name, command)`, or `None`.
+pub fn dependency_audit(files: &[String], posix: bool) -> Option<(&'static str, String)> {
+    let has = |name: &str| files.iter().any(|file| file == name);
+    let quiet = if posix { " 2>/dev/null" } else { "" };
+
+    if has("package-lock.json") {
+        Some(("npm audit", format!("npm audit --json --omit=dev{quiet}")))
+    } else if has("pnpm-lock.yaml") {
+        Some(("pnpm audit", format!("pnpm audit --json --prod{quiet}")))
+    } else if has("composer.lock") {
+        Some(("composer audit", format!("composer audit --format=json --no-interaction{quiet}")))
+    } else if has("requirements.txt") {
+        Some(("pip-audit", format!("pip-audit -r requirements.txt -f json{quiet}")))
+    } else if has("Cargo.lock") {
+        Some(("cargo audit", format!("cargo audit --json{quiet}")))
+    } else {
+        None
+    }
+}
+
+/// A dependency audit's JSON as counts by severity - npm's and pnpm's `metadata.vulnerabilities`,
+/// composer's `advisories`, pip-audit's `dependencies[].vulns`, cargo-audit's `vulnerabilities.list`.
+pub fn read_audit(text: &str) -> Option<Value> {
+    let start = text.find('{').or_else(|| text.find('['))?;
+    let value: Value = serde_json::from_str(text[start..].trim()).ok()?;
+    let mut counts = json!({ "critical": 0, "high": 0, "moderate": 0, "low": 0 });
+
+    if let Some(vulnerabilities) = value.pointer("/metadata/vulnerabilities").and_then(Value::as_object) {
+        for key in ["critical", "high", "moderate", "low"] {
+            counts[key] = json!(vulnerabilities.get(key).and_then(Value::as_u64).unwrap_or(0));
+        }
+    } else if let Some(advisories) = value.get("advisories").and_then(Value::as_object) {
+        let total: usize = advisories.values().map(|list| list.as_array().map(Vec::len).unwrap_or(0)).sum();
+
+        counts["high"] = json!(total);
+    } else if let Some(list) = value.pointer("/vulnerabilities/list").and_then(Value::as_array) {
+        counts["high"] = json!(list.len());
+    } else {
+        let dependencies = value.get("dependencies").and_then(Value::as_array)?;
+        let total: usize = dependencies.iter().map(|dependency| dependency["vulns"].as_array().map(Vec::len).unwrap_or(0)).sum();
+
+        counts["high"] = json!(total);
+    }
+
+    Some(counts)
+}
+
+/// The run's word: `PASS`, `FAIL`, `NO_CHECKS` or `UNPROVEN` (P4 - "nothing failed" is not "proved").
+pub fn verdict(checks: &[Value], scans: &Value, review: Option<&Value>, changed: bool) -> &'static str {
+    let ran: Vec<&Value> = checks.iter().filter(|check| check["status"] == "pass" || check["status"] == "fail").collect();
+    let failed_check = ran.iter().any(|check| check["status"] == "fail");
+    let secrets = scans["secrets"].as_array().map(Vec::len).unwrap_or(0);
+    let sast_high = scans["sast"].as_array().map(|findings| findings.iter().filter(|finding| finding["severity"] == "high").count()).unwrap_or(0);
+    let deps_bad = scans["dependencies"]["counts"]["critical"].as_u64().unwrap_or(0) + scans["dependencies"]["counts"]["high"].as_u64().unwrap_or(0) > 0;
+    let review_issues = review.is_some_and(|review| {
+        review["verdict"] == "issues" && review["issues"].as_array().map(|issues| issues.iter().any(|issue| issue["severity"] == "high")).unwrap_or(false)
+            || review["criteria"].as_array().map(|criteria| criteria.iter().any(|criterion| criterion["met"] == false)).unwrap_or(false)
+    });
+
+    if failed_check || secrets > 0 || sast_high > 0 || deps_bad || review_issues {
+        return "FAIL";
+    }
+
+    if ran.is_empty() && !changed && review.is_none() {
+        return "NO_CHECKS";
+    }
+
+    let reviewed_clean = review.is_some_and(|review| review["verdict"] == "pass");
+
+    if ran.is_empty() && !reviewed_clean {
+        return "UNPROVEN";
+    }
+
+    "PASS"
 }
 
 /// The run as one snapshot - what `VerifyUpdated` carries and what the Verify tab draws.
@@ -228,6 +421,8 @@ struct Run {
     checks: Vec<Value>,
     review: Option<Value>,
     note: String,
+    scans: Value,
+    verdict: Option<&'static str>,
 }
 
 impl Run {
@@ -242,6 +437,8 @@ impl Run {
                 "checks": self.checks,
                 "review": self.review,
                 "note": self.note,
+                "scans": self.scans,
+                "verdict": self.verdict,
             })),
             Some(self.session_id.clone()),
             self.turn_id.clone(),
@@ -270,7 +467,11 @@ pub async fn run(state: Arc<DaemonState>, out: Arc<dyn Notifier>, request: Reque
             json!({ "engine": reviewer.engine, "model": reviewer.model, "status": "pending" })
         }),
         note: String::new(),
+        scans: json!({ "state": "pending" }),
+        verdict: None,
     };
+
+    crate::trust::kill::begin(&request.verify_id, "verify", Some(&request.session_id), "Verify");
 
     /* Stage 1: which checks this folder has. */
     let planned = {
@@ -343,6 +544,58 @@ pub async fn run(state: Arc<DaemonState>, out: Arc<dyn Notifier>, request: Reque
         run.push(&out);
     }
 
+    /* Stage 1b (0.12): the change's added lines through the secret scanner and the SAST rules, and the
+       project's dependency audit when its tool is there. Rules, not opinions: every finding names its rule. */
+    let diff_text = {
+        let workspace = workspace.clone();
+        let since = request.since.clone();
+
+        tokio::task::spawn_blocking(move || match since {
+            Some(sha) => workspace.changes_since(&sha),
+            None => workspace.diff(),
+        })
+        .await
+        .ok()
+        .and_then(Result::ok)
+        .unwrap_or_default()
+    };
+    let changed = !diff_text.trim().is_empty();
+    let (secret_rules, sast_rules) = crate::trust::scan::rule_counts();
+
+    run.scans = json!({
+        "state": "running",
+        "secrets": crate::trust::scan::secrets(&diff_text),
+        "sast": crate::trust::scan::sast(&diff_text),
+        "rules": { "secrets": secret_rules, "sast": sast_rules },
+        "dependencies": Value::Null,
+    });
+    run.push(&out);
+
+    let audit = {
+        let workspace = workspace.clone();
+
+        tokio::task::spawn_blocking(move || {
+            let files: Vec<String> = workspace
+                .list(".")
+                .map(|(entries, _)| entries.into_iter().map(|entry| entry.split(" (").next().unwrap_or_default().trim_end_matches('/').to_string()).collect())
+                .unwrap_or_default();
+            let (name, command) = dependency_audit(&files, posix)?;
+            let report = workspace.run(&command, Duration::from_secs(180)).ok()?;
+
+            Some(match read_audit(&report.stdout) {
+                Some(counts) => json!({ "tool": name, "counts": counts, "status": "done" }),
+                None => json!({ "tool": name, "status": "unavailable", "detail": tail(&format!("{}\n{}", report.stdout, report.stderr)).join(" ") }),
+            })
+        })
+        .await
+        .ok()
+        .flatten()
+    };
+
+    run.scans["dependencies"] = audit.unwrap_or_else(|| json!({ "status": "none", "detail": "No lock file with an audit tool on this machine: dependencies were not checked." }));
+    run.scans["state"] = json!("done");
+    run.push(&out);
+
     /* Stage 2: the review - by a different engine, on the diff. */
     let mut review_failed = false;
 
@@ -358,20 +611,51 @@ pub async fn run(state: Arc<DaemonState>, out: Arc<dyn Notifier>, request: Reque
             run.review = Some(json!({ "engine": reviewer.engine, "model": reviewer.model, "status": "running" }));
             run.push(&out);
 
-            let review = review(&state, &workspace, &request, &reviewer).await;
+            /* What SDC itself ran is a fact the reviewer is given and may not contradict (found live in 0.12: a
+               reviewer that saw only the diff said "npm test cannot pass" right after npm test had passed). */
+            let facts: Vec<String> = run
+                .checks
+                .iter()
+                .filter(|check| check["status"] == "pass" || check["status"] == "fail")
+                .map(|check| {
+                    format!(
+                        "the project's own {} check (`{}`, the same as running its {} script by any other spelling) {}",
+                        check["name"].as_str().unwrap_or_default(),
+                        check["command"].as_str().unwrap_or_default(),
+                        check["name"].as_str().unwrap_or_default(),
+                        if check["status"] == "pass" { "PASSED" } else { "FAILED" }
+                    )
+                })
+                .collect();
+            let mut review = review(&state, &workspace, &request, &reviewer, &facts).await;
+
+            measured_criteria(&mut review, &request.acceptance, &run.checks);
 
             review_failed = review["status"] == "failed" || review["verdict"] == "issues";
             run.review = Some(review);
         }
     }
 
+    let word = verdict(&run.checks, &run.scans, run.review.as_ref().filter(|review| review["status"] == "done"), changed);
+
     run.state = "done";
-    run.pass = Some(!failed && !review_failed);
+    run.verdict = Some(word);
+    /* `pass` means proven (P4): PASS and nothing else - an UNPROVEN run is not a passing one. */
+    let _ = review_failed;
+    run.pass = Some(!failed && word == "PASS");
     run.push(&out);
     crate::engines::cancel::clear(&request.verify_id);
+    crate::trust::kill::end(&request.verify_id);
+
+    /* The turn this run verified is scored again: a proven turn loses the "not verified" cap. */
+    if let Some(turn) = request.turn_id.as_deref() {
+        let policy = crate::trust::policy::Policy::load(Some(&request.root), request.remote.as_ref());
+
+        crate::sdcp::methods::score_turn(&state, &*out, &request.session_id, turn, 0, &policy, Some(&request.root));
+    }
 }
 
-async fn review(state: &Arc<DaemonState>, workspace: &Arc<Workspace>, request: &Request, reviewer: &Reviewer) -> Value {
+async fn review(state: &Arc<DaemonState>, workspace: &Arc<Workspace>, request: &Request, reviewer: &Reviewer, facts: &[String]) -> Value {
     let base = json!({ "engine": reviewer.engine, "model": reviewer.model });
     let failed = |summary: String| {
         let mut value = base.clone();
@@ -398,10 +682,12 @@ async fn review(state: &Arc<DaemonState>, workspace: &Arc<Workspace>, request: &
     };
 
     if diff.trim().is_empty() {
+        /* VR-6: nothing changed is not "the change is correct" - there is no change. The review is skipped,
+           and said to be. */
         let mut value = base.clone();
 
-        value["status"] = json!("done");
-        value["verdict"] = json!("pass");
+        value["status"] = json!("skipped");
+        value["verdict"] = Value::Null;
         value["summary"] = json!("Nothing to review: the folder has no changes since the checkpoint.");
         value["issues"] = json!([]);
 
@@ -421,7 +707,7 @@ async fn review(state: &Arc<DaemonState>, workspace: &Arc<Workspace>, request: &
     let prompt = Prompt {
         session_id: request.session_id.clone(),
         turn_id: format!("{}-review", request.verify_id),
-        text: review_prompt(&request.task, &diff),
+        text: with_facts(review_prompt_with(&request.task, &diff, &request.acceptance, request.focus.as_deref()), facts),
         model: reviewer.model.clone(),
         provider: reviewer.provider.clone(),
         history: Vec::new(),
@@ -535,6 +821,75 @@ mod tests {
         assert!(prompt.contains("fix the 500"));
         assert!(prompt.contains("+let x = 1;"));
         assert!(prompt.contains("\"verdict\""));
+    }
+
+    #[test]
+    fn the_verdict_has_four_words_and_never_calls_unproven_work_a_pass() {
+        let pass = json!({ "status": "pass" });
+        let fail = json!({ "status": "fail" });
+        let clean = json!({ "secrets": [], "sast": [], "dependencies": { "counts": { "critical": 0, "high": 0 } } });
+        let leaked = json!({ "secrets": [{ "rule": "aws-access-key" }], "sast": [] });
+        let reviewed = json!({ "verdict": "pass", "issues": [], "criteria": [] });
+
+        assert_eq!(verdict(std::slice::from_ref(&pass), &clean, None, true), "PASS");
+        assert_eq!(verdict(&[fail], &clean, None, true), "FAIL");
+        assert_eq!(verdict(&[pass], &leaked, None, true), "FAIL", "a secret fails the run");
+        assert_eq!(verdict(&[], &clean, None, true), "UNPROVEN", "nothing ran, nothing proved");
+        assert_eq!(verdict(&[], &clean, Some(&reviewed), true), "PASS", "a clean second-AI review proves a change with no tests");
+        assert_eq!(verdict(&[], &clean, None, false), "NO_CHECKS");
+
+        let unmet = json!({ "verdict": "pass", "issues": [], "criteria": [{ "met": false }] });
+
+        assert_eq!(verdict(&[json!({ "status": "pass" })], &clean, Some(&unmet), true), "FAIL", "an unmet agreed condition fails");
+    }
+
+    #[test]
+    fn a_measured_check_decides_a_condition_the_reviewer_could_not_see() {
+        let mut review = json!({
+            "verdict": "issues",
+            "issues": [{ "severity": "medium", "message": "no test in the diff" }],
+            "criteria": [{ "met": true, "why": "ok" }, { "met": false, "why": "npm test cannot pass" }, { "met": false, "why": "no email" }],
+        });
+        let checks = vec![json!({ "name": "test", "command": "npm run test", "status": "pass" })];
+
+        measured_criteria(&mut review, &["add works".into(), "npm test passes".into(), "an email is sent".into()], &checks);
+
+        assert_eq!(review["criteria"][1]["met"], true);
+        assert!(review["criteria"][1]["why"].as_str().unwrap().contains("Measured by SDC"));
+        assert_eq!(review["criteria"][2]["met"], false, "a condition no check measures stays the reviewer's call");
+        assert_eq!(review["verdict"], "issues", "one condition is still unmet");
+
+        review["criteria"][2]["met"] = json!(true);
+        measured_criteria(&mut review, &[], &checks);
+
+        assert_eq!(review["verdict"], "pass", "medium observations do not block");
+    }
+
+    #[test]
+    fn dependency_audits_are_read_from_each_tools_json() {
+        let npm = r#"{"metadata":{"vulnerabilities":{"info":0,"low":1,"moderate":2,"high":1,"critical":0}}}"#;
+        let pip = r#"{"dependencies":[{"name":"flask","vulns":[{"id":"PYSEC-1"}]},{"name":"x","vulns":[]}]}"#;
+
+        assert_eq!(read_audit(npm).unwrap()["high"], 1);
+        assert_eq!(read_audit(pip).unwrap()["high"], 1);
+        assert!(read_audit("not json").is_none());
+        assert_eq!(dependency_audit(&files(&["package-lock.json"]), true).unwrap().0, "npm audit");
+        assert!(dependency_audit(&files(&["README.md"]), true).is_none());
+    }
+
+    #[test]
+    fn the_reviewer_judges_each_agreed_condition() {
+        let prompt = review_prompt_with("fix the form", "+x", &["The form sends an email".into()], Some("security"));
+
+        assert!(prompt.contains("1. The form sends an email"));
+        assert!(prompt.contains("SECURITY review"));
+        assert!(with_facts(prompt.clone(), &["`npm test` PASSED".into()]).ends_with("- `npm test` PASSED"));
+        assert_eq!(with_facts(prompt.clone(), &[]), prompt);
+
+        let review = parse_review(r#"{"verdict":"pass","summary":"ok","issues":[],"criteria":[{"met":false,"why":"no email is sent"}]}"#);
+
+        assert_eq!(review["verdict"], "issues", "an unmet condition turns a pass into issues");
+        assert_eq!(review["criteria"][0]["why"], "no email is sent");
     }
 
     /// The diff a review reads includes files that did not exist at the checkpoint.

@@ -145,6 +145,9 @@ pub enum EngineEvent {
     },
     /// The agent's checklist, as it stands now: `[{text, status}]` (the plan card, v4).
     Plan(Value),
+    /// What the turn has used so far, as the provider reported it (0.12, the cost governor). Totals, not
+    /// increments: a later `Usage` of the same turn supersedes an earlier one field by field.
+    Usage { input_tokens: u64, output_tokens: u64, cost_usd: Option<f64> },
     Failed(String),
     Done {
         summary: String,
@@ -387,11 +390,14 @@ pub fn parse_stream_line(line: &str) -> Vec<EngineEvent> {
         "item.completed" | "item.started" | "item.updated" => {
             value.get("item").map(parse_codex_item).unwrap_or_default()
         }
-        "turn.completed" => vec![EngineEvent::Done {
-            summary: "Done".to_string(),
-            meta: usage_meta(&value),
-            pass: Some(true),
-        }],
+        "turn.completed" => usage_event(&value)
+            .into_iter()
+            .chain(std::iter::once(EngineEvent::Done {
+                summary: "Done".to_string(),
+                meta: usage_meta(&value),
+                pass: Some(true),
+            }))
+            .collect(),
         "turn.failed" => vec![EngineEvent::Failed(error_message(&value))],
 
         /* Gemini's stream-json: one message per delta - **the assistant's only**. Gemini also emits
@@ -673,7 +679,9 @@ fn result_event(value: &Value) -> Vec<EngineEvent> {
         return vec![EngineEvent::Failed(error_message(value))];
     }
 
-    vec![EngineEvent::Done {
+    let mut events: Vec<EngineEvent> = usage_event(value).into_iter().collect();
+
+    events.push(EngineEvent::Done {
         /* Claude puts the whole answer in `result` and the fixtures put a label in `summary`. The
            deltas already printed the answer, so a summary that repeats it would print it twice: the
            label wins, and the provider's numbers go in `meta` where the footer reads them. */
@@ -684,7 +692,34 @@ fn result_event(value: &Value) -> Vec<EngineEvent> {
             .to_string(),
         meta: usage_meta(value),
         pass: value.get("pass").and_then(Value::as_bool).or(Some(true)),
-    }]
+    });
+
+    events
+}
+
+/// The provider's own numbers as a `Usage` event, when the line has any (0.12): Claude's `usage` and
+/// `total_cost_usd`, Codex's `usage`, Gemini's `stats`. `None` for a line with no numbers - the governor
+/// then says the turn was not measured rather than inventing a figure.
+fn usage_event(value: &Value) -> Option<EngineEvent> {
+    let usage = value.get("usage").or_else(|| value.get("stats"));
+    let read = |keys: &[&str]| -> u64 {
+        usage
+            .map(|usage| keys.iter().map(|key| usage.get(*key).and_then(Value::as_u64).unwrap_or(0)).sum())
+            .unwrap_or(0)
+    };
+    let input = read(&["input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens", "prompt_tokens"]);
+    let output = read(&["output_tokens", "completion_tokens"]);
+    let total = read(&["total_tokens"]);
+    let cost = value.get("total_cost_usd").and_then(Value::as_f64);
+
+    /* Gemini's stats may carry only a total: it is counted as input, which prices it at the lower rate. */
+    let (input, output) = if input == 0 && output == 0 && total > 0 { (total, 0) } else { (input, output) };
+
+    if input == 0 && output == 0 && cost.is_none() {
+        return None;
+    }
+
+    Some(EngineEvent::Usage { input_tokens: input, output_tokens: output, cost_usd: cost })
 }
 
 /// What a provider's own numbers say about the turn, when it sends any.
@@ -922,6 +957,8 @@ mod tests {
             vec![
                 EngineEvent::Delta("O".into()),
                 EngineEvent::Delta("K".into()),
+                /* Claude's own figure for the turn - the cost governor's "measured". */
+                EngineEvent::Usage { input_tokens: 0, output_tokens: 0, cost_usd: Some(0.029004) },
                 EngineEvent::Done { summary: "Done".into(), meta: "$0.0290 · 3.3s".into(), pass: Some(true) },
             ]
         );
@@ -942,6 +979,7 @@ mod tests {
             events,
             vec![
                 EngineEvent::Delta("OK".into()),
+                EngineEvent::Usage { input_tokens: 12926, output_tokens: 5, cost_usd: None },
                 EngineEvent::Done {
                     summary: "Done".into(),
                     meta: "12926 in · 5 out".into(),
@@ -994,7 +1032,7 @@ mod tests {
 
         let ending = parse_stream_line(r#"{"type":"result","stats":{"total_tokens":42}}"#);
 
-        assert!(matches!(ending.as_slice(), [EngineEvent::Done { .. }]));
+        assert!(matches!(ending.as_slice(), [EngineEvent::Usage { input_tokens: 42, .. }, EngineEvent::Done { .. }]), "{ending:?}");
     }
 
     /// A codex `error` **item** is a note, not the end of the turn.
@@ -1014,7 +1052,7 @@ mod tests {
         ]);
 
         assert!(
-            matches!(events.as_slice(), [EngineEvent::ToolOutput { .. }, EngineEvent::Delta(text), EngineEvent::Done { .. }] if text == "OK"),
+            matches!(events.as_slice(), [EngineEvent::ToolOutput { .. }, EngineEvent::Delta(text), EngineEvent::Usage { .. }, EngineEvent::Done { .. }] if text == "OK"),
             "{events:?}"
         );
     }

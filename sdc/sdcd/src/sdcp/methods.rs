@@ -31,6 +31,15 @@ use crate::session_bridge;
 use crate::store::sqlite::Store;
 use crate::{DaemonState, SDCP_VERSION, VERSION};
 
+/* The Trust Kernel's, the Intent Engine's and the agency's methods (0.12) - child modules, so they share
+   this file's private helpers rather than copying them. */
+#[path = "kernel.rs"]
+mod kernel;
+#[path = "intent_methods.rs"]
+mod intent_methods;
+#[path = "ops_methods.rs"]
+mod ops_methods;
+
 /// One connection's request handler. It holds the shared daemon state and nothing else, so a second
 /// connection is a second `Daemon` over the same state rather than a second source of truth.
 pub struct Daemon {
@@ -57,6 +66,14 @@ impl Daemon {
     }
 
     fn dispatch(&self, envelope: &Envelope, out: Arc<dyn Notifier>) -> Result<Value, ErrorObject> {
+        /* Agency Mode (0.12): the person at the desk has a role, and the daemon - not the window - refuses
+           what the role may not do. With no team configured the one person is the owner. */
+        let role = crate::ops::team::current_role(self.store());
+
+        if role != "owner" {
+            crate::ops::team::allowed(&role, &envelope.method).map_err(ErrorObject::permission_denied)?;
+        }
+
         match envelope.method.as_str() {
             /* Host ---------------------------------------------------------------------------- */
             "host.status" => Ok(self.host_status(&*out)),
@@ -174,7 +191,9 @@ impl Daemon {
             "event.subscribe" => Ok(json!({ "fromSeq": self.state.events.seq() + 1 })),
             "event.append" => self.event_append(envelope, &*out),
 
-            other => Err(ErrorObject::unsupported(other)),
+            /* The Trust Kernel, then the Intent Engine, then the agency methods - each falls through to the
+               next, and the last one answers `unsupported`. */
+            _ => self.dispatch_kernel(envelope, out),
         }
     }
 
@@ -1303,7 +1322,36 @@ impl Daemon {
          * autonomy level the person chose, on the same turn pipeline (events, checkpoint, Stop).
          */
         let agent_mode = envelope.params.get("agent").and_then(Value::as_bool).unwrap_or(false);
-        let autonomy = crate::agent::gate::Autonomy::parse(&envelope.opt_str("autonomy").unwrap_or_default());
+        let requested_autonomy = crate::agent::gate::Autonomy::parse(&envelope.opt_str("autonomy").unwrap_or_default());
+
+        /*
+         * The Trust Kernel decides before anything is recorded (0.12): the folder's policy (privacy, the
+         * production cap on Auto), and the cost governor (a budget already spent, or a turn estimated far
+         * past its cap). A refusal here is a sentence and no turn - never a turn that starts and is then
+         * cut off.
+         */
+        let known_root = self.store().session_project_root(&session_id).map_err(ErrorObject::internal)?;
+        let early_remote = self.remote_for(envelope)?;
+        let policy = crate::trust::policy::Policy::load(known_root.as_deref(), early_remote.as_ref());
+
+        policy
+            .allows_engine(&engine_id, provider.as_deref())
+            .map_err(ErrorObject::permission_denied)?;
+
+        let (autonomy, capped) = policy.cap_autonomy(requested_autonomy);
+        let history_chars: usize = session_bridge::history_for(self.store(), &session_id)
+            .map(|history| history.iter().map(|message| message.text.len()).sum())
+            .unwrap_or(0);
+        let estimate = crate::trust::cost::estimate(&engine_id, provider.as_deref(), &model, &prompt_text, history_chars, agent_mode);
+        let estimate_usd = estimate["usd"].as_f64();
+
+        crate::trust::cost::check_before(self.store(), &session_id, policy.max_turn_usd, estimate_usd)
+            .map_err(ErrorObject::permission_denied)?;
+
+        if let Some(sentence) = capped.as_deref().or(policy.error.as_deref()) {
+            out.push(event::toast(sentence, None, Some(8_000)), Some(session_id.clone()), None);
+        }
+
         let backend = match engine_id.as_str() {
             "native_api" => Some(crate::agent::Backend::Api),
             "ollama" => Some(crate::agent::Backend::Ollama),
@@ -1318,6 +1366,7 @@ impl Daemon {
                     .map(|steps| steps.max(1) as usize)
                     .unwrap_or(crate::agent::DEFAULT_STEPS),
             )
+            .with_policy(policy.clone())
         });
 
         let history = session_bridge::history_for(self.store(), &session_id)?;
@@ -1346,6 +1395,15 @@ impl Daemon {
             started["reading"] = reading.to_json();
         }
 
+        /* What the turn will probably cost, labelled as an estimate - the window shows it next to the live meter. */
+        started["estimate"] = estimate.clone();
+
+        if let Some(intent_id) = envelope.opt_str("intentId") {
+            started["intentId"] = json!(intent_id);
+        }
+
+        let first_seq = self.state.events.seq();
+
         out.push(started, Some(session_id.clone()), Some(turn_id.clone()));
 
         /* The folder this chat works in, resolved *now* from the session's project and carried in the
@@ -1357,7 +1415,7 @@ impl Daemon {
             .map_err(ErrorObject::internal)?;
         /* And **which machine** that folder is on (0.7.13): with a host here, the adapter runs the CLI
            over `ssh` in that folder rather than locally (see `engines::cli::remote_command`). */
-        let remote = self.remote_for(envelope)?;
+        let remote = early_remote;
         /* An agent turn in a chat with no folder used to end in a refusal ("Agent mode works inside a
            folder, and this chat has none"). 0.10.0 provisions one instead - a workspace under the
            person's home, on whichever machine the chat lives on, bound to the chat exactly the way
@@ -1400,6 +1458,8 @@ impl Daemon {
                         snapshot,
                         crate::checkpoints::screenshot::capture(),
                     ) {
+                        let _ = store.set_checkpoint_turn(&fresh.id, &turn);
+
                         notifier.push(
                             event::checkpoint_saved(&session, fresh.to_event_payload()),
                             Some(session.clone()),
@@ -1418,7 +1478,23 @@ impl Daemon {
         let notifier = out.clone();
         let answer_turn_id = turn_id.clone();
         /* The engine reads the brief and the message; the store and the history keep the message alone. */
-        let prompt_text = if briefed { crate::understand::shape(&prompt_text, &reading) } else { prompt_text };
+        /* A confirmed Intent Contract (0.12) wins over the reading brief: the person already saw and agreed
+           to what SDC understood, and the Prompt Compiler writes it the way this engine works best. */
+        let compiled = envelope
+            .opt_str("intentId")
+            .and_then(|intent_id| self.compiled_prompt(&intent_id, &engine_id, envelope).ok());
+        let include_memory_file = compiled.is_none();
+        let prompt_text = match compiled {
+            Some(compiled) => compiled,
+            None if briefed => crate::understand::shape(&prompt_text, &reading),
+            None => prompt_text,
+        };
+        /* Long-task memory (0.12): an unfinished plan and the project's .sdc/memory.md travel in front of the
+           words - for this turn only; the stored prompt stays the person's own. */
+        let prompt_text = match self.long_task_memory(&session_id, project_root.as_deref(), remote.as_ref(), include_memory_file) {
+            Some(memory) => format!("{memory}\n\n{prompt_text}"),
+            None => prompt_text,
+        };
         let plan = RunPlan {
             session_id,
             turn_id,
@@ -1431,6 +1507,9 @@ impl Daemon {
             remote,
             self_checkpointing,
             autonomy,
+            policy,
+            first_seq,
+            estimate_usd,
         };
 
         tokio::spawn(async move {
@@ -1474,6 +1553,35 @@ impl Daemon {
             remote: self.remote_for(envelope)?,
             reviewer,
             review_failing: envelope.params.get("reviewFailing").and_then(Value::as_bool).unwrap_or(false),
+            /* The conditions the person agreed to: sent by the window, or read from the turn's Intent Contract. */
+            acceptance: {
+                let sent: Vec<String> = envelope
+                    .params
+                    .get("acceptance")
+                    .and_then(Value::as_array)
+                    .map(|items| items.iter().filter_map(|item| item.as_str().map(str::to_string)).collect())
+                    .unwrap_or_default();
+
+                if sent.is_empty() {
+                    envelope
+                        .opt_str("intentId")
+                        .and_then(|id| self.store().intent(&id).ok().flatten())
+                        .map(|intent| {
+                            intent["spec"]["acceptance"]
+                                .as_array()
+                                .cloned()
+                                .unwrap_or_default()
+                                .iter()
+                                .filter(|item| item["checked"].as_bool().unwrap_or(true))
+                                .filter_map(|item| item["text"].as_str().map(str::to_string))
+                                .collect()
+                        })
+                        .unwrap_or_default()
+                } else {
+                    sent
+                }
+            },
+            focus: envelope.opt_str("focus"),
         };
         let state = self.state.clone();
 
@@ -2618,8 +2726,19 @@ impl Daemon {
         let turn = crate::checkpoints::turn_of(&envelope.require_str("turnId")?);
         /* The session's folder when the caller does not send one: a rewind restores the files of the chat
            it belongs to, which is the folder that chat works in - locally or on a host (0.7.13). */
+        self.refuse_while_running(&session_id)?;
+
         let subject = self.subject(envelope)?;
-        let applied = crate::rewind::apply(self.store(), &session_id, turn, subject.snapshot())?;
+        let host = self.host_id_for(envelope)?;
+        let applied = crate::rewind::apply(self.store(), &session_id, turn, subject.snapshot(), host.as_deref())?;
+
+        /* TM-8: nothing at or after that point is nothing rewound - and saying "Rewound" anyway was the
+           kind of claim P4 forbids. */
+        if applied.turns == 0 {
+            return Err(ErrorObject::not_found(
+                "There is no checkpoint at or after that point in this chat, so nothing was rewound.",
+            ));
+        }
 
         out.push(
             applied.to_event_payload(&session_id),
@@ -2642,10 +2761,13 @@ impl Daemon {
     fn rewind_redo(&self, envelope: &Envelope, out: &dyn Notifier) -> Result<Value, ErrorObject> {
         let session_id = envelope.opt_str("sessionId").unwrap_or_else(|| "s1".into());
 
+        self.refuse_while_running(&session_id)?;
+
         /* The folder, so a redo puts the files back as well as the list (it only moved rows until v4). */
         let subject = self.subject(envelope)?;
+        let host = self.host_id_for(envelope)?;
 
-        match crate::rewind::redo(self.store(), &session_id, subject.snapshot())? {
+        match crate::rewind::redo(self.store(), &session_id, subject.snapshot(), host.as_deref())? {
             Some(applied) => {
                 out.push(applied.to_event_payload(&session_id), Some(session_id), None);
 
@@ -2746,8 +2868,12 @@ impl Daemon {
             .ok_or_else(|| ErrorObject::not_found(format!("no checkpoint `{checkpoint_id}`")))?;
         let session_id = checkpoint["sessionId"].as_str().unwrap_or("s1").to_string();
         let turn = checkpoint["turn"].as_i64().unwrap_or(0);
+
+        self.refuse_while_running(&session_id)?;
+
         let subject = self.subject(envelope)?;
-        let applied = crate::rewind::apply(self.store(), &session_id, turn, subject.snapshot())?;
+        let host = self.host_id_for(envelope)?;
+        let applied = crate::rewind::apply(self.store(), &session_id, turn, subject.snapshot(), host.as_deref())?;
 
         out.push(applied.to_event_payload(&session_id), Some(session_id), None);
 
@@ -2807,6 +2933,7 @@ impl Daemon {
  * ---------------------------------------------------------------------------------------------- */
 
 /// Everything a turn needs after the call has already answered.
+#[derive(Default)]
 struct RunPlan {
     session_id: String,
     turn_id: String,
@@ -2832,23 +2959,38 @@ struct RunPlan {
     self_checkpointing: bool,
     /// The autonomy the person chose, for the engines that run their own agent (the CLIs).
     autonomy: crate::agent::gate::Autonomy,
+    /// The folder's policy, loaded when the turn started (0.12, the Trust Kernel).
+    policy: crate::trust::policy::Policy,
+    /// The log's sequence number just before the turn, so its score reads only its own events.
+    first_seq: i64,
+    /// What the turn was estimated to cost before it ran - kept to compare with what it did cost.
+    estimate_usd: Option<f64>,
 }
 
 /// How long streamed text is gathered before it is pushed as one delta (0.11.7).
 const DELTA_WINDOW: std::time::Duration = std::time::Duration::from_millis(50);
 
+/// The gathering window on a slow link (0.12, Settings → Low-bandwidth mode): five times fewer pushes.
+const LOW_BANDWIDTH_WINDOW: std::time::Duration = std::time::Duration::from_millis(250);
+
 /// Streamed text that has not been pushed yet: at most one of the two is non-empty at a time.
-#[derive(Default)]
 struct Pending {
     answer: String,
     thinking: String,
     since: Option<std::time::Instant>,
+    window: std::time::Duration,
+}
+
+impl Default for Pending {
+    fn default() -> Self {
+        Self { answer: String::new(), thinking: String::new(), since: None, window: DELTA_WINDOW }
+    }
 }
 
 impl Pending {
     /// Old enough, or big enough, to go now.
     fn due(&self) -> bool {
-        self.since.is_some_and(|since| since.elapsed() >= DELTA_WINDOW) || self.answer.len() + self.thinking.len() >= 4096
+        self.since.is_some_and(|since| since.elapsed() >= self.window) || self.answer.len() + self.thinking.len() >= 4096
     }
 
     fn flush(&mut self, out: &dyn Notifier, turn_id: &str, session: &Option<String>, turn: &Option<String>) {
@@ -2892,6 +3034,16 @@ async fn run_turn(
     let mut checkpoint_written = false;
     /* What the turn did with its tools, one line per call - kept with the answer for the next turn. */
     let mut tools: Vec<(String, String)> = Vec::new();
+    /* The Trust Kernel's view of the turn as it runs (0.12): what it cost so far, the files it changed,
+       the shapes of a runaway, and whether the kernel already stopped it. */
+    let mut usage = crate::trust::cost::Usage::default();
+    let mut changed: Vec<String> = Vec::new();
+    let mut runaway = crate::trust::cost::Runaway::default();
+    let mut halted = false;
+    let turn_cap = crate::trust::cost::turn_cap(&state.store, plan.policy.max_turn_usd);
+    let stopper = engine.clone();
+
+    crate::trust::kill::begin(&plan.turn_id, "turn", Some(&plan.session_id), &plan.prompt_text.chars().take(80).collect::<String>());
 
     /* The engine runs on its own task and writes into a channel; this loop reads it and pushes each
       event out while the engine is still talking.
@@ -2922,12 +3074,13 @@ async fn run_turn(
      * fraction of the events. Order is kept: the other kind of delta, and every non-delta event, flushes
      * what is pending first.
      */
-    let mut pending = Pending::default();
+    let low_bandwidth = matches!(state.store.setting("net.lowBandwidth").ok().flatten().as_deref(), Some("true" | "on"));
+    let mut pending = Pending { window: if low_bandwidth { LOW_BANDWIDTH_WINDOW } else { DELTA_WINDOW }, ..Pending::default() };
 
     loop {
         let next = match pending.since {
             None => stream.recv().await,
-            Some(since) => match tokio::time::timeout(DELTA_WINDOW.saturating_sub(since.elapsed()), stream.recv()).await {
+            Some(since) => match tokio::time::timeout(pending.window.saturating_sub(since.elapsed()), stream.recv()).await {
                 Ok(next) => next,
                 Err(_) => {
                     pending.flush(&*out, &plan.turn_id, &session, &turn);
@@ -2972,6 +3125,8 @@ async fn run_turn(
                     pending.flush(&*out, &plan.turn_id, &session, &turn);
                 }
             }
+            /* A slow link keeps the answer and drops the running commentary. */
+            crate::engines::EngineEvent::Thinking(_) if low_bandwidth => {}
             crate::engines::EngineEvent::Thinking(text) => {
                 pending.thinking.push_str(&text);
                 pending.since.get_or_insert_with(std::time::Instant::now);
@@ -2980,7 +3135,82 @@ async fn run_turn(
                     pending.flush(&*out, &plan.turn_id, &session, &turn);
                 }
             }
+            crate::engines::EngineEvent::Usage { input_tokens, output_tokens, cost_usd } => {
+                usage.merge(crate::trust::cost::Usage { input_tokens, output_tokens, cost_usd });
+
+                /* A turn that crosses its budget while running is stopped here, whichever engine runs it. */
+                if let Some(cap) = turn_cap {
+                    let (spent, _) = crate::trust::cost::settle(&plan.engine_id, plan.provider.as_deref(), &plan.model, &usage);
+
+                    if spent > cap && !halted {
+                        halted = true;
+                        halt(
+                            &*out,
+                            &stopper,
+                            &plan,
+                            "BudgetStop",
+                            "budget",
+                            &format!("Stopped at ${spent:.2}: this turn crossed its ${cap:.2} budget. The work so far is kept; raise the budget or continue with a cheaper model."),
+                        );
+                    }
+                }
+            }
             crate::engines::EngineEvent::ToolStarted { call_id, tool, name, target } => {
+                /* The kernel looks first (0.12). A runaway loop stops whichever engine runs it; for the
+                   engines that run their own agent (the CLIs) a protected path, a denied command or a
+                   turn past its blast radius is stopped the moment the stream shows it - the SDC Agent
+                   asks *before* acting, in its own tools, so it is not stopped here. */
+                if !halted {
+                    if let Some(reason) = runaway.observe(&name, &target) {
+                        halted = true;
+                        halt(&*out, &stopper, &plan, "BudgetStop", "runaway", &reason);
+                    }
+                }
+
+                if tool == "edit" && !target.is_empty() && !changed.contains(&target) {
+                    changed.push(target.clone());
+                }
+
+                if !halted && !plan.self_checkpointing {
+                    let root = plan.project_root.as_deref();
+                    let verdict = match tool.as_str() {
+                        "edit" => plan
+                            .policy
+                            .protected(&target, root)
+                            .map(|pattern| ("protected-path", format!("`{target}` is protected by the policy (`{pattern}`). The turn was stopped before it could go further; the checkpoint before it can put the file back.")))
+                            .or_else(|| {
+                                (plan.policy.max_files_per_turn > 0 && changed.len() > plan.policy.max_files_per_turn).then(|| {
+                                    ("blast-radius", format!("This turn changed {} files, over the policy's limit of {}. It was stopped so you can look at the change before it grows.", changed.len(), plan.policy.max_files_per_turn))
+                                })
+                            }),
+                        "run" => plan
+                            .policy
+                            .denies(&target)
+                            .map(|rule| ("denied-command", format!("`{target}` matches `{rule}`, which the policy denies. The turn was stopped.")) ),
+                        _ => None,
+                    };
+
+                    if let Some((rule, sentence)) = verdict {
+                        halted = true;
+                        out.push(
+                            event::policy_violation(&plan.session_id, Some(&plan.turn_id), rule, &target, "stopped", &sentence),
+                            session.clone(),
+                            turn.clone(),
+                        );
+                        halt(&*out, &stopper, &plan, "", rule, &sentence);
+                    }
+                }
+
+                /* A command that reaches past the folder cannot be undone by a rewind: the newest checkpoint
+                   says so, so the Time Machine never promises more than it can give (TM-6). */
+                if tool == "run" && (crate::agent::gate::looks_dangerous(&target) || plan.policy.always_asks(&target).is_some()) {
+                    if let Ok(Some(id)) = state.store.mark_irreversible(&plan.session_id, &format!("ran `{}`", target.chars().take(80).collect::<String>())) {
+                        if let Ok(Some(row)) = state.store.checkpoint(&id) {
+                            out.push(event::checkpoint_updated(&plan.session_id, row), session.clone(), turn.clone());
+                        }
+                    }
+                }
+
                 if !plan.self_checkpointing && !checkpoint_written && ["edit", "write", "delete", "run"].contains(&tool.as_str()) {
                     let ordinal = state.events.seq();
                     /* The chat's own folder, so a checkpoint written before a mutating tool hashes the
@@ -3001,6 +3231,8 @@ async fn run_turn(
                         snapshot,
                         crate::checkpoints::screenshot::capture(),
                     ) {
+                        let _ = state.store.set_checkpoint_turn(&fresh.id, &plan.turn_id);
+
                         out.push(
                             event::checkpoint_saved(&plan.session_id, fresh.to_event_payload()),
                             session.clone(),
@@ -3057,6 +3289,10 @@ async fn run_turn(
                 );
             }
             crate::engines::EngineEvent::Plan(steps) => {
+                /* The plan outlives the turn and the daemon (long-task memory, 0.12): the next agent turn in
+                   this chat is told where it left off. */
+                let _ = state.store.set_setting(&format!("plan.{}", plan.session_id), &steps.to_string());
+
                 out.push(event::plan_updated(&plan.turn_id, steps), session.clone(), turn.clone());
             }
             crate::engines::EngineEvent::Failed(reason) => {
@@ -3095,10 +3331,59 @@ async fn run_turn(
 
     let interrupted = crate::engines::cancel::requested(&plan.turn_id);
     let failed = answer.is_empty();
-    let state_name = if interrupted { "idle" } else if failed { "error" } else { "success" };
-    let summary = if interrupted { "Interrupted" } else { "Done" };
+    let state_name = if halted { "error" } else if interrupted { "idle" } else if failed { "error" } else { "success" };
+    let summary = if halted { "Stopped by SDC" } else if interrupted { "Interrupted" } else { "Done" };
 
     crate::engines::cancel::clear(&plan.turn_id);
+    crate::trust::kill::end(&plan.turn_id);
+
+    /* The cost governor's record (0.12): measured when the provider said, priced from the catalogue when it
+       sent only tokens, and never a made-up number. "Saved" exists only against a baseline and measured tokens. */
+    {
+        let (cost, source) = crate::trust::cost::settle(&plan.engine_id, plan.provider.as_deref(), &plan.model, &usage);
+        let baseline = crate::trust::cost::baseline(&state.store, &usage);
+        let site = plan
+            .project_root
+            .as_deref()
+            .and_then(|root| state.store.sites().ok()?.into_iter().find(|site| site["root"].as_str() == Some(root)))
+            .and_then(|site| site["id"].as_str().map(str::to_string));
+
+        let _ = state.store.record_usage(
+            &plan.turn_id,
+            &plan.session_id,
+            plan.project_root.as_deref(),
+            site.as_deref(),
+            &plan.engine_id,
+            &plan.model,
+            plan.provider.as_deref(),
+            usage.input_tokens,
+            usage.output_tokens,
+            cost,
+            source,
+            plan.estimate_usd,
+            baseline,
+        );
+
+        out.push(
+            event::cost_updated(
+                &plan.session_id,
+                &plan.turn_id,
+                &plan.engine_id,
+                &plan.model,
+                usage.input_tokens,
+                usage.output_tokens,
+                cost,
+                source,
+                plan.estimate_usd,
+                baseline.map(|base| (base - cost).max(0.0)),
+            ),
+            session.clone(),
+            turn.clone(),
+        );
+    }
+
+    /* The turn's Trust score, from its own events - recomputed when Verify runs for it. */
+    score_turn(&state, &*out, &plan.session_id, &plan.turn_id, plan.first_seq, &plan.policy, plan.project_root.as_deref());
 
     /*
      * The stored answer is what the *next* turn is told this one said (session_bridge::history_for), and
@@ -3126,6 +3411,59 @@ async fn run_turn(
         })),
         session,
         None,
+    );
+}
+
+/// The kernel stops a running turn (0.12): the cancel mark first, so the loop drops whatever the engine
+/// still says; the engine told to stop; and the turn closed with the kernel's own sentence, so the window
+/// never shows a turn that was stopped as one that finished.
+fn halt(out: &dyn Notifier, engine: &Arc<dyn crate::engines::Engine>, plan: &RunPlan, event_kind: &str, kind: &str, sentence: &str) {
+    crate::engines::cancel::request(&plan.turn_id);
+
+    let engine = engine.clone();
+    let turn_id = plan.turn_id.clone();
+
+    tokio::spawn(async move {
+        engine.cancel(&turn_id).await;
+    });
+
+    if event_kind == "BudgetStop" {
+        out.push(
+            event::budget_stop(&plan.session_id, &plan.turn_id, kind, sentence),
+            Some(plan.session_id.clone()),
+            Some(plan.turn_id.clone()),
+        );
+    }
+
+    out.push(
+        event::turn_completed(&plan.turn_id, "Stopped by SDC", sentence, Some(false)),
+        Some(plan.session_id.clone()),
+        Some(plan.turn_id.clone()),
+    );
+}
+
+/// Scores one turn from its own events and pushes `TrustScored`. Called when the turn ends and again when
+/// a Verify run for it finishes, which is what lifts an unverified turn's cap.
+pub(crate) fn score_turn(
+    state: &Arc<DaemonState>,
+    out: &dyn Notifier,
+    session_id: &str,
+    turn_id: &str,
+    first_seq: i64,
+    policy: &crate::trust::policy::Policy,
+    root: Option<&str>,
+) {
+    let events = state.events.since(first_seq.max(0));
+    let facts = crate::trust::score::facts(&events, turn_id, policy, root);
+    let (score, level, reasons) = crate::trust::score::turn(&facts, policy.max_files_per_turn);
+    let reasons = json!(reasons);
+
+    let _ = state.store.save_trust_score(turn_id, session_id, score, level, &reasons);
+
+    out.push(
+        event::trust_scored(session_id, turn_id, score, level, reasons),
+        Some(session_id.to_string()),
+        Some(turn_id.to_string()),
     );
 }
 
@@ -3623,6 +3961,45 @@ mod tests {
         assert!(pending.since.is_none(), "flush resets the clock so the next byte starts a fresh window");
     }
 
+    /// The size cap is on the *combined* length, not either field alone - and when both kinds have
+    /// gathered text, `flush` pushes both, thinking first (an engine's thinking always precedes its
+    /// answer within the same window).
+    #[test]
+    fn the_delta_limiter_caps_the_combined_length_and_flushes_both_kinds_in_order() {
+        use crate::sdcp::notifications::RecordingNotifier;
+
+        let mut pending = Pending { answer: "a".repeat(2048), thinking: "t".repeat(2047), ..Pending::default() };
+
+        assert!(!pending.due(), "one byte under the combined cap");
+
+        pending.thinking.push('t');
+
+        assert!(pending.due(), "the combined length alone trips the cap, with neither field at 4096 on its own");
+
+        let notifier = RecordingNotifier::new();
+
+        pending.flush(&notifier, "turn-1", &None, &None);
+
+        assert_eq!(notifier.kinds(), vec!["ThinkingDelta", "TurnDelta"], "thinking is flushed before the answer");
+        assert!(pending.answer.is_empty() && pending.thinking.is_empty(), "flush takes both");
+    }
+
+    /// A custom window - what low-bandwidth mode sets `Pending::window` to - governs `due`, not the
+    /// constant [`DELTA_WINDOW`].
+    #[test]
+    fn the_delta_limiter_is_due_on_its_own_window_not_the_default() {
+        let mut pending = Pending { window: LOW_BANDWIDTH_WINDOW, ..Pending::default() };
+
+        pending.answer.push_str("hi");
+        pending.since = Some(std::time::Instant::now() - DELTA_WINDOW);
+
+        assert!(!pending.due(), "past the default window, but the wider low-bandwidth window has not elapsed yet");
+
+        pending.since = Some(std::time::Instant::now() - LOW_BANDWIDTH_WINDOW);
+
+        assert!(pending.due(), "the wider window has now elapsed");
+    }
+
     /// The sentence a `host.add` puts on screen when the machine's key is one SDC has never seen, and
     /// the one it puts there when that key is *wrong*. Two different questions, two different actions.
     #[test]
@@ -3790,6 +4167,7 @@ mod tests {
             remote: None,
             self_checkpointing: false,
             autonomy: Default::default(),
+            ..Default::default()
         };
         let engine: Arc<dyn crate::engines::Engine> = Arc::new(Halfway {
             release: std::sync::Mutex::new(Some(gated)),
@@ -3808,7 +4186,7 @@ mod tests {
         );
         assert_eq!(
             notifier.kinds(),
-            vec!["TurnDelta", "TurnDelta", "TurnCompleted", "SessionUpdated"]
+            vec!["TurnDelta", "TurnDelta", "TurnCompleted", "CostUpdated", "TrustScored", "SessionUpdated"]
         );
     }
 
@@ -3860,6 +4238,7 @@ mod tests {
             remote: None,
             self_checkpointing: false,
             autonomy: Default::default(),
+            ..Default::default()
         };
         let engine: Arc<dyn crate::engines::Engine> = Arc::new(Rapid);
         let out: Arc<dyn Notifier> = notifier.clone();
@@ -3868,7 +4247,7 @@ mod tests {
 
         assert_eq!(
             notifier.kinds(),
-            vec!["TurnDelta", "TurnCompleted", "SessionUpdated"],
+            vec!["TurnDelta", "TurnCompleted", "CostUpdated", "TrustScored", "SessionUpdated"],
             "five deltas that never waited for the window should still land as a single push"
         );
         assert_eq!(notifier.streamed_text(), "Hello, world");
@@ -3918,6 +4297,7 @@ mod tests {
             remote: None,
             self_checkpointing: false,
             autonomy: Default::default(),
+            ..Default::default()
         };
         let engine: Arc<dyn crate::engines::Engine> = Arc::new(Oversized);
         let out: Arc<dyn Notifier> = notifier.clone();
@@ -3934,7 +4314,7 @@ mod tests {
         );
         assert_eq!(
             notifier.kinds(),
-            vec!["TurnDelta", "TurnCompleted", "SessionUpdated"],
+            vec!["TurnDelta", "TurnCompleted", "CostUpdated", "TrustScored", "SessionUpdated"],
             "the oversized delta is its own push, not folded into whatever follows"
         );
         assert_eq!(notifier.streamed_text(), "x".repeat(4096));
@@ -3991,6 +4371,7 @@ mod tests {
             remote: None,
             self_checkpointing: false,
             autonomy: Default::default(),
+            ..Default::default()
         };
         let engine: Arc<dyn crate::engines::Engine> = Arc::new(ThenATool);
         let out: Arc<dyn Notifier> = notifier.clone();
@@ -3999,7 +4380,7 @@ mod tests {
 
         assert_eq!(
             notifier.kinds(),
-            vec!["TurnDelta", "ToolCallStarted", "TurnCompleted", "SessionUpdated"],
+            vec!["TurnDelta", "ToolCallStarted", "TurnCompleted", "CostUpdated", "TrustScored", "SessionUpdated"],
             "the buffered delta must be flushed ahead of the tool event, not left to trail in behind it"
         );
         assert_eq!(notifier.streamed_text(), "checking the tests");
@@ -4060,6 +4441,7 @@ mod tests {
             remote: None,
             self_checkpointing: false,
             autonomy: Default::default(),
+            ..Default::default()
         };
 
         run_turn(state.clone(), Arc::new(Worker), plan, Arc::new(Quiet)).await;

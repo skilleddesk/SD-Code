@@ -21,6 +21,8 @@ import {
 } from '../store/intents';
 import { nameOf } from '../lib/picker';
 import { toast } from '../store/toast';
+import { killAll } from '../store/kernelIntents';
+import { useKernelUi } from '../store/kernelUi';
 import { strings } from '../strings';
 
 /**
@@ -237,6 +239,13 @@ export const COMMANDS: readonly Command[] = [
   /* The Terminal (0.11.7): a live shell for the open chat's machine, one key away. */
   { id: 'terminal.open', label: 'Open terminal', hint: 'Ctrl `', icon: 'keyboard', group: 'session', keys: ['ctrl+`', 'meta+`'], inInput: true, run: () => { useLayoutStore.getState().showRight(); useRightPanelStore.getState().setActiveTab('terminal', usePrefsStore.getState().activeTab); } },
   { id: 'timemachine.open', label: 'Time Machine', hint: 'Ctrl E', icon: 'clock', group: 'session', keys: ['ctrl+e', 'meta+e'], run: () => { useLayoutStore.getState().showRight(); useRightPanelStore.getState().setActiveTab('timemachine', usePrefsStore.getState().activeTab); } },
+  /* The kill switch (0.12, P7): every running turn, check, deploy and command, one key. */
+  { id: 'kernel.kill', label: strings.kernel.kill.label, hint: 'Ctrl Shift .', icon: 'ban', group: 'global', keys: ['ctrl+shift+.', 'meta+shift+.', 'ctrl+shift+>', 'meta+shift+>'], inInput: true, run: () => void killAll() },
+  { id: 'kernel.agency', label: strings.kernel.agency.title, hint: 'Ctrl Shift G', icon: 'serverPlus', group: 'global', keys: ['ctrl+shift+g', 'meta+shift+g'], run: () => useKernelUi.getState().openAgency() },
+  { id: 'kernel.cost', label: strings.kernel.cost.title, icon: 'zap', group: 'actions', run: () => useKernelUi.getState().openCost() },
+  { id: 'kernel.policy', label: strings.kernel.policy.title, icon: 'shield', group: 'actions', run: () => useKernelUi.getState().openPolicy() },
+  { id: 'kernel.proof', label: strings.kernel.proof.open, icon: 'check', group: 'session', keys: ['ctrl+shift+p', 'meta+shift+p'], run: () => { useLayoutStore.getState().showRight(); useRightPanelStore.getState().setActiveTab('proof', usePrefsStore.getState().activeTab); } },
+  { id: 'kernel.onboarding', label: strings.kernel.onboarding.title, icon: 'plus', group: 'actions', run: () => useKernelUi.getState().openOnboarding() },
   { id: 'verify.run', label: 'Run verify', hint: 'Ctrl Enter', icon: 'check', group: 'session', keys: ['ctrl+enter', 'meta+enter'], inInput: true, run: () => runVerifyForActiveChat() },
 
   /* ---------------------------------------------------------------- Model (2) */

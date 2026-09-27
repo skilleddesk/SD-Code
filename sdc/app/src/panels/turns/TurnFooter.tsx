@@ -1,3 +1,4 @@
+import { TrustChip } from '../../kernel/TrustChip';
 import { CircleCheckBig, CircleX, LoaderCircle, ScanSearch, ThumbsDown, ThumbsUp } from 'lucide-react';
 import { useState } from 'react';
 
@@ -73,6 +74,8 @@ export function TurnFooter({ footer, verify = null }: TurnFooterProps) {
           ))
         )}
       </div>
+
+      {verify === null ? null : <TrustChip turnId={verify.turnId} sessionId={verify.sessionId} />}
 
       {verify === null ? null : <VerifyChip {...verify} />}
 

@@ -64,6 +64,9 @@ export function Connect() {
   const connected = provider?.status === 'connected';
 
   const [key, setKey] = useState('');
+  /* The account's own endpoint (0.12): an Alibaba Model Studio workspace answers at its workspace host. */
+  const [baseUrl, setBaseUrl] = useState('');
+  const endpointEditable = providerId === 'qwen';
   const [login, setLogin] = useState<CliLoginView | null>(null);
   const [recipe, setRecipe] = useState<CliRecipeView | null>(null);
   const [code, setCode] = useState('');
@@ -243,7 +246,7 @@ export function Connect() {
 
   const saveKey = (): void => {
     setBusy(true);
-    void connectApiKey(providerId ?? '', key).then((saved) => {
+    void connectApiKey(providerId ?? '', key, undefined, endpointEditable ? baseUrl : undefined).then((saved) => {
       setBusy(false);
 
       if (saved) {
@@ -562,6 +565,17 @@ export function Connect() {
                     }
                   }}
                 />
+                {endpointEditable ? (
+                  <Field
+                    id="connectBaseUrl"
+                    label={strings.connect.baseUrlLabel}
+                    placeholder={strings.connect.baseUrlPlaceholder}
+                    value={baseUrl}
+                    onChange={setBaseUrl}
+                    hint={strings.connect.baseUrlHint}
+                    onEnter={() => saveKey()}
+                  />
+                ) : null}
               </Section>
 
               <Section

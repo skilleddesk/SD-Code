@@ -22,6 +22,7 @@
 
 pub mod dialect;
 pub mod gate;
+pub mod mcp;
 pub mod tools;
 pub mod workspace;
 
@@ -54,11 +55,19 @@ pub struct SdcAgent {
     autonomy: Autonomy,
     max_steps: usize,
     checkpoint: Option<tools::Checkpointer>,
+    /// The folder's policy (0.12): what the tools must ask about or refuse before they act.
+    policy: crate::trust::policy::Policy,
 }
 
 impl SdcAgent {
     pub fn new(backend: Backend, autonomy: Autonomy, max_steps: usize) -> Self {
-        Self { backend, autonomy, max_steps: max_steps.clamp(1, MAX_STEPS), checkpoint: None }
+        Self { backend, autonomy, max_steps: max_steps.clamp(1, MAX_STEPS), checkpoint: None, policy: Default::default() }
+    }
+
+    /// The Trust Kernel's policy for this turn's folder.
+    pub fn with_policy(mut self, policy: crate::trust::policy::Policy) -> Self {
+        self.policy = policy;
+        self
     }
 
     /// The daemon's checkpoint for this turn, taken by the agent itself before its first change.
@@ -78,10 +87,11 @@ impl crate::engines::Engine for SdcAgent {
         let sink = sink.clone();
         let (backend, autonomy, max_steps) = (self.backend, self.autonomy, self.max_steps);
         let checkpoint = self.checkpoint.clone();
+        let policy = self.policy.clone();
 
         /* Every step blocks - a streaming HTTP read, a file read over ssh, a command - so the whole loop
            runs on the blocking pool, and its events travel through the sink while it does. */
-        let _ = tokio::task::spawn_blocking(move || run(backend, autonomy, max_steps, checkpoint, &prompt, &sink)).await;
+        let _ = tokio::task::spawn_blocking(move || run(backend, autonomy, max_steps, checkpoint, &policy, &prompt, &sink)).await;
     }
 
     async fn cancel(&self, turn_id: &str) -> bool {
@@ -260,6 +270,7 @@ pub fn run(
     autonomy: Autonomy,
     max_steps: usize,
     checkpoint: Option<tools::Checkpointer>,
+    policy: &crate::trust::policy::Policy,
     prompt: &Prompt,
     sink: &EventSink,
 ) {
@@ -282,7 +293,7 @@ pub fn run(
         }
     };
 
-    drive(backend, &target, &workspace, autonomy, max_steps, checkpoint, prompt, sink);
+    drive(backend, &target, &workspace, autonomy, max_steps, checkpoint, policy, prompt, sink);
 }
 
 /// The loop over a resolved endpoint - separate from `run` so a test can point it at a loopback
@@ -295,13 +306,25 @@ fn drive(
     autonomy: Autonomy,
     max_steps: usize,
     checkpoint: Option<tools::Checkpointer>,
+    policy: &crate::trust::policy::Policy,
     prompt: &Prompt,
     sink: &EventSink,
 ) {
     let turn_id = prompt.turn_id.clone();
     let stopped = || crate::engines::cancel::requested(&turn_id);
     let system = system_prompt(workspace);
-    let specs = tools::specs();
+    /* The project's own MCP servers (0.12), local folders only: their tools join the eight for this turn. */
+    let (mut mcp, warnings) = if workspace.is_remote() { (None, Vec::new()) } else { mcp::McpTools::start(std::path::Path::new(workspace.root())) };
+
+    for warning in warnings {
+        sink.send(EngineEvent::Thinking(format!("MCP: {warning}\n")));
+    }
+
+    let mut specs = tools::specs();
+
+    if let Some(servers) = &mcp {
+        specs.extend(servers.specs().iter().cloned());
+    }
     let mut messages: Vec<Value> = prompt
         .history
         .iter()
@@ -322,6 +345,9 @@ fn drive(
         calls: 0,
         checkpoint,
         checkpointed: false,
+        policy,
+        changed: HashSet::new(),
+        radius_allowed: false,
     };
     let (mut input_tokens, mut output_tokens) = (0u64, 0u64);
     let mut said_something = false;
@@ -352,6 +378,9 @@ fn drive(
 
         input_tokens += reply.input_tokens;
         output_tokens += reply.output_tokens;
+
+        /* Totals so far, every step: the cost governor can stop a turn that crosses its budget mid-way. */
+        sink.send(EngineEvent::Usage { input_tokens, output_tokens, cost_usd: None });
         said_something = said_something || !reply.text.trim().is_empty();
 
         if reply.stop == "refusal" {
@@ -387,7 +416,10 @@ fn drive(
                 return;
             }
 
-            let outcome = tools::execute(&mut context, call);
+            let outcome = match mcp.as_mut() {
+                Some(servers) if servers.handles(&call.name) => tools::mcp_call(&mut context, servers, call),
+                _ => tools::execute(&mut context, call),
+            };
 
             results.push((call.id.clone(), outcome.content, outcome.is_error));
         }
@@ -452,7 +484,7 @@ mod tests {
                     autonomy: Default::default(),
         };
 
-        run(Backend::Ollama, Autonomy::Ask, 5, None, &prompt, &recorder.sink());
+        run(Backend::Ollama, Autonomy::Ask, 5, None, &Default::default(), &prompt, &recorder.sink());
 
         assert!(matches!(&recorder.events()[..], [EngineEvent::Failed(reason)] if reason.contains("Open a folder")));
     }
@@ -581,7 +613,7 @@ mod end_to_end {
             probe.lock().unwrap().push((title.to_string(), file.exists()));
         });
 
-        drive(Backend::Api, &target, &workspace, Autonomy::Auto, 10, Some(checkpoint), &prompt, &recorder.sink());
+        drive(Backend::Api, &target, &workspace, Autonomy::Auto, 10, Some(checkpoint), &Default::default(), &prompt, &recorder.sink());
 
         assert_eq!(
             *seen.lock().unwrap(),
@@ -651,7 +683,7 @@ mod end_to_end {
         };
         let recorder = crate::engines::Recorder::new();
 
-        drive(Backend::Api, &target, &workspace, Autonomy::Ask, 2, None, &prompt, &recorder.sink());
+        drive(Backend::Api, &target, &workspace, Autonomy::Ask, 2, None, &Default::default(), &prompt, &recorder.sink());
         server.join().unwrap();
 
         assert!(matches!(recorder.events().last(), Some(EngineEvent::Done { summary, .. }) if summary == "Paused at the step limit"));

@@ -149,6 +149,10 @@ export interface TurnView {
   prompt: string;
   /** How the daemon read it (0.11.8), when it added a reading brief. */
   reading?: { code: string; label: string; reply: string };
+  /** What the turn was estimated to cost before it ran (0.12). */
+  estimate?: import('../../../protocol/types').CostEstimate;
+  /** The confirmed Intent Contract the turn was compiled from (0.12). */
+  intentId?: string;
   /** The engine's answer as it streams in; `aria-live="polite"` reads it. */
   text: string;
   thinking: string;
@@ -196,6 +200,10 @@ export interface CheckpointView {
   title: string;
   thumbnail: string | null;
   filesHash: string;
+  /** A name the person gave it (0.12). */
+  label?: string | null;
+  /** Why a rewind to it cannot undo everything after it (0.12). */
+  irreversible?: string | null;
 }
 
 /** Spec section 16.5: what a mid-turn engine switch has to carry across. */
@@ -321,6 +329,9 @@ export interface AppState {
 
   /** Verify runs (v4), newest last - each the latest `VerifyUpdated` snapshot of its run. */
   verifies: VerifyView[];
+
+  /** The Trust Kernel's slice (0.12): costs, scores, the agency's deploys and health. */
+  kernel: import('./kernel').KernelState;
 }
 
 /** A verify run as the Verify tab and the turn footer draw it: `VerifyUpdated` without its `type`. */

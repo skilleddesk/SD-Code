@@ -1,0 +1,61 @@
+import type { StringsPack } from './index';
+
+/** Bahasa Indonesia (0.12): kata-kata yang paling terlihat di jendela dan layar baru; sisanya bahasa Inggris. */
+export const id: StringsPack = {
+  modal: { close: 'Tutup' },
+  topbar: {
+    palette: { label: 'Cari atau lompat ke…', title: 'Palet perintah' },
+    providers: { title: 'Penyedia & model' },
+    theme: { title: 'Ganti tema' },
+    settings: { title: 'Pengaturan' },
+    modes: { simple: 'Sederhana', pro: 'Pro', auto: 'Otomatis' },
+  },
+  prompt: { placeholder: 'Tulis atau ucapkan, dalam bahasa apa pun, apa yang ingin dibuat atau diperbaiki…', send: 'Kirim', stop: 'Berhenti' },
+  statusBar: { connection: { ready: 'siap', degraded: 'terganggu', offline: 'offline' } },
+  rightPanel: { tabs: { preview: 'Pratinjau', console: 'Konsol', terminal: 'Terminal', timemachine: 'Mesin waktu', duel: 'Duel', verify: 'Verifikasi', proof: 'Bukti', analytics: 'Statistik' } },
+  settings: {
+    nav: [
+      { id: 'general', label: 'Umum', icon: 'sliders' },
+      { id: 'appearance', label: 'Tampilan', icon: 'palette' },
+      { id: 'keymap', label: 'Keyboard', icon: 'keyboard' },
+      { id: 'safety', label: 'Keamanan', icon: 'shield' },
+      { id: 'notifications', label: 'Notifikasi', icon: 'bell' },
+      { id: 'backup', label: 'Cadangan', icon: 'databaseBackup' },
+      { id: 'language', label: 'Bahasa', icon: 'languages' },
+      { id: 'team', label: 'Tim', icon: 'users' },
+      { id: 'updates', label: 'Pembaruan', icon: 'download' },
+      { id: 'about', label: 'Tentang', icon: 'info' },
+    ],
+  },
+  kernel: {
+    kill: { label: 'Hentikan semua', title: 'Tombol henti: hentikan sekarang semua giliran, pemeriksaan, deploy, dan perintah (Ctrl Shift .)' },
+    trust: { chip: (score: number, level: string): string => `Kepercayaan ${score} · ${level}`, level: { high: 'tinggi', medium: 'sedang', low: 'rendah' } },
+    cost: { meter: (today: string): string => `${today} hari ini`, title: 'Pusat biaya', today: 'Hari ini', month: 'Bulan ini', saved: 'Dihemat', budgets: 'Anggaran' },
+    intent: {
+      title: 'Yang dipahami SDC',
+      reading: 'Membaca permintaan Anda…',
+      readAs: (label: string): string => `Dibaca sebagai ${label}`,
+      backTitle: 'Dengan kata-kata Anda — benar?',
+      target: 'Di mana',
+      goal: 'Yang Anda inginkan',
+      conditions: 'Selesai berarti',
+      outOfScope: 'Tidak akan disentuh',
+      questions: 'Satu hal untuk dipastikan',
+      confirm: 'Konfirmasi dan jalankan',
+      asTyped: 'Jalankan apa adanya',
+      cancel: 'Batal',
+      showPrompt: 'Lihat prompt yang disusun',
+    },
+    timeline: { rewind: 'Kembali ke sini', compare: 'Bandingkan', label: 'Label', restoreFile: 'Pulihkan file ini saja', branches: 'Cabang', switchTo: 'Pindah ke' },
+    proof: { trust: 'Skor kepercayaan', verification: 'Verifikasi', cost: 'Biaya', rollback: 'Titik kembali', export: 'Ekspor paket bukti' },
+    agency: { title: 'Agensi', tabs: { sites: 'Situs', deploys: 'Deploy', approvals: 'Persetujuan', playbooks: 'Playbook', xray: 'X-ray pengambilalihan', guardian: 'Penjaga malam' }, deploy: 'Deploy aman' },
+    language: { title: 'Bahasa', ui: 'Bahasa jendela', contract: 'Konfirmasi yang dipahami SDC' },
+    onboarding: {
+      title: 'Selamat datang di SDC',
+      steps: ['Apa yang ingin Anda lakukan', 'Sebuah model', 'Mesin ini', 'Keamanan dulu', 'Tugas pertama Anda'],
+      skip: 'Lewati',
+      back: 'Kembali',
+      next: 'Lanjut',
+    },
+  },
+};

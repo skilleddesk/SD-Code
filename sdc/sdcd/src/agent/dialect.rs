@@ -48,6 +48,7 @@ pub struct Reply {
 }
 
 /// A tool as the model is told about it.
+#[derive(Debug, Clone)]
 pub struct ToolSpec {
     pub name: &'static str,
     pub description: &'static str,

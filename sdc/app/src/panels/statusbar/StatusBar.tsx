@@ -13,6 +13,7 @@ import {
 import { toast } from '../../store/toast';
 import { CONNECTION_DOT_CLASS, HOST_STATUS_DOT_CLASS, HOST_STATUS_LABEL } from '../ui/status';
 import { StatusItem } from './StatusItem';
+import { CostMeter } from '../../kernel/CostMeter';
 
 /**
  * The status bar region - spec section 7.15.
@@ -142,6 +143,12 @@ export function StatusBar() {
       >
         <span id="statProviders">{connectedProviderCount(providers)}</span> {strings.statusBar.providers}
       </StatusItem>
+
+      <span className="sep text-border-strong max-520:hidden" aria-hidden="true">
+        ·
+      </span>
+
+      <CostMeter />
 
       <div className="spacer flex-1 min-w-[4px]" />
 

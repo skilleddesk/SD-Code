@@ -11,7 +11,11 @@
  * A handful of entries are functions of one or two values (`strings.prompt.sent(engine, model)`).
  * They are still strings, still here, still the only place that knows the wording.
  */
-export const strings = {
+import { currentLocale, merge } from './i18n';
+import { kernelStrings } from './kernelStrings';
+import { PACKS } from './locales';
+
+const english = {
   /** Window/document metadata. The OS window title is set in src-tauri/tauri.conf.json. */
   app: {
     name: 'SDC',
@@ -555,6 +559,7 @@ export const strings = {
       timemachine: 'Time Machine',
       duel: 'Duel',
       verify: 'Verify',
+      proof: 'Proof',
       analytics: 'Analytics',
     },
     resize: 'Resize panel',
@@ -858,6 +863,10 @@ export const strings = {
       `Pasted here and sent straight to the OS keychain. ${provider} is called by the daemon with it; SDC never shows it again after saving.`,
     keyNote:
       'A key that is rejected is reported in the provider’s own words — press Refresh under MODELS after saving to see what it listed.',
+    baseUrlLabel: 'Base URL (your Model Studio workspace)',
+    baseUrlPlaceholder: 'https://ws-xxxx.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1',
+    baseUrlHint:
+      'Leave empty for the international endpoint (dashscope-intl). A workspace key works only on its own workspace URL - paste it from the Model Studio console. Kimi, DeepSeek, GLM, MiniMax and Qwen all answer here.',
     saveKey: 'Save key',
     refresh: 'Refresh',
     modelsHint: (shown: number, total: number, snapshot: string): string =>
@@ -1249,6 +1258,9 @@ export const strings = {
       { id: 'safety', label: 'Safety', icon: 'shield' },
       { id: 'notifications', label: 'Notifications', icon: 'bell' },
       { id: 'backup', label: 'Backup', icon: 'databaseBackup' },
+      { id: 'language', label: 'Language', icon: 'languages' },
+      { id: 'team', label: 'Team', icon: 'users' },
+      { id: 'updates', label: 'Updates', icon: 'download' },
       { id: 'about', label: 'About', icon: 'info' },
     ],
     general: {
@@ -1562,9 +1574,15 @@ export const strings = {
     /** A host with no chat has no folder to run a command in, and that is the honest sentence. */
     noChat: (host: string): string => `${host} has no chat yet, so there is no folder to run in`,
   },
+
+  /** The Trust Kernel, the Intent Engine and the agency layer (0.12) - see kernelStrings.ts. */
+  kernel: kernelStrings,
 } as const;
 
-export type Strings = typeof strings;
+export type Strings = typeof english;
+
+/** Every word the window shows: English, with the chosen language laid over it (i18n.ts, locales/). */
+export const strings: Strings = merge(english, PACKS[currentLocale()]);
 
 /**
  * `2.4 KB` - a file size a person can read.

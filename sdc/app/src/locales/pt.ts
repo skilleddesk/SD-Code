@@ -1,0 +1,61 @@
+import type { StringsPack } from './index';
+
+/** Português (0.12): as palavras mais visíveis da janela e das novas telas; o resto em inglês. */
+export const pt: StringsPack = {
+  modal: { close: 'Fechar' },
+  topbar: {
+    palette: { label: 'Pesquisar ou ir para…', title: 'Paleta de comandos' },
+    providers: { title: 'Provedores e modelos' },
+    theme: { title: 'Alternar tema' },
+    settings: { title: 'Configurações' },
+    modes: { simple: 'Simples', pro: 'Pro', auto: 'Auto' },
+  },
+  prompt: { placeholder: 'Escreva ou diga, em qualquer idioma, o que quer construir ou corrigir…', send: 'Enviar', stop: 'Parar' },
+  statusBar: { connection: { ready: 'pronto', degraded: 'degradado', offline: 'offline' } },
+  rightPanel: { tabs: { preview: 'Prévia', console: 'Console', terminal: 'Terminal', timemachine: 'Máquina do tempo', duel: 'Duelo', verify: 'Verificar', proof: 'Prova', analytics: 'Estatísticas' } },
+  settings: {
+    nav: [
+      { id: 'general', label: 'Geral', icon: 'sliders' },
+      { id: 'appearance', label: 'Aparência', icon: 'palette' },
+      { id: 'keymap', label: 'Teclado', icon: 'keyboard' },
+      { id: 'safety', label: 'Segurança', icon: 'shield' },
+      { id: 'notifications', label: 'Notificações', icon: 'bell' },
+      { id: 'backup', label: 'Backup', icon: 'databaseBackup' },
+      { id: 'language', label: 'Idioma', icon: 'languages' },
+      { id: 'team', label: 'Equipe', icon: 'users' },
+      { id: 'updates', label: 'Atualizações', icon: 'download' },
+      { id: 'about', label: 'Sobre', icon: 'info' },
+    ],
+  },
+  kernel: {
+    kill: { label: 'Parar tudo', title: 'Botão de parada: pare agora todos os turnos, verificações, deploys e comandos (Ctrl Shift .)' },
+    trust: { chip: (score: number, level: string): string => `Confiança ${score} · ${level}`, level: { high: 'alta', medium: 'média', low: 'baixa' } },
+    cost: { meter: (today: string): string => `${today} hoje`, title: 'Central de custos', today: 'Hoje', month: 'Este mês', saved: 'Economizado', budgets: 'Orçamentos' },
+    intent: {
+      title: 'O que o SDC entendeu',
+      reading: 'Lendo seu pedido…',
+      readAs: (label: string): string => `Lido como ${label}`,
+      backTitle: 'Nas suas palavras — está certo?',
+      target: 'Onde',
+      goal: 'O que você quer',
+      conditions: 'Pronto significa',
+      outOfScope: 'Não será tocado',
+      questions: 'Uma coisa para confirmar',
+      confirm: 'Confirmar e executar',
+      asTyped: 'Executar como digitado',
+      cancel: 'Cancelar',
+      showPrompt: 'Ver o prompt compilado',
+    },
+    timeline: { rewind: 'Voltar aqui', compare: 'Comparar', label: 'Rótulo', restoreFile: 'Restaurar só este arquivo', branches: 'Ramos', switchTo: 'Mudar para' },
+    proof: { trust: 'Pontuação de confiança', verification: 'Verificação', cost: 'Custo', rollback: 'Ponto de retorno', export: 'Exportar pacote de prova' },
+    agency: { title: 'Agência', tabs: { sites: 'Sites', deploys: 'Deploys', approvals: 'Aprovações', playbooks: 'Playbooks', xray: 'Raio-X de herança', guardian: 'Guardião noturno' }, deploy: 'Deploy seguro' },
+    language: { title: 'Idioma', ui: 'Idioma da janela', contract: 'Confirmar o que o SDC entendeu' },
+    onboarding: {
+      title: 'Bem-vindo ao SDC',
+      steps: ['O que você quer fazer', 'Um modelo', 'Esta máquina', 'Segurança primeiro', 'Sua primeira tarefa'],
+      skip: 'Pular',
+      back: 'Voltar',
+      next: 'Próximo',
+    },
+  },
+};

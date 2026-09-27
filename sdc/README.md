@@ -356,6 +356,13 @@ it is reached.
   (completion, go-to-definition), a debugger and extensions - SDC is not an IDE (spec §2.2) - and a marker
   for which line a turn touched.
 
+* **0.12's Trust Kernel is code; some parts of the plan are not.** Code signing (a certificate), a notarised
+  macOS build (an Apple account), pilot agencies, legal review of the client approval page, A/B tests and
+  pricing are outside this repository. Team roles are enforced by the daemon on one machine: a shared team
+  server is not built. The Qwen (Alibaba) provider follows Alibaba's OpenAI-compatible sample but has not run a
+  live turn from here without a key. Of the ten UI languages, Bengali covers every screen, and the other eight
+  cover the chrome and the new screens, with English for the rest.
+
 ## Next step
 
 1. **A paid live turn in the Anthropic dialect** (thinking with its signature, tool results), to go with the

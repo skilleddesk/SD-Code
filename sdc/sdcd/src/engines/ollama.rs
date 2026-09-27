@@ -213,6 +213,14 @@ pub fn parse_chat_line(line: &str) -> Vec<EngineEvent> {
     }
 
     if value.get("done").and_then(Value::as_bool).unwrap_or(false) {
+        let input = value.get("prompt_eval_count").and_then(Value::as_u64).unwrap_or(0);
+        let output = value.get("eval_count").and_then(Value::as_u64).unwrap_or(0);
+
+        if input + output > 0 {
+            /* A local model costs nothing, and the governor says so - but the tokens are real. */
+            events.push(EngineEvent::Usage { input_tokens: input, output_tokens: output, cost_usd: Some(0.0) });
+        }
+
         events.push(EngineEvent::Done {
             summary: "Done".to_string(),
             meta: value
@@ -327,8 +335,10 @@ mod tests {
         let last = parse_chat_line(r#"{"message":{"content":"lo"},"done":true,"eval_count":7}"#);
 
         assert_eq!(first, vec![EngineEvent::Delta("Hel".into())]);
-        assert_eq!(last.len(), 2);
-        assert!(matches!(last[1], EngineEvent::Done { .. }));
+        /* A local model's tokens are real and free: the governor gets them before the turn ends. */
+        assert_eq!(last.len(), 3);
+        assert_eq!(last[1], EngineEvent::Usage { input_tokens: 0, output_tokens: 7, cost_usd: Some(0.0) });
+        assert!(matches!(last[2], EngineEvent::Done { .. }));
     }
 
     #[test]

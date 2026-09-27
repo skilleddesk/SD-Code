@@ -1,4 +1,7 @@
-import { Moon, PanelLeft, PanelRight, Plug, Search, Settings, Sun } from 'lucide-react';
+import { Building2, Moon, PanelLeft, PanelRight, Plug, Search, Settings, Sun } from 'lucide-react';
+
+import { KillSwitch } from '../../kernel/KillSwitch';
+import { useKernelUi } from '../../store/kernelUi';
 
 import { strings } from '../../strings';
 import { setTheme as applyTheme, type Theme } from '../../lib/theme';
@@ -88,6 +91,10 @@ export function Topbar() {
           {strings.topbar.palette.shortcut}
         </span>
       </button>
+
+      <KillSwitch />
+
+      <IconButton id="openAgency" icon={Building2} label={strings.kernel.agency.title} onClick={() => useKernelUi.getState().openAgency()} />
 
       <IconButton
         id="openProviders"

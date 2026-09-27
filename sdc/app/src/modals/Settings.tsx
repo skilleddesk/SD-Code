@@ -4,7 +4,10 @@ import { useState, type ReactNode } from 'react';
 import {
   Bell,
   DatabaseBackup,
+  Download,
   Info,
+  Languages,
+  Users,
   Keyboard,
   Palette as PaletteIcon,
   Shield,
@@ -24,6 +27,8 @@ import { useOverlayStore, type SettingsTab } from '../store/overlays';
 import { BTN, BTN_PRIMARY, BTN_SECONDARY } from '../panels/ui/button';
 import { storedSettings, storeSetting } from '../lib/settings';
 import { Modal } from './Modal';
+import { LanguageTab, TeamTab, UpdatesTab } from '../kernel/SettingsTabs';
+import { useKernelUi } from '../store/kernelUi';
 
 /**
  * `#settingsBd` - Settings, seven tabs (spec section 9.11).
@@ -51,6 +56,9 @@ const TAB_ICON: Record<string, LucideIcon> = {
   shield: Shield,
   bell: Bell,
   databaseBackup: DatabaseBackup,
+  languages: Languages,
+  users: Users,
+  download: Download,
   info: Info,
 };
 
@@ -163,8 +171,24 @@ export function Settings() {
         ) : null}
 
         {tab === 'backup' ? <BackupTab /> : null}
+        {tab === 'language' ? <LanguageTab /> : null}
+        {tab === 'team' ? <TeamTab /> : null}
+        {tab === 'updates' ? <UpdatesTab /> : null}
 
-        {tab !== 'keymap' && tab !== 'about' && tab !== 'backup' ? (
+        {tab === 'safety' ? (
+          <button
+            type="button"
+            className={BTN + ' ' + BTN_PRIMARY + ' mb-[14px]'}
+            onClick={() => {
+              close();
+              useKernelUi.getState().openPolicy();
+            }}
+          >
+            {strings.kernel.policy.open}
+          </button>
+        ) : null}
+
+        {tab !== 'keymap' && tab !== 'about' && tab !== 'backup' && tab !== 'language' && tab !== 'team' && tab !== 'updates' ? (
           <GroupTable
             table={tableFor(tab)}
             values={values}

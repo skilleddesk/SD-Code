@@ -3,6 +3,7 @@ import {
   CircleCheckBig,
   Clock,
   Eye,
+  ShieldCheck,
   SquareChevronRight,
   SquareTerminal,
   Swords,
@@ -26,6 +27,7 @@ import { AnalyticsTab } from './AnalyticsTab';
 import { ConsoleTab } from './ConsoleTab';
 import { DuelTab } from './DuelTab';
 import { PreviewTab } from './PreviewTab';
+import { ProofTab } from '../../kernel/ProofTab';
 import { TimeMachineTab } from './TimeMachineTab';
 import { TerminalTab } from './TerminalTab';
 import { VerifyTab } from './VerifyTab';
@@ -59,6 +61,7 @@ const TAB_ICON: Record<PanelTabDefinition['icon'], LucideIcon> = {
   clock: Clock,
   swords: Swords,
   check: CircleCheckBig,
+  shield: ShieldCheck,
   chart: ChartColumn,
 };
 
@@ -68,6 +71,7 @@ const VIEWS: Record<PanelTabId, ComponentType> = {
   terminal: TerminalTab,
   timemachine: TimeMachineTab,
   duel: DuelTab,
+  proof: ProofTab,
   verify: VerifyTab,
   analytics: AnalyticsTab,
 };

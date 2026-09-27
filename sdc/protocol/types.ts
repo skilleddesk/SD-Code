@@ -185,7 +185,70 @@ export type SdcpMethod =
   | 'permission.request'
   | 'permission.resolve'
   | 'console.attach'
-  | 'console.detach';
+  | 'console.detach'
+  /* 0.12: the Trust Kernel, the Intent Engine, the agency layer. */
+  | 'audit.list'
+  | 'audit.verify'
+  | 'policy.get'
+  | 'policy.set'
+  | 'kill.all'
+  | 'kill.list'
+  | 'cost.summary'
+  | 'cost.estimate'
+  | 'cost.budget.set'
+  | 'trust.score'
+  | 'checkpoint.label'
+  | 'checkpoint.files'
+  | 'checkpoint.fileDiff'
+  | 'checkpoint.restoreFile'
+  | 'proof.export'
+  | 'intent.detect'
+  | 'intent.parse'
+  | 'intent.confirm'
+  | 'intent.compile'
+  | 'intent.cancel'
+  | 'intent.stats'
+  | 'glossary.list'
+  | 'glossary.set'
+  | 'voice.status'
+  | 'voice.transcribe'
+  | 'site.list'
+  | 'site.detect'
+  | 'site.save'
+  | 'site.remove'
+  | 'deploy.run'
+  | 'deploy.list'
+  | 'deploy.get'
+  | 'deploy.preview'
+  | 'deploy.rollback'
+  | 'deploy.restoreDb'
+  | 'health.check'
+  | 'health.history'
+  | 'guardian.set'
+  | 'approval.list'
+  | 'approval.request'
+  | 'approval.decide'
+  | 'approval.poll'
+  | 'xray.scan'
+  | 'xray.get'
+  | 'shadowdb.run'
+  | 'staging.create'
+  | 'staging.stop'
+  | 'playbook.list'
+  | 'playbook.save'
+  | 'playbook.remove'
+  | 'playbook.run'
+  | 'team.get'
+  | 'team.set'
+  | 'settings.get'
+  | 'settings.set'
+  | 'update.check'
+  | 'crash.list'
+  | 'crash.clear'
+  | 'cli.selfcheck'
+  | 'status.share'
+  | 'timeline.branches'
+  | 'timeline.switch';
 
 /**
  * Host lifecycle (schema `$defs.eventTypes` → `HostStatus`).
@@ -239,6 +302,12 @@ export interface CheckpointRecord {
   thumbnail?: string | null;
   filesHash: string;
   rewindRef?: number | null;
+  /** A name the person gave it (0.12): `Before deploy`. */
+  label?: string | null;
+  /** Why a rewind to it cannot undo everything after it - a push, a deploy, a database command (0.12). */
+  irreversible?: string | null;
+  /** The turn that wrote it, when a turn did (0.12). */
+  turnId?: string | null;
 }
 
 export interface DoctorCheck {
@@ -491,6 +560,10 @@ export interface TurnStartedEvent {
   /** How SDC read the message (0.11.8): its language, and the language the answer comes back in. Absent
    *  when the message went to the engine exactly as typed. */
   reading?: { code: string; label: string; reply: string };
+  /** What the turn was estimated to cost before it ran (0.12) - an estimate, labelled as one. */
+  estimate?: CostEstimate;
+  /** The confirmed Intent Contract the turn was compiled from (0.12). */
+  intentId?: string;
 }
 
 export interface TurnDeltaEvent {
@@ -558,9 +631,11 @@ export interface VerifyReview {
   engine: string;
   model: string;
   status: 'pending' | 'running' | 'done' | 'skipped' | 'failed';
-  verdict?: 'pass' | 'issues' | 'unreadable';
+  verdict?: 'pass' | 'issues' | 'unreadable' | null;
   summary?: string;
   issues?: VerifyIssue[];
+  /** The confirmed Intent Contract's conditions, judged one by one (0.12). */
+  criteria?: { met: boolean | null; why: string }[];
 }
 
 /**
@@ -589,6 +664,10 @@ export interface VerifyUpdatedEvent {
   review: VerifyReview | null;
   /** A sentence about the run as a whole, e.g. why no checks were found. */
   note: string;
+  /** The secret, SAST and dependency scans of the change (0.12). */
+  scans?: VerifyScans;
+  /** The run's word (0.12): `UNPROVEN` when nothing failed but nothing proved it either. */
+  verdict?: VerifyVerdict | null;
 }
 
 /** The agent's checklist for a turn (v4), whole each time: the newest one replaces the last. */
@@ -732,6 +811,492 @@ export interface SessionBridgedEvent {
   reason?: string;
 }
 
+/* ================================================================================================
+ * The Trust Kernel, the Intent Engine and the agency layer (0.12, docs/MASTER-PLAN-v3-TRUST-KERNEL.md)
+ * ============================================================================================== */
+
+/** Where a turn's cost number came from - a number is measured or it says it is not (P4). */
+export type CostSource = 'measured' | 'priced' | 'local' | 'subscription' | 'unpriced' | 'none';
+
+/** What a turn will probably cost, before it runs - always labelled an estimate. */
+export interface CostEstimate {
+  inputTokens: number;
+  outputTokens: number;
+  usd: number | null;
+  source: 'estimate' | 'subscription' | 'unknown';
+  complexity: 'simple' | 'normal' | 'complex';
+}
+
+export interface CheaperModel {
+  provider: string;
+  model: string;
+  reason: string;
+  pricePerMillion: { in: number; out: number };
+}
+
+export interface CostSpent {
+  day: number;
+  month: number;
+  chat: number | null;
+}
+
+export interface CostBudgets {
+  turn?: number | null;
+  chat?: number | null;
+  day?: number | null;
+  month?: number | null;
+}
+
+export interface CostSummary {
+  days: { day: string; usd: number }[];
+  models: { model: string; usd: number; inputTokens: number; outputTokens: number; turns: number }[];
+  projects: { root: string; usd: number }[];
+  sites: { siteId: string; usd: number }[];
+  today: number;
+  spent: CostSpent;
+  /** Only against a baseline the person chose, and only for measured turns. */
+  savedUsd: number;
+  measuredTurns: number;
+  unmeasuredTurns: number;
+  baseline: string | null;
+  budgets: CostBudgets;
+}
+
+export type TrustLevel = 'high' | 'medium' | 'low';
+
+export interface TrustReason {
+  text: string;
+  /** Points this reason moved the score by (0 for a reason that only explains). */
+  delta: number;
+}
+
+/** `.sdc/policy.toml` as the daemon reads it. */
+export interface Policy {
+  production: boolean;
+  maxFilesPerTurn: number;
+  privacy: 'any' | 'local-only';
+  protectedPaths: string[];
+  alwaysAsk: string[];
+  denyCommands: string[];
+  maxTurnUsd: number | null;
+  autoRollback: boolean;
+  source: string;
+  error: string | null;
+}
+
+/** One row of the hash-chained audit ledger. */
+export interface AuditEntry {
+  seq: number;
+  ts: string;
+  sessionId: string | null;
+  turnId: string | null;
+  actor: string;
+  kind: string;
+  summary: string;
+  detail: unknown;
+  prevHash: string;
+  hash: string;
+}
+
+export interface LedgerCheck {
+  intact: boolean;
+  entries: number;
+  brokenAt: number | null;
+  head?: string;
+  reason?: string;
+}
+
+/** Something the kill switch can stop. */
+export interface ActiveWork {
+  id: string;
+  kind: 'turn' | 'verify' | 'deploy' | 'playbook' | 'guardian';
+  sessionId: string | null;
+  label: string;
+  started: string;
+}
+
+/** The Intent Engine's offline first look at a message. */
+export interface Detection {
+  code: string;
+  dialect: string | null;
+  script: string;
+  romanized: boolean;
+  mixed: boolean;
+  confidence: number;
+  label: string;
+  replyIn: string;
+  reply: string;
+}
+
+/** What SDC understood a request to be - the Intent Contract card's content. */
+export interface TaskSpec {
+  language: Partial<Detection> & { code: string; label: string };
+  kind: string;
+  target: { value: string; confidence: number };
+  goal: { value: string; confidence: number };
+  acceptance: { text: string; checked: boolean }[];
+  acceptanceConfidence: number;
+  outOfScope: string[];
+  risk: 'low' | 'medium' | 'high';
+  questions: string[];
+  summary: string;
+  backTranslation: string;
+  showBackTranslation: boolean;
+  unsure: ('target' | 'goal' | 'acceptance')[];
+  confidence: number;
+  glossary: { term: string; meaning: string }[];
+  source: 'model' | 'heuristic' | 'person';
+}
+
+export interface GlossaryTerm {
+  term: string;
+  meaning: string;
+  scope: string;
+}
+
+/** A finding of the secret scanner or the SAST rules, pinned to an added line. */
+export interface ScanFinding {
+  rule: string;
+  severity: 'high' | 'medium' | 'low';
+  file: string;
+  line: number;
+  message: string;
+  fix: string;
+}
+
+export interface VerifyScans {
+  state: 'pending' | 'running' | 'done';
+  secrets?: ScanFinding[];
+  sast?: ScanFinding[];
+  rules?: { secrets: number; sast: number };
+  dependencies?: {
+    status: 'done' | 'unavailable' | 'none';
+    tool?: string;
+    counts?: { critical: number; high: number; moderate: number; low: number };
+    detail?: string;
+  } | null;
+}
+
+export type VerifyVerdict = 'PASS' | 'FAIL' | 'NO_CHECKS' | 'UNPROVEN';
+
+export interface HealthReport {
+  ts?: string;
+  http: { ok: boolean | null; status?: number | null; ms?: number; detail: string };
+  ssl: { days: number | null; expires?: string; detail?: string } | null;
+  disk: { percent: number | null; freeMb: number | null } | null;
+  backup: { configured: boolean; newest?: string | null; ageHours?: number | null; detail?: string } | null;
+  errors: { count: number; file?: string } | null;
+  deploy: { id: string; state: DeployState; at: string } | null;
+  score?: { score: number; level: OpsLevel; reasons: TrustReason[] };
+}
+
+export type OpsLevel = 'healthy' | 'watch' | 'at-risk';
+
+export interface SiteRecord {
+  id: string;
+  name: string;
+  hostId: string;
+  root: string;
+  url: string;
+  config: Record<string, unknown>;
+  createdAt: string;
+  health?: HealthReport | null;
+  lastDeploy?: DeployRecord | null;
+}
+
+export type DeployState = 'running' | 'success' | 'failed' | 'rolled_back' | 'rollback_failed' | 'awaiting_approval';
+
+export interface DeployStep {
+  id: string;
+  name: string;
+  command: string | null;
+  status: 'pending' | 'running' | 'pass' | 'fail' | 'skipped';
+  ms: number | null;
+  tail: string[];
+}
+
+export interface DeployRecord {
+  id: string;
+  siteId: string;
+  kind: string;
+  state: DeployState;
+  steps: DeployStep[];
+  backup: { stem: string; files: { path: string; bytes?: number } | null; db: { path: string; bytes?: number } | null } | null;
+  note: string;
+  startedAt: string;
+  finishedAt: string | null;
+}
+
+export interface ApprovalRecord {
+  id: string;
+  subject: string;
+  kind: string;
+  state: 'pending' | 'approved' | 'declined' | 'question' | 'used';
+  requestedBy: string;
+  decidedBy: string | null;
+  note: string;
+  token: string | null;
+  createdAt: string;
+  decidedAt: string | null;
+}
+
+export interface XrayRisk {
+  level: 'critical' | 'high' | 'medium' | 'low';
+  title: string;
+  why: string;
+  fix: string;
+}
+
+export interface XrayMap {
+  host: string;
+  scannedAt: string;
+  os: string;
+  arch: string | null;
+  uptime: string | null;
+  cpus: string | null;
+  memoryMb: string | null;
+  disks: string[];
+  services: string[];
+  ports: string[];
+  sites: { names: string[]; root: string | null; ssl: boolean; listen?: string[]; server?: string }[];
+  wordpress: string[];
+  databases: string[];
+  docker: string[];
+  cron: string[];
+  runtimes: string[];
+  certificates: { name: string; expires: string; days: number | null }[];
+  backups: string[];
+  risks: XrayRisk[];
+}
+
+export interface Playbook {
+  id: string;
+  name: string;
+  steps: { kind: 'command' | 'prompt'; text: string }[];
+}
+
+export interface TeamMember {
+  name: string;
+  role: 'owner' | 'developer' | 'reviewer' | 'client';
+}
+
+export interface TeamState {
+  members: TeamMember[];
+  current: string | null;
+  role: TeamMember['role'];
+  roles: TeamMember['role'][];
+}
+
+export interface ReleaseInfo {
+  tag: string;
+  name: string;
+  url: string;
+  prerelease: boolean;
+  publishedAt: string;
+  assets: { name: string; url: string }[] | null;
+}
+
+export interface UpdateInfo {
+  channel: string;
+  current: string;
+  latest: ReleaseInfo | null;
+  updateAvailable: boolean;
+  /** The release before the running one - the rollback when an update misbehaves. */
+  previous: ReleaseInfo | null;
+}
+
+export interface CrashReport {
+  file: string;
+  report: { version: string; os: string; arch: string; at: string; location: string; message: string; backtrace: string };
+  /** A pre-filled GitHub issue: sending a report is always the person's own click. */
+  issueUrl: string;
+}
+
+export interface CliSelfCheck {
+  program: string;
+  label: string;
+  installed: boolean;
+  version: string | null;
+  signedIn: boolean;
+  sentence: string;
+}
+
+export interface TimelineBranch {
+  id: number;
+  turn: number;
+  checkpointId: string;
+  pushedAt: string;
+  branch: boolean;
+  checkpoints: number;
+  title: string;
+  turns: number;
+  hasFiles: boolean;
+}
+
+export interface CostUpdatedEvent {
+  type: 'CostUpdated';
+  sessionId: string;
+  turnId: string;
+  engine: string;
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number;
+  costSource: CostSource;
+  estimateUsd: number | null;
+  savedUsd: number | null;
+}
+
+export interface PolicyViolationEvent {
+  type: 'PolicyViolation';
+  sessionId: string;
+  turnId?: string | null;
+  rule: string;
+  target: string;
+  action: string;
+  sentence: string;
+}
+
+export interface BudgetStopEvent {
+  type: 'BudgetStop';
+  sessionId: string;
+  turnId: string;
+  kind: 'budget' | 'runaway';
+  sentence: string;
+}
+
+export interface KillSwitchEvent {
+  type: 'KillSwitch';
+  stopped: ActiveWork[];
+  checkpoints: { sessionId: string; checkpointId: string }[];
+}
+
+export interface TrustScoredEvent {
+  type: 'TrustScored';
+  sessionId: string;
+  turnId: string;
+  score: number;
+  level: TrustLevel;
+  reasons: TrustReason[];
+}
+
+export interface CheckpointUpdatedEvent {
+  type: 'CheckpointUpdated';
+  sessionId: string;
+  checkpoint: CheckpointRecord & { sessionId?: string };
+}
+
+export interface FileRestoredEvent {
+  type: 'FileRestored';
+  sessionId: string;
+  checkpointId: string;
+  path: string;
+  outcome: 'restored' | 'removed';
+  undoCheckpointId: string | null;
+}
+
+export interface IntentParsedEvent {
+  type: 'IntentParsed';
+  intentId: string;
+  sessionId: string | null;
+  text: string;
+  detection: Detection;
+  spec: TaskSpec;
+  /** Why the offline reading was used instead of a model's, when it was. */
+  note: string | null;
+}
+
+export interface IntentConfirmedEvent {
+  type: 'IntentConfirmed';
+  sessionId: string | null;
+  intentId: string;
+  corrections: number;
+}
+
+export interface VoiceTranscribedEvent {
+  type: 'VoiceTranscribed';
+  requestId: string;
+  text: string;
+  engine: string | null;
+  local: boolean;
+  detection?: Detection;
+  error: string | null;
+}
+
+export interface DeployUpdatedEvent {
+  type: 'DeployUpdated';
+  deployId: string;
+  siteId: string;
+  name: string;
+  kind: string;
+  state: DeployState;
+  steps: DeployStep[];
+  backup: DeployRecord['backup'];
+  note: string;
+  health: HealthReport['http'] | null;
+  actor: string;
+}
+
+export interface HealthUpdatedEvent {
+  type: 'HealthUpdated';
+  siteId: string;
+  name: string;
+  report: HealthReport;
+  score: number;
+  level: OpsLevel;
+  reasons: TrustReason[];
+}
+
+export interface HealthAlertEvent {
+  type: 'HealthAlert';
+  siteId: string;
+  name: string;
+  level: 'critical' | 'warning' | 'info';
+  sentence: string;
+}
+
+export interface GuardianActionEvent {
+  type: 'GuardianAction';
+  siteId: string;
+  action: 'rolled_back' | 'alerted' | 'fix_prepared';
+  sentence: string;
+  deployId: string | null;
+}
+
+export interface ApprovalRecordedEvent {
+  type: 'ApprovalRecorded';
+  approval: ApprovalRecord;
+}
+
+export interface XrayReadyEvent {
+  type: 'XrayReady';
+  hostId: string;
+  map: XrayMap | null;
+  document?: string;
+  path?: string | null;
+  error: string | null;
+}
+
+export interface ShadowDbUpdatedEvent {
+  type: 'ShadowDbUpdated';
+  runId: string;
+  siteId: string;
+  state: 'running' | 'done';
+  command: string;
+  result?: { passed: boolean; exitCode: number | null; error: string | null; output: string[]; schemaChanges: string[]; sentence: string };
+}
+
+export interface StagingUpdatedEvent {
+  type: 'StagingUpdated';
+  siteId: string;
+  approvalId: string;
+  state: 'copying' | 'ready' | 'failed';
+  url?: string;
+  page?: string;
+  php?: boolean;
+  error?: string;
+}
+
 export type SdcpEvent =
   | HostStatusEvent
   | HostRemovedEvent
@@ -761,7 +1326,25 @@ export type SdcpEvent =
   | SessionBridgedEvent
   | PlanUpdatedEvent
   | VerifyUpdatedEvent
-  | ModelsUpdatedEvent;
+  | ModelsUpdatedEvent
+  | CostUpdatedEvent
+  | PolicyViolationEvent
+  | BudgetStopEvent
+  | KillSwitchEvent
+  | TrustScoredEvent
+  | CheckpointUpdatedEvent
+  | FileRestoredEvent
+  | IntentParsedEvent
+  | IntentConfirmedEvent
+  | VoiceTranscribedEvent
+  | DeployUpdatedEvent
+  | HealthUpdatedEvent
+  | HealthAlertEvent
+  | GuardianActionEvent
+  | ApprovalRecordedEvent
+  | XrayReadyEvent
+  | ShadowDbUpdatedEvent
+  | StagingUpdatedEvent;
 
 /** The `type` literals, in catalogue order — used by tests and by the reducer's exhaustiveness. */
 export const SDCP_EVENT_TYPES = [
@@ -794,6 +1377,24 @@ export const SDCP_EVENT_TYPES = [
   'PlanUpdated',
   'VerifyUpdated',
   'ModelsUpdated',
+  'CostUpdated',
+  'PolicyViolation',
+  'BudgetStop',
+  'KillSwitch',
+  'TrustScored',
+  'CheckpointUpdated',
+  'FileRestored',
+  'IntentParsed',
+  'IntentConfirmed',
+  'VoiceTranscribed',
+  'DeployUpdated',
+  'HealthUpdated',
+  'HealthAlert',
+  'GuardianAction',
+  'ApprovalRecorded',
+  'XrayReady',
+  'ShadowDbUpdated',
+  'StagingUpdated',
 ] as const satisfies readonly SdcpEvent['type'][];
 
 /** Every event as a `Record` keyed by `type`, handy for a switch's exhaustiveness check. */
@@ -964,6 +1565,8 @@ export interface SdcpMethodMap {
       autonomy?: 'ask' | 'pro' | 'auto';
       /** Model calls one agent turn may make before it pauses (default 25). */
       maxSteps?: number;
+      /** A confirmed Intent Contract: the Prompt Compiler writes the engine's prompt from it (0.12). */
+      intentId?: string;
       /** Read the message with SDC's brief - its language, every request in it, the answer's language (default true, 0.11.8). */
       understand?: boolean;
     };
@@ -990,6 +1593,11 @@ export interface SdcpMethodMap {
       /** Review even when a check failed (by default the review waits for green checks). */
       reviewFailing?: boolean;
       hostId?: string;
+      /** The conditions the reviewer judges one by one; read from `intentId` when not sent (0.12). */
+      acceptance?: string[];
+      intentId?: string;
+      /** `security`: the role pipeline's SecReview. */
+      focus?: 'security';
     };
     result: { verifyId: string };
   };
@@ -1324,6 +1932,70 @@ export interface SdcpMethodMap {
 
   'console.attach': { params: { sessionId: string; url: string }; result: { attached: boolean } };
   'console.detach': { params: { sessionId: string }; result: { detached: boolean } };
+
+  /* 0.12 ---------------------------------------------------------------------------------------- */
+  'audit.list': { params: { sessionId?: string; turnId?: string; limit?: number }; result: { entries: AuditEntry[]; chain: LedgerCheck } };
+  'audit.verify': { params: Record<string, never>; result: LedgerCheck };
+  'policy.get': { params: { sessionId?: string; root?: string; hostId?: string }; result: { root: string | null; path: string | null; exists: boolean; policy: Policy; text: string; defaults: { protected: string[]; alwaysAsk: string[] } } };
+  'policy.set': { params: { sessionId?: string; root?: string; hostId?: string; text?: string; policy?: Partial<Policy> }; result: { policy: Policy; path: string } };
+  'kill.all': { params: Record<string, never>; result: { stopped: ActiveWork[]; processes: number; checkpoints: { sessionId: string; checkpointId: string }[] } };
+  'kill.list': { params: Record<string, never>; result: { active: ActiveWork[] } };
+  'cost.summary': { params: Record<string, never>; result: CostSummary };
+  'cost.estimate': { params: { prompt: string; engine: string; model: string; provider?: string; sessionId?: string; agent?: boolean }; result: { estimate: CostEstimate; cheaper: CheaperModel | null; spent: CostSpent; budgets: CostBudgets } };
+  'cost.budget.set': { params: { turn?: number | null; chat?: number | null; day?: number | null; month?: number | null; baseline?: string }; result: CostSummary };
+  'trust.score': { params: { turnId: string }; result: { turnId: string; sessionId: string; score: number; level: TrustLevel; reasons: TrustReason[]; ts: string } | null };
+  'checkpoint.label': { params: { checkpointId: string; label?: string }; result: { checkpoint: CheckpointRecord } };
+  'checkpoint.files': { params: { checkpointId: string }; result: { checkpoint: CheckpointRecord; files: { status: string; path: string }[] } };
+  'checkpoint.fileDiff': { params: { checkpointId: string; path: string }; result: { path: string; diff: string } };
+  'checkpoint.restoreFile': { params: { checkpointId: string; path: string }; result: { path: string; outcome: 'restored' | 'removed'; undoCheckpointId: string } };
+  'proof.export': { params: { sessionId: string; turnId?: string; lang?: string }; result: { jsonPath: string; htmlPath: string; html: string; pack: Record<string, unknown> } };
+  'intent.detect': { params: { text: string }; result: Detection };
+  'intent.parse': { params: { text: string; sessionId?: string; engine?: string; model?: string; provider?: string; hostId?: string }; result: { intentId: string; detection: Detection } };
+  'intent.confirm': { params: { intentId: string; spec?: TaskSpec; glossary?: { term: string; meaning: string }[]; sessionId?: string }; result: { intentId: string; spec: TaskSpec; corrections: number; glossaryScope: string } };
+  'intent.compile': { params: { intentId: string; engine?: string; sessionId?: string }; result: { engine: string; prompt: string } };
+  'intent.cancel': { params: { intentId: string }; result: { cancelled: boolean } };
+  'intent.stats': { params: Record<string, never>; result: { parsed: number; confirmed: number; corrected: number; cancelled: number } };
+  'glossary.list': { params: { sessionId?: string; scope?: string }; result: { scope: string; terms: GlossaryTerm[] } };
+  'glossary.set': { params: { sessionId?: string; scope?: string; term: string; meaning?: string }; result: { scope: string; terms: GlossaryTerm[] } };
+  'voice.status': { params: Record<string, never>; result: { local: boolean; program: string | null; model: string | null; online: string[]; available: boolean; hint: string | null } };
+  'voice.transcribe': { params: { audio: string; mime?: string; language?: string; sessionId?: string }; result: { requestId: string } };
+  'site.list': { params: Record<string, never>; result: { sites: SiteRecord[] } };
+  'site.detect': { params: { hostId?: string; root: string }; result: { config: Record<string, unknown> } };
+  'site.save': { params: { siteId?: string; name: string; hostId?: string; root: string; url?: string; config?: Record<string, unknown> }; result: { siteId: string; site: SiteRecord } };
+  'site.remove': { params: { siteId: string }; result: { removed: boolean } };
+  'deploy.run': { params: { siteId: string; kind?: 'production' | 'staging' }; result: { deployId?: string; state: 'running' | 'awaiting_approval'; approvalId?: string } };
+  'deploy.list': { params: { siteId?: string; limit?: number }; result: { deploys: DeployRecord[] } };
+  'deploy.get': { params: { deployId: string }; result: { deploy: DeployRecord | null } };
+  'deploy.preview': { params: { deployId: string }; result: { changes: { path: string; change: 'added' | 'modified' | 'deleted' }[]; archive: string } };
+  'deploy.rollback': { params: { deployId: string }; result: { state: 'running' } };
+  'deploy.restoreDb': { params: { deployId: string; confirm: 'RESTORE' }; result: { restored: boolean; output: string[] } };
+  'health.check': { params: { siteId: string }; result: { queued: boolean } };
+  'health.history': { params: { siteId: string; limit?: number }; result: { reports: HealthReport[] } };
+  'guardian.set': { params: { siteId: string; enabled: boolean; autoRollback: boolean }; result: { guardian: { enabled: boolean; autoRollback: boolean } } };
+  'approval.list': { params: { subject?: string }; result: { approvals: ApprovalRecord[] } };
+  'approval.request': { params: { subject: string; kind?: string; note?: string; token?: string }; result: { approval: ApprovalRecord } };
+  'approval.decide': { params: { approvalId: string; decision: 'approved' | 'declined'; note?: string }; result: { approval: ApprovalRecord } };
+  'approval.poll': { params: { approvalId: string }; result: { approval: ApprovalRecord; answered?: boolean } };
+  'xray.scan': { params: { hostId: string }; result: { queued: boolean } };
+  'xray.get': { params: { hostId: string }; result: { map: XrayMap | null } };
+  'shadowdb.run': { params: { siteId: string; command: string }; result: { runId: string } };
+  'staging.create': { params: { siteId: string; summary?: string; changes?: string[]; before?: string; after?: string; lang?: string }; result: { approvalId: string } };
+  'staging.stop': { params: { siteId: string; remove?: boolean }; result: { stopped: boolean } };
+  'playbook.list': { params: Record<string, never>; result: { playbooks: Playbook[] } };
+  'playbook.save': { params: { playbook: Partial<Playbook> }; result: { playbooks: Playbook[] } };
+  'playbook.remove': { params: { playbookId: string }; result: { playbooks: Playbook[] } };
+  'playbook.run': { params: { playbookId: string; siteIds: string[] }; result: { deploys: { siteId: string; deployId: string }[]; prompts: string[] } };
+  'team.get': { params: Record<string, never>; result: TeamState };
+  'team.set': { params: { members?: TeamMember[]; current?: string }; result: TeamState };
+  'settings.get': { params: { key: string }; result: { key: string; value: string | null } };
+  'settings.set': { params: { key: string; value: string | boolean }; result: { key: string; value: string } };
+  'update.check': { params: { channel?: 'stable' | 'beta' }; result: UpdateInfo };
+  'crash.list': { params: Record<string, never>; result: { reports: CrashReport[] } };
+  'crash.clear': { params: Record<string, never>; result: { cleared: number } };
+  'cli.selfcheck': { params: Record<string, never>; result: { clis: CliSelfCheck[] } };
+  'status.share': { params: { enabled: boolean; port?: number }; result: { enabled: boolean; port?: number; url?: string; error?: string } };
+  'timeline.branches': { params: { sessionId: string }; result: { branches: TimelineBranch[] } };
+  'timeline.switch': { params: { sessionId: string; frameId: number }; result: { switched: boolean; turn?: number } };
 }
 
 export type MethodParams<M extends SdcpMethod> = SdcpMethodMap[M]['params'];

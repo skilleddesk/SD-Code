@@ -19,6 +19,9 @@ import { ComposeSwitch } from './ComposeSwitch';
 import { FolderChip } from './FolderChip';
 import { ModelSelector } from './ModelSelector';
 import { QueuedChips } from './QueuedChips';
+import { IntentCard } from '../../kernel/IntentCard';
+import { VoiceButton } from '../../kernel/VoiceButton';
+import { usePrefsStore } from '../../store/prefs';
 
 /**
  * `.prompt-area` - the input, and everything around it (spec section 7.6).
@@ -85,6 +88,9 @@ export function PromptArea({ sessionId }: PromptAreaProps = {}) {
    * run: no decoration, no invented `12.4k`.
    */
   const [attached, setAttached] = useState<readonly PickedFile[]>([]);
+  /* The chat whose Intent Contract card this box shows (0.12): the pane's own, or the open one. */
+  const activeTab = usePrefsStore((state) => state.activeTab);
+  const cardSession = sessionId ?? activeTab;
   const draft = useModelStore((state) => state.draft);
 
   /* The chat's turn ended: the next queued prompt for it goes out now. */
@@ -215,6 +221,11 @@ export function PromptArea({ sessionId }: PromptAreaProps = {}) {
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>): void => {
+    /* An input method still composing (Bengali, Chinese, Japanese…) owns Enter: it commits the word, it does not send (0.12). */
+    if (event.nativeEvent.isComposing || event.keyCode === 229) {
+      return;
+    }
+
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
       send();
@@ -260,6 +271,8 @@ export function PromptArea({ sessionId }: PromptAreaProps = {}) {
           )}
         </div>
 
+        {cardSession === null ? null : <IntentCard sessionId={cardSession} />}
+
         <QueuedChips sessionId={sessionId} />
 
         <div className="prompt-box flex flex-col gap-[8px] rounded-lg border border-border-default bg-bg-input px-[13px] py-[11px] transition-all duration-base ease-ease focus-within:border-border-strong">
@@ -286,6 +299,22 @@ export function PromptArea({ sessionId }: PromptAreaProps = {}) {
                 label={strings.prompt.toolbar.image}
                 iconSize={14}
                 onClick={() => attach('image')}
+              />
+              <VoiceButton
+                {...(sessionId === undefined ? {} : { sessionId })}
+                onText={(spoken) => {
+                  const textarea = textareaRef.current;
+
+                  if (textarea === null) {
+                    return;
+                  }
+
+                  const present = textarea.value.trimEnd();
+
+                  textarea.value = present === '' ? spoken : `${present} ${spoken}`;
+                  textarea.focus();
+                  grow();
+                }}
               />
             </div>
 

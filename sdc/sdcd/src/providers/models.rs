@@ -47,14 +47,23 @@ pub struct ProviderBlock {
 /// that could go stale against a edited file).
 pub fn blocked() -> Vec<ProviderBlock> {
     let parsed: Value = serde_json::from_str(BUNDLED).unwrap_or(Value::Null);
+    let overrides = endpoint_overrides();
     let mut blocks = Vec::new();
 
     for group in ["providers", "subscriptions"] {
         for entry in parsed.get(group).and_then(Value::as_array).cloned().unwrap_or_default() {
+            let id = entry["id"].as_str().unwrap_or_default().to_string();
+            /* A provider whose base URL the person set (0.12: an Alibaba Model Studio workspace has its
+               own host) lists its models, and takes its turns, at that URL. */
+            let live = match overrides.get(&id) {
+                Some(base) => format!("{}/models", base.trim_end_matches('/')),
+                None => entry["live"].as_str().unwrap_or_default().to_string(),
+            };
+
             blocks.push(ProviderBlock {
-                id: entry["id"].as_str().unwrap_or_default().to_string(),
+                id,
                 label: entry["label"].as_str().unwrap_or_default().to_string(),
-                live: entry["live"].as_str().unwrap_or_default().to_string(),
+                live,
                 protocol: entry["protocol"].as_str().unwrap_or("openai").to_string(),
                 models: entry["models"].as_array().cloned().unwrap_or_default(),
             });
@@ -62,6 +71,45 @@ pub fn blocked() -> Vec<ProviderBlock> {
     }
 
     blocks
+}
+
+fn overrides_path() -> Option<std::path::PathBuf> {
+    crate::paths::data_dir().ok().map(|dir| dir.join("endpoints.json"))
+}
+
+/// The base URLs a person set for catalogue providers: `{ "qwen": "https://…/compatible-mode/v1" }`.
+pub fn endpoint_overrides() -> std::collections::HashMap<String, String> {
+    overrides_path()
+        .and_then(|path| std::fs::read_to_string(path).ok())
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default()
+}
+
+/// Sets (or, with `None`, clears) a provider's base URL. It must be an `https://` (or loopback `http://`)
+/// URL; a trailing `/chat/completions` or `/models` is taken off, so a pasted endpoint works too.
+pub fn set_endpoint_override(id: &str, base: Option<&str>) -> Result<Option<String>, String> {
+    let mut overrides = endpoint_overrides();
+    let cleaned = match base.map(str::trim).filter(|base| !base.is_empty()) {
+        None => {
+            overrides.remove(id);
+            None
+        }
+        Some(base) => {
+            let base = base.trim_end_matches('/').trim_end_matches("/chat/completions").trim_end_matches("/models").trim_end_matches('/');
+
+            if !(base.starts_with("https://") || base.starts_with("http://127.0.0.1") || base.starts_with("http://localhost")) {
+                return Err("The base URL starts with https:// (for example https://dashscope-intl.aliyuncs.com/compatible-mode/v1).".into());
+            }
+
+            overrides.insert(id.to_string(), base.to_string());
+            Some(base.to_string())
+        }
+    };
+    let path = overrides_path().ok_or("no data folder")?;
+
+    std::fs::write(path, serde_json::to_string_pretty(&overrides).unwrap_or_default()).map_err(|error| error.to_string())?;
+
+    Ok(cleaned)
 }
 
 /// The day the bundle was last curated, which is what the UI shows next to a `bundled` row.

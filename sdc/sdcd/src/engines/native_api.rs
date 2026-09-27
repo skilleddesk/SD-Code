@@ -356,6 +356,28 @@ pub fn parse_sse_line(line: &str) -> Vec<EngineEvent> {
         }
     }
 
+    /* The provider's own token counts (0.12, the cost governor): Anthropic's `message_start` carries the
+       input, its `message_delta` the output so far; an OpenAI-compatible stream sends one `usage` chunk at
+       the end when it is asked to. Totals - the governor keeps the largest of each. */
+    let anthropic_input = value.pointer("/message/usage").map(|usage| {
+        ["input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"]
+            .iter()
+            .map(|key| usage[*key].as_u64().unwrap_or(0))
+            .sum::<u64>()
+    });
+    let usage = value.get("usage").filter(|usage| usage.is_object());
+
+    if anthropic_input.is_some() || usage.is_some() {
+        let input = anthropic_input.unwrap_or(0) + usage.and_then(|usage| usage["prompt_tokens"].as_u64()).unwrap_or(0);
+        let output = usage
+            .and_then(|usage| usage["output_tokens"].as_u64().or_else(|| usage["completion_tokens"].as_u64()))
+            .unwrap_or(0);
+
+        if input > 0 || output > 0 {
+            return vec![EngineEvent::Usage { input_tokens: input, output_tokens: output, cost_usd: None }];
+        }
+    }
+
     Vec::new()
 }
 

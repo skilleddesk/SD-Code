@@ -174,6 +174,69 @@ pub fn changes_since(project_root: &Path, sha: &str) -> Result<String, ErrorObje
     run(project_root, &["diff", sha])
 }
 
+/// Which files changed since a shadow commit, new ones included: `[(status, path)]` with git's letters
+/// (`A` added, `M` modified, `D` deleted, `R` renamed). The Time Machine's before/after list.
+pub fn files_since(project_root: &Path, sha: &str) -> Result<Vec<(String, String)>, ErrorObject> {
+    run(project_root, &["add", "-N", "--", ":/"])?;
+
+    Ok(parse_name_status(&run(project_root, &["diff", "--name-status", sha])?))
+}
+
+/// `git diff --name-status` output as `(status, path)` pairs; a rename keeps its new path.
+pub fn parse_name_status(text: &str) -> Vec<(String, String)> {
+    text.lines()
+        .filter_map(|line| {
+            let mut parts = line.split('\t');
+            let status = parts.next()?.trim().chars().next()?.to_string();
+            let path = parts.next_back()?.trim().to_string();
+
+            (!path.is_empty()).then_some((status, path))
+        })
+        .collect()
+}
+
+/// One file's change since a shadow commit.
+pub fn file_diff(project_root: &Path, sha: &str, path: &str) -> Result<String, ErrorObject> {
+    let path = clean_relative(path)?;
+
+    run(project_root, &["add", "-N", "--", &path])?;
+    run(project_root, &["diff", sha, "--", &path])
+}
+
+/// Puts **one file** back as a shadow commit recorded it - the rest of the folder is not touched.
+///
+/// A file the commit did not have (made after the checkpoint) is removed, which is what "as it was" means
+/// for it. Returns `restored` or `removed`.
+pub fn restore_file(project_root: &Path, sha: &str, path: &str) -> Result<&'static str, ErrorObject> {
+    let path = clean_relative(path)?;
+    let existed = run(project_root, &["cat-file", "-e", &format!("{sha}:{path}")]).is_ok();
+
+    if existed {
+        run(project_root, &["checkout", sha, "--", &path])?;
+
+        return Ok("restored");
+    }
+
+    let absolute = project_root.join(&path);
+
+    if absolute.exists() {
+        std::fs::remove_file(&absolute).map_err(ErrorObject::internal)?;
+    }
+
+    Ok("removed")
+}
+
+/// A path the person gave, as git wants it: relative, forward slashes, and never outside the folder.
+pub fn clean_relative(path: &str) -> Result<String, ErrorObject> {
+    let normal = path.replace('\\', "/").trim_start_matches("./").trim_start_matches('/').to_string();
+
+    if normal.is_empty() || normal.split('/').any(|segment| segment == "..") {
+        return Err(ErrorObject::bad_request(format!("`{path}` is not a path inside the folder")));
+    }
+
+    Ok(normal)
+}
+
 /// A per-session worktree, so two chats on the same project cannot see each other's half-finished
 /// edits (spec section 5.5: "worktree per session").
 pub fn worktree(project_root: &Path, session_id: &str) -> Result<PathBuf, ErrorObject> {

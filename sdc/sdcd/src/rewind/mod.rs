@@ -50,6 +50,7 @@ pub fn apply(
     session_id: &str,
     turn: i64,
     snapshot: crate::checkpoints::Snapshot<'_>,
+    host_id: Option<&str>,
 ) -> Result<Applied, ErrorObject> {
     let rows = store.checkpoints_from(session_id, turn).map_err(ErrorObject::internal)?;
 
@@ -62,10 +63,23 @@ pub fn apply(
     let now = if restorable { commit_now(&snapshot)? } else { None };
 
     if restorable {
-        restore(&snapshot, &sha)?;
+        journaled(store, session_id, &snapshot, host_id, &sha, now.as_deref(), "all", || restore(&snapshot, &sha))?;
     }
 
-    let frame = serde_json::json!({ "rows": rows, "nowSha": now });
+    /* The conversation half (TM-1): the turn that wrote this checkpoint and every later one leave the
+       history the next engine is given, so it does not build on work that is no longer on disk. Their
+       states travel in the frame, so a redo puts each back exactly as it was. */
+    let dropped = store.turns_after_checkpoint(session_id, target).map_err(ErrorObject::internal)?;
+
+    for (id, _) in &dropped {
+        store.set_turn_state(id, "rewound").map_err(ErrorObject::internal)?;
+    }
+
+    let frame = serde_json::json!({
+        "rows": rows,
+        "nowSha": now,
+        "turns": dropped.iter().map(|(id, state)| serde_json::json!({ "id": id, "state": state })).collect::<Vec<_>>(),
+    });
     let hidden: Vec<String> = rows.iter().filter_map(|row| row["id"].as_str().map(str::to_string)).collect();
     let target_id = target["id"].as_str().unwrap_or_default().to_string();
 
@@ -81,12 +95,14 @@ pub fn apply(
     })
 }
 
-/// Puts back the last rewind: the folder as it was just before it, and its checkpoints. `None` when the
-/// stack is empty, which is not an error - there is simply nothing to redo.
+/// Puts back the last rewind: the folder as it was just before it, its checkpoints, and the turns it
+/// took out of the conversation. `None` when the stack is empty, which is not an error - there is simply
+/// nothing to redo.
 pub fn redo(
     store: &Arc<Store>,
     session_id: &str,
     snapshot: crate::checkpoints::Snapshot<'_>,
+    host_id: Option<&str>,
 ) -> Result<Option<Applied>, ErrorObject> {
     let Some((turn, frame)) = store.pop_rewind_frame(session_id).map_err(ErrorObject::internal)? else {
         return Ok(None);
@@ -95,17 +111,94 @@ pub fn redo(
     let rows = frame["rows"].as_array().map(Vec::len).unwrap_or(0) as i64;
     let restored = match frame["nowSha"].as_str() {
         Some(sha) if sha.len() == 40 => {
-            restore(&snapshot, sha)?;
+            journaled(store, session_id, &snapshot, host_id, sha, None, "all", || restore(&snapshot, sha))?;
             1
         }
         _ => 0,
     };
 
+    for dropped in frame["turns"].as_array().cloned().unwrap_or_default() {
+        if let (Some(id), Some(state)) = (dropped["id"].as_str(), dropped["state"].as_str()) {
+            store.set_turn_state(id, state).map_err(ErrorObject::internal)?;
+        }
+    }
+
     Ok(Some(Applied { direction: "forward", turn, turns: rows, files: restored }))
 }
 
+/// Runs a restore inside the journal (TM-2): the row is written **before** the folder moves and closed
+/// after, so a daemon that stops in the middle finds the open row at its next start and finishes the
+/// restore (`recover`) instead of leaving a folder that is half one checkpoint and half another.
+#[allow(clippy::too_many_arguments)]
+pub fn journaled(
+    store: &Arc<Store>,
+    session_id: &str,
+    snapshot: &crate::checkpoints::Snapshot<'_>,
+    host_id: Option<&str>,
+    target: &str,
+    before: Option<&str>,
+    scope: &str,
+    work: impl FnOnce() -> Result<(), ErrorObject>,
+) -> Result<(), ErrorObject> {
+    let root = match snapshot {
+        crate::checkpoints::Snapshot::Local(root) => root.display().to_string(),
+        crate::checkpoints::Snapshot::Remote(_, root) => root.to_string(),
+        crate::checkpoints::Snapshot::Unbound => return work(),
+    };
+    let entry = store.journal_open(session_id, &root, host_id, target, before, scope).map_err(ErrorObject::internal)?;
+    let result = work();
+
+    let _ = store.journal_close(entry, if result.is_ok() { "done" } else { "failed" });
+
+    result
+}
+
+/// Finishes the restores a stopped daemon left open. A whole-folder restore is re-run to its target -
+/// `read-tree -u --reset` lands on the same tree however far the first attempt got - and a single-file
+/// restore likewise. Local folders only: a host's restore is re-run the next time its chat is opened, so
+/// the report names them. Returns one sentence per journal entry.
+pub fn recover(store: &Arc<Store>) -> Vec<String> {
+    let mut sentences = Vec::new();
+
+    for entry in store.open_journals().unwrap_or_default() {
+        let id = entry["id"].as_i64().unwrap_or(0);
+        let root = entry["root"].as_str().unwrap_or_default();
+        let target = entry["target"].as_str().unwrap_or_default();
+        let scope = entry["scope"].as_str().unwrap_or("all");
+        let host = entry["hostId"].as_str().filter(|host| *host != "local");
+
+        if host.is_some() {
+            let _ = store.journal_close(id, "interrupted-remote");
+            sentences.push(format!(
+                "A restore of {root} on a VPS was cut off when SDC stopped. Open its chat and rewind again to finish it."
+            ));
+            continue;
+        }
+
+        let path = std::path::Path::new(root);
+        let result = if scope == "all" {
+            crate::git::restore(path, target)
+        } else {
+            crate::git::restore_file(path, target, scope).map(|_| ())
+        };
+
+        match result {
+            Ok(()) => {
+                let _ = store.journal_close(id, "recovered");
+                sentences.push(format!("A restore of {root} was cut off when SDC stopped; it has been finished."));
+            }
+            Err(error) => {
+                let _ = store.journal_close(id, "failed");
+                sentences.push(format!("A restore of {root} was cut off and could not be finished: {}", error.message));
+            }
+        }
+    }
+
+    sentences
+}
+
 /// The folder's current state as a shadow commit, so a redo has something to return to.
-fn commit_now(snapshot: &crate::checkpoints::Snapshot<'_>) -> Result<Option<String>, ErrorObject> {
+pub(crate) fn commit_now(snapshot: &crate::checkpoints::Snapshot<'_>) -> Result<Option<String>, ErrorObject> {
     Ok(match snapshot {
         crate::checkpoints::Snapshot::Local(root) => Some(crate::git::checkpoint(root, "sdcd: before a rewind")?),
         crate::checkpoints::Snapshot::Remote(ssh, root) => {
@@ -153,14 +246,14 @@ mod tests {
     fn rewinds_to_the_chosen_checkpoint_and_redoes_it_whole() {
         let store = store_with_three_checkpoints();
 
-        let applied = apply(&store, "s1", 13, crate::checkpoints::Snapshot::Unbound).unwrap();
+        let applied = apply(&store, "s1", 13, crate::checkpoints::Snapshot::Unbound, None).unwrap();
 
         assert_eq!(applied.direction, "back");
         assert_eq!(applied.turns, 2);
         assert_eq!(store.checkpoints("s1").unwrap().len(), 1);
         assert_eq!(depth(&store, "s1").unwrap(), 1);
 
-        let undone = redo(&store, "s1", crate::checkpoints::Snapshot::Unbound).unwrap().unwrap();
+        let undone = redo(&store, "s1", crate::checkpoints::Snapshot::Unbound, None).unwrap().unwrap();
 
         assert_eq!(undone.direction, "forward");
         assert_eq!(depth(&store, "s1").unwrap(), 0);
@@ -193,14 +286,14 @@ mod tests {
         std::fs::remove_file(root.join("gone.txt")).unwrap();
         std::fs::write(root.join("new.txt"), "made later\n").unwrap();
 
-        let applied = apply(&store, "s1", 20, crate::checkpoints::Snapshot::Local(&root)).unwrap();
+        let applied = apply(&store, "s1", 20, crate::checkpoints::Snapshot::Local(&root), None).unwrap();
 
         assert_eq!(applied.files, 1);
         assert_eq!(std::fs::read_to_string(root.join("a.txt")).unwrap().trim_end(), "one");
         assert!(root.join("gone.txt").exists(), "a deleted file comes back");
         assert!(!root.join("new.txt").exists(), "a file made after the checkpoint is removed");
 
-        redo(&store, "s1", crate::checkpoints::Snapshot::Local(&root)).unwrap().unwrap();
+        redo(&store, "s1", crate::checkpoints::Snapshot::Local(&root), None).unwrap().unwrap();
 
         assert_eq!(std::fs::read_to_string(root.join("a.txt")).unwrap().trim_end(), "two");
         assert!(root.join("new.txt").exists());
@@ -221,7 +314,7 @@ mod tests {
     #[test]
     fn a_rewind_with_nothing_to_drop_is_a_no_op() {
         let store = store_with_three_checkpoints();
-        let applied = apply(&store, "s1", 99, crate::checkpoints::Snapshot::Unbound).unwrap();
+        let applied = apply(&store, "s1", 99, crate::checkpoints::Snapshot::Unbound, None).unwrap();
 
         assert_eq!(applied.turns, 0);
         assert_eq!(store.checkpoints("s1").unwrap().len(), 3);
@@ -231,6 +324,6 @@ mod tests {
     fn redoing_an_empty_stack_is_none_and_not_an_error() {
         let store = store_with_three_checkpoints();
 
-        assert!(redo(&store, "s1", crate::checkpoints::Snapshot::Unbound).unwrap().is_none());
+        assert!(redo(&store, "s1", crate::checkpoints::Snapshot::Unbound, None).unwrap().is_none());
     }
 }

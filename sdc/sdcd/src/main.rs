@@ -37,6 +37,27 @@ async fn main() -> Result<()> {
         std::process::exit(sdcd::ssh::session::answer_prompt(&spec, &prompt));
     }
 
+    sdcd::crash::install_hook();
+
+    /* Headless commands (0.12): `sdcd run|verify|kill|audit …` talk to the daemon that is already running,
+       so a turn from a terminal or a CI job gets the same Trust Kernel as one typed in the window. */
+    {
+        let all: Vec<String> = std::env::args().skip(1).collect();
+
+        if let Some(command) = all.first().filter(|command| matches!(command.as_str(), "run" | "verify" | "kill" | "audit")) {
+            let port = all
+                .iter()
+                .position(|arg| arg == "--port")
+                .and_then(|index| all.get(index + 1))
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(paths::DEFAULT_PORT);
+            let command = command.clone();
+            let code = tokio::task::spawn_blocking(move || sdcd::cli::main(&command, &all[1..], port)).await.unwrap_or(1);
+
+            std::process::exit(code);
+        }
+    }
+
     let mut port = paths::DEFAULT_PORT;
     let mut database = None;
     /* 0 means "never leave on my own", which is right for a daemon a human started: a terminal you
@@ -78,6 +99,26 @@ async fn main() -> Result<()> {
         .with_context(|| format!("binding 127.0.0.1:{port}"))?;
 
     println!("  loopback   127.0.0.1:{}", tcp.local_addr()?.port());
+
+    /* A restore the last daemon was in the middle of is finished first (the Time Machine's journal, 0.12),
+       before any window can ask about the folder it was restoring. */
+    for sentence in sdcd::rewind::recover(&state.store) {
+        println!("  journal    {sentence}");
+        state.events.append(sdcd::sdcp::events::event::toast(&sentence, None, Some(12_000)), None, None);
+    }
+
+    /* Health Watch and the Night Guardian (0.12): every site on its own interval. */
+    sdcd::ops::health::spawn(
+        state.clone(),
+        Arc::new(ChannelNotifier::new(state.events.clone(), state.fanout.clone())),
+    );
+
+    /* The phone's read-only status page, when the person turned it on. */
+    if state.store.setting("status.share").ok().flatten().as_deref() == Some("on") {
+        let answer = sdcd::status::configure(state.clone(), true, None);
+
+        println!("  status     {}", answer["url"].as_str().unwrap_or("could not start"));
+    }
 
     /* The catalogue keeps itself fresh (0.9.0): the connected providers are asked at start and every
        twelve hours, and every window hears `ModelsUpdated` when a list moved. A model a provider ships

@@ -17,6 +17,11 @@ import { NewChatPopover } from './overlays/NewChatPopover';
 import { Palette } from './overlays/Palette';
 import { SearchOverlay } from './overlays/SearchOverlay';
 import { Toast } from './overlays/Toast';
+import { Agency } from './kernel/Agency';
+import { CostCenter } from './kernel/CostCenter';
+import { Onboarding } from './kernel/Onboarding';
+import { PolicyEditor } from './kernel/PolicyEditor';
+import { onboardedAlready, useKernelUi } from './store/kernelUi';
 import { connectDaemon, watchBackground, watchDaemon, watchHosts } from './store/intents';
 import { useLayoutStore, workspaceClassName } from './store/layout';
 import { usePrefixHint } from './store/prefs';
@@ -89,6 +94,13 @@ export function App() {
    */
   useEffect(() => watchHosts(), []);
 
+  /* The first launch opens the ten-minute wizard (0.12); after that it is in the palette. */
+  useEffect(() => {
+    if (!onboardedAlready()) {
+      useKernelUi.getState().openOnboarding();
+    }
+  }, []);
+
   const layout = useLayoutStore();
   const rightPanelWidth = useRightPanelStore((state) => state.width);
 
@@ -122,6 +134,10 @@ export function App() {
       <NewProject />
       <Permission />
       <Connect />
+      <Agency />
+      <CostCenter />
+      <PolicyEditor />
+      <Onboarding />
 
       <Toast />
     </>

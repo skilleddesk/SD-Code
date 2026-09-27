@@ -728,6 +728,23 @@ mod tests {
         );
     }
 
+    /// The limiter only ever *shortens* a real check into a skip - it must never keep a cached yes
+    /// alive past a real check that comes back no, even while the window is still fresh. Otherwise a
+    /// closed master would keep answering commands as if it were still open.
+    #[test]
+    fn a_real_no_clears_a_cached_yes_before_the_window_passes() {
+        let ssh = Ssh::parse("nobody@203.0.113.99 -p 4").unwrap();
+
+        checked().lock().unwrap().insert(ssh.label(), Instant::now());
+
+        assert!(!is_open(&ssh), "a host with no real socket must never report open");
+        assert!(
+            !checked().lock().unwrap().contains_key(&ssh.label()),
+            "a real no must remove the stale yes rather than leave it for the window to expire"
+        );
+        assert!(!is_open_recently(&ssh), "the cleared cache must not be trusted either");
+    }
+
     #[test]
     fn a_control_path_is_short_and_per_host() {
         let one = Ssh::parse("deploy@203.0.113.10 -p 8443").unwrap();

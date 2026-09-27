@@ -87,7 +87,8 @@ const conversations = [
     JSON.stringify({ type: 'result', summary: 'Done', meta: '1m 20s', pass: true }),
   ]],
 
-  ['ollama-12-local-summary.jsonl', ['Delta', 'Delta', 'Done'], 'ollama', [
+  /* 0.12: Ollama's `eval_count` is the turn's measured usage - the cost governor's `Usage`, before `Done`. */
+  ['ollama-12-local-summary.jsonl', ['Delta', 'Delta', 'Usage', 'Done'], 'ollama', [
     JSON.stringify({ message: { content: 'Rate limiting is ' }, done: false }),
     JSON.stringify({ message: { content: 'the answer.' }, done: true, eval_count: 12 }),
   ]],

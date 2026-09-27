@@ -859,6 +859,54 @@ pub fn shadow_restore(ssh: &Ssh, root: &str, sha: &str) -> Result<(), ErrorObjec
     Ok(())
 }
 
+/// `git::files_since` on a host.
+pub fn shadow_files_since(ssh: &Ssh, root: &str, since: &str) -> Result<Vec<(String, String)>, ErrorObject> {
+    let shadow = shadow_dir(root);
+    let intend = shadow_git(root, &shadow, &["add", "-N", "--", ":/"])?;
+    let diff = shadow_git(root, &shadow, &["diff", "--name-status", since])?;
+    let output = ssh.run(&format!("{intend} && {diff}"), TRANSFER)?;
+
+    if !output.ok() {
+        return Err(failed(ssh, "listing what changed since the checkpoint", &output));
+    }
+
+    Ok(crate::git::parse_name_status(&output.stdout))
+}
+
+/// `git::file_diff` on a host.
+pub fn shadow_file_diff(ssh: &Ssh, root: &str, since: &str, path: &str) -> Result<String, ErrorObject> {
+    let path = crate::git::clean_relative(path)?;
+    let shadow = shadow_dir(root);
+    let intend = shadow_git(root, &shadow, &["add", "-N", "--", &path])?;
+    let diff = shadow_git(root, &shadow, &["diff", since, "--", &path])?;
+    let output = ssh.run(&format!("{intend} && {diff}"), TRANSFER)?;
+
+    if !output.ok() {
+        return Err(failed(ssh, "reading the file's change", &output));
+    }
+
+    Ok(output.stdout)
+}
+
+/// `git::restore_file` on a host: the one file as the commit had it, or removed when it did not exist.
+pub fn shadow_restore_file(ssh: &Ssh, root: &str, sha: &str, path: &str) -> Result<&'static str, ErrorObject> {
+    let path = crate::git::clean_relative(path)?;
+    let shadow = shadow_dir(root);
+    let exists = shadow_git(root, &shadow, &["cat-file", "-e", &format!("{sha}:{path}")])?;
+    let checkout = shadow_git(root, &shadow, &["checkout", sha, "--", &path])?;
+    let target = remote_expr(&format!("{}/{}", root.trim_end_matches('/'), path))?;
+    let output = ssh.run(
+        &format!("if {exists} 2>/dev/null; then {checkout} && echo restored; else rm -f {target} && echo removed; fi"),
+        TRANSFER,
+    )?;
+
+    if !output.ok() {
+        return Err(failed(ssh, "restoring the file", &output));
+    }
+
+    Ok(if output.stdout.contains("removed") { "removed" } else { "restored" })
+}
+
 /* --------------------------------------------------------------------------------------------
  * One command, and one question
  * ------------------------------------------------------------------------------------------ */

@@ -1,0 +1,61 @@
+import type { StringsPack } from './index';
+
+/** اردو (0.12): کھڑکی اور نئے حصوں کے اہم الفاظ؛ باقی انگریزی میں۔ کھڑکی دائیں سے بائیں۔ */
+export const ur: StringsPack = {
+  modal: { close: 'بند کریں' },
+  topbar: {
+    palette: { label: 'تلاش کریں یا جائیں…', title: 'کمانڈ پیلیٹ' },
+    providers: { title: 'پرووائیڈر اور ماڈل' },
+    theme: { title: 'تھیم بدلیں' },
+    settings: { title: 'ترتیبات' },
+    modes: { simple: 'آسان', pro: 'پرو', auto: 'آٹو' },
+  },
+  prompt: { placeholder: 'کسی بھی زبان میں لکھیں یا بولیں کہ کیا بنانا یا ٹھیک کرنا ہے…', send: 'بھیجیں', stop: 'روکیں' },
+  statusBar: { connection: { ready: 'تیار', degraded: 'کمزور', offline: 'آف لائن' } },
+  rightPanel: { tabs: { preview: 'پیش منظر', console: 'کنسول', terminal: 'ٹرمینل', timemachine: 'ٹائم مشین', duel: 'مقابلہ', verify: 'جانچ', proof: 'ثبوت', analytics: 'حساب' } },
+  settings: {
+    nav: [
+      { id: 'general', label: 'عمومی', icon: 'sliders' },
+      { id: 'appearance', label: 'ظاہری شکل', icon: 'palette' },
+      { id: 'keymap', label: 'کی بورڈ', icon: 'keyboard' },
+      { id: 'safety', label: 'حفاظت', icon: 'shield' },
+      { id: 'notifications', label: 'اطلاعات', icon: 'bell' },
+      { id: 'backup', label: 'بیک اپ', icon: 'databaseBackup' },
+      { id: 'language', label: 'زبان', icon: 'languages' },
+      { id: 'team', label: 'ٹیم', icon: 'users' },
+      { id: 'updates', label: 'اپ ڈیٹ', icon: 'download' },
+      { id: 'about', label: 'تعارف', icon: 'info' },
+    ],
+  },
+  kernel: {
+    kill: { label: 'سب روکیں', title: 'کِل سوئچ: چلتے ہوئے تمام ٹرن، جانچ، ڈیپلائے اور کمانڈ ابھی روکیں (Ctrl Shift .)' },
+    trust: { chip: (score: number, level: string): string => `اعتماد ${score} · ${level}`, level: { high: 'زیادہ', medium: 'درمیانہ', low: 'کم' } },
+    cost: { meter: (today: string): string => `آج ${today}`, title: 'خرچ کا مرکز', today: 'آج', month: 'اس مہینے', saved: 'بچت', budgets: 'بجٹ' },
+    intent: {
+      title: 'SDC نے کیا سمجھا',
+      reading: 'آپ کی درخواست پڑھی جا رہی ہے…',
+      readAs: (label: string): string => `پڑھا گیا: ${label}`,
+      backTitle: 'آپ کے الفاظ میں — کیا یہ درست ہے؟',
+      target: 'کہاں',
+      goal: 'آپ کیا چاہتے ہیں',
+      conditions: 'کام مکمل کا مطلب',
+      outOfScope: 'جسے نہیں چھوا جائے گا',
+      questions: 'ایک بات کی تصدیق کریں',
+      confirm: 'تصدیق کر کے چلائیں',
+      asTyped: 'جیسا لکھا ویسا چلائیں',
+      cancel: 'منسوخ',
+      showPrompt: 'تیار شدہ prompt دیکھیں',
+    },
+    timeline: { rewind: 'یہاں واپس جائیں', compare: 'موازنہ', label: 'لیبل', restoreFile: 'صرف یہ فائل واپس لائیں', branches: 'شاخیں', switchTo: 'یہاں جائیں' },
+    proof: { trust: 'اعتماد اسکور', verification: 'جانچ', cost: 'خرچ', rollback: 'واپسی کا نقطہ', export: 'ثبوت پیک برآمد کریں' },
+    agency: { title: 'ایجنسی', tabs: { sites: 'سائٹس', deploys: 'ڈیپلائے', approvals: 'منظوری', playbooks: 'پلے بک', xray: 'ٹیک اوور ایکس رے', guardian: 'نائٹ گارڈین' }, deploy: 'محفوظ ڈیپلائے' },
+    language: { title: 'زبان', ui: 'کھڑکی کی زبان', contract: 'SDC نے جو سمجھا اس کی تصدیق کریں' },
+    onboarding: {
+      title: 'SDC میں خوش آمدید',
+      steps: ['آپ کیا کرنا چاہتے ہیں', 'ایک ماڈل', 'یہ مشین', 'پہلے حفاظت', 'آپ کا پہلا کام'],
+      skip: 'چھوڑیں',
+      back: 'پیچھے',
+      next: 'آگے',
+    },
+  },
+};

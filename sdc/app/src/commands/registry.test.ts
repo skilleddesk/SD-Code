@@ -25,14 +25,15 @@ describe('command registry', () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  it('registers the ten global shortcuts of spec section 9.1', () => {
-    expect(COMMANDS.filter((command) => command.group === 'global')).toHaveLength(10);
+  it('registers the ten global shortcuts of spec section 9.1, plus the kill switch and the Agency hub (0.12)', () => {
+    expect(COMMANDS.filter((command) => command.group === 'global')).toHaveLength(12);
   });
 
   it('registers the seven session keys (Terminal since 0.11.7), the two model keys and the approval keys', () => {
     const group = (name: string) => COMMANDS.filter((command) => command.group === name);
 
-    expect(group('session')).toHaveLength(7);
+    /* 0.12 adds the Proof panel (Ctrl Shift P). */
+    expect(group('session')).toHaveLength(8);
     expect(group('model')).toHaveLength(2);
     /* Enter, A, Shift+A, S, D and Esc across five entries - Enter and Esc share with others. */
     expect(group('approval')).toHaveLength(5);

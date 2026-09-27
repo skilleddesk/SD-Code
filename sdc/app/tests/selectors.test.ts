@@ -49,6 +49,12 @@ export function unstable(expression: string): string | null {
     return 'an array literal';
   }
 
+  /* 0.12: `state.doctor.local ?? []` builds a new empty array every time the key is missing - the
+     onboarding wizard's loop (React error #185) was exactly this. */
+  if (/(\?\?|\|\|)\s*(\[\]|\{\})/.test(expression)) {
+    return 'a fresh fallback ([] or {})';
+  }
+
   for (const builder of ARRAY_BUILDERS) {
     const at = expression.lastIndexOf(builder);
 

@@ -43,13 +43,17 @@
 pub mod agent;
 pub mod auth;
 pub mod checkpoints;
+pub mod cli;
 pub mod console;
+pub mod crash;
 pub mod duel;
 pub mod engines;
 pub mod errors;
 pub mod fs;
 pub mod git;
 pub mod host;
+pub mod intent;
+pub mod ops;
 pub mod paths;
 pub mod providers;
 pub mod pty;
@@ -57,7 +61,9 @@ pub mod rewind;
 pub mod sdcp;
 pub mod session_bridge;
 pub mod ssh;
+pub mod status;
 pub mod store;
+pub mod trust;
 pub mod understand;
 pub mod verify;
 

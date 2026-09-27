@@ -15,7 +15,10 @@ import { useRightPanelStore } from './rightPanel';
 import { selectActiveSession, dispatch, useAppStore } from './store';
 import { findSession } from './sessions';
 import { useTerminalStore } from './terminal';
-import { setting } from '../lib/settings';
+import { setting, storedSettings } from '../lib/settings';
+import type { TaskSpec } from '../../../protocol/types';
+import { cancelIntent, confirmIntent, parseIntent } from './kernelIntents';
+import { useKernelUi } from './kernelUi';
 import type { AppState, HostView, TurnView } from './types';
 
 /**
@@ -1950,8 +1953,8 @@ export async function testProvider(id: string, key: string): Promise<ProviderTes
 }
 
 /** Flow 1's `Save`: the key goes to the keychain; the UI only ever sees the masked label. */
-export async function connectApiKey(id: string, key: string, label?: string): Promise<boolean> {
-  if (key.trim() === '') {
+export async function connectApiKey(id: string, key: string, label?: string, baseUrl?: string): Promise<boolean> {
+  if (key.trim() === '' && (baseUrl === undefined || baseUrl.trim() === '')) {
     toast(strings.hub.keyToast);
     return false;
   }
@@ -1960,8 +1963,10 @@ export async function connectApiKey(id: string, key: string, label?: string): Pr
     await sdcpCall('provider.save', {
       id,
       kind: 'api-key',
-      key,
+      ...(key.trim() === '' ? {} : { key }),
       ...(label === undefined || label === '' ? {} : { label }),
+      /* A provider whose endpoint depends on the account (0.12: an Alibaba Model Studio workspace). */
+      ...(baseUrl === undefined || baseUrl.trim() === '' ? {} : { url: baseUrl.trim() }),
     });
 
     return true;
@@ -2150,6 +2155,8 @@ export interface TurnSeed {
   autonomy?: 'ask' | 'pro' | 'auto';
   /** Read the message with SDC's brief (0.11.8); Settings → General can turn it off. */
   understand?: boolean;
+  /** A confirmed Intent Contract (0.12): the daemon compiles the engine's prompt from it. */
+  intentId?: string;
 }
 
 /** The app's mode as the agent's autonomy: Simple asks for everything, Pro for commands, Auto for danger. */
@@ -2246,7 +2253,7 @@ export async function sendPrompt(prompt: string, target?: string): Promise<strin
     return null;
   }
 
-  const turnId = await startTurn({
+  const seed: TurnSeed = {
     sessionId,
     prompt,
     engine,
@@ -2257,13 +2264,94 @@ export async function sendPrompt(prompt: string, target?: string): Promise<strin
     autonomy: autonomyFor(useLayoutStore.getState().mode),
     /* Settings → General (0.11.8): off sends the message exactly as typed. */
     understand: setting('understand-messages', true),
-  });
+  };
+
+  /*
+   * The Intent Contract (0.12): a request that matters is read first - into a Task Spec the person
+   * confirms on a card - and only then does an engine start, with a prompt compiled for it. A reading that
+   * cannot be asked for (the daemon refused) falls through to the old path, so a send never just vanishes.
+   */
+  if (needsContract(prompt)) {
+    const intentId = await parseIntent({ text: prompt, sessionId, engine, model, ...(providerId === null ? {} : { provider: providerId }) });
+
+    if (intentId !== null) {
+      useKernelUi.getState().setPending(sessionId, { intentId, text: prompt, seed });
+
+      return intentId;
+    }
+  }
+
+  const turnId = await startTurn(seed);
 
   if (turnId !== null) {
     toast(strings.prompt.sent(engine, model));
   }
 
   return turnId;
+}
+
+/**
+ * Whether a request goes through the Intent Contract card first (Settings → Language → "Confirm what SDC
+ * understood"): `always`, `off`, or - by default - when it matters: a request of eight words or more, or
+ * one written in any script besides plain ASCII. A slash command never does.
+ */
+export function needsContract(prompt: string): boolean {
+  const mode = storedSettings()['intent-contract'];
+  const trimmed = prompt.trim();
+
+  if (trimmed.startsWith('/') || mode === 'off') {
+    return false;
+  }
+
+  if (mode === 'always') {
+    return true;
+  }
+
+  return trimmed.split(/\s+/).length >= 8 || /[^\p{ASCII}]/u.test(trimmed);
+}
+
+/** The card's Confirm: the reading as the person left it, then the turn - compiled from it by the daemon. */
+export async function runConfirmedIntent(sessionId: string, spec: TaskSpec, glossary: { term: string; meaning: string }[]): Promise<string | null> {
+  const pending = useKernelUi.getState().pending[sessionId];
+
+  if (pending === undefined) {
+    return null;
+  }
+
+  if (!(await confirmIntent(pending.intentId, sessionId, spec, glossary))) {
+    return null;
+  }
+
+  useKernelUi.getState().clearPending(sessionId);
+
+  return startTurn({ ...pending.seed, intentId: pending.intentId });
+}
+
+/** The card's "Run as typed": the words go out exactly as they were, with no contract. */
+export async function runPendingAsTyped(sessionId: string): Promise<string | null> {
+  const pending = useKernelUi.getState().pending[sessionId];
+
+  if (pending === undefined) {
+    return null;
+  }
+
+  useKernelUi.getState().clearPending(sessionId);
+  void cancelIntent(pending.intentId);
+
+  return startTurn(pending.seed);
+}
+
+/** The card's Cancel: nothing runs, and the words go back into the box. */
+export function cancelPendingIntent(sessionId: string): void {
+  const pending = useKernelUi.getState().pending[sessionId];
+
+  if (pending === undefined) {
+    return;
+  }
+
+  useKernelUi.getState().clearPending(sessionId);
+  void cancelIntent(pending.intentId);
+  useModelStore.getState().setDraft(pending.text);
 }
 
 /** `Enter` in the prompt area: the daemon appends `TurnStarted` and starts streaming. */

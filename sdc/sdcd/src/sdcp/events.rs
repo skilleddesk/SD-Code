@@ -82,6 +82,10 @@ impl EventLog {
 
         if let Some(store) = &self.store {
             let _ = store.store_event(&entry);
+
+            /* The Trust Kernel's ledger is fed here, the one path every event takes, so no feature can
+               act without leaving its hash-chained row (trust::ledger). */
+            crate::trust::ledger::record(store, &entry);
         }
 
         if let Ok(mut entries) = self.entries.lock() {
@@ -338,5 +342,110 @@ pub mod event {
 
     pub fn toast(message: &str, action: Option<&str>, hold_ms: Option<i64>) -> Value {
         base("Toast", json!({ "message": message, "action": action, "holdMs": hold_ms }))
+    }
+
+    /* ---- The Trust Kernel (0.12) ---------------------------------------------------------------- */
+
+    /// What a turn cost, and where the number came from (`measured`, `priced`, `local`, `subscription`,
+    /// `unpriced`, `none`). Pushed once, when the turn ends.
+    #[allow(clippy::too_many_arguments)]
+    pub fn cost_updated(
+        session_id: &str,
+        turn_id: &str,
+        engine: &str,
+        model: &str,
+        input_tokens: u64,
+        output_tokens: u64,
+        cost_usd: f64,
+        cost_source: &str,
+        estimate_usd: Option<f64>,
+        saved_usd: Option<f64>,
+    ) -> Value {
+        base(
+            "CostUpdated",
+            json!({
+                "sessionId": session_id,
+                "turnId": turn_id,
+                "engine": engine,
+                "model": model,
+                "inputTokens": input_tokens,
+                "outputTokens": output_tokens,
+                "costUsd": cost_usd,
+                "costSource": cost_source,
+                "estimateUsd": estimate_usd,
+                "savedUsd": saved_usd,
+            }),
+        )
+    }
+
+    /// A policy rule was hit: which rule, on what, what SDC did about it, and the sentence for the person.
+    pub fn policy_violation(session_id: &str, turn_id: Option<&str>, rule: &str, target: &str, action: &str, sentence: &str) -> Value {
+        base(
+            "PolicyViolation",
+            json!({ "sessionId": session_id, "turnId": turn_id, "rule": rule, "target": target, "action": action, "sentence": sentence }),
+        )
+    }
+
+    /// The governor stopped a turn: `kind` is `budget` or `runaway`.
+    pub fn budget_stop(session_id: &str, turn_id: &str, kind: &str, sentence: &str) -> Value {
+        base("BudgetStop", json!({ "sessionId": session_id, "turnId": turn_id, "kind": kind, "sentence": sentence }))
+    }
+
+    /// The kill switch: everything that was stopped, and the checkpoints that keep the state it stopped in.
+    pub fn kill_switch(stopped: Value, checkpoints: Value) -> Value {
+        base("KillSwitch", json!({ "stopped": stopped, "checkpoints": checkpoints }))
+    }
+
+    /// A turn's Trust score, with the reasons that make it up.
+    pub fn trust_scored(session_id: &str, turn_id: &str, score: i64, level: &str, reasons: Value) -> Value {
+        base(
+            "TrustScored",
+            json!({ "sessionId": session_id, "turnId": turn_id, "score": score, "level": level, "reasons": reasons }),
+        )
+    }
+
+    /// A checkpoint row changed after it was saved: a label, or the mark that something after it cannot
+    /// be undone. Carries the whole row, like `CheckpointSaved`.
+    pub fn checkpoint_updated(session_id: &str, checkpoint: Value) -> Value {
+        base("CheckpointUpdated", json!({ "sessionId": session_id, "checkpoint": checkpoint }))
+    }
+
+    /// One file was put back as a checkpoint had it.
+    pub fn file_restored(session_id: &str, checkpoint_id: &str, path: &str, outcome: &str, undo: Option<&str>) -> Value {
+        base(
+            "FileRestored",
+            json!({ "sessionId": session_id, "checkpointId": checkpoint_id, "path": path, "outcome": outcome, "undoCheckpointId": undo }),
+        )
+    }
+
+    /// The person confirmed (or corrected) what the Intent Engine understood.
+    pub fn intent_confirmed(session_id: Option<&str>, intent_id: &str, corrections: i64) -> Value {
+        base("IntentConfirmed", json!({ "sessionId": session_id, "intentId": intent_id, "corrections": corrections }))
+    }
+
+    /// A deploy as it stands now, whole each time (like `VerifyUpdated`).
+    pub fn deploy_updated(fields: Value) -> Value {
+        base("DeployUpdated", fields)
+    }
+
+    /// A site's latest health report and Ops score.
+    pub fn health_updated(fields: Value) -> Value {
+        base("HealthUpdated", fields)
+    }
+
+    /// A site crossed a line a person should hear about, in their language.
+    pub fn health_alert(site_id: &str, name: &str, level: &str, sentence: &str) -> Value {
+        base("HealthAlert", json!({ "siteId": site_id, "name": name, "level": level, "sentence": sentence }))
+    }
+
+    /// The Night Guardian acted on its own (only ever a rollback to the last good deploy), or prepared a
+    /// fix that waits for approval.
+    pub fn guardian_action(site_id: &str, action: &str, sentence: &str, deploy_id: Option<&str>) -> Value {
+        base("GuardianAction", json!({ "siteId": site_id, "action": action, "sentence": sentence, "deployId": deploy_id }))
+    }
+
+    /// Someone approved or declined something that waited for them.
+    pub fn approval_recorded(approval: Value) -> Value {
+        base("ApprovalRecorded", json!({ "approval": approval }))
     }
 }

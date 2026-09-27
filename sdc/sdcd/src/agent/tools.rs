@@ -156,6 +156,81 @@ pub struct ToolContext<'a> {
     pub checkpoint: Option<Checkpointer>,
     /// Whether this turn's checkpoint exists yet: one per turn, before its first change.
     pub checkpointed: bool,
+    /// The folder's policy (0.12): protected paths and command rules are asked about **before** acting.
+    pub policy: &'a crate::trust::policy::Policy,
+    /// The files this turn has changed - the blast radius.
+    pub changed: HashSet<String>,
+    /// The person allowed this turn to go past the blast radius.
+    pub radius_allowed: bool,
+}
+
+/// The Trust Kernel's word on a file change before it happens: a protected path, a turn past its blast
+/// radius, or text that carries a secret each wait for the person - in every mode, Auto included.
+/// `Some(outcome)` is the refusal to hand the model.
+fn guard_edit(context: &mut ToolContext, path: &str, content: Option<&str>) -> Option<Outcome> {
+    let root = context.workspace.root().to_string();
+
+    if let Some(pattern) = context.policy.protected(path, Some(&root)) {
+        if let Some(refused) = ask_always(
+            context,
+            &format!("Change a protected file: {path}"),
+            &format!("The policy protects `{pattern}`. Changing it can break the site or leak a secret."),
+            path,
+            "This path is in .sdc/policy.toml's protected list (or SDC's defaults). Allow only if you meant the agent to touch it.",
+        ) {
+            return Some(refused);
+        }
+    }
+
+    if let Some(text) = content {
+        let found = crate::trust::scan::secrets_in_text(path, text);
+
+        if let Some(first) = found.first() {
+            if let Some(refused) = ask_always(
+                context,
+                &format!("Write a secret into {path}"),
+                first["message"].as_str().unwrap_or("The content looks like a secret"),
+                path,
+                "A key written into a file ends up in commits and backups. The usual place is an environment variable.",
+            ) {
+                return Some(refused);
+            }
+        }
+    }
+
+    let max = context.policy.max_files_per_turn;
+
+    if !context.changed.contains(path) && max > 0 && context.changed.len() >= max && !context.radius_allowed {
+        if let Some(refused) = ask_always(
+            context,
+            "Go past the blast radius",
+            &format!("This turn has already changed {} files, the policy's limit.", context.changed.len()),
+            path,
+            "A wide change is harder to review and to undo. Allow to let this turn continue past the limit.",
+        ) {
+            return Some(refused);
+        }
+
+        context.radius_allowed = true;
+    }
+
+    context.changed.insert(path.to_string());
+
+    None
+}
+
+/// A question the kernel asks whatever the autonomy level: `DANGEROUS` is the risk the gate never skips.
+fn ask_always(context: &mut ToolContext, title: &str, sub: &str, target: &str, explain: &str) -> Option<Outcome> {
+    match gate::ask(context.sink, context.turn_id, context.calls, "edit", title, sub, target, "DANGEROUS", explain) {
+        Decision::Allow | Decision::AlwaysAllow => None,
+        Decision::Deny => Some(Outcome::error(
+            "The person declined this change: it touches something the project's policy protects. Do not try it another way; explain what you wanted to do.",
+        )),
+        Decision::ShowMe => Some(Outcome::error(
+            "The person wants to see exactly what this changes before allowing it. Stop calling tools now and show the change in your answer.",
+        )),
+        Decision::Stopped => Some(Outcome::error("The turn was stopped.")),
+    }
 }
 
 /**
@@ -359,6 +434,12 @@ fn write_file(context: &mut ToolContext, call_id: &str, path: &str, content: &st
 
     started(context, call_id, "edit", if existed { "Edit" } else { "Create" }, path);
 
+    if let Some(refused) = guard_edit(context, path, Some(content)) {
+        completed(context, call_id, false, "declined", None);
+
+        return refused;
+    }
+
     let verb = if existed { "replace" } else { "create" };
 
     if let Some(refused) = ask(
@@ -421,6 +502,12 @@ fn edit_file(context: &mut ToolContext, call_id: &str, path: &str, old: &str, ne
 
     started(context, call_id, "edit", "Edit", path);
 
+    if let Some(refused) = guard_edit(context, path, Some(new)) {
+        completed(context, call_id, false, "declined", None);
+
+        return refused;
+    }
+
     if let Some(refused) = ask(
         context,
         "edit",
@@ -464,7 +551,16 @@ fn run_command(context: &mut ToolContext, call_id: &str, line: &str, timeout: Du
         return Outcome::error(format!("Refused: {reason}. This command is on SDC's deny list and cannot be run."));
     }
 
-    let risk = if gate::looks_dangerous(line) { "DANGEROUS" } else { "MUTATING" };
+    if let Some(rule) = context.policy.denies(line) {
+        completed(context, call_id, false, "refused", None);
+
+        return Outcome::error(format!(
+            "Refused: this project's policy (.sdc/policy.toml) denies commands matching `{rule}`. Do not run it another way."
+        ));
+    }
+
+    /* A command the policy lists under `always_ask` waits for the person in every mode, like a dangerous one. */
+    let risk = if gate::looks_dangerous(line) || context.policy.always_asks(line).is_some() { "DANGEROUS" } else { "MUTATING" };
 
     if let Some(refused) = ask(
         context,
@@ -570,6 +666,46 @@ fn update_plan(context: &mut ToolContext, input: &Value) -> Outcome {
     } else {
         format!("Plan shown: {done} of {total} steps done. Call update_plan again as each step starts or finishes.")
     })
+}
+
+/// One call to a tool of the project's MCP servers (0.12): a `run` for the permission rules, because an
+/// MCP tool can do anything its server can - with the card, the checkpoint and the ledger row of one.
+pub fn mcp_call(context: &mut ToolContext, servers: &mut super::mcp::McpTools, call: &ToolUse) -> Outcome {
+    context.calls += 1;
+
+    let call_id = format!("{}-{}", context.turn_id, context.calls);
+    let label = servers.label(&call.name);
+
+    started(context, &call_id, "run", "MCP", &label);
+
+    if let Some(refused) = ask(
+        context,
+        "run",
+        &format!("Use {label}"),
+        "The agent wants to call a tool of this project's MCP server",
+        &label,
+        "MUTATING",
+        "The server is listed in .sdc/mcp.json and runs on this machine; its tool can do whatever the server can.",
+    ) {
+        completed(context, &call_id, false, "declined", None);
+
+        return refused;
+    }
+
+    checkpoint_first(context, &format!("Before MCP {label}"));
+
+    match servers.call(&call.name, &call.input) {
+        Ok(text) => {
+            completed(context, &call_id, true, &format!("done · {} ln", text.lines().count()), None);
+
+            Outcome::ok(if text.trim().is_empty() { "The tool answered with nothing.".to_string() } else { text })
+        }
+        Err(error) => {
+            completed(context, &call_id, false, "failed", None);
+
+            Outcome::error(error)
+        }
+    }
 }
 
 /// Asks the person when the autonomy level says so; `Some(outcome)` is the refusal to hand the model.
@@ -678,7 +814,110 @@ mod tests {
     use crate::engines::Recorder;
 
     fn context<'a>(workspace: &'a Workspace, sink: &'a EventSink, autonomy: Autonomy) -> ToolContext<'a> {
-        ToolContext { workspace, sink, turn_id: "turn-t", autonomy, always: HashSet::new(), calls: 0, checkpoint: None, checkpointed: false }
+        static POLICY: std::sync::OnceLock<crate::trust::policy::Policy> = std::sync::OnceLock::new();
+
+        ToolContext {
+            workspace,
+            sink,
+            turn_id: "turn-t",
+            autonomy,
+            always: HashSet::new(),
+            calls: 0,
+            checkpoint: None,
+            checkpointed: false,
+            policy: POLICY.get_or_init(Default::default),
+            changed: HashSet::new(),
+            radius_allowed: false,
+        }
+    }
+
+    /// The kernel's guard runs before the gate: a protected file waits for the person even in Auto,
+    /// and a denied answer leaves the file untouched.
+    #[test]
+    fn a_protected_file_is_asked_about_in_auto_and_left_alone_when_declined() {
+        let (root, workspace) = folder("protected");
+        let recorder = Recorder::new();
+        let sink = recorder.sink();
+
+        std::fs::write(root.join("wp-config.php"), "<?php define('DB_NAME','x');").unwrap();
+
+        let answering = std::thread::spawn(|| {
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+
+            while !gate::resolve("perm-turn-t-1", "deny") {
+                assert!(std::time::Instant::now() < deadline, "the protected path was never asked about");
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        });
+        let mut context = context(&workspace, &sink, Autonomy::Auto);
+        let call = ToolUse {
+            id: "c1".into(),
+            name: "write_file".into(),
+            input: json!({ "path": "wp-config.php", "content": "<?php // replaced" }),
+        };
+        let outcome = execute(&mut context, &call);
+
+        answering.join().unwrap();
+
+        assert!(outcome.is_error);
+        assert!(std::fs::read_to_string(root.join("wp-config.php")).unwrap().contains("DB_NAME"), "the file was not changed");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_command_the_policy_denies_is_refused_without_running() {
+        let (root, workspace) = folder("denied");
+        let recorder = Recorder::new();
+        let sink = recorder.sink();
+        let policy = crate::trust::policy::Policy::parse("deny_commands = [\"drop database\"]", ".sdc/policy.toml");
+        let mut context = context(&workspace, &sink, Autonomy::Auto);
+
+        context.policy = Box::leak(Box::new(policy));
+
+        let call = ToolUse { id: "c1".into(), name: "run_command".into(), input: json!({ "command": "mysql -e 'DROP DATABASE shop'" }) };
+        let outcome = execute(&mut context, &call);
+
+        assert!(outcome.is_error);
+        assert!(outcome.content.contains("denies"), "{}", outcome.content);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The blast radius (0.12): a turn that would change more files than the policy allows is asked
+    /// about even in Auto, and the file that would cross the limit is left unwritten when declined.
+    #[test]
+    fn a_turn_past_the_blast_radius_is_asked_about_and_the_extra_file_is_left_alone() {
+        let (root, workspace) = folder("blast-radius");
+        let recorder = Recorder::new();
+        let sink = recorder.sink();
+        let policy = crate::trust::policy::Policy::parse("max_files_per_turn = 2", ".sdc/policy.toml");
+        let mut context = context(&workspace, &sink, Autonomy::Auto);
+
+        context.policy = Box::leak(Box::new(policy));
+
+        let answering = std::thread::spawn(|| {
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+
+            while !gate::resolve("perm-turn-t-3", "deny") {
+                assert!(std::time::Instant::now() < deadline, "the blast-radius question was never asked");
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        });
+
+        assert!(!execute(&mut context, &call("write_file", json!({ "path": "a.txt", "content": "1" }))).is_error);
+        assert!(!execute(&mut context, &call("write_file", json!({ "path": "b.txt", "content": "2" }))).is_error);
+
+        let third = execute(&mut context, &call("write_file", json!({ "path": "c.txt", "content": "3" })));
+
+        answering.join().unwrap();
+
+        assert!(third.is_error);
+        assert!(root.join("a.txt").exists());
+        assert!(root.join("b.txt").exists());
+        assert!(!root.join("c.txt").exists(), "the file over the limit must not be written");
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     fn folder(name: &str) -> (std::path::PathBuf, Workspace) {

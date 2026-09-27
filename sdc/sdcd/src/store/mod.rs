@@ -6,5 +6,6 @@
 //! what makes a restart continue a conversation rather than start a new one.
 
 pub mod sqlite;
+pub mod trust;
 
 pub use sqlite::Store;

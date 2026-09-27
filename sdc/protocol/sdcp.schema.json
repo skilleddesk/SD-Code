@@ -4,9 +4,15 @@
   "title": "SDCP 0.1 (Skilleddesk Code Protocol)",
   "description": "The single source of truth for the wire format between the SDC app and a host daemon (sdcd). Spec section 5. Three shapes travel: a request envelope, a response, and a one-way notification. Every notification carries exactly one event from the append-only event catalogue (section 5.4); there is no other way for state to reach the UI (section 3.3). Both transports - unix socket / named pipe locally, WebSocket over an SSH tunnel remotely - carry the SAME envelope (section 3.1).",
   "oneOf": [
-    { "$ref": "#/$defs/envelope" },
-    { "$ref": "#/$defs/response" },
-    { "$ref": "#/$defs/notification" }
+    {
+      "$ref": "#/$defs/envelope"
+    },
+    {
+      "$ref": "#/$defs/response"
+    },
+    {
+      "$ref": "#/$defs/notification"
+    }
   ],
   "$defs": {
     "protocolVersion": {
@@ -16,90 +22,305 @@
     },
     "error": {
       "type": "object",
-      "required": ["code", "message"],
+      "required": [
+        "code",
+        "message"
+      ],
       "properties": {
         "code": {
           "description": "Stable, machine-readable. The UI never parses the message (principle P3).",
           "type": "string",
           "enum": [
-            "bad_request", "not_found", "not_ready", "permission_denied", "blocked_path",
-            "engine_failed", "engine_stuck", "budget_exceeded", "cancelled", "unsupported", "internal"
+            "bad_request",
+            "not_found",
+            "not_ready",
+            "permission_denied",
+            "blocked_path",
+            "engine_failed",
+            "engine_stuck",
+            "budget_exceeded",
+            "cancelled",
+            "unsupported",
+            "internal"
           ]
         },
-        "message": { "type": "string" },
-        "data": { "type": "object", "additionalProperties": true },
-        "retryable": { "type": "boolean", "default": false }
+        "message": {
+          "type": "string"
+        },
+        "data": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "retryable": {
+          "type": "boolean",
+          "default": false
+        }
       }
     },
     "envelope": {
       "description": "Request. `params` is validated against `methods` below.",
       "type": "object",
-      "required": ["v", "id", "method", "params"],
+      "required": [
+        "v",
+        "id",
+        "method",
+        "params"
+      ],
       "additionalProperties": false,
       "properties": {
-        "v": { "$ref": "#/$defs/protocolVersion" },
-        "id": { "description": "Caller-chosen correlation id; echoed by the response.", "type": "string" },
-        "method": { "type": "string", "enum": { "$ref": "#/$defs/methodNames" } },
-        "params": { "type": "object" },
-        "hostId": { "description": "Set when one app multiplexes several hosts over one socket.", "type": "string" }
+        "v": {
+          "$ref": "#/$defs/protocolVersion"
+        },
+        "id": {
+          "description": "Caller-chosen correlation id; echoed by the response.",
+          "type": "string"
+        },
+        "method": {
+          "type": "string",
+          "enum": {
+            "$ref": "#/$defs/methodNames"
+          }
+        },
+        "params": {
+          "type": "object"
+        },
+        "hostId": {
+          "description": "Set when one app multiplexes several hosts over one socket.",
+          "type": "string"
+        }
       }
     },
     "response": {
       "description": "Exactly one of `result` / `error` is present.",
       "type": "object",
-      "required": ["v", "id"],
+      "required": [
+        "v",
+        "id"
+      ],
       "additionalProperties": false,
       "properties": {
-        "v": { "$ref": "#/$defs/protocolVersion" },
-        "id": { "type": "string" },
-        "result": { "type": "object" },
-        "error": { "$ref": "#/$defs/error" }
+        "v": {
+          "$ref": "#/$defs/protocolVersion"
+        },
+        "id": {
+          "type": "string"
+        },
+        "result": {
+          "type": "object"
+        },
+        "error": {
+          "$ref": "#/$defs/error"
+        }
       },
-      "oneOf": [{ "required": ["result"] }, { "required": ["error"] }]
+      "oneOf": [
+        {
+          "required": [
+            "result"
+          ]
+        },
+        {
+          "required": [
+            "error"
+          ]
+        }
+      ]
     },
     "notification": {
       "description": "One-way server push. `seq` is monotonic per daemon run, which is what lets the reducer detect a gap and ask for a replay.",
       "type": "object",
-      "required": ["v", "seq", "ts", "event"],
+      "required": [
+        "v",
+        "seq",
+        "ts",
+        "event"
+      ],
       "additionalProperties": false,
       "properties": {
-        "v": { "$ref": "#/$defs/protocolVersion" },
-        "seq": { "type": "integer", "minimum": 1 },
-        "ts": { "description": "RFC 3339, UTC. Supplied by the daemon's clock, never by the UI.", "type": "string", "format": "date-time" },
-        "sessionId": { "type": ["string", "null"] },
-        "turnId": { "type": ["string", "null"] },
-        "event": { "$ref": "#/$defs/event" }
+        "v": {
+          "$ref": "#/$defs/protocolVersion"
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "ts": {
+          "description": "RFC 3339, UTC. Supplied by the daemon's clock, never by the UI.",
+          "type": "string",
+          "format": "date-time"
+        },
+        "sessionId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "turnId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "event": {
+          "$ref": "#/$defs/event"
+        }
       }
     },
     "event": {
       "description": "The append-only event catalogue (section 5.4). `type` is the discriminant; the reducer switches on it and nothing else.",
       "type": "object",
-      "required": ["type"],
-      "properties": { "type": { "type": "string", "enum": { "$ref": "#/$defs/eventTypes" } } }
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": {
+            "$ref": "#/$defs/eventTypes"
+          }
+        }
+      }
     },
     "methodNames": {
       "type": "array",
       "items": {
         "type": "string",
         "enum": [
-          "host.status", "host.doctor", "host.add", "host.trust", "host.probe", "host.key", "host.remove", "host.shutdown", "ssh.key",
-          "session.open", "session.close", "session.list", "session.update", "session.fork",
-          "project.add", "project.scaffold", "project.locate", "project.list", "project.remove",
-          "engine.start", "engine.cancel", "engine.kill", "engine.status", "engine.switch", "verify.run",
-          "fs.read", "fs.write", "fs.list", "fs.stat", "fs.search", "fs.rename", "fs.delete", "fs.mkdir",
-          "git.status", "git.diff", "git.checkpoint", "git.worktree",
-          "pty.open", "pty.write", "pty.resize", "pty.close", "pty.output", "shell.run",
-          "cli.login", "cli.login.status", "cli.login.code", "cli.login.cancel", "cli.recipes",
-          "models.list", "models.select",
-          "event.list", "event.append", "event.subscribe",
-          "provider.list", "provider.test", "provider.save", "provider.remove",
-          "provider.oauth.open", "provider.oauth.callback", "provider.local.doctor",
-          "provider.registry.list", "provider.registry.set",
-          "checkpoint.create", "checkpoint.list", "checkpoint.restore",
-          "rewind.apply", "rewind.redo",
-          "duel.start", "duel.keep", "duel.discard",
-          "permission.request", "permission.resolve",
-          "console.attach", "console.detach"
+          "host.status",
+          "host.doctor",
+          "host.add",
+          "host.trust",
+          "host.probe",
+          "host.key",
+          "host.remove",
+          "host.shutdown",
+          "ssh.key",
+          "session.open",
+          "session.close",
+          "session.list",
+          "session.update",
+          "session.fork",
+          "project.add",
+          "project.scaffold",
+          "project.locate",
+          "project.list",
+          "project.remove",
+          "engine.start",
+          "engine.cancel",
+          "engine.kill",
+          "engine.status",
+          "engine.switch",
+          "verify.run",
+          "fs.read",
+          "fs.write",
+          "fs.list",
+          "fs.stat",
+          "fs.search",
+          "fs.rename",
+          "fs.delete",
+          "fs.mkdir",
+          "git.status",
+          "git.diff",
+          "git.checkpoint",
+          "git.worktree",
+          "pty.open",
+          "pty.write",
+          "pty.resize",
+          "pty.close",
+          "pty.output",
+          "shell.run",
+          "cli.login",
+          "cli.login.status",
+          "cli.login.code",
+          "cli.login.cancel",
+          "cli.recipes",
+          "models.list",
+          "models.select",
+          "event.list",
+          "event.append",
+          "event.subscribe",
+          "provider.list",
+          "provider.test",
+          "provider.save",
+          "provider.remove",
+          "provider.oauth.open",
+          "provider.oauth.callback",
+          "provider.local.doctor",
+          "provider.registry.list",
+          "provider.registry.set",
+          "checkpoint.create",
+          "checkpoint.list",
+          "checkpoint.restore",
+          "rewind.apply",
+          "rewind.redo",
+          "duel.start",
+          "duel.keep",
+          "duel.discard",
+          "permission.request",
+          "permission.resolve",
+          "console.attach",
+          "console.detach",
+          "audit.list",
+          "audit.verify",
+          "policy.get",
+          "policy.set",
+          "kill.all",
+          "kill.list",
+          "cost.summary",
+          "cost.estimate",
+          "cost.budget.set",
+          "trust.score",
+          "checkpoint.label",
+          "checkpoint.files",
+          "checkpoint.fileDiff",
+          "checkpoint.restoreFile",
+          "proof.export",
+          "intent.detect",
+          "intent.parse",
+          "intent.confirm",
+          "intent.compile",
+          "intent.cancel",
+          "intent.stats",
+          "glossary.list",
+          "glossary.set",
+          "voice.status",
+          "voice.transcribe",
+          "site.list",
+          "site.detect",
+          "site.save",
+          "site.remove",
+          "deploy.run",
+          "deploy.list",
+          "deploy.get",
+          "deploy.preview",
+          "deploy.rollback",
+          "deploy.restoreDb",
+          "health.check",
+          "health.history",
+          "guardian.set",
+          "approval.list",
+          "approval.request",
+          "approval.decide",
+          "approval.poll",
+          "xray.scan",
+          "xray.get",
+          "shadowdb.run",
+          "staging.create",
+          "staging.stop",
+          "playbook.list",
+          "playbook.save",
+          "playbook.remove",
+          "playbook.run",
+          "team.get",
+          "team.set",
+          "settings.get",
+          "settings.set",
+          "update.check",
+          "crash.list",
+          "crash.clear",
+          "cli.selfcheck",
+          "status.share",
+          "timeline.branches",
+          "timeline.switch"
         ]
       }
     },
@@ -108,45 +329,166 @@
       "items": {
         "type": "string",
         "enum": [
-          "HostStatus", "HostRemoved", "ProviderStatus", "RegistryLoaded", "SessionOpened", "SessionClosed", "SessionUpdated",
-          "TurnStarted", "TurnDelta", "TurnCompleted", "ToolCallStarted", "ToolCallOutput",
-          "ToolCallCompleted", "ThinkingDelta", "ErrorRaised", "PermissionRequested",
-          "PermissionResolved", "CheckpointSaved", "RewindApplied", "Toast", "ToastDismissed",
-          "StuckDetected", "ConsoleError", "DuelStarted", "DuelResolved", "SessionBridged", "PlanUpdated", "VerifyUpdated", "ModelsUpdated"
+          "HostStatus",
+          "HostRemoved",
+          "ProviderStatus",
+          "RegistryLoaded",
+          "SessionOpened",
+          "SessionClosed",
+          "SessionUpdated",
+          "TurnStarted",
+          "TurnDelta",
+          "TurnCompleted",
+          "ToolCallStarted",
+          "ToolCallOutput",
+          "ToolCallCompleted",
+          "ThinkingDelta",
+          "ErrorRaised",
+          "PermissionRequested",
+          "PermissionResolved",
+          "CheckpointSaved",
+          "RewindApplied",
+          "Toast",
+          "ToastDismissed",
+          "StuckDetected",
+          "ConsoleError",
+          "DuelStarted",
+          "DuelResolved",
+          "SessionBridged",
+          "PlanUpdated",
+          "VerifyUpdated",
+          "ModelsUpdated",
+          "CostUpdated",
+          "PolicyViolation",
+          "BudgetStop",
+          "KillSwitch",
+          "TrustScored",
+          "CheckpointUpdated",
+          "FileRestored",
+          "IntentParsed",
+          "IntentConfirmed",
+          "VoiceTranscribed",
+          "DeployUpdated",
+          "HealthUpdated",
+          "HealthAlert",
+          "GuardianAction",
+          "ApprovalRecorded",
+          "XrayReady",
+          "ShadowDbUpdated",
+          "StagingUpdated"
         ]
       }
     },
     "notificationMethods": {
       "description": "Notification `method` values the daemon may push. The events themselves always travel as `event` notifications.",
       "type": "array",
-      "items": { "type": "string", "enum": ["event", "log", "progress", "pong"] }
+      "items": {
+        "type": "string",
+        "enum": [
+          "event",
+          "log",
+          "progress",
+          "pong"
+        ]
+      }
     },
     "provider": {
       "type": "object",
-      "required": ["id", "name", "kind", "status"],
+      "required": [
+        "id",
+        "name",
+        "kind",
+        "status"
+      ],
       "properties": {
-        "id": { "type": "string" },
-        "name": { "type": "string" },
-        "kind": { "type": "string", "enum": ["subscription", "api-key", "local", "custom"] },
-        "status": { "type": "string", "enum": ["connected", "needs-auth", "available", "error"] },
-        "detail": { "type": "string" },
-        "account": { "type": ["string", "null"] },
-        "logo": { "type": "string" },
-        "url": { "type": ["string", "null"] },
-        "protocol": { "type": ["string", "null"] }
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "subscription",
+            "api-key",
+            "local",
+            "custom"
+          ]
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "connected",
+            "needs-auth",
+            "available",
+            "error"
+          ]
+        },
+        "detail": {
+          "type": "string"
+        },
+        "account": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "logo": {
+          "type": "string"
+        },
+        "url": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "protocol": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
       }
     },
     "checkpoint": {
       "type": "object",
-      "required": ["id", "turn", "ts", "filesHash"],
+      "required": [
+        "id",
+        "turn",
+        "ts",
+        "filesHash"
+      ],
       "properties": {
-        "id": { "type": "string" },
-        "turn": { "type": "integer" },
-        "ts": { "type": "string", "format": "date-time" },
-        "title": { "type": "string" },
-        "thumbnail": { "type": ["string", "null"], "description": "Path under the daemon data dir; null when the turn changed nothing renderable." },
-        "filesHash": { "type": "string" },
-        "rewindRef": { "type": ["integer", "null"] }
+        "id": {
+          "type": "string"
+        },
+        "turn": {
+          "type": "integer"
+        },
+        "ts": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "title": {
+          "type": "string"
+        },
+        "thumbnail": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Path under the daemon data dir; null when the turn changed nothing renderable."
+        },
+        "filesHash": {
+          "type": "string"
+        },
+        "rewindRef": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
       }
     },
     "methods": {
@@ -154,80 +496,1443 @@
       "type": "object",
       "additionalProperties": true,
       "properties": {
-        "host.status": { "params": {}, "result": { "hostId": "string", "name": "string", "type": "local|vps", "status": "connected|untrusted|degraded|offline|connecting", "sdcd": "string" } },
-        "host.doctor": { "params": { "hostId": "string?", "sessionId": "string?" }, "result": { "checks": [{ "id": "string", "label": "string", "state": "ok|warn|fail", "detail": "string", "fix": "string?" }] } },
-        "host.add": { "params": { "type": "local|ssh", "target": "string?", "label": "string?", "password": "string?", "code": "string?" }, "result": { "hostId": "string", "reused": "boolean" } },
-        "host.trust": { "params": { "hostId": "string", "fingerprint": "string", "password": "string?", "code": "string?" }, "result": { "trusted": "boolean", "hostId": "string", "fingerprint": "string" } },
-        "host.probe": { "params": { "hostId": "string" }, "result": { "hostId": "string", "status": "string", "detail": "string?" } },
-        "host.key": { "params": { "hostId": "string" }, "result": { "hostId": "string", "hostKey": "string", "keyType": "string", "pinned": "boolean", "matches": "boolean|null", "pinnedKey": "string|null" } },
-        "ssh.key": { "params": {}, "result": { "publicKey": "string|null", "path": "string|null", "exists": "boolean" } },
-        "host.remove": { "params": { "hostId": "string" }, "result": { "removed": "boolean", "name": "string", "sessions": "number" } },
-        "host.shutdown": { "params": {}, "result": { "stopping": "boolean", "sdcd": "string", "clients": "number" } },
-        "session.open": { "params": { "hostId": "string", "title": "string?", "prompt": "string?", "projectId": "string?" }, "result": { "sessionId": "string", "projectId": "string?", "projectRoot": "string?" } },
-        "session.close": { "params": { "sessionId": "string" }, "result": {} },
-        "session.update": { "params": { "sessionId": "string", "title": "string?", "state": "string?", "projectId": "string?" }, "result": { "projectId": "string?", "projectRoot": "string?" } },
-        "session.list": { "params": {}, "result": { "hosts": [{ "hostId": "string", "sessions": "object[]" }] } },
-        "session.fork": { "params": { "sessionId": "string", "atTurn": "integer?" }, "result": { "sessionId": "string", "turns": "integer", "title": "string" } },
-        "project.scaffold": { "params": { "hostId": "string?", "parent": "string", "name": "string" }, "result": { "projectId": "string", "hostId": "string", "root": "string", "name": "string" } },
-        "project.add": { "params": { "hostId": "string?", "root": "string", "name": "string?" }, "result": { "projectId": "string", "hostId": "string", "root": "string", "name": "string" } },
-        "project.locate": { "params": { "hostId": "string?", "query": "string" }, "result": { "candidates": [{ "root": "string", "source": "string" }] } },
-        "project.list": { "params": {}, "result": { "projects": [{ "projectId": "string", "hostId": "string", "root": "string", "name": "string", "chats": "integer" }] } },
-        "project.remove": { "params": { "projectId": "string" }, "result": { "removed": "boolean", "chats": "integer" } },
-        "engine.start": { "params": { "sessionId": "string", "prompt": "string", "engine": "string", "model": "string", "tier": "Fast|Balanced|Deep", "provider": "string?", "agent": "boolean?", "autonomy": "ask|pro|auto?", "maxSteps": "integer?", "understand": "boolean?" }, "result": { "turnId": "string" } },
-        "verify.run": { "params": { "sessionId": "string", "turnId": "string?", "since": "string?", "task": "string?", "reviewer": "object?", "reviewFailing": "boolean?", "hostId": "string?" }, "result": { "verifyId": "string" } },
-        "engine.cancel": { "params": { "turnId": "string" }, "result": { "state": "string", "engine": "string", "stopped": "boolean" } },
-        "engine.kill": { "params": { "turnId": "string" }, "result": { "state": "string", "engine": "string", "stopped": "boolean" } },
-        "engine.status": { "params": { "turnId": "string" }, "result": { "state": "idle|running|awaiting|stuck|done|failed|killed", "engine": "string", "model": "string" } },
-        "engine.switch": { "params": { "turnId": "string", "engine": "string", "model": "string", "reason": "string?" }, "result": { "turnId": "string", "bridgedFrom": "string" } },
-        "fs.read": { "params": { "path": "string", "hostId": "string?" }, "result": { "path": "string", "text": "string", "sha256": "string", "bytes": "integer", "truncated": "boolean" } },
-        "fs.list": { "params": { "path": "string?", "sessionId": "string?", "hostId": "string?" }, "result": { "path": "string", "entries": [{ "name": "string", "path": "string", "dir": "boolean", "size": "integer" }], "hidden": "integer" } },
-        "fs.write": { "params": { "path": "string", "text": "string", "sessionId": "string?", "turnId": "string?", "hostId": "string?" }, "result": { "path": "string", "sha256": "string", "bytes": "integer" } },
-        "fs.rename": { "params": { "path": "string", "to": "string", "sessionId": "string", "hostId": "string?" }, "result": { "path": "string", "renamed": "boolean" } },
-        "fs.delete": { "params": { "path": "string", "sessionId": "string", "hostId": "string?" }, "result": { "path": "string", "deleted": "boolean" } },
-        "fs.mkdir": { "params": { "path": "string", "sessionId": "string", "hostId": "string?" }, "result": { "path": "string", "created": "boolean" } },
-        "fs.stat": { "params": { "path": "string", "hostId": "string?" }, "result": { "path": "string", "size": "integer", "dir": "boolean", "sha256": "string" } },
-        "fs.search": { "params": { "query": "string", "glob": "string?", "root": "string?", "sessionId": "string?", "hostId": "string?", "limit": "integer?" }, "result": { "hits": [{ "path": "string", "line": "integer", "text": "string" }], "files": [{ "path": "string", "dir": "boolean" }] } },
-        "git.checkpoint": { "params": { "sessionId": "string", "turnId": "string?" }, "result": { "checkpointId": "string", "sha": "string" } },
-        "git.diff": { "params": { "sessionId": "string?", "root": "string?", "checkpointId": "string?", "sha": "string?", "hostId": "string?" }, "result": { "patch": "string" } },
-        "git.status": { "params": { "sessionId": "string?", "root": "string?", "hostId": "string?" }, "result": { "branch": "string", "dirty": "integer" } },
-        "git.worktree": { "params": { "sessionId": "string?", "root": "string?" }, "result": { "path": "string" } },
-        "pty.open": { "params": { "command": "string?", "args": "string[]?", "line": "string?", "shell": "boolean?", "cols": "integer?", "rows": "integer?", "cwd": "string?", "sessionId": "string?", "hostId": "string?" }, "result": { "ptyId": "string", "command": "string", "tty": "boolean", "hostId": "string?" } },
-        "shell.run": { "params": { "command": "string?", "args": "string[]?", "line": "string?", "cwd": "string?", "sessionId": "string?", "turnId": "string?", "root": "string?", "hostId": "string?", "timeoutMs": "integer?" }, "result": { "command": "string", "exitCode": "integer?", "ok": "boolean", "stdout": "string", "stderr": "string", "durationMs": "integer", "timedOut": "boolean", "truncated": "boolean", "error": "object?" } },
-        "pty.output": { "params": { "ptyId": "string", "since": "integer?" }, "result": { "ptyId": "string", "command": "string", "state": "running|exited|gone", "lines": ["string"], "lineCount": "integer", "ms": "integer", "data": "string?", "next": "integer?" } },
-        "pty.write": { "params": { "ptyId": "string", "data": "string?" }, "result": { "written": "boolean" } },
-        "pty.resize": { "params": { "ptyId": "string", "cols": "integer?", "rows": "integer?" }, "result": {} },
-        "pty.close": { "params": { "ptyId": "string" }, "result": { "closed": "boolean" } },
-        "cli.login": { "params": { "providerId": "string", "program": "string?", "args": "string[]?", "pump": "string[]?" }, "result": { "loginId": "string", "ptyId": "string", "program": "string", "providerId": "string" } },
-        "cli.login.status": { "params": { "loginId": "string" }, "result": { "loginId": "string", "providerId": "string", "url": "string?", "state": "string", "note": "string?", "lines": ["string"], "authenticated": "boolean" } },
-        "cli.login.code": { "params": { "loginId": "string", "code": "string" }, "result": { "submitted": "boolean", "loginId": "string" } },
-        "cli.login.cancel": { "params": { "loginId": "string" }, "result": { "cancelled": "boolean", "loginId": "string" } },
-        "cli.recipes": { "params": {}, "result": { "recipes": ["object"] } },
-        "models.list": { "params": { "providerId": "string?", "refresh": "boolean?" }, "result": { "models": ["object"], "snapshot": "string", "refreshed": "boolean", "notes": ["string"], "selected": "object" } },
-        "models.select": { "params": { "modelId": "string", "providerId": "string?" }, "result": { "modelId": "string", "providerId": "string?" } },
-        "event.list": { "params": { "since": "integer?", "sessionId": "string?" }, "result": { "events": ["notification"] } },
-        "event.subscribe": { "params": { "since": "integer?" }, "result": { "fromSeq": "integer" } },
-        "event.append": { "params": { "event": "object", "sessionId": "string?", "turnId": "string?" }, "result": { "seq": "integer" } },
-        "provider.list": { "params": {}, "result": { "providers": ["provider"] } },
-        "provider.test": { "params": { "id": "string", "key": "string?" }, "result": { "ok": "boolean", "models": "integer", "detail": "string", "verified": "boolean", "error": "string?" } },
-        "provider.save": { "params": { "id": "string", "kind": "subscription|api-key|local|custom", "key": "string?", "label": "string?", "url": "string?", "protocol": "string?" }, "result": { "id": "string", "status": "string", "account": "string?" } },
-        "provider.remove": { "params": { "id": "string" }, "result": { "removed": "boolean" } },
-        "provider.oauth.open": { "params": { "id": "string" }, "result": { "url": "string", "state": "string" } },
-        "provider.oauth.callback": { "params": { "id": "string", "state": "string", "code": "string?" }, "result": { "ok": "boolean", "account": "string?" } },
-        "provider.local.doctor": { "params": {}, "result": { "daemon": "boolean", "endpoint": "string", "models": ["string"] } },
-        "provider.registry.list": { "params": {}, "result": { "models": [{ "id": "string", "provider": "string", "tier": "fast|balanced|deep", "ctx": "integer", "cost": "string", "enabled": "boolean" }] } },
-        "provider.registry.set": { "params": { "id": "string", "enabled": "boolean" }, "result": {} },
-        "checkpoint.create": { "params": { "sessionId": "string", "turnId": "string", "title": "string" }, "result": { "checkpointId": "string" } },
-        "checkpoint.list": { "params": { "sessionId": "string" }, "result": { "checkpoints": ["checkpoint"] } },
-        "checkpoint.restore": { "params": { "checkpointId": "string" }, "result": { "restored": "integer" } },
-        "rewind.apply": { "params": { "sessionId": "string", "turnId": "string" }, "result": { "removedTurns": "integer", "restoredFiles": "integer" } },
-        "rewind.redo": { "params": { "sessionId": "string" }, "result": { "turn": "integer?" } },
-        "duel.start": { "params": { "sessionId": "string", "prompt": "string", "engines": ["string"] }, "result": { "duelId": "string" } },
-        "duel.keep": { "params": { "duelId": "string", "keep": "string" }, "result": {} },
-        "duel.discard": { "params": { "duelId": "string" }, "result": {} },
-        "permission.request": { "params": { "sessionId": "string", "turnId": "string", "action": "string", "target": "string", "risk": "SAFE|MUTATING|DANGEROUS" }, "result": { "permissionId": "string" } },
-        "permission.resolve": { "params": { "permissionId": "string", "decision": "allow_once|always_allow|deny|show_me", "scope": "string?" }, "result": { "decision": "string", "delivered": "boolean" } },
-        "console.attach": { "params": { "sessionId": "string", "url": "string" }, "result": { "attached": "boolean" } },
-        "console.detach": { "params": { "sessionId": "string" }, "result": { "detached": "boolean" } }
+        "host.status": {
+          "params": {},
+          "result": {
+            "hostId": "string",
+            "name": "string",
+            "type": "local|vps",
+            "status": "connected|untrusted|degraded|offline|connecting",
+            "sdcd": "string"
+          }
+        },
+        "host.doctor": {
+          "params": {
+            "hostId": "string?",
+            "sessionId": "string?"
+          },
+          "result": {
+            "checks": [
+              {
+                "id": "string",
+                "label": "string",
+                "state": "ok|warn|fail",
+                "detail": "string",
+                "fix": "string?"
+              }
+            ]
+          }
+        },
+        "host.add": {
+          "params": {
+            "type": "local|ssh",
+            "target": "string?",
+            "label": "string?",
+            "password": "string?",
+            "code": "string?"
+          },
+          "result": {
+            "hostId": "string",
+            "reused": "boolean"
+          }
+        },
+        "host.trust": {
+          "params": {
+            "hostId": "string",
+            "fingerprint": "string",
+            "password": "string?",
+            "code": "string?"
+          },
+          "result": {
+            "trusted": "boolean",
+            "hostId": "string",
+            "fingerprint": "string"
+          }
+        },
+        "host.probe": {
+          "params": {
+            "hostId": "string"
+          },
+          "result": {
+            "hostId": "string",
+            "status": "string",
+            "detail": "string?"
+          }
+        },
+        "host.key": {
+          "params": {
+            "hostId": "string"
+          },
+          "result": {
+            "hostId": "string",
+            "hostKey": "string",
+            "keyType": "string",
+            "pinned": "boolean",
+            "matches": "boolean|null",
+            "pinnedKey": "string|null"
+          }
+        },
+        "ssh.key": {
+          "params": {},
+          "result": {
+            "publicKey": "string|null",
+            "path": "string|null",
+            "exists": "boolean"
+          }
+        },
+        "host.remove": {
+          "params": {
+            "hostId": "string"
+          },
+          "result": {
+            "removed": "boolean",
+            "name": "string",
+            "sessions": "number"
+          }
+        },
+        "host.shutdown": {
+          "params": {},
+          "result": {
+            "stopping": "boolean",
+            "sdcd": "string",
+            "clients": "number"
+          }
+        },
+        "session.open": {
+          "params": {
+            "hostId": "string",
+            "title": "string?",
+            "prompt": "string?",
+            "projectId": "string?"
+          },
+          "result": {
+            "sessionId": "string",
+            "projectId": "string?",
+            "projectRoot": "string?"
+          }
+        },
+        "session.close": {
+          "params": {
+            "sessionId": "string"
+          },
+          "result": {}
+        },
+        "session.update": {
+          "params": {
+            "sessionId": "string",
+            "title": "string?",
+            "state": "string?",
+            "projectId": "string?"
+          },
+          "result": {
+            "projectId": "string?",
+            "projectRoot": "string?"
+          }
+        },
+        "session.list": {
+          "params": {},
+          "result": {
+            "hosts": [
+              {
+                "hostId": "string",
+                "sessions": "object[]"
+              }
+            ]
+          }
+        },
+        "session.fork": {
+          "params": {
+            "sessionId": "string",
+            "atTurn": "integer?"
+          },
+          "result": {
+            "sessionId": "string",
+            "turns": "integer",
+            "title": "string"
+          }
+        },
+        "project.scaffold": {
+          "params": {
+            "hostId": "string?",
+            "parent": "string",
+            "name": "string"
+          },
+          "result": {
+            "projectId": "string",
+            "hostId": "string",
+            "root": "string",
+            "name": "string"
+          }
+        },
+        "project.add": {
+          "params": {
+            "hostId": "string?",
+            "root": "string",
+            "name": "string?"
+          },
+          "result": {
+            "projectId": "string",
+            "hostId": "string",
+            "root": "string",
+            "name": "string"
+          }
+        },
+        "project.locate": {
+          "params": {
+            "hostId": "string?",
+            "query": "string"
+          },
+          "result": {
+            "candidates": [
+              {
+                "root": "string",
+                "source": "string"
+              }
+            ]
+          }
+        },
+        "project.list": {
+          "params": {},
+          "result": {
+            "projects": [
+              {
+                "projectId": "string",
+                "hostId": "string",
+                "root": "string",
+                "name": "string",
+                "chats": "integer"
+              }
+            ]
+          }
+        },
+        "project.remove": {
+          "params": {
+            "projectId": "string"
+          },
+          "result": {
+            "removed": "boolean",
+            "chats": "integer"
+          }
+        },
+        "engine.start": {
+          "params": {
+            "sessionId": "string",
+            "prompt": "string",
+            "engine": "string",
+            "model": "string",
+            "tier": "Fast|Balanced|Deep",
+            "provider": "string?",
+            "agent": "boolean?",
+            "autonomy": "ask|pro|auto?",
+            "maxSteps": "integer?",
+            "understand": "boolean?",
+            "intentId": "string?"
+          },
+          "result": {
+            "turnId": "string"
+          }
+        },
+        "verify.run": {
+          "params": {
+            "sessionId": "string",
+            "turnId": "string?",
+            "since": "string?",
+            "task": "string?",
+            "reviewer": "object?",
+            "reviewFailing": "boolean?",
+            "hostId": "string?",
+            "acceptance": "array?",
+            "focus": "string?",
+            "intentId": "string?"
+          },
+          "result": {
+            "verifyId": "string"
+          }
+        },
+        "engine.cancel": {
+          "params": {
+            "turnId": "string"
+          },
+          "result": {
+            "state": "string",
+            "engine": "string",
+            "stopped": "boolean"
+          }
+        },
+        "engine.kill": {
+          "params": {
+            "turnId": "string"
+          },
+          "result": {
+            "state": "string",
+            "engine": "string",
+            "stopped": "boolean"
+          }
+        },
+        "engine.status": {
+          "params": {
+            "turnId": "string"
+          },
+          "result": {
+            "state": "idle|running|awaiting|stuck|done|failed|killed",
+            "engine": "string",
+            "model": "string"
+          }
+        },
+        "engine.switch": {
+          "params": {
+            "turnId": "string",
+            "engine": "string",
+            "model": "string",
+            "reason": "string?"
+          },
+          "result": {
+            "turnId": "string",
+            "bridgedFrom": "string"
+          }
+        },
+        "fs.read": {
+          "params": {
+            "path": "string",
+            "hostId": "string?"
+          },
+          "result": {
+            "path": "string",
+            "text": "string",
+            "sha256": "string",
+            "bytes": "integer",
+            "truncated": "boolean"
+          }
+        },
+        "fs.list": {
+          "params": {
+            "path": "string?",
+            "sessionId": "string?",
+            "hostId": "string?"
+          },
+          "result": {
+            "path": "string",
+            "entries": [
+              {
+                "name": "string",
+                "path": "string",
+                "dir": "boolean",
+                "size": "integer"
+              }
+            ],
+            "hidden": "integer"
+          }
+        },
+        "fs.write": {
+          "params": {
+            "path": "string",
+            "text": "string",
+            "sessionId": "string?",
+            "turnId": "string?",
+            "hostId": "string?"
+          },
+          "result": {
+            "path": "string",
+            "sha256": "string",
+            "bytes": "integer"
+          }
+        },
+        "fs.rename": {
+          "params": {
+            "path": "string",
+            "to": "string",
+            "sessionId": "string",
+            "hostId": "string?"
+          },
+          "result": {
+            "path": "string",
+            "renamed": "boolean"
+          }
+        },
+        "fs.delete": {
+          "params": {
+            "path": "string",
+            "sessionId": "string",
+            "hostId": "string?"
+          },
+          "result": {
+            "path": "string",
+            "deleted": "boolean"
+          }
+        },
+        "fs.mkdir": {
+          "params": {
+            "path": "string",
+            "sessionId": "string",
+            "hostId": "string?"
+          },
+          "result": {
+            "path": "string",
+            "created": "boolean"
+          }
+        },
+        "fs.stat": {
+          "params": {
+            "path": "string",
+            "hostId": "string?"
+          },
+          "result": {
+            "path": "string",
+            "size": "integer",
+            "dir": "boolean",
+            "sha256": "string"
+          }
+        },
+        "fs.search": {
+          "params": {
+            "query": "string",
+            "glob": "string?",
+            "root": "string?",
+            "sessionId": "string?",
+            "hostId": "string?",
+            "limit": "integer?"
+          },
+          "result": {
+            "hits": [
+              {
+                "path": "string",
+                "line": "integer",
+                "text": "string"
+              }
+            ],
+            "files": [
+              {
+                "path": "string",
+                "dir": "boolean"
+              }
+            ]
+          }
+        },
+        "git.checkpoint": {
+          "params": {
+            "sessionId": "string",
+            "turnId": "string?"
+          },
+          "result": {
+            "checkpointId": "string",
+            "sha": "string"
+          }
+        },
+        "git.diff": {
+          "params": {
+            "sessionId": "string?",
+            "root": "string?",
+            "checkpointId": "string?",
+            "sha": "string?",
+            "hostId": "string?"
+          },
+          "result": {
+            "patch": "string"
+          }
+        },
+        "git.status": {
+          "params": {
+            "sessionId": "string?",
+            "root": "string?",
+            "hostId": "string?"
+          },
+          "result": {
+            "branch": "string",
+            "dirty": "integer"
+          }
+        },
+        "git.worktree": {
+          "params": {
+            "sessionId": "string?",
+            "root": "string?"
+          },
+          "result": {
+            "path": "string"
+          }
+        },
+        "pty.open": {
+          "params": {
+            "command": "string?",
+            "args": "string[]?",
+            "line": "string?",
+            "shell": "boolean?",
+            "cols": "integer?",
+            "rows": "integer?",
+            "cwd": "string?",
+            "sessionId": "string?",
+            "hostId": "string?"
+          },
+          "result": {
+            "ptyId": "string",
+            "command": "string",
+            "tty": "boolean",
+            "hostId": "string?"
+          }
+        },
+        "shell.run": {
+          "params": {
+            "command": "string?",
+            "args": "string[]?",
+            "line": "string?",
+            "cwd": "string?",
+            "sessionId": "string?",
+            "turnId": "string?",
+            "root": "string?",
+            "hostId": "string?",
+            "timeoutMs": "integer?"
+          },
+          "result": {
+            "command": "string",
+            "exitCode": "integer?",
+            "ok": "boolean",
+            "stdout": "string",
+            "stderr": "string",
+            "durationMs": "integer",
+            "timedOut": "boolean",
+            "truncated": "boolean",
+            "error": "object?"
+          }
+        },
+        "pty.output": {
+          "params": {
+            "ptyId": "string",
+            "since": "integer?"
+          },
+          "result": {
+            "ptyId": "string",
+            "command": "string",
+            "state": "running|exited|gone",
+            "lines": [
+              "string"
+            ],
+            "lineCount": "integer",
+            "ms": "integer",
+            "data": "string?",
+            "next": "integer?"
+          }
+        },
+        "pty.write": {
+          "params": {
+            "ptyId": "string",
+            "data": "string?"
+          },
+          "result": {
+            "written": "boolean"
+          }
+        },
+        "pty.resize": {
+          "params": {
+            "ptyId": "string",
+            "cols": "integer?",
+            "rows": "integer?"
+          },
+          "result": {}
+        },
+        "pty.close": {
+          "params": {
+            "ptyId": "string"
+          },
+          "result": {
+            "closed": "boolean"
+          }
+        },
+        "cli.login": {
+          "params": {
+            "providerId": "string",
+            "program": "string?",
+            "args": "string[]?",
+            "pump": "string[]?"
+          },
+          "result": {
+            "loginId": "string",
+            "ptyId": "string",
+            "program": "string",
+            "providerId": "string"
+          }
+        },
+        "cli.login.status": {
+          "params": {
+            "loginId": "string"
+          },
+          "result": {
+            "loginId": "string",
+            "providerId": "string",
+            "url": "string?",
+            "state": "string",
+            "note": "string?",
+            "lines": [
+              "string"
+            ],
+            "authenticated": "boolean"
+          }
+        },
+        "cli.login.code": {
+          "params": {
+            "loginId": "string",
+            "code": "string"
+          },
+          "result": {
+            "submitted": "boolean",
+            "loginId": "string"
+          }
+        },
+        "cli.login.cancel": {
+          "params": {
+            "loginId": "string"
+          },
+          "result": {
+            "cancelled": "boolean",
+            "loginId": "string"
+          }
+        },
+        "cli.recipes": {
+          "params": {},
+          "result": {
+            "recipes": [
+              "object"
+            ]
+          }
+        },
+        "models.list": {
+          "params": {
+            "providerId": "string?",
+            "refresh": "boolean?"
+          },
+          "result": {
+            "models": [
+              "object"
+            ],
+            "snapshot": "string",
+            "refreshed": "boolean",
+            "notes": [
+              "string"
+            ],
+            "selected": "object"
+          }
+        },
+        "models.select": {
+          "params": {
+            "modelId": "string",
+            "providerId": "string?"
+          },
+          "result": {
+            "modelId": "string",
+            "providerId": "string?"
+          }
+        },
+        "event.list": {
+          "params": {
+            "since": "integer?",
+            "sessionId": "string?"
+          },
+          "result": {
+            "events": [
+              "notification"
+            ]
+          }
+        },
+        "event.subscribe": {
+          "params": {
+            "since": "integer?"
+          },
+          "result": {
+            "fromSeq": "integer"
+          }
+        },
+        "event.append": {
+          "params": {
+            "event": "object",
+            "sessionId": "string?",
+            "turnId": "string?"
+          },
+          "result": {
+            "seq": "integer"
+          }
+        },
+        "provider.list": {
+          "params": {},
+          "result": {
+            "providers": [
+              "provider"
+            ]
+          }
+        },
+        "provider.test": {
+          "params": {
+            "id": "string",
+            "key": "string?"
+          },
+          "result": {
+            "ok": "boolean",
+            "models": "integer",
+            "detail": "string",
+            "verified": "boolean",
+            "error": "string?"
+          }
+        },
+        "provider.save": {
+          "params": {
+            "id": "string",
+            "kind": "subscription|api-key|local|custom",
+            "key": "string?",
+            "label": "string?",
+            "url": "string?",
+            "protocol": "string?"
+          },
+          "result": {
+            "id": "string",
+            "status": "string",
+            "account": "string?"
+          }
+        },
+        "provider.remove": {
+          "params": {
+            "id": "string"
+          },
+          "result": {
+            "removed": "boolean"
+          }
+        },
+        "provider.oauth.open": {
+          "params": {
+            "id": "string"
+          },
+          "result": {
+            "url": "string",
+            "state": "string"
+          }
+        },
+        "provider.oauth.callback": {
+          "params": {
+            "id": "string",
+            "state": "string",
+            "code": "string?"
+          },
+          "result": {
+            "ok": "boolean",
+            "account": "string?"
+          }
+        },
+        "provider.local.doctor": {
+          "params": {},
+          "result": {
+            "daemon": "boolean",
+            "endpoint": "string",
+            "models": [
+              "string"
+            ]
+          }
+        },
+        "provider.registry.list": {
+          "params": {},
+          "result": {
+            "models": [
+              {
+                "id": "string",
+                "provider": "string",
+                "tier": "fast|balanced|deep",
+                "ctx": "integer",
+                "cost": "string",
+                "enabled": "boolean"
+              }
+            ]
+          }
+        },
+        "provider.registry.set": {
+          "params": {
+            "id": "string",
+            "enabled": "boolean"
+          },
+          "result": {}
+        },
+        "checkpoint.create": {
+          "params": {
+            "sessionId": "string",
+            "turnId": "string",
+            "title": "string"
+          },
+          "result": {
+            "checkpointId": "string"
+          }
+        },
+        "checkpoint.list": {
+          "params": {
+            "sessionId": "string"
+          },
+          "result": {
+            "checkpoints": [
+              "checkpoint"
+            ]
+          }
+        },
+        "checkpoint.restore": {
+          "params": {
+            "checkpointId": "string"
+          },
+          "result": {
+            "restored": "integer"
+          }
+        },
+        "rewind.apply": {
+          "params": {
+            "sessionId": "string",
+            "turnId": "string"
+          },
+          "result": {
+            "removedTurns": "integer",
+            "restoredFiles": "integer"
+          }
+        },
+        "rewind.redo": {
+          "params": {
+            "sessionId": "string"
+          },
+          "result": {
+            "turn": "integer?"
+          }
+        },
+        "duel.start": {
+          "params": {
+            "sessionId": "string",
+            "prompt": "string",
+            "engines": [
+              "string"
+            ]
+          },
+          "result": {
+            "duelId": "string"
+          }
+        },
+        "duel.keep": {
+          "params": {
+            "duelId": "string",
+            "keep": "string"
+          },
+          "result": {}
+        },
+        "duel.discard": {
+          "params": {
+            "duelId": "string"
+          },
+          "result": {}
+        },
+        "permission.request": {
+          "params": {
+            "sessionId": "string",
+            "turnId": "string",
+            "action": "string",
+            "target": "string",
+            "risk": "SAFE|MUTATING|DANGEROUS"
+          },
+          "result": {
+            "permissionId": "string"
+          }
+        },
+        "permission.resolve": {
+          "params": {
+            "permissionId": "string",
+            "decision": "allow_once|always_allow|deny|show_me",
+            "scope": "string?"
+          },
+          "result": {
+            "decision": "string",
+            "delivered": "boolean"
+          }
+        },
+        "console.attach": {
+          "params": {
+            "sessionId": "string",
+            "url": "string"
+          },
+          "result": {
+            "attached": "boolean"
+          }
+        },
+        "console.detach": {
+          "params": {
+            "sessionId": "string"
+          },
+          "result": {
+            "detached": "boolean"
+          }
+        },
+        "audit.list": {
+          "params": {
+            "sessionId": "string?",
+            "turnId": "string?",
+            "limit": "number?"
+          },
+          "result": {
+            "entries": "array",
+            "chain": "object"
+          }
+        },
+        "audit.verify": {
+          "params": {},
+          "result": {
+            "intact": "boolean",
+            "entries": "number",
+            "brokenAt": "number?"
+          }
+        },
+        "policy.get": {
+          "params": {
+            "sessionId": "string?",
+            "root": "string?",
+            "hostId": "string?"
+          },
+          "result": {
+            "policy": "object",
+            "text": "string",
+            "exists": "boolean"
+          }
+        },
+        "policy.set": {
+          "params": {
+            "sessionId": "string?",
+            "root": "string?",
+            "hostId": "string?",
+            "text": "string?",
+            "policy": "object?"
+          },
+          "result": {
+            "policy": "object",
+            "path": "string"
+          }
+        },
+        "kill.all": {
+          "params": {},
+          "result": {
+            "stopped": "array",
+            "processes": "number",
+            "checkpoints": "array"
+          }
+        },
+        "kill.list": {
+          "params": {},
+          "result": {
+            "active": "array"
+          }
+        },
+        "cost.summary": {
+          "params": {},
+          "result": {
+            "days": "array",
+            "models": "array",
+            "savedUsd": "number"
+          }
+        },
+        "cost.estimate": {
+          "params": {
+            "prompt": "string",
+            "engine": "string",
+            "model": "string",
+            "provider": "string?",
+            "sessionId": "string?",
+            "agent": "boolean?"
+          },
+          "result": {
+            "estimate": "object",
+            "cheaper": "object?"
+          }
+        },
+        "cost.budget.set": {
+          "params": {
+            "turn": "number?",
+            "chat": "number?",
+            "day": "number?",
+            "month": "number?",
+            "baseline": "string?"
+          },
+          "result": {
+            "budgets": "object"
+          }
+        },
+        "trust.score": {
+          "params": {
+            "turnId": "string"
+          },
+          "result": {
+            "score": "number",
+            "level": "string",
+            "reasons": "array"
+          }
+        },
+        "checkpoint.label": {
+          "params": {
+            "checkpointId": "string",
+            "label": "string?"
+          },
+          "result": {
+            "checkpoint": "object"
+          }
+        },
+        "checkpoint.files": {
+          "params": {
+            "checkpointId": "string"
+          },
+          "result": {
+            "files": "array"
+          }
+        },
+        "checkpoint.fileDiff": {
+          "params": {
+            "checkpointId": "string",
+            "path": "string"
+          },
+          "result": {
+            "path": "string",
+            "diff": "string"
+          }
+        },
+        "checkpoint.restoreFile": {
+          "params": {
+            "checkpointId": "string",
+            "path": "string"
+          },
+          "result": {
+            "path": "string",
+            "outcome": "string",
+            "undoCheckpointId": "string"
+          }
+        },
+        "proof.export": {
+          "params": {
+            "sessionId": "string",
+            "turnId": "string?",
+            "lang": "string?"
+          },
+          "result": {
+            "jsonPath": "string",
+            "htmlPath": "string",
+            "html": "string"
+          }
+        },
+        "intent.detect": {
+          "params": {
+            "text": "string"
+          },
+          "result": {
+            "code": "string",
+            "label": "string"
+          }
+        },
+        "intent.parse": {
+          "params": {
+            "text": "string",
+            "sessionId": "string?",
+            "engine": "string?",
+            "model": "string?",
+            "provider": "string?"
+          },
+          "result": {
+            "intentId": "string",
+            "detection": "object"
+          }
+        },
+        "intent.confirm": {
+          "params": {
+            "intentId": "string",
+            "spec": "object?",
+            "glossary": "array?"
+          },
+          "result": {
+            "intentId": "string",
+            "spec": "object",
+            "corrections": "number"
+          }
+        },
+        "intent.compile": {
+          "params": {
+            "intentId": "string",
+            "engine": "string?",
+            "sessionId": "string?"
+          },
+          "result": {
+            "engine": "string",
+            "prompt": "string"
+          }
+        },
+        "intent.cancel": {
+          "params": {
+            "intentId": "string"
+          },
+          "result": {
+            "cancelled": "boolean"
+          }
+        },
+        "intent.stats": {
+          "params": {},
+          "result": {
+            "parsed": "number",
+            "confirmed": "number",
+            "corrected": "number"
+          }
+        },
+        "glossary.list": {
+          "params": {
+            "sessionId": "string?",
+            "scope": "string?"
+          },
+          "result": {
+            "scope": "string",
+            "terms": "array"
+          }
+        },
+        "glossary.set": {
+          "params": {
+            "sessionId": "string?",
+            "scope": "string?",
+            "term": "string",
+            "meaning": "string?"
+          },
+          "result": {
+            "scope": "string",
+            "terms": "array"
+          }
+        },
+        "voice.status": {
+          "params": {},
+          "result": {
+            "available": "boolean",
+            "local": "boolean"
+          }
+        },
+        "voice.transcribe": {
+          "params": {
+            "audio": "string",
+            "mime": "string?",
+            "language": "string?",
+            "sessionId": "string?"
+          },
+          "result": {
+            "requestId": "string"
+          }
+        },
+        "site.list": {
+          "params": {},
+          "result": {
+            "sites": "array"
+          }
+        },
+        "site.detect": {
+          "params": {
+            "hostId": "string?",
+            "root": "string"
+          },
+          "result": {
+            "config": "object"
+          }
+        },
+        "site.save": {
+          "params": {
+            "siteId": "string?",
+            "name": "string",
+            "hostId": "string?",
+            "root": "string",
+            "url": "string?",
+            "config": "object?"
+          },
+          "result": {
+            "siteId": "string",
+            "site": "object"
+          }
+        },
+        "site.remove": {
+          "params": {
+            "siteId": "string"
+          },
+          "result": {
+            "removed": "boolean"
+          }
+        },
+        "deploy.run": {
+          "params": {
+            "siteId": "string",
+            "kind": "string?"
+          },
+          "result": {
+            "deployId": "string?",
+            "state": "string",
+            "approvalId": "string?"
+          }
+        },
+        "deploy.list": {
+          "params": {
+            "siteId": "string?",
+            "limit": "number?"
+          },
+          "result": {
+            "deploys": "array"
+          }
+        },
+        "deploy.get": {
+          "params": {
+            "deployId": "string"
+          },
+          "result": {
+            "deploy": "object?"
+          }
+        },
+        "deploy.preview": {
+          "params": {
+            "deployId": "string"
+          },
+          "result": {
+            "changes": "array",
+            "archive": "string"
+          }
+        },
+        "deploy.rollback": {
+          "params": {
+            "deployId": "string"
+          },
+          "result": {
+            "state": "string"
+          }
+        },
+        "deploy.restoreDb": {
+          "params": {
+            "deployId": "string",
+            "confirm": "string"
+          },
+          "result": {
+            "restored": "boolean"
+          }
+        },
+        "health.check": {
+          "params": {
+            "siteId": "string"
+          },
+          "result": {
+            "queued": "boolean"
+          }
+        },
+        "health.history": {
+          "params": {
+            "siteId": "string",
+            "limit": "number?"
+          },
+          "result": {
+            "reports": "array"
+          }
+        },
+        "guardian.set": {
+          "params": {
+            "siteId": "string",
+            "enabled": "boolean",
+            "autoRollback": "boolean"
+          },
+          "result": {
+            "guardian": "object"
+          }
+        },
+        "approval.list": {
+          "params": {
+            "subject": "string?"
+          },
+          "result": {
+            "approvals": "array"
+          }
+        },
+        "approval.request": {
+          "params": {
+            "subject": "string",
+            "kind": "string?",
+            "note": "string?",
+            "token": "string?"
+          },
+          "result": {
+            "approval": "object"
+          }
+        },
+        "approval.decide": {
+          "params": {
+            "approvalId": "string",
+            "decision": "string",
+            "note": "string?"
+          },
+          "result": {
+            "approval": "object"
+          }
+        },
+        "approval.poll": {
+          "params": {
+            "approvalId": "string"
+          },
+          "result": {
+            "approval": "object"
+          }
+        },
+        "xray.scan": {
+          "params": {
+            "hostId": "string"
+          },
+          "result": {
+            "queued": "boolean"
+          }
+        },
+        "xray.get": {
+          "params": {
+            "hostId": "string"
+          },
+          "result": {
+            "map": "object?"
+          }
+        },
+        "shadowdb.run": {
+          "params": {
+            "siteId": "string",
+            "command": "string"
+          },
+          "result": {
+            "runId": "string"
+          }
+        },
+        "staging.create": {
+          "params": {
+            "siteId": "string",
+            "summary": "string?",
+            "changes": "array?",
+            "before": "string?",
+            "after": "string?",
+            "lang": "string?"
+          },
+          "result": {
+            "approvalId": "string"
+          }
+        },
+        "staging.stop": {
+          "params": {
+            "siteId": "string",
+            "remove": "boolean?"
+          },
+          "result": {
+            "stopped": "boolean"
+          }
+        },
+        "playbook.list": {
+          "params": {},
+          "result": {
+            "playbooks": "array"
+          }
+        },
+        "playbook.save": {
+          "params": {
+            "playbook": "object"
+          },
+          "result": {
+            "playbooks": "array"
+          }
+        },
+        "playbook.remove": {
+          "params": {
+            "playbookId": "string"
+          },
+          "result": {
+            "playbooks": "array"
+          }
+        },
+        "playbook.run": {
+          "params": {
+            "playbookId": "string",
+            "siteIds": "array"
+          },
+          "result": {
+            "deploys": "array",
+            "prompts": "array"
+          }
+        },
+        "team.get": {
+          "params": {},
+          "result": {
+            "members": "array",
+            "role": "string"
+          }
+        },
+        "team.set": {
+          "params": {
+            "members": "array?",
+            "current": "string?"
+          },
+          "result": {
+            "members": "array",
+            "role": "string"
+          }
+        },
+        "settings.get": {
+          "params": {
+            "key": "string"
+          },
+          "result": {
+            "key": "string",
+            "value": "string?"
+          }
+        },
+        "settings.set": {
+          "params": {
+            "key": "string",
+            "value": "string"
+          },
+          "result": {
+            "key": "string",
+            "value": "string"
+          }
+        },
+        "update.check": {
+          "params": {
+            "channel": "string?"
+          },
+          "result": {
+            "current": "string",
+            "updateAvailable": "boolean"
+          }
+        },
+        "crash.list": {
+          "params": {},
+          "result": {
+            "reports": "array"
+          }
+        },
+        "crash.clear": {
+          "params": {},
+          "result": {
+            "cleared": "number"
+          }
+        },
+        "cli.selfcheck": {
+          "params": {},
+          "result": {
+            "clis": "array"
+          }
+        },
+        "status.share": {
+          "params": {
+            "enabled": "boolean",
+            "port": "number?"
+          },
+          "result": {
+            "enabled": "boolean",
+            "url": "string?"
+          }
+        },
+        "timeline.branches": {
+          "params": {
+            "sessionId": "string"
+          },
+          "result": {
+            "branches": "array"
+          }
+        },
+        "timeline.switch": {
+          "params": {
+            "sessionId": "string",
+            "frameId": "number"
+          },
+          "result": {
+            "switched": "boolean"
+          }
+        }
       }
     }
   }

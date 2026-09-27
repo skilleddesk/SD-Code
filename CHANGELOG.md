@@ -15,6 +15,92 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [0.12.0] — the Trust Kernel: every change proven, priced, reversible and on the record
+
+The plan: [`sdc/docs/MASTER-PLAN-v3-TRUST-KERNEL.md`](sdc/docs/MASTER-PLAN-v3-TRUST-KERNEL.md). This release
+builds all of its phases in one go. Tested live against an isolated daemon with DeepSeek: an agent turn wrote
+`math.js` with a checkpoint taken first, cost was priced per turn, Verify came back **PASS** (the check ran,
+secret/SAST scans ran, a second model reviewed it) and Trust went from 70 to 100. A Banglish request was read
+and compiled for Claude Code, the kill switch stopped a streaming turn and took a checkpoint, the audit chain
+verified intact, and a Bengali Proof Pack was written.
+
+### Added: Trust Kernel (`sdcd/src/trust`)
+
+* **Audit ledger.** Every event is also written to a hash chain. `audit.verify` finds a row that was changed,
+  and `sdcd audit` does the same from the command line.
+* **Policy as code** (`.sdc/policy.toml`, editable in **Policy**). Sets protected paths (`.env`,
+  `wp-config.php`, keys, backups), denied commands, commands that always need a yes, blast-radius limits,
+  privacy (local models only) and budgets. The agent's tools enforce it. A turn that reaches a protected path,
+  denied command or blast-radius limit is stopped and recorded.
+* **Secret and SAST scanning** of the added lines on every Verify, plus the project's own dependency audit
+  (`npm`/`pnpm`/`yarn`/`pip-audit`/`cargo audit`) when it is installed. Findings are redacted.
+* **Cost governor.** Engines report token usage, and every turn has an estimate before it starts and a settled
+  price after. Session, daily and monthly budgets stop a turn at the limit. A runaway guard stops a loop that
+  burns tokens without changing anything. The router suggests a cheaper model for simple work. A **Cost** meter
+  sits in the status bar, and **Cost Center** gives the breakdown.
+* **Kill switch** (top bar, `Ctrl+Shift+.`). Stops every turn, command and deploy, and checkpoints each folder
+  as it was.
+* **Trust score** on every turn: rollback point, verified or not, protected paths, blast radius, cost. An
+  **Ops score** per site.
+* **Proof Pack** (`Ctrl+Shift+P`). JSON and a self-contained HTML page in Bengali, Hindi, Arabic, Spanish or
+  English: what was asked, what changed, checks, scans, review, cost and the ledger rows.
+
+### Added: Universal Intent Engine (`sdcd/src/intent`)
+
+* Offline language detection covers every script plus Banglish, Hinglish, Arabizi, Roman Urdu and Taglish,
+  and the dialects (Sylheti, Chittagonian, Noakhali, Bhojpuri, Egyptian, Gulf, Levantine, Maghrebi, Swiss
+  German).
+* **Task Spec.** A request is read into goal, scope, out-of-scope and acceptance criteria, with a
+  back-translation in the person's own language. The **Understood** card asks "is this what you meant?", and
+  corrections go into a per-project glossary.
+* **Prompt compiler.** One spec is compiled per engine (Claude Code, Codex, Gemini, API agent), with the
+  policy's protected paths written in.
+* **Voice input**: whisper.cpp locally, or Groq/OpenAI when a key is stored.
+* **Long-task memory**: a plan survives a restart, and later turns see it.
+
+### Added: Verify
+Verdicts are now **PASS / FAIL / NO_CHECKS / UNPROVEN**. `pass` means proven, so UNPROVEN is not a pass. A
+condition about tests, build, lint or types that a check SDC ran has measured is decided by that measurement,
+not by a reviewer's reading of the diff. Found live: the reviewer saw only `math.js` and said
+"npm test cannot pass" right after it passed. A skipped review is marked as skipped, never as passed.
+
+### Fixed: Time Machine (TM-1 to TM-8)
+* A restore is journaled and survives a crash halfway through (`recover()` at start-up).
+* A rewind also rewinds the conversation, so the next turn does not see the undone work.
+* **Per-file restore** with a diff for each file, locally and on a VPS.
+* Checkpoints carry a label, the turn that made them, and an *irreversible* mark when a turn did something no
+  file restore can undo (a DB command, a deploy).
+* Rewinding while a turn is running is refused with a clear sentence, not a half-restore.
+
+### Added: Agency (`sdcd/src/ops`, **Agency** `Ctrl+Shift+G`)
+* **Sites** and a **Safe Deploy** pipeline: preflight, then a mandatory backup (files and DB), steps (with the
+  deny list), restart, health check, and automatic rollback on failure. Restoring a DB needs the word
+  `RESTORE` typed.
+* **Health Watch**: a background checker with alerts.
+* **Night Guardian**: at night it only rolls back, and a fix waits for a person.
+* **Takeover X-ray**: a read-only scan of an unknown server (web servers, WordPress installs, databases,
+  Docker, cron).
+* **Shadow DB rehearsal** runs a migration against a copy first.
+* **Staging and a client approval page**: a small PHP receiver with a token.
+* **Playbooks** and **team roles** (owner/dev/viewer), enforced by the daemon on every call.
+* **Headless**: `sdcd run | verify | kill | audit` for CI and cron.
+* **MCP tools** in the API agent, **crash reports** kept locally, a **status share** for a phone, and a
+  **low-bandwidth mode**.
+
+### Added: global UI
+* The interface is in **10 languages**: English, বাংলা, हिन्दी, العربية, اردو, Español, Português, Français,
+  Bahasa Indonesia and 中文. Arabic and Urdu lay out right to left, and code stays left to right.
+* The prompt no longer sends mid-composition in Bengali, Chinese or Japanese input methods.
+* Onboarding for a first run.
+
+### Added: provider **Qwen (Alibaba)**
+Alibaba Cloud Model Studio through its OpenAI-compatible endpoint, with the streamed reasoning shown as
+thinking. Models: Qwen3 Max, Qwen3 Coder Plus, Qwen Plus/Flash, Kimi K3, Kimi K2 Thinking, DeepSeek V3.2,
+DeepSeek R1, GLM-4.6 and MiniMax-M2. The Connect dialog takes the workspace's own **Base URL**
+(`https://<workspace>.<region>.maas.aliyuncs.com/compatible-mode/v1`), and it is saved per provider. Wan and
+HappyHorse are image/video models: they are recognised and kept out of the chat model list, because a chat
+turn cannot run them.
+
 ## [0.11.9] — measured on the real VPS: a command line that reached it, faster commands, a switch that stays
 
 This release was checked against the report's own VPS (password + verification code, 217 ms away): the

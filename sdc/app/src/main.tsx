@@ -1,3 +1,4 @@
+import { applyDocumentLocale } from './i18n';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 
@@ -19,6 +20,8 @@ const container = document.getElementById('root');
 if (!container) {
   throw new Error('SDC: the #root container is missing from index.html');
 }
+
+applyDocumentLocale();
 
 createRoot(container).render(
   <StrictMode>
