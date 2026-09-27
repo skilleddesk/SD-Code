@@ -15,6 +15,17 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [0.12.1] — 0.12.0, with the two release checks it failed
+
+0.12.0's release run stopped before the Windows and macOS installers. This is the same release with those two
+checks fixed:
+
+* **Accessibility (axe-core, on the built window).** On the first-run card, the selected goal's help text was
+  muted grey on the accent tint, about 4.0:1 in the dark theme where 4.5:1 is the floor. It is secondary text
+  now (about 6.3:1). The same fix applies to the chosen row in Agency → deploy history.
+* **Secret scan (gitleaks).** The scanner's own tests held a made-up AWS key id as a literal. It is built at
+  run time now, and `.gitleaksignore` lists the two fingerprints of the commit that held it.
+
 ## [0.12.0] — the Trust Kernel: every change proven, priced, reversible and on the record
 
 The plan: [`sdc/docs/MASTER-PLAN-v3-TRUST-KERNEL.md`](sdc/docs/MASTER-PLAN-v3-TRUST-KERNEL.md). This release

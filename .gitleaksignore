@@ -1,0 +1,5 @@
+# Findings gitleaks may ignore, by fingerprint (commit:file:rule:line). Each one is a made-up key in a test
+# of SDC's own secret scanner, not a credential. The source no longer holds them as literals (0.12.0 builds
+# them at run time); these two lines cover the commit that did.
+17271094709ba36dabb0cc3f70038508bb2986f5:sdc/sdcd/src/trust/scan.rs:aws-access-token:308
+17271094709ba36dabb0cc3f70038508bb2986f5:sdc/sdcd/src/trust/scan.rs:aws-access-token:336

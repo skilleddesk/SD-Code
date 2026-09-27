@@ -552,7 +552,7 @@ function DeploysTab() {
                 setPreview(null);
               }}
             >
-              <span className="block font-mono text-[10.5px] text-text-muted">{row.startedAt.slice(0, 16).replace('T', ' ')}</span>
+              <span className={'block font-mono text-[10.5px] ' + (row.id === deploy.id ? 'text-text-secondary' : 'text-text-muted')}>{row.startedAt.slice(0, 16).replace('T', ' ')}</span>
               <span className="flex items-center gap-[6px]">
                 <Badge tone={stateTone(row.state)}>{k.deployState[row.state]}</Badge>
                 <span className="truncate">{row.kind}</span>

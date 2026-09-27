@@ -305,9 +305,12 @@ mod tests {
 
     #[test]
     fn placeholders_and_lock_files_are_not_secrets() {
-        let diff = "+++ b/config.js\n@@ -0,0 +1,2 @@\n+const password = \"your-password-here\";\n+const api_key = process.env.KEY;\n+++ b/package-lock.json\n@@ -0,0 +1 @@\n+\"integrity\": \"sha512-AKIAABCDEFGHIJKLMNOP\"";
+        let diff = format!(
+            "+++ b/config.js\n@@ -0,0 +1,2 @@\n+const password = \"your-password-here\";\n+const api_key = process.env.KEY;\n+++ b/package-lock.json\n@@ -0,0 +1 @@\n+\"integrity\": \"sha512-{}\"",
+            fake_aws_key()
+        );
 
-        assert!(secrets(diff).is_empty(), "{:?}", secrets(diff));
+        assert!(secrets(&diff).is_empty(), "{:?}", secrets(&diff));
     }
 
     #[test]
@@ -333,6 +336,12 @@ mod tests {
 
     #[test]
     fn text_about_to_be_written_is_scanned_too() {
-        assert_eq!(secrets_in_text(".env.example", "AWS_KEY=AKIAABCDEFGHIJKLMNOP")[0]["rule"], "aws-access-key");
+        assert_eq!(secrets_in_text(".env.example", &format!("AWS_KEY={}", fake_aws_key()))[0]["rule"], "aws-access-key");
+    }
+
+    /// A made-up AWS key id, put together at run time so the repository's own secret scan (gitleaks) does
+    /// not read the scanner's test as a leak.
+    fn fake_aws_key() -> String {
+        ["AK", "IA", "ABCDEFGHIJKLMNOP"].concat()
     }
 }

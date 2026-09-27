@@ -110,7 +110,7 @@ export function Onboarding() {
                 >
                   <Icon size={18} className="text-accent" aria-hidden="true" />
                   <span className="font-semibold text-text-primary">{k.goal[item.id]}</span>
-                  <span className="text-[11.5px] text-text-muted">{k.goalHelp[item.id]}</span>
+                  <span className={'text-[11.5px] ' + (goal === item.id ? 'text-text-secondary' : 'text-text-muted')}>{k.goalHelp[item.id]}</span>
                 </button>
               );
             })}
