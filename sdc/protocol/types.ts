@@ -488,6 +488,9 @@ export interface TurnStartedEvent {
   /** What the user asked, verbatim. The log carries it so a reloaded window can draw the question
    *  beside the answer instead of showing a conversation that starts with the reply. */
   prompt: string;
+  /** How SDC read the message (0.11.8): its language, and the language the answer comes back in. Absent
+   *  when the message went to the engine exactly as typed. */
+  reading?: { code: string; label: string; reply: string };
 }
 
 export interface TurnDeltaEvent {
@@ -961,6 +964,8 @@ export interface SdcpMethodMap {
       autonomy?: 'ask' | 'pro' | 'auto';
       /** Model calls one agent turn may make before it pauses (default 25). */
       maxSteps?: number;
+      /** Read the message with SDC's brief - its language, every request in it, the answer's language (default true, 0.11.8). */
+      understand?: boolean;
     };
     result: { turnId: string };
   };

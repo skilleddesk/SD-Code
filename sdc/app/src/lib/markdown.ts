@@ -227,3 +227,32 @@ export function parseInline(text: string): Inline[] {
 
   return out;
 }
+
+/** Splits Markdown at blank lines that are not inside a fenced code block. */
+export function paragraphs(text: string): string[] {
+  const chunks: string[] = [];
+  let current: string[] = [];
+  let fenced = false;
+
+  for (const line of text.split('\n')) {
+    if (/^\s*(```|~~~)/.test(line)) {
+      fenced = !fenced;
+    }
+
+    if (!fenced && line.trim() === '' && current.length > 0) {
+      chunks.push(current.join('\n'));
+      current = [];
+      continue;
+    }
+
+    if (line.trim() !== '' || current.length > 0) {
+      current.push(line);
+    }
+  }
+
+  if (current.length > 0) {
+    chunks.push(current.join('\n'));
+  }
+
+  return chunks;
+}

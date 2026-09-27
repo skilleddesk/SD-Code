@@ -211,7 +211,18 @@ export const strings = {
       tokens: (count: number): string => `~${count.toLocaleString()} tok`,
       pace: (perSecond: number): string => `~${perSecond} tok/s`,
       tools: (count: number): string => (count === 1 ? '1 tool call' : `${count} tool calls`),
+      /** What the turn is doing this second (0.11.8), first on the live line. */
+      phase: {
+        running: (name: string, target: string): string => (target === '' ? name : `${name} · ${target}`),
+        thinking: 'Thinking',
+        writing: 'Writing',
+        working: 'Working',
+      },
     },
+    /** The chip under a message SDC read with a brief (0.11.8). */
+    reading: (label: string, reply: string): string => `Read as ${label} · answering in ${reply}`,
+    readingTitle: 'SDC told the model how to read this message - what it asks, in which language to answer - and sent your words unchanged.',
+    understood: 'Understood',
     /** The label above a user's message. The prototype's `You · 14:02` fixed the clock this app does
      *  not have on the turn: the log carries the prompt, not the minute it was typed. */
     who: 'You',
@@ -1512,6 +1523,7 @@ export const strings = {
       restartHint: 'Start a fresh shell in the open chat’s folder',
       close: 'Close',
       otherChat: 'another chat’s shell',
+      signIn: 'Sign in',
     },
     /** Where a command runs when the chat has no folder yet: the daemon's own working directory. */
     anywhere: 'where the daemon runs',

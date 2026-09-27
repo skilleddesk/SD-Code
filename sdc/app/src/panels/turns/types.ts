@@ -121,6 +121,8 @@ export interface UserMessageData {
   who: string;
   body: string;
   attachments: AttachmentData[];
+  /** How SDC read the message (0.11.8): `Banglish` → `বাংলা`. */
+  reading?: { label: string; reply: string };
 }
 
 /** The line under the user's message: `Balanced · claude_code · sonnet`, plus the forecast. */

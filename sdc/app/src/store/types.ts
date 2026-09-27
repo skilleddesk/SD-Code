@@ -147,6 +147,8 @@ export interface TurnView {
   tier: TierName;
   /** What the user asked. From `TurnStarted`, so it survives a reload. */
   prompt: string;
+  /** How the daemon read it (0.11.8), when it added a reading brief. */
+  reading?: { code: string; label: string; reply: string };
   /** The engine's answer as it streams in; `aria-live="polite"` reads it. */
   text: string;
   thinking: string;

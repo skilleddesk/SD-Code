@@ -52,6 +52,12 @@ export function StatusBar() {
     hosts.find((host) => host.id === activeHostId) ??
     hosts[0];
 
+  /* The daemon this window talks to is the one on this machine, whatever chat is open: a VPS row's
+     `sdcd` is what the daemon said the last time it wrote about that host - after an update, the
+     previous version (0.11.7: `v0.11.7 · sdcd 0.11.6` next to a 0.11.7 daemon). `host.status` refreshes
+     the local row on every launch. */
+  const daemon = hosts.find((host) => host.id === 'local')?.sdcd ?? activeHost?.sdcd ?? '';
+
   const connection = connectionState(hosts);
   const connectionLabel =
     connection === 'success'
@@ -84,16 +90,16 @@ export function StatusBar() {
       <StatusItem
         id="statusVersion"
         tone="text-text-muted"
-        title={strings.statusBar.versionTitle(APP_VERSION, activeHost?.sdcd ?? '')}
+        title={strings.statusBar.versionTitle(APP_VERSION, daemon)}
         hideSmall
         onClick={() => {
-          const pair = strings.statusBar.version(APP_VERSION, activeHost?.sdcd ?? '');
+          const pair = strings.statusBar.version(APP_VERSION, daemon);
 
           void navigator.clipboard?.writeText(pair);
-          toast(strings.statusBar.versionCopied(APP_VERSION, activeHost?.sdcd ?? ''));
+          toast(strings.statusBar.versionCopied(APP_VERSION, daemon));
         }}
       >
-        {strings.statusBar.version(APP_VERSION, activeHost?.sdcd ?? '')}
+        {strings.statusBar.version(APP_VERSION, daemon)}
       </StatusItem>
 
       <span className="sep text-border-strong max-520:hidden" aria-hidden="true">

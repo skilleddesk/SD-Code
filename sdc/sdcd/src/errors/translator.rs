@@ -57,7 +57,44 @@ pub fn translate(tool: &str, output: &str) -> Translation {
         .map(str::trim)
         .find(|line| !line.is_empty())
         .unwrap_or("the tool produced no output")
-        .to_string();
+        /* The line is quoted in backticks below; one of its own (`gemini` said: …) broke the quote. */
+        .replace('`', "");
+
+    /* 0.11.8: an `ssh` that was refused at the door is a connection fact, not a file one. The log had
+       `Permission denied (keyboard-interactive)` explained as "the path is not writable". */
+    if haystack.contains("(keyboard-interactive)") || haystack.contains("permission denied (publickey") {
+        return rule(
+            "Not signed in to the host",
+            format!("`{first_line}`. SDC's signed-in connection to that machine is closed, so nothing ran there. Sign in again (the banner's Reconnect, or the host's card), then send the message again."),
+            false,
+            "ssh-signed-out",
+        );
+    }
+
+    if haystack.contains("host key verification failed") {
+        return rule(
+            "The host's key is not the pinned one",
+            format!("`{first_line}`. The machine answered with a key SDC did not pin, so nothing was sent. Add the host again to see and pin the key it presents now."),
+            false,
+            "ssh-host-key",
+        );
+    }
+
+    /* `env: 'gemini': No such file or directory` - a CLI that is not installed on the machine the chat
+       runs on (a VPS, usually). */
+    if let Some(program) = haystack
+        .split("env: '")
+        .nth(1)
+        .and_then(|rest| rest.split('\'').next())
+        .filter(|_| haystack.contains("no such file or directory"))
+    {
+        return rule(
+            &format!("{program} is not installed where this chat runs"),
+            format!("`{first_line}`. The chat's folder is on a machine without `{program}`. Install it there, or pick an engine that is."),
+            false,
+            "missing-program-remote",
+        );
+    }
 
     if haystack.contains("command not found")
         || haystack.contains("enoent")
@@ -158,6 +195,23 @@ pub fn translate(tool: &str, output: &str) -> Translation {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The three sentences the report's own log got wrong (0.11.8).
+    #[test]
+    fn connection_failures_are_not_file_failures() {
+        let signed_out = translate("gemini", "`gemini` said: deploy@203.0.113.10: Permission denied (keyboard-interactive).");
+
+        assert_eq!(signed_out.rule, "ssh-signed-out");
+        assert!(!signed_out.explanation.contains("``"), "{}", signed_out.explanation);
+
+        let missing = translate("gemini", "`gemini` said: env: 'gemini': No such file or directory");
+
+        assert_eq!(missing.rule, "missing-program-remote");
+        assert!(missing.title.starts_with("gemini is not installed"), "{}", missing.title);
+
+        /* A real file permission problem keeps its own sentence. */
+        assert_eq!(translate("npm", "EACCES: permission denied, open '/srv/app/x'").rule, "permission-denied");
+    }
 
     #[test]
     fn a_missing_program_is_explained_and_fixable() {

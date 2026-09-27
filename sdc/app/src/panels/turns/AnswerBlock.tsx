@@ -1,7 +1,8 @@
-import { Sparkles } from 'lucide-react';
+import { Sparkles, Target } from 'lucide-react';
 
 import { strings } from '../../strings';
 import { Markdown } from './Markdown';
+import { splitUnderstood, useSmoothText } from './smooth';
 import type { AnswerData } from './types';
 
 /**
@@ -32,6 +33,10 @@ export interface AnswerBlockProps {
 }
 
 export function AnswerBlock({ answer }: AnswerBlockProps) {
+  /* 0.11.8: revealed evenly rather than in 50 ms lumps, and the `Understood:` line drawn as its own card. */
+  const shown = useSmoothText(answer.text, answer.streaming);
+  const { understood, rest } = splitUnderstood(shown, answer.streaming);
+
   return (
     <div
       className="answer mb-[8px] rounded-md border border-border-subtle border-l-2 border-l-accent bg-bg-raised px-[13px] py-[10px]"
@@ -43,8 +48,21 @@ export function AnswerBlock({ answer }: AnswerBlockProps) {
         {answer.streaming ? <span className="font-normal normal-case tracking-normal">{strings.turns.answer.streaming}</span> : null}
       </div>
 
-      <div className="answer-body">
-        <Markdown text={answer.text} />
+      {understood === null ? null : (
+        <div
+          className="understood mb-[10px] flex items-start gap-[8px] rounded-md border border-accent/25 bg-accent-subtle px-[10px] py-[7px]"
+          data-understood
+        >
+          <Target size={13} aria-hidden="true" className="mt-[3px] shrink-0 text-accent" />
+          <div className="min-w-0 text-[12.5px] leading-[1.55] text-text-primary">
+            <span className="mr-[6px] text-[10px] font-semibold uppercase tracking-[.08em] text-accent">{strings.turns.understood}</span>
+            {understood}
+          </div>
+        </div>
+      )}
+
+      <div className="answer-body" aria-live="polite">
+        <Markdown text={rest} />
         {answer.streaming ? <span className="answer-caret ml-[1px] animate-pulse text-accent motion-reduce:animate-none">▍</span> : null}
       </div>
     </div>

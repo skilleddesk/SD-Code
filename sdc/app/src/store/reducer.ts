@@ -400,6 +400,7 @@ function reduce(state: AppState, entry: AppEvent): AppState {
         model: event.model,
         tier: event.tier,
         prompt: event.prompt,
+        ...(event.reading === undefined ? {} : { reading: event.reading }),
         text: '',
         thinking: '',
         thinkingMs: 0,

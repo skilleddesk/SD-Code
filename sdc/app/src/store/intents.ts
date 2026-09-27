@@ -846,6 +846,16 @@ export async function trustHost(
  * started.
  */
 export async function reconnectHost(hostId: string, name: string): Promise<boolean> {
+  /* A host that is only waiting for its sign-in gets the card at once (0.11.8): measuring it first cost
+     two seconds and could only end in the same card. */
+  const host = useAppStore.getState().hosts.find((candidate) => candidate.id === hostId);
+
+  if (host !== undefined && needsSignIn(host.detail)) {
+    useOverlayStore.getState().openAddHost(hostId);
+
+    return true;
+  }
+
   try {
     await sdcpCall('host.probe', { hostId });
 
@@ -859,6 +869,11 @@ export async function reconnectHost(hostId: string, name: string): Promise<boole
 
     return false;
   }
+}
+
+/** Does a host's sentence say the one way back is typing the password and code again? */
+export function needsSignIn(detail: string | undefined): boolean {
+  return detail !== undefined && (detail.includes('is not signed in') || detail.includes('signed-in connection'));
 }
 
 /**

@@ -58,6 +58,7 @@ pub mod sdcp;
 pub mod session_bridge;
 pub mod ssh;
 pub mod store;
+pub mod understand;
 pub mod verify;
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};

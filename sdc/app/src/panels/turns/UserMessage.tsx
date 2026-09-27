@@ -1,4 +1,6 @@
-import { Image as ImageIcon } from 'lucide-react';
+import { Image as ImageIcon, Languages } from 'lucide-react';
+
+import { strings } from '../../strings';
 
 import type { AttachmentData, UserMessageData } from './types';
 
@@ -66,7 +68,18 @@ export function UserMessage({ message }: UserMessageProps) {
         <span className="h-px flex-1 bg-border-subtle" aria-hidden="true" />
       </div>
 
-      <div className="body text-[14.5px] leading-[1.6] text-text-primary">{message.body}</div>
+      <div className="body whitespace-pre-wrap break-words text-[14.5px] leading-[1.6] text-text-primary">{message.body}</div>
+
+      {message.reading === undefined ? null : (
+        <div
+          className="reading mt-[7px] inline-flex items-center gap-[5px] rounded-full border border-border-subtle bg-bg-raised px-[8px] py-[2px] text-[10.5px] text-text-muted"
+          title={strings.turns.readingTitle}
+          data-reading={message.reading.label}
+        >
+          <Languages size={11} aria-hidden="true" className="text-accent" />
+          {strings.turns.reading(message.reading.label, message.reading.reply)}
+        </div>
+      )}
 
       {message.attachments.length === 0 ? null : (
         <div className="meta mt-[10px] flex flex-wrap items-center gap-[6px]">

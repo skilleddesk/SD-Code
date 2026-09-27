@@ -1,8 +1,8 @@
 import { Check, Copy } from 'lucide-react';
-import { Fragment, useMemo, useState, type ReactNode } from 'react';
+import { Fragment, memo, useMemo, useState, type ReactNode } from 'react';
 
 import { openOutside } from '../../lib/external';
-import { parseMarkdown, type Block, type Inline } from '../../lib/markdown';
+import { paragraphs, parseMarkdown, type Block, type Inline } from '../../lib/markdown';
 import { strings } from '../../strings';
 
 /**
@@ -11,16 +11,33 @@ import { strings } from '../../strings';
  * window; everything takes the window's type scale and tokens.
  */
 export function Markdown({ text }: { text: string }) {
-  const blocks = useMemo(() => parseMarkdown(text), [text]);
+  const chunks = useMemo(() => paragraphs(text), [text]);
 
   return (
     <div className="markdown flex flex-col gap-[8px] text-[13px] leading-[1.65] text-text-primary">
-      {blocks.map((block, index) => (
-        <BlockView key={index} block={block} />
+      {chunks.map((chunk, index) => (
+        <Chunk key={index} source={chunk} />
       ))}
     </div>
   );
 }
+
+/**
+ * One paragraph's worth of Markdown, parsed and drawn once (0.11.8). While an answer streams only its
+ * last paragraph changes, so only that one is parsed again - a long answer no longer re-parses and
+ * re-draws from the top on every frame of the reveal.
+ */
+const Chunk = memo(function Chunk({ source }: { source: string }) {
+  const blocks = useMemo(() => parseMarkdown(source), [source]);
+
+  return (
+    <>
+      {blocks.map((block, index) => (
+        <BlockView key={index} block={block} />
+      ))}
+    </>
+  );
+});
 
 function BlockView({ block }: { block: Block }) {
   switch (block.kind) {

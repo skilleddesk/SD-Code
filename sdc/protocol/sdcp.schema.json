@@ -173,7 +173,7 @@
         "project.locate": { "params": { "hostId": "string?", "query": "string" }, "result": { "candidates": [{ "root": "string", "source": "string" }] } },
         "project.list": { "params": {}, "result": { "projects": [{ "projectId": "string", "hostId": "string", "root": "string", "name": "string", "chats": "integer" }] } },
         "project.remove": { "params": { "projectId": "string" }, "result": { "removed": "boolean", "chats": "integer" } },
-        "engine.start": { "params": { "sessionId": "string", "prompt": "string", "engine": "string", "model": "string", "tier": "Fast|Balanced|Deep", "provider": "string?", "agent": "boolean?", "autonomy": "ask|pro|auto?", "maxSteps": "integer?" }, "result": { "turnId": "string" } },
+        "engine.start": { "params": { "sessionId": "string", "prompt": "string", "engine": "string", "model": "string", "tier": "Fast|Balanced|Deep", "provider": "string?", "agent": "boolean?", "autonomy": "ask|pro|auto?", "maxSteps": "integer?", "understand": "boolean?" }, "result": { "turnId": "string" } },
         "verify.run": { "params": { "sessionId": "string", "turnId": "string?", "since": "string?", "task": "string?", "reviewer": "object?", "reviewFailing": "boolean?", "hostId": "string?" }, "result": { "verifyId": "string" } },
         "engine.cancel": { "params": { "turnId": "string" }, "result": { "state": "string", "engine": "string", "stopped": "boolean" } },
         "engine.kill": { "params": { "turnId": "string" }, "result": { "state": "string", "engine": "string", "stopped": "boolean" } },

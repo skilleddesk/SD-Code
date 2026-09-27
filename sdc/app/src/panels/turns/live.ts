@@ -31,6 +31,7 @@ export function toTurns(
         /* Attachments are not in the log yet: the prompt area cannot attach one, so claiming a chip
            here would be the same kind of decoration this change is removing. */
         attachments: [],
+        ...(turn.reading === undefined ? {} : { reading: { label: turn.reading.label, reply: turn.reading.reply } }),
       },
       meta: {
         tier: turn.tier,

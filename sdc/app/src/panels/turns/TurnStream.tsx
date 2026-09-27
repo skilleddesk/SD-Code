@@ -72,6 +72,27 @@ export function TurnStream({ turns, collapsed = null, sessionId }: TurnStreamPro
   );
 }
 
+/** What a running turn is doing this second (0.11.8): the tool that runs, the thinking, or the writing. */
+function phaseOf(turn: Turn): string {
+  const running = turn.tools.find((tool) => tool.status === 'running');
+
+  if (running !== undefined) {
+    const target = running.target.length > 60 ? `${running.target.slice(0, 57)}…` : running.target;
+
+    return strings.turns.stats.phase.running(running.name, target);
+  }
+
+  if (turn.thinking?.since !== null && turn.thinking?.since !== undefined) {
+    return strings.turns.stats.phase.thinking;
+  }
+
+  if (turn.answer?.streaming === true) {
+    return strings.turns.stats.phase.writing;
+  }
+
+  return strings.turns.stats.phase.working;
+}
+
 /** One `.turn`: the user's message, the meta line, then whatever the engine produced. */
 function TurnBlock({ turn, sessionId }: { turn: Turn; sessionId: string }) {
   return (
@@ -93,7 +114,7 @@ function TurnBlock({ turn, sessionId }: { turn: Turn; sessionId: string }) {
       </div>
 
       {/* The measured live line (0.9.0): only while the turn runs; the footer carries real totals. */}
-      {turn.stats === undefined ? null : <LiveStats stats={turn.stats} />}
+      {turn.stats === undefined ? null : <LiveStats stats={turn.stats} phase={phaseOf(turn)} />}
 
       {/* The plan first: it is the map of everything below it. */}
       <PlanCard steps={turn.plan} running={turn.running} />

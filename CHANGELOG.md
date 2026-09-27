@@ -15,6 +15,49 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [0.11.8] — SDC reads you the way you write, and a stream that flows
+
+The report: *"ami jevabe tmake sms kortasi ai vabe sms korle jano SDC bujte pare and promt make kore
+automatic"* - write the way you text, in any language, and have SDC turn it into a proper request - and a
+live stream better than the chat apps.
+
+### Added — reading a message the way it was meant (`sdcd/src/understand.rs`)
+
+* Every message's language is detected: **Banglish** (Bengali in English letters), Bengali script,
+  Hinglish, Hindi, Arabic script, others. Scripts are counted; romanized Bengali and Hindi are recognised
+  by their common words - the report's own messages are the tests.
+* The engine receives a short brief in front of the message: read past the spelling, find **every**
+  request in it, restate it, do each part, answer in the person's language, keep code and commands as they
+  are, and ask before a costly guess. The message itself is sent **verbatim**, and only the message is
+  stored and replayed.
+* The answer opens with one line - `Understood: …` in the person's language - drawn as its own card, so
+  you see at a glance whether SDC got it right before reading any work. Measured end to end with a
+  Banglish request: the card and the whole answer came back in Bengali, the code untouched.
+* The message carries a chip: *Read as Banglish · answering in বাংলা*. Short English lines and `/commands`
+  go through untouched; `engine.start { understand: false }` turns it off.
+
+### Changed — the live stream
+
+* **Even reveal.** Text is drawn a few characters per frame, always a fixed share of what is behind, so it
+  flows at the engine's pace instead of jumping in 50 ms lumps - and it never stops inside a character: a
+  Bengali conjunct (ক্ষ), a vowel sign or an emoji arrives whole. Reduced-motion settings get the text at
+  once.
+* **Only the last paragraph is re-drawn.** Markdown is parsed per paragraph and memoised, so a long answer
+  no longer re-parses from the top on every frame.
+* **What it is doing now** leads the live line: `Run · git status`, `Thinking`, `Writing`.
+
+### Fixed
+
+* **Errors that blamed the wrong thing.** `Permission denied (keyboard-interactive)` was explained as *"the
+  path is not writable"*; it is now *Not signed in to the host*, with the way back. `env: 'gemini': No
+  such file or directory` now says the CLI is not installed on the machine the chat runs on. A quoted line
+  no longer shows a stray double backtick.
+* **Reconnect opens the sign-in card at once** for a host that only needs its password and code, instead
+  of probing for two seconds first.
+* **The Terminal on a signed-out host** offers *Sign in*, and reopens the shell by itself once you are in.
+* **The status bar's daemon version** is the running daemon's (it showed `sdcd 0.11.6` next to a 0.11.7
+  daemon after the update).
+
 ## [0.11.7] — the 15-second cut, a sign-in without the 13-second wait, and a real terminal
 
 The report: a VPS chat dropped every so often (*"maje maje onk druto disconnect hoye jasse"*), the sign-in

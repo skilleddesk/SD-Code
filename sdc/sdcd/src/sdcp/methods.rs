@@ -1335,11 +1335,18 @@ impl Daemon {
             .start_turn(&turn_id, &session_id, ordinal, &engine_id, &model, &tier, &prompt_text)
             .map_err(ErrorObject::internal)?;
 
-        out.push(
-            event::turn_started(&turn_id, &session_id, &engine_id, &model, &tier, &prompt_text),
-            Some(session_id.clone()),
-            Some(turn_id.clone()),
-        );
+        /* How the message is read (0.11.8, `understand`): the chip on the person's message, and the brief
+           the engine gets in front of it. `understand: false` sends the text exactly as typed. */
+        let understand = envelope.params.get("understand").and_then(Value::as_bool).unwrap_or(true);
+        let reading = crate::understand::Reading::of(&prompt_text);
+        let briefed = understand && crate::understand::wants_brief(&prompt_text, &reading);
+        let mut started = event::turn_started(&turn_id, &session_id, &engine_id, &model, &tier, &prompt_text);
+
+        if briefed {
+            started["reading"] = reading.to_json();
+        }
+
+        out.push(started, Some(session_id.clone()), Some(turn_id.clone()));
 
         /* The folder this chat works in, resolved *now* from the session's project and carried in the
            plan, so the engine can be started inside it. A chat bound to a folder runs there; a chat with
@@ -1410,6 +1417,8 @@ impl Daemon {
         let state = self.state.clone();
         let notifier = out.clone();
         let answer_turn_id = turn_id.clone();
+        /* The engine reads the brief and the message; the store and the history keep the message alone. */
+        let prompt_text = if briefed { crate::understand::shape(&prompt_text, &reading) } else { prompt_text };
         let plan = RunPlan {
             session_id,
             turn_id,
@@ -3856,6 +3865,72 @@ mod tests {
             "five deltas that never waited for the window should still land as a single push"
         );
         assert_eq!(notifier.streamed_text(), "Hello, world");
+    }
+
+    /// The limiter's other trigger, also through `run_turn`: a delta that alone crosses the 4096-byte
+    /// cap must not sit and wait for [`DELTA_WINDOW`] - it goes out the moment it lands, same as the
+    /// unit test on `Pending` checks, but here through the loop that decides when `flush` runs.
+    #[tokio::test]
+    async fn an_oversized_delta_is_flushed_by_run_turn_without_waiting_for_the_window() {
+        use crate::sdcp::notifications::RecordingNotifier;
+
+        struct Oversized;
+
+        #[async_trait::async_trait]
+        impl crate::engines::Engine for Oversized {
+            fn id(&self) -> &'static str {
+                "oversized"
+            }
+
+            async fn start(&self, _prompt: Prompt, sink: &EventSink) {
+                sink.send(crate::engines::EngineEvent::Delta("x".repeat(4096)));
+                sink.send(crate::engines::EngineEvent::Done { summary: "Done".to_string(), meta: String::new(), pass: None });
+            }
+
+            async fn cancel(&self, _turn_id: &str) -> bool {
+                false
+            }
+
+            fn status(&self, _turn_id: &str) -> EngineStatus {
+                EngineStatus::Idle
+            }
+        }
+
+        let notifier = Arc::new(RecordingNotifier::new());
+        let state = DaemonState::bootstrap(Some(std::path::PathBuf::from(":memory:")))
+            .expect("bootstrapping a daemon for the test");
+        let plan = RunPlan {
+            session_id: "s1".to_string(),
+            turn_id: "turn-1".to_string(),
+            engine_id: "oversized".to_string(),
+            prompt_text: "hi".to_string(),
+            model: "sonnet".to_string(),
+            provider: None,
+            history: Vec::new(),
+            project_root: None,
+            remote: None,
+            self_checkpointing: false,
+            autonomy: Default::default(),
+        };
+        let engine: Arc<dyn crate::engines::Engine> = Arc::new(Oversized);
+        let out: Arc<dyn Notifier> = notifier.clone();
+
+        let ran = tokio::time::timeout(
+            std::time::Duration::from_millis(200),
+            run_turn(state, engine, plan, out),
+        )
+        .await;
+
+        assert!(
+            ran.is_ok(),
+            "a delta past the size cap should flush on arrival, not sit until the window elapses"
+        );
+        assert_eq!(
+            notifier.kinds(),
+            vec!["TurnDelta", "TurnCompleted", "SessionUpdated"],
+            "the oversized delta is its own push, not folded into whatever follows"
+        );
+        assert_eq!(notifier.streamed_text(), "x".repeat(4096));
     }
 
     /// The answer stored for the next turn carries the tool calls: without them a model read its own

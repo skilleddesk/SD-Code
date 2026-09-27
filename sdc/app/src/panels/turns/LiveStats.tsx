@@ -20,7 +20,7 @@ import type { TurnStatsData } from './types';
  * It exists only while the turn runs. The finished turn's footer carries the daemon's real totals
  * (cost, exact tokens), which this line never pretends to know.
  */
-export function LiveStats({ stats }: { stats: TurnStatsData }) {
+export function LiveStats({ stats, phase }: { stats: TurnStatsData; phase?: string }) {
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
@@ -61,7 +61,8 @@ export function LiveStats({ stats }: { stats: TurnStatsData }) {
       data-live-stats
     >
       <Activity size={11} aria-hidden="true" className="shrink-0 animate-pulse text-accent" />
-      <span>{parts.join(' · ')}</span>
+      {phase === undefined ? null : <span className="phase min-w-0 truncate font-sans text-[11px] font-medium text-text-secondary">{phase}</span>}
+      <span className="shrink-0">{parts.join(' · ')}</span>
     </div>
   );
 }

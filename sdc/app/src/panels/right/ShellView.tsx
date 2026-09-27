@@ -1,13 +1,15 @@
 import { FitAddon } from '@xterm/addon-fit';
 import { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
-import { Power, RotateCcw } from 'lucide-react';
+import { KeyRound, Power, RotateCcw } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
 import { sdcpCall } from '../../lib/sdcp';
 import { isSdcpError } from '../../lib/transport';
 import { strings } from '../../strings';
 import type { TerminalSubject } from '../../store/intents';
+import { useOverlayStore } from '../../store/overlays';
+import { useAppStore } from '../../store/store';
 import { BTN_GHOST, BTN_SM } from '../ui/button';
 
 /**
@@ -39,6 +41,8 @@ export function ShellView({ subject }: { subject: TerminalSubject }) {
   const shell = useRef<{ ptyId: string; tty: boolean } | null>(null);
   const [where, setWhere] = useState<string | null>(null);
   const [state, setState] = useState<'idle' | 'opening' | 'running' | 'exited'>('idle');
+  /* The host refused because nobody is signed in (0.11.8): the header offers the sign-in card. */
+  const [signedOut, setSignedOut] = useState(false);
   /* The subject changes with the active chat; the shell is opened with the one on screen at that moment. */
   const subjectRef = useRef(subject);
 
@@ -104,6 +108,10 @@ export function ShellView({ subject }: { subject: TerminalSubject }) {
 
       const data = answer.data ?? '';
 
+      if (data.includes('(keyboard-interactive)')) {
+        setSignedOut(true);
+      }
+
       if (data !== '') {
         term.current?.write(shell.current?.tty === false ? data.replace(/\r?\n/g, '\r\n') : data);
       }
@@ -142,6 +150,7 @@ export function ShellView({ subject }: { subject: TerminalSubject }) {
 
     line.current = '';
     outbox.current = '';
+    setSignedOut(false);
     view.reset();
     setState('opening');
     setWhere(target.where);
@@ -227,6 +236,17 @@ export function ShellView({ subject }: { subject: TerminalSubject }) {
       }
     }
   };
+
+  /* Signed in again from the card: the shell that was refused opens by itself. */
+  const hostStatus = useAppStore((state) =>
+    subject.hostId === undefined ? undefined : state.hosts.find((host) => host.id === subject.hostId)?.status,
+  );
+
+  useEffect(() => {
+    if (signedOut && hostStatus === 'connected') {
+      void openRef.current();
+    }
+  }, [signedOut, hostStatus]);
 
   const onDataRef = useRef(onData);
 
@@ -330,6 +350,17 @@ export function ShellView({ subject }: { subject: TerminalSubject }) {
           <RotateCcw size={10} aria-hidden="true" />
           {state === 'running' ? strings.terminal.shell.restart : strings.terminal.shell.open}
         </button>
+
+        {signedOut && subject.hostId !== undefined ? (
+          <button
+            type="button"
+            className={BTN_SM + ' ' + BTN_GHOST + ' text-accent'}
+            onClick={() => useOverlayStore.getState().openAddHost(subject.hostId)}
+          >
+            <KeyRound size={10} aria-hidden="true" />
+            {strings.terminal.shell.signIn}
+          </button>
+        ) : null}
 
         {state === 'running' ? (
           <button type="button" className={BTN_SM + ' ' + BTN_GHOST} onClick={close}>
