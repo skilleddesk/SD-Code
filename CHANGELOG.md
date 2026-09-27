@@ -15,6 +15,25 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [0.12.3] — Qwen (Alibaba): the key check goes where the key lives
+
+Found by installing 0.12.2 from GitHub over the running app. A **qwen3-max** chat in it had failed with
+Alibaba's `Incorrect API key provided (401)`.
+
+* **The key check ignored the saved Base URL.** `provider.test` always asked the built-in
+  `dashscope-intl` host, even with a workspace URL saved. It now asks the saved one, the same as a chat turn
+  and the model list do.
+* **A pasted key keeps no whitespace.** A key is cleaned on save and on Test. Keys read from the Windows and
+  macOS keychains are trimmed too, as the file store's keys always were.
+* **Alibaba's 401 says what to do.** Alibaba gives the same sentence for a wrong key and for a key made in
+  another region or workspace, so SDC adds: create the key under Model Studio → API Keys in the workspace
+  whose Base URL is set, then paste it again.
+
+Measured: the key stored on this machine was refused (401) by `dashscope-intl` (Singapore), `dashscope`
+(Beijing), `dashscope-us` and the workspace host `ws-….ap-southeast-1.maas.aliyuncs.com`. The key itself is
+the problem, not the address. The workspace Base URL stays saved, so a new key from that workspace works as
+soon as it is pasted.
+
 ## [0.12.2] — an accessibility audit that measures a settled screen
 
 0.12.1's Windows and macOS runs still failed the axe-core audit, each time on a *different* piece of text in the

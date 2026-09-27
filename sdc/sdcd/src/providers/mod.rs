@@ -116,7 +116,17 @@ const KEY_CHECK: &[(&str, &str)] = &[
 /// Anthropic wants its key in `x-api-key` and a version header; every other provider in the table is
 /// OpenAI-compatible, which means a bearer token.
 fn key_check(id: &str, key: &str) -> Option<(String, Vec<(String, String)>)> {
-    let (_, url) = KEY_CHECK.iter().find(|(provider, _)| *provider == id)?;
+    let overrides = crate::providers::models::endpoint_overrides();
+
+    key_check_at(id, key, overrides.get(id).map(String::as_str))
+}
+
+/// [`key_check`] with the base URL the person set, if any. 0.12.2 checked a Qwen key against the built-in
+/// `dashscope-intl` host even with a workspace URL saved, and a workspace key is refused there (401) - so
+/// the Test button said "Incorrect API key" about a key the workspace accepts.
+fn key_check_at(id: &str, key: &str, base: Option<&str>) -> Option<(String, Vec<(String, String)>)> {
+    let (_, built_in) = KEY_CHECK.iter().find(|(provider, _)| *provider == id)?;
+    let url = base.map(|base| format!("{}/models", base.trim_end_matches('/'))).unwrap_or_else(|| built_in.to_string());
 
     let headers = if id == "anthropic-api" {
         vec![
@@ -128,6 +138,24 @@ fn key_check(id: &str, key: &str) -> Option<(String, Vec<(String, String)>)> {
     };
 
     Some((url.to_string(), headers))
+}
+
+/// The provider's own sentence, and - where it does not say what to do - what to do. Alibaba answers
+/// "Incorrect API key" whether the key is wrong or was made in another region or workspace; measured in
+/// 0.12.3 against all three public hosts and a workspace host.
+fn with_hint(id: &str, status: u16, error: String) -> String {
+    if id == "qwen" && status == 401 {
+        return format!(
+            "{error} · Alibaba ties a key to one region and workspace: create it in Model Studio → API Keys of the workspace whose Base URL is set here, and paste it again."
+        );
+    }
+
+    error
+}
+
+/// A pasted API key without the whitespace a paste brings along. No provider's key contains any.
+fn clean_key(key: &str) -> String {
+    key.chars().filter(|character| !character.is_whitespace()).collect()
 }
 
 /// How many models the provider listed. Both dialects answer `{"data":[ … ]}`.
@@ -167,7 +195,7 @@ pub fn test(id: &str, key: Option<&str>) -> Value {
         });
     }
 
-    let candidate = key.map(str::to_string).or_else(|| keychain::get(&key_ref(id)));
+    let candidate = key.map(clean_key).or_else(|| keychain::get(&key_ref(id)));
 
     let Some(secret) = candidate.filter(|secret| !secret.trim().is_empty()) else {
         return json!({
@@ -197,7 +225,7 @@ pub fn test(id: &str, key: Option<&str>) -> Value {
                 "verified": true,
                 "models": 0,
                 "detail": "",
-                "error": crate::engines::native_api::rejection(status, &body),
+                "error": with_hint(id, status, crate::engines::native_api::rejection(status, &body)),
             }),
             /* Not reachable is a different sentence from rejected: the key was never judged. */
             Err(reason) => json!({
@@ -374,7 +402,9 @@ pub fn save(
         .find(|row| row.0 == id)
         .map(|row| row.1.to_string())
         .unwrap_or_else(|| id.to_string());
-    let secret = key.unwrap_or_default();
+    /* An API key has no whitespace in it; a paste can (a trailing newline, a key wrapped across lines). */
+    let cleaned = clean_key(key.unwrap_or_default());
+    let secret = cleaned.as_str();
 
     if !secret.is_empty() {
         keychain::set(&key_ref(id), secret)?;
@@ -556,6 +586,17 @@ mod tests {
 
         /* A provider with no check endpoint is not guessed at. */
         assert!(key_check("smoke-only-provider", "sk-1").is_none());
+
+        /* A saved workspace URL is where the key is checked, not the built-in host. */
+        let workspace = "https://ws-1.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1/";
+
+        assert_eq!(key_check_at("qwen", "sk-1", Some(workspace)).unwrap().0, "https://ws-1.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1/models");
+        assert_eq!(key_check_at("qwen", "sk-1", None).unwrap().0, "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/models");
+
+        /* A pasted key loses its whitespace, and Alibaba's 401 says what to do. */
+        assert_eq!(clean_key(" sk-ab\r\ncd \n"), "sk-abcd");
+        assert!(with_hint("qwen", 401, "Incorrect API key provided. (401)".into()).contains("Model Studio"));
+        assert_eq!(with_hint("deepseek", 401, "no".into()), "no");
     }
 
     #[test]

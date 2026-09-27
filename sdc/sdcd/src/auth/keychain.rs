@@ -211,8 +211,10 @@ pub fn set(name: &str, secret: &str) -> Result<(), ErrorObject> {
 
 /// Reads a secret, or `None` when there is not one.
 pub fn get(name: &str) -> Option<String> {
+    /* Trimmed on both stores (0.12.3): the file store always was, the OS store was not - so a key pasted with
+       a trailing newline worked on Linux and was refused with 401 on Windows and macOS. */
     if os_store_works() {
-        return os_get(name);
+        return os_get(name).map(|secret| secret.trim().to_string());
     }
 
     let path = key_path(name).ok()?;
