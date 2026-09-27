@@ -1,5 +1,10 @@
 {
   "bundle": {
-    "targets": ["msi", "nsis"]
+    "targets": ["msi", "nsis"],
+    "windows": {
+      "nsis": {
+        "installerHooks": "./windows/hooks.nsh"
+      }
+    }
   }
 }

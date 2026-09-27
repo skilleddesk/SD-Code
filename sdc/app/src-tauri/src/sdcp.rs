@@ -355,10 +355,26 @@ pub async fn subscribe(app: AppHandle, bridge: Arc<SdcpBridge>) -> Result<(), St
     };
 
     let mut reader = BufReader::new(stream);
-    /* The first request on this connection asks for the whole log, so a window that reloads while a
-       turn is running catches up instead of starting mid-sentence (spec section 5.4). */
+    /*
+     * What this socket asks for first (0.11.6).
+     *
+     * It used to be `event.list { since: 0 }` on every first connect - the whole log, forwarded to the
+     * window one `emit` at a time. The page asks for that same history itself (`lib/sdcp.ts`, one
+     * `event.list` answer folded in a loop), so this was a second copy, and on a log of 35 249 events it
+     * was thirty-five thousand IPC messages queued in front of every call: measured on the machine the
+     * report came from, `sdcp_status` did not answer for more than twelve minutes and the window sat on
+     * `0 providers · 0 chats · 0 hosts` - "all my providers were removed".
+     *
+     * So a first connect only subscribes, and the page's own catch-up is the history. A *re*connect
+     * (the daemon went away and came back while the window stayed open) still asks for what it missed
+     * since the last event it forwarded, which is a handful rather than the log.
+     */
     let since = bridge.last_seq.load(Ordering::SeqCst);
-    let envelope = json!({ "v": "0.1", "id": "app-subscribe", "method": "event.list", "params": { "since": since } });
+    let envelope = if since == 0 {
+        json!({ "v": "0.1", "id": "app-subscribe-live", "method": "event.subscribe", "params": {} })
+    } else {
+        json!({ "v": "0.1", "id": "app-subscribe", "method": "event.list", "params": { "since": since } })
+    };
 
     reader
         .get_mut()
@@ -394,6 +410,16 @@ pub async fn subscribe(app: AppHandle, bridge: Arc<SdcpBridge>) -> Result<(), St
                         bridge.last_seq.store(entry["seq"].as_i64().unwrap_or(0), Ordering::SeqCst);
                         let _ = app.emit(EVENT_NAME, entry.clone());
                     }
+                }
+
+                continue;
+            }
+
+            /* The live-only subscribe's answer: where the stream starts, so a later reconnect asks for
+               what came after it rather than for the whole log again. */
+            if message.get("id").and_then(Value::as_str) == Some("app-subscribe-live") {
+                if let Some(from) = message.pointer("/result/fromSeq").and_then(Value::as_i64) {
+                    let _ = bridge.last_seq.compare_exchange(0, from - 1, Ordering::SeqCst, Ordering::SeqCst);
                 }
 
                 continue;

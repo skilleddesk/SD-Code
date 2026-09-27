@@ -15,6 +15,40 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [0.11.6] — the real reason the providers vanished, and an update that replaces the daemon
+
+0.11.5 was installed on the machine the report came from and checked in its window. It came up
+`0 providers · 0 chats · 0 hosts` - the report, exactly - with the daemon answering every one of those
+lists in under seven seconds from a terminal. Two defects were behind it, and neither was the one 0.11.5
+fixed.
+
+### Fixed — thirty-five thousand messages in front of every call
+
+On its first connect the desktop bridge asked the daemon for the **whole event log** and forwarded it to
+the window one `emit` at a time. The page already asks for that history itself (`lib/sdcp.ts`, one
+`event.list` folded in a loop), so this was a second copy - and on this machine's log of 35 249 events it
+was 35 249 IPC messages queued ahead of everything else. `sdcp_status`, a command that touches no socket
+at all, did not answer for more than twelve minutes; the window sat empty the whole time. The longer SDC
+is used, the longer the log and the longer the wait, which is why it looked like providers had been
+*removed* rather than slow to load.
+
+* **A first connect only subscribes** (`event.subscribe`); the page's own catch-up is the history. A
+  reconnect while the window stays open still asks for what it missed since the last event it forwarded.
+* Measured after the fix on the same machine and the same log: the window shows `4 providers · 2 chats ·
+  2 hosts` within fifteen seconds of launch, and `sdcp_status` answers at once.
+
+### Fixed — an update that left the old daemon behind
+
+Installing 0.11.5 while SDC was open left `sdcd.exe` at 0.11.4 (`sdcd --version`, after the installer
+finished): Windows locks a running program's file, and the installer skipped it. The window then talked to
+the previous release's daemon. The NSIS installer now stops `sdc.exe` and `sdcd.exe` before it copies
+(`src-tauri/windows/hooks.nsh`) - verified by installing 0.11.6 over a running 0.11.5: `sdcd 0.11.6`.
+
+### Verified in the installed window
+
+* The banner's `Reconnect` on the 2FA VPS opens the host's card with the password and verification-code
+  fields (0.11.5's `watchHosts`), after the doctor names `Sign in`.
+
 ## [0.11.5] — the window asks again: providers after an update, a sign-in after a drop, a site by its name
 
 Three reports, and all three came down to a window that asked once and then stopped asking.
