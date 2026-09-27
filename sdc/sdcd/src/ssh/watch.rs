@@ -26,8 +26,14 @@ use crate::store::sqlite::Store;
 
 use super::Ssh;
 
-/// How often a connected host is looked at. A probe through an open master costs about 30 ms.
+/// How often a connected host is probed over the network.
 pub const INTERVAL: Duration = Duration::from_secs(45);
+
+/// How often a signed-in host's master is checked **locally** (0.11.7): `-O check` talks to a socket on
+/// this machine, so a master that died is on the card within seconds - before the agent's next command
+/// falls back to the key and meets `Permission denied (keyboard-interactive)` four times in a row, which
+/// is what the report's screenshot shows.
+pub const QUICK: Duration = Duration::from_secs(5);
 
 /// How long to wait before believing a failed probe.
 const CONFIRM: Duration = Duration::from_secs(3);
@@ -58,18 +64,59 @@ fn connected_hosts(store: &Store) -> Vec<(String, String, Option<String>, Ssh)> 
 ///
 /// Answers with the ids whose status changed, which is what the tests assert.
 pub fn tick(store: &Store, notifier: &dyn Notifier) -> Vec<String> {
+    sweep(store, notifier, true)
+}
+
+/// One pass. `full` probes every connected host over the network; otherwise only the hosts whose
+/// signed-in master is gone are measured, and the check that finds them is local.
+fn sweep(store: &Store, notifier: &dyn Notifier, full: bool) -> Vec<String> {
     let mut changed = Vec::new();
 
     for (id, name, platform, ssh) in connected_hosts(store) {
+        /* A master this daemon did not start - the one a previous daemon left running across an update -
+           is looked after the same way once its socket is found. */
+        let socket = super::session::control_path(&ssh).ok().filter(|path| path.exists());
+        let tracked = super::session::was_signed_in(&ssh) || socket.is_some();
+        let open = tracked && super::session::is_open(&ssh);
+        let master_lost = tracked && !open;
+
+        if open {
+            super::session::adopt(&ssh);
+        }
+
+        if !full && !master_lost {
+            continue;
+        }
+
         let (mut status, mut detail) = super::ops::probe(&ssh);
 
-        if status != "connected" {
+        /* A master that is gone is not a hiccup: `-O check` asked this machine, not the network. */
+        if status != "connected" && !master_lost {
             std::thread::sleep(CONFIRM);
             (status, detail) = super::ops::probe(&ssh);
         }
 
         if status == "connected" {
+            /* Reached without the master (by key): the socket was a leftover, and checking it every
+               few seconds would buy nothing. */
+            if master_lost {
+                super::session::forget(&ssh);
+
+                if let Some(path) = &socket {
+                    let _ = std::fs::remove_file(path);
+                }
+            }
+
             continue;
+        }
+
+        super::session::forget(&ssh);
+
+        if master_lost {
+            detail = format!(
+                "the signed-in connection to {} closed (the network dropped, the machine slept, or the host ended it). {detail}",
+                ssh.label()
+            );
         }
 
         let target = ssh.target.user_host.clone();
@@ -91,13 +138,18 @@ pub fn tick(store: &Store, notifier: &dyn Notifier) -> Vec<String> {
 /// first, and a row the previous daemon left `connected` is measured shortly after.
 pub fn spawn(store: Arc<Store>, notifier: Arc<dyn Notifier>) {
     tokio::spawn(async move {
+        let every = (INTERVAL.as_secs() / QUICK.as_secs()).max(1);
+        let mut round: u64 = 0;
+
         loop {
-            tokio::time::sleep(INTERVAL).await;
+            tokio::time::sleep(QUICK).await;
+            round += 1;
 
             let store = store.clone();
             let notifier = notifier.clone();
+            let full = round % every == 0;
 
-            let _ = tokio::task::spawn_blocking(move || tick(&store, &*notifier)).await;
+            let _ = tokio::task::spawn_blocking(move || sweep(&store, &*notifier, full)).await;
         }
     });
 }

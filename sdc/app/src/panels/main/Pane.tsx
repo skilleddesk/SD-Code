@@ -1,5 +1,5 @@
-import { MessageSquare } from 'lucide-react';
-import { useEffect, useRef } from 'react';
+import { ArrowDown, MessageSquare } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
 
 import { strings } from '../../strings';
 import type { Host, Session } from '../../store/sessions';
@@ -54,24 +54,63 @@ export function Pane({ session, host, showHeader }: PaneProps) {
    * on every render and the array itself would scroll on a hover.
    */
   const scroll = useRef<HTMLDivElement>(null);
+  const inner = useRef<HTMLDivElement>(null);
   const pinned = useRef(true);
-  const live = streamTurns[streamTurns.length - 1];
-  const grown = [
-    streamTurns.length,
-    live?.answer?.text.length ?? 0,
-    live?.thinking?.text.length ?? 0,
-    live?.tools.length ?? 0,
-  ].join(':');
+  /** The reader scrolled up while the stream kept growing below: the "Jump to latest" chip shows. */
+  const [behind, setBehind] = useState(false);
+
+  /*
+   * Follow the stream by its **size**, not by a list of things that grow (0.11.7).
+   *
+   * The follow used to key on the answer's and the thinking's length and the number of tool cards, so a
+   * Run card printing forty lines of output, a plan ticking over, a permission card or a code block
+   * re-flowing grew the page below the fold and the view stayed where it was - *"written ar songge
+   * screen up and down hobe"*. A ResizeObserver on the column sees every one of those, including the
+   * ones nobody thought of yet. A frame is the unit: several deltas in one frame scroll once.
+   */
+  useEffect(() => {
+    const element = scroll.current;
+    const column = inner.current;
+
+    if (element === null || column === null || typeof ResizeObserver === 'undefined') {
+      return;
+    }
+
+    let frame = 0;
+    const follow = new ResizeObserver(() => {
+      if (!pinned.current) {
+        setBehind(true);
+        return;
+      }
+
+      globalThis.cancelAnimationFrame(frame);
+      frame = globalThis.requestAnimationFrame(() => {
+        element.scrollTop = element.scrollHeight;
+      });
+    });
+
+    follow.observe(column);
+
+    return () => {
+      globalThis.cancelAnimationFrame(frame);
+      follow.disconnect();
+    };
+  }, []);
+
+  /* A new turn - the message the person just sent - takes the view back to the bottom: they are
+     reading what they asked for, wherever they had scrolled to before. */
+  const count = streamTurns.length;
 
   useEffect(() => {
     const element = scroll.current;
 
-    if (element === null || !pinned.current) {
-      return;
-    }
+    pinned.current = true;
+    setBehind(false);
 
-    element.scrollTop = element.scrollHeight;
-  }, [grown]);
+    if (element !== null) {
+      element.scrollTop = element.scrollHeight;
+    }
+  }, [count, session.id]);
 
   /** 24px of slack: a trackpad's last nudge is not "the reader scrolled away". */
   const onScroll = () => {
@@ -82,6 +121,18 @@ export function Pane({ session, host, showHeader }: PaneProps) {
     }
 
     pinned.current = element.scrollHeight - element.scrollTop - element.clientHeight <= 24;
+
+    if (pinned.current) {
+      setBehind(false);
+    }
+  };
+
+  const jumpToLatest = () => {
+    const element = scroll.current;
+
+    pinned.current = true;
+    setBehind(false);
+    element?.scrollTo({ top: element.scrollHeight, behavior: 'smooth' });
   };
 
   return (
@@ -111,7 +162,7 @@ export function Pane({ session, host, showHeader }: PaneProps) {
         ref={scroll}
         onScroll={onScroll}
       >
-        <div className="pane-inner mx-auto max-w-[780px]">
+        <div className="pane-inner mx-auto max-w-[780px]" ref={inner}>
           {streamTurns.length === 0 ? (
             /* A fresh session, and the app says so instead of drawing someone else's conversation. */
             <div
@@ -133,6 +184,19 @@ export function Pane({ session, host, showHeader }: PaneProps) {
           )}
         </div>
       </div>
+
+      {behind ? (
+        <div className="pointer-events-none relative h-0">
+          <button
+            type="button"
+            className="pointer-events-auto absolute bottom-[10px] left-1/2 flex -translate-x-1/2 items-center gap-[6px] rounded-full border border-border-default bg-bg-raised px-[12px] py-[5px] text-[11.5px] font-medium text-text-primary shadow-md hover:border-border-strong"
+            onClick={jumpToLatest}
+          >
+            <ArrowDown size={12} aria-hidden="true" />
+            {strings.main.jumpToLatest}
+          </button>
+        </div>
+      ) : null}
 
       <PromptArea sessionId={session.id} />
     </div>

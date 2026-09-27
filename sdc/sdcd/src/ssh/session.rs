@@ -123,6 +123,40 @@ pub fn mux_options(ssh: &Ssh) -> Result<Vec<String>, ErrorObject> {
     ])
 }
 
+/// The hosts this daemon signed in to and holds a master for (0.11.7), by [`Ssh::label`].
+///
+/// The watcher looks at these every few seconds with a local `-O check` - no network - so a master that
+/// went away is on the host's card in seconds, not after the next 45 s remote probe.
+fn signed() -> &'static Mutex<std::collections::HashSet<String>> {
+    static SIGNED: OnceLock<Mutex<std::collections::HashSet<String>>> = OnceLock::new();
+
+    SIGNED.get_or_init(Default::default)
+}
+
+/// Did this daemon sign in to this host, and has nobody yet reported that sign-in gone?
+pub fn was_signed_in(ssh: &Ssh) -> bool {
+    signed().lock().map(|set| set.contains(&ssh.label())).unwrap_or(false)
+}
+
+/// Forgets a sign-in once its loss has been reported, so it is reported once.
+pub fn forget(ssh: &Ssh) {
+    if let Ok(mut set) = signed().lock() {
+        set.remove(&ssh.label());
+    }
+}
+
+/// Takes over a live master this daemon did not start (0.11.7) - one left by the daemon an update
+/// replaced - so its loss is noticed as quickly as that of one it did.
+pub fn adopt(ssh: &Ssh) {
+    remember(ssh);
+}
+
+fn remember(ssh: &Ssh) {
+    if let Ok(mut set) = signed().lock() {
+        set.insert(ssh.label());
+    }
+}
+
 /// Is a master open for this host right now?
 pub fn is_open(ssh: &Ssh) -> bool {
     let Some(program) = program() else {
@@ -178,6 +212,8 @@ fn bounded(mut command: std::process::Command, budget: Duration) -> Option<bool>
 
 /// Closes this host's master, if there is one (a removed host, a sign-out).
 pub fn close(ssh: &Ssh) {
+    forget(ssh);
+
     let (Some(program), Ok(path)) = (program(), control_path(ssh)) else {
         return;
     };
@@ -227,6 +263,8 @@ pub fn sign_in(ssh: &Ssh, password: &str, code: &str) -> Result<String, SignInEr
     };
 
     if is_open(ssh) {
+        remember(ssh);
+
         return Ok(format!("signed in to {} · the connection was already open", ssh.label()));
     }
 
@@ -279,8 +317,12 @@ pub fn sign_in(ssh: &Ssh, password: &str, code: &str) -> Result<String, SignInEr
         "BatchMode=no".to_string(),
         "NumberOfPasswordPrompts=1".to_string(),
         "PreferredAuthentications=publickey,keyboard-interactive,password".to_string(),
+        /* The master is the one connection that carries a sign-in nobody can redo without a fresh
+           code, so it rides out a flaky network instead of giving up after 45 s (0.11.7): a keepalive
+           every 15 s, and only 8 unanswered ones - two minutes of silence - end it. */
         "ServerAliveInterval=15".to_string(),
-        "ServerAliveCountMax=3".to_string(),
+        "ServerAliveCountMax=8".to_string(),
+        "TCPKeepAlive=yes".to_string(),
         "ControlMaster=yes".to_string(),
         format!("ControlPersist={PERSIST}"),
         format!("ControlPath={}", ssh_path(&path)),
@@ -348,6 +390,8 @@ pub fn sign_in(ssh: &Ssh, password: &str, code: &str) -> Result<String, SignInEr
     let seen = seen.lock().map(|mut seen| std::mem::take(&mut *seen)).unwrap_or_default();
 
     if code_status == Some(0) && is_open(ssh) {
+        remember(ssh);
+
         let how = match (seen.password, seen.code) {
             (true, true) => "password and verification code",
             (true, false) => "password",

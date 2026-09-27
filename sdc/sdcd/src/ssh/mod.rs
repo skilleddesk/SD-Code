@@ -174,12 +174,33 @@ impl Ssh {
             options.push("BatchMode=no".to_string());
             options.push("NumberOfPasswordPrompts=1".to_string());
             options.push("PreferredAuthentications=publickey,keyboard-interactive,password".to_string());
-        } else {
+        }
+
+        /* Through the signed-in connection when there is one (0.8.1). Not for the key install: that call
+           runs on the PTY with the platform's own `ssh`, which has no multiplexing. */
+        let mux = if interactive { Vec::new() } else { session::mux_options(self)? };
+
+        if !interactive {
             options.push("BatchMode=yes".to_string());
-            options.push("ServerAliveInterval=15".to_string());
-            options.push("ServerAliveCountMax=3".to_string());
             options.push("PreferredAuthentications=publickey".to_string());
             options.push("PasswordAuthentication=no".to_string());
+
+            /*
+             * No keepalive on a call that rides the signed-in connection (0.11.7), and this is the
+             * measured cause of *"maje maje disconnect hoye jay"*: every `Connection to … closed by remote
+             * host.` in the log came 14.6-15.0 s into a quiet command - one `ServerAliveInterval`. A
+             * `-O proxy` client sends its `keepalive@openssh.com` to the **master**, and the master's
+             * proxy only relays `tcpip-forward` global requests: anything else closes that client. The
+             * command was cut off, its channel orphaned on the master, and once the master itself went
+             * down with it. The master keeps the real connection alive (`session::sign_in`); a proxied
+             * call needs none of its own.
+             */
+            if mux.is_empty() {
+                options.push("ServerAliveInterval=15".to_string());
+                options.push("ServerAliveCountMax=3".to_string());
+            } else {
+                options.push("ServerAliveInterval=0".to_string());
+            }
         }
 
         for option in options {
@@ -189,12 +210,7 @@ impl Ssh {
 
         args.push("-o".to_string());
         args.push(format!("UserKnownHostsFile={}", session::ssh_path(&pins)));
-
-        /* Through the signed-in connection when there is one (0.8.1). Not for the key install: that call
-           runs on the PTY with the platform's own `ssh`, which has no multiplexing. */
-        if !interactive {
-            args.extend(session::mux_options(self)?);
-        }
+        args.extend(mux);
 
         /* The key SDC owns, when it exists. `ensure_key` is what makes one, and it is called on the
            path that adds a host - never here, because reading a remote folder must not create a key

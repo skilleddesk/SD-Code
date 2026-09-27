@@ -204,6 +204,10 @@ const CAPTURE_LIMIT: usize = 256 * 1024;
 /// handful; a dev server's log is its tail. 400 covers both and stays small.
 pub const OUTPUT_LINES: usize = 400;
 
+/// How many raw output bytes a process keeps for `pty.output`'s cursor (0.11.7). A terminal screen is
+/// far less than this; what falls off the front is simply older than any screen that is still open.
+pub const RAW_LIMIT: usize = 1024 * 1024;
+
 /// What the daemon knows about one long-running process: its output tail and whether it is alive.
 ///
 /// It exists because `pty.open` used to be fire-and-forget, and a process you cannot read is a process
@@ -228,6 +232,11 @@ pub struct Session {
     /// question was invisible to everything reading this ring - the login dialog, and the code that
     /// should have answered it. Output now includes these tails after the complete lines.
     pub partials: [String; 2],
+    /// Every byte both streams printed, in arrival order, for the Terminal's shell (0.11.7): escape
+    /// sequences, prompts and carriage returns included - the line ring above drops exactly those.
+    pub raw: Vec<u8>,
+    /// How many bytes fell off the front of `raw`, so a cursor stays an absolute offset.
+    pub raw_base: u64,
     pub state: String,
     pub started: Instant,
 }
@@ -240,6 +249,8 @@ impl Session {
             remote,
             lines: Vec::new(),
             partials: [String::new(), String::new()],
+            raw: Vec::new(),
+            raw_base: 0,
             state: "running".to_string(),
             started: Instant::now(),
         }
@@ -252,6 +263,35 @@ impl Session {
         }
 
         self.lines.push(line);
+    }
+
+    /// Appends raw output, dropping the oldest bytes past [`RAW_LIMIT`].
+    fn push_raw(&mut self, bytes: &[u8]) {
+        self.raw.extend_from_slice(bytes);
+
+        if self.raw.len() > RAW_LIMIT {
+            let excess = self.raw.len() - RAW_LIMIT;
+
+            self.raw.drain(..excess);
+            self.raw_base += excess as u64;
+        }
+    }
+
+    /// The raw output from absolute offset `since`, cut at the last whole UTF-8 character, and the
+    /// offset to ask from next time. A character split across two reads comes whole on the next call.
+    pub fn raw_since(&self, since: u64) -> (String, u64) {
+        let start = since.saturating_sub(self.raw_base).min(self.raw.len() as u64) as usize;
+        let slice = &self.raw[start..];
+        let whole = match std::str::from_utf8(slice) {
+            Ok(_) => slice.len(),
+            Err(error) if error.error_len().is_none() => error.valid_up_to(),
+            Err(_) => slice.len(),
+        };
+
+        (
+            String::from_utf8_lossy(&slice[..whole]).to_string(),
+            self.raw_base + (start + whole) as u64,
+        )
     }
 
     /// Everything printed so far, which is what a URL search and a log view both read.
@@ -467,6 +507,8 @@ impl PtyManager {
                         continue;
                     };
 
+                    session.push_raw(&chunk[..read]);
+
                     while let Some(end) = pending.iter().position(|byte| *byte == b'\n') {
                         let raw: Vec<u8> = pending.drain(..=end).collect();
 
@@ -503,11 +545,33 @@ impl PtyManager {
     /// it is done. `pty.output` on an id that never existed is a `not_found`, because a UI asking about
     /// a process the daemon does not have is a UI that has lost track of itself.
     pub fn output(&self, id: &str) -> Result<Value, ErrorObject> {
+        self.output_since(id, None)
+    }
+
+    /// The same, plus - with `since` - the raw bytes from that offset (`data`) and the next offset
+    /// (`next`): what the Terminal's shell polls (0.11.7). The line tail is left out then, because a
+    /// terminal draws the bytes and has no use for a second copy of them.
+    pub fn output_since(&self, id: &str, since: Option<u64>) -> Result<Value, ErrorObject> {
         let state = self.state_of(id);
         let sessions = self.sessions.lock().map_err(|_| ErrorObject::internal("pty registry poisoned"))?;
         let session = sessions
             .get(id)
             .ok_or_else(|| ErrorObject::not_found(format!("{id} is not a process this daemon started")))?;
+
+        if let Some(since) = since {
+            let (data, next) = session.raw_since(since);
+
+            return Ok(json!({
+                "ptyId": id,
+                "command": session.label,
+                "state": state,
+                "lineCount": 0,
+                "lines": [],
+                "ms": session.started.elapsed().as_millis() as u64,
+                "data": data,
+                "next": next,
+            }));
+        }
 
         let lines = session.visible_lines();
 
@@ -688,6 +752,33 @@ mod tests {
 
         assert_eq!(error.code, "internal");
         assert_eq!(manager.running(), 0);
+    }
+
+    #[test]
+    fn the_raw_cursor_returns_whole_characters_and_survives_the_cap() {
+        let mut session = Session::new("sh", None, None);
+
+        /* "অ" is three bytes; the first two arrive alone. */
+        session.push_raw(b"ok \xe0\xa6");
+
+        let (data, next) = session.raw_since(0);
+
+        assert_eq!(data, "ok ");
+        assert_eq!(next, 3);
+
+        session.push_raw(b"\x85\r\n");
+
+        let (data, next) = session.raw_since(next);
+
+        assert_eq!(data, "অ\r\n");
+        assert_eq!(next, 8);
+
+        session.push_raw(&vec![b'x'; RAW_LIMIT]);
+
+        let (data, next) = session.raw_since(0);
+
+        assert_eq!(data.len(), RAW_LIMIT);
+        assert_eq!(next, 8 + RAW_LIMIT as u64);
     }
 
     #[test]

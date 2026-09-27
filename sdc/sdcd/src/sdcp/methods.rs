@@ -316,19 +316,39 @@ impl Daemon {
             .and_then(|row| row["name"].as_str().map(str::to_string))
             .unwrap_or(label);
 
-        out.push(
-            event::host_status(
-                &host_id,
-                &name,
-                "vps",
-                "connecting",
+        /*
+         * A sign-in to a host whose key is already pinned goes straight to the sign-in (0.11.7).
+         *
+         * The report: *"login hote onk time lage"*. The log shows why - 13 s of `checking host key…`
+         * before every sign-in, because `ssh-keyscan` fails that host's key exchange and the scan then
+         * falls back to a full handshake. The sign-in itself runs with `StrictHostKeyChecking=yes`
+         * against the same pins, so for a pinned host the scan decided nothing the sign-in does not
+         * decide again - and a changed key still stops the sign-in before a password is offered. The
+         * 13 s also mattered for the verification code: an authenticator code lives about 30 s.
+         */
+        let pinned = crate::ssh::hostkey::known_hosts_path()
+            .ok()
+            .and_then(|pins| crate::ssh::hostkey::pinned_in(&pins, &ssh.target).ok())
+            .is_some_and(|keys| !keys.is_empty());
+        let straight = pinned
+            && (!password.is_empty() || !code.is_empty())
+            && crate::ssh::session::program().is_some();
+
+        if !straight {
+            out.push(
+                event::host_status(
+                    &host_id,
+                    &name,
+                    "vps",
+                    "connecting",
+                    None,
+                    Some(&format!("checking {target}'s host key…")),
+                    None,
+                ),
                 None,
-                Some(&format!("checking {target}'s host key…")),
                 None,
-            ),
-            None,
-            None,
-        );
+            );
+        }
 
         let state = self.state.clone();
         let notifier = out.clone();
@@ -348,6 +368,12 @@ impl Daemon {
          *     sentence says so with both fingerprints.
          */
         tokio::spawn(async move {
+            if straight {
+                finish_connection(state, notifier, host_id, name, ssh, Secrets { password, code }, key_note).await;
+
+                return;
+            }
+
             let scan_target = ssh.target.clone();
             let seen = tokio::task::spawn_blocking(move || crate::ssh::hostkey::inspect(&scan_target))
                 .await
@@ -2034,6 +2060,10 @@ impl Daemon {
     /// It is not a terminal (`tty: false` still - no `-tt`, so no full-screen programs), and the answer
     /// says so rather than leaving a caller to discover it.
     fn pty_open(&self, envelope: &Envelope) -> Result<Value, ErrorObject> {
+        if envelope.opt_bool("shell") {
+            return self.pty_open_shell(envelope);
+        }
+
         let args: Vec<String> = envelope
             .params
             .get("args")
@@ -2101,6 +2131,52 @@ impl Daemon {
         Ok(json!({ "ptyId": opened["ptyId"], "command": display, "tty": false, "hostId": self.host_id_for(envelope)? }))
     }
 
+    /// `pty.open` with `shell: true` - the Terminal's interactive shell (0.11.7).
+    ///
+    /// The report: *"aikhane terminal nai"*. The Terminal tab ran one command at a time, so a prompt, a
+    /// `cd` that stays, `top`, `nano`, a REPL - everything a person opens a terminal for - was out of
+    /// reach. On a host this is `ssh -tt` through the **same signed-in connection** every other call
+    /// uses, so the host allocates a real terminal (prompt, colours, full-screen programs) and nothing is
+    /// asked again; here it is the platform's shell on pipes, which the window drives line by line.
+    fn pty_open_shell(&self, envelope: &Envelope) -> Result<Value, ErrorObject> {
+        let cwd = envelope.opt_str("cwd").filter(|cwd| !cwd.trim().is_empty());
+        let cols = envelope.params.get("cols").and_then(Value::as_u64).unwrap_or(100).clamp(20, 400);
+        let rows = envelope.params.get("rows").and_then(Value::as_u64).unwrap_or(30).clamp(5, 200);
+
+        let Some(ssh) = self.remote_for(envelope)? else {
+            let (command, args): (String, Vec<String>) = if cfg!(windows) {
+                ("powershell.exe".to_string(), vec!["-NoLogo".to_string(), "-NoProfile".to_string(), "-Command".to_string(), "-".to_string()])
+            } else {
+                ("sh".to_string(), vec!["-i".to_string()])
+            };
+            let cwd = cwd.filter(|cwd| std::path::Path::new(cwd).is_dir());
+            let opened = self.state.pty.open(&command, &args, cwd.as_deref(), Some("shell on this computer"), None)?;
+
+            return Ok(json!({ "ptyId": opened["ptyId"], "command": "shell", "tty": false, "hostId": Value::Null }));
+        };
+
+        let mut script = format!("stty cols {cols} rows {rows} 2>/dev/null; export TERM=xterm-256color COLORTERM=truecolor; ");
+
+        if let Some(cwd) = cwd.as_deref() {
+            script.push_str(&format!("cd {} 2>/dev/null; ", crate::ssh::ops::remote_expr(cwd)?));
+        }
+
+        script.push_str("exec \"${SHELL:-/bin/sh}\" -l");
+
+        let mut ssh_args = vec!["-tt".to_string()];
+
+        ssh_args.extend(ssh.base_args()?);
+        ssh_args.push(script);
+
+        let program = crate::ssh::program()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| "ssh".to_string());
+        let label = format!("shell on {}", ssh.label());
+        let opened = self.state.pty.open(&program, &ssh_args, None, Some(&label), None)?;
+
+        Ok(json!({ "ptyId": opened["ptyId"], "command": "shell", "tty": true, "hostId": self.host_id_for(envelope)? }))
+    }
+
     fn pty_write(&self, envelope: &Envelope) -> Result<Value, ErrorObject> {
         let pty_id = envelope.require_str("ptyId")?;
 
@@ -2117,7 +2193,9 @@ impl Daemon {
 
     /// `pty.output`: the tail of a long-running process, and whether it is still alive.
     fn pty_output(&self, envelope: &Envelope) -> Result<Value, ErrorObject> {
-        self.state.pty.output(&envelope.require_str("ptyId")?)
+        let since = envelope.params.get("since").and_then(Value::as_u64);
+
+        self.state.pty.output_since(&envelope.require_str("ptyId")?, since)
     }
 
     /// `cli.login`: start the CLI's own sign-in and put its URL in front of the user.
@@ -2740,6 +2818,36 @@ struct RunPlan {
     autonomy: crate::agent::gate::Autonomy,
 }
 
+/// How long streamed text is gathered before it is pushed as one delta (0.11.7).
+const DELTA_WINDOW: std::time::Duration = std::time::Duration::from_millis(50);
+
+/// Streamed text that has not been pushed yet: at most one of the two is non-empty at a time.
+#[derive(Default)]
+struct Pending {
+    answer: String,
+    thinking: String,
+    since: Option<std::time::Instant>,
+}
+
+impl Pending {
+    /// Old enough, or big enough, to go now.
+    fn due(&self) -> bool {
+        self.since.is_some_and(|since| since.elapsed() >= DELTA_WINDOW) || self.answer.len() + self.thinking.len() >= 4096
+    }
+
+    fn flush(&mut self, out: &dyn Notifier, turn_id: &str, session: &Option<String>, turn: &Option<String>) {
+        if !self.thinking.is_empty() {
+            out.push(event::thinking_delta(turn_id, &std::mem::take(&mut self.thinking)), session.clone(), turn.clone());
+        }
+
+        if !self.answer.is_empty() {
+            out.push(event::turn_delta(turn_id, &std::mem::take(&mut self.answer)), session.clone(), turn.clone());
+        }
+
+        self.since = None;
+    }
+}
+
 /// Runs one turn and pushes its events - including the checkpoint that must exist *before* a mutating
 /// tool runs (principle P5).
 ///
@@ -2788,21 +2896,73 @@ async fn run_turn(
         lost on the way. */
     });
 
-    while let Some(event) = stream.recv().await {
+    /*
+     * Deltas are gathered for up to [`DELTA_WINDOW`] and pushed as one (0.11.7).
+     *
+     * An engine streams a token - often a single Bengali grapheme - at a time, and each one used to be
+     * its own event: one turn in the report's log was 14,000 `TurnDelta`s, every one written to the
+     * database, sent over the bridge and folded by the window, which re-drew the whole answer each time.
+     * Fifty milliseconds is below what reads as a pause, so the stream looks exactly as live, at a
+     * fraction of the events. Order is kept: the other kind of delta, and every non-delta event, flushes
+     * what is pending first.
+     */
+    let mut pending = Pending::default();
+
+    loop {
+        let next = match pending.since {
+            None => stream.recv().await,
+            Some(since) => match tokio::time::timeout(DELTA_WINDOW.saturating_sub(since.elapsed()), stream.recv()).await {
+                Ok(next) => next,
+                Err(_) => {
+                    pending.flush(&*out, &plan.turn_id, &session, &turn);
+                    continue;
+                }
+            },
+        };
+
+        let Some(event) = next else {
+            break;
+        };
+
         /* A stopped turn is over as far as the window is concerned: `engine.cancel` already pushed its
            `TurnCompleted`, and anything the engine still says would reopen it. The stream is still
            drained, so the engine task can finish and be joined below. */
         if crate::engines::cancel::requested(&plan.turn_id) {
+            pending = Pending::default();
             continue;
+        }
+
+        match &event {
+            crate::engines::EngineEvent::Delta(_) => {
+                if !pending.thinking.is_empty() {
+                    pending.flush(&*out, &plan.turn_id, &session, &turn);
+                }
+            }
+            crate::engines::EngineEvent::Thinking(_) => {
+                if !pending.answer.is_empty() {
+                    pending.flush(&*out, &plan.turn_id, &session, &turn);
+                }
+            }
+            _ => pending.flush(&*out, &plan.turn_id, &session, &turn),
         }
 
         match event {
             crate::engines::EngineEvent::Delta(delta) => {
                 answer.push_str(&delta);
-                out.push(event::turn_delta(&plan.turn_id, &delta), session.clone(), turn.clone());
+                pending.answer.push_str(&delta);
+                pending.since.get_or_insert_with(std::time::Instant::now);
+
+                if pending.due() {
+                    pending.flush(&*out, &plan.turn_id, &session, &turn);
+                }
             }
             crate::engines::EngineEvent::Thinking(text) => {
-                out.push(event::thinking_delta(&plan.turn_id, &text), session.clone(), turn.clone());
+                pending.thinking.push_str(&text);
+                pending.since.get_or_insert_with(std::time::Instant::now);
+
+                if pending.due() {
+                    pending.flush(&*out, &plan.turn_id, &session, &turn);
+                }
             }
             crate::engines::EngineEvent::ToolStarted { call_id, tool, name, target } => {
                 if !plan.self_checkpointing && !checkpoint_written && ["edit", "write", "delete", "run"].contains(&tool.as_str()) {
@@ -2910,6 +3070,8 @@ async fn run_turn(
             }
         }
     }
+
+    pending.flush(&*out, &plan.turn_id, &session, &turn);
 
     /* The task is joined so the turn's own bookkeeping cannot race it: a `finish_turn` before the
     engine's last event was pushed would be a stored answer that is missing its tail. */
@@ -3064,6 +3226,11 @@ async fn finish_connection(
                 "{} asks for a verification code. Open Sign in, type the password and the code your authenticator shows right now, and press Sign in.",
                 ssh.label()
             )),
+            /* The sign-in checks the pin itself; a changed key ends it before anything is offered, and
+               it gets the pin's own sentence rather than "refused the password". */
+            Err(crate::ssh::session::SignInError::Failed(sentence)) if sentence.contains("Host key verification failed") => {
+                Some(crate::ssh::ops::refusal(&ssh.label(), "Host key verification failed."))
+            }
             Err(crate::ssh::session::SignInError::Failed(sentence)) => Some(sentence),
         };
 
@@ -3406,6 +3573,40 @@ mod tests {
         assert!(host_key.contains("Add the host again"), "{host_key}");
     }
 
+    /// The delta limiter (0.11.7): gathers streamed text for up to [`DELTA_WINDOW`], or until it grows
+    /// past 4096 bytes, whichever comes first - the guard against the report's 14,000-event turn.
+    #[test]
+    fn the_delta_limiter_is_due_on_size_or_time_and_flushes_only_what_is_not_empty() {
+        use crate::sdcp::notifications::RecordingNotifier;
+
+        let mut pending = Pending::default();
+
+        assert!(!pending.due(), "nothing pending is never due");
+
+        pending.answer.push_str("hi");
+        pending.since = Some(std::time::Instant::now());
+
+        assert!(!pending.due(), "well under both the window and the size cap");
+
+        pending.answer = "x".repeat(4096);
+
+        assert!(pending.due(), "the size cap trips regardless of how young `since` still is");
+
+        pending.answer.clear();
+        pending.thinking.push_str("thinking");
+        pending.since = Some(std::time::Instant::now() - DELTA_WINDOW);
+
+        assert!(pending.due(), "the time window alone is enough, with nothing in `answer`");
+
+        let notifier = RecordingNotifier::new();
+
+        pending.flush(&notifier, "turn-1", &None, &None);
+
+        assert_eq!(notifier.kinds(), vec!["ThinkingDelta"], "an empty answer is never pushed as its own delta");
+        assert!(pending.thinking.is_empty(), "flush takes what it pushed");
+        assert!(pending.since.is_none(), "flush resets the clock so the next byte starts a fresh window");
+    }
+
     /// The sentence a `host.add` puts on screen when the machine's key is one SDC has never seen, and
     /// the one it puts there when that key is *wrong*. Two different questions, two different actions.
     #[test]
@@ -3593,6 +3794,68 @@ mod tests {
             notifier.kinds(),
             vec!["TurnDelta", "TurnDelta", "TurnCompleted", "SessionUpdated"]
         );
+    }
+
+    /// The limiter earns its keep here: an engine that sends its deltas back-to-back, with nothing
+    /// gating it between them, still reaches the window as **one** `TurnDelta` - the coalescing
+    /// `the_delta_limiter_is_due_on_size_or_time_and_flushes_only_what_is_not_empty` checks on `Pending`
+    /// alone, this time through `run_turn` itself, where the 14,000-event turn actually happened.
+    #[tokio::test]
+    async fn rapid_deltas_are_coalesced_into_one_push_by_run_turn() {
+        use crate::sdcp::notifications::RecordingNotifier;
+
+        struct Rapid;
+
+        #[async_trait::async_trait]
+        impl crate::engines::Engine for Rapid {
+            fn id(&self) -> &'static str {
+                "rapid"
+            }
+
+            async fn start(&self, _prompt: Prompt, sink: &EventSink) {
+                for piece in ["Hel", "lo", ", ", "wor", "ld"] {
+                    sink.send(crate::engines::EngineEvent::Delta(piece.to_string()));
+                }
+
+                sink.send(crate::engines::EngineEvent::Done { summary: "Done".to_string(), meta: String::new(), pass: None });
+            }
+
+            async fn cancel(&self, _turn_id: &str) -> bool {
+                false
+            }
+
+            fn status(&self, _turn_id: &str) -> EngineStatus {
+                EngineStatus::Idle
+            }
+        }
+
+        let notifier = Arc::new(RecordingNotifier::new());
+        let state = DaemonState::bootstrap(Some(std::path::PathBuf::from(":memory:")))
+            .expect("bootstrapping a daemon for the test");
+        let plan = RunPlan {
+            session_id: "s1".to_string(),
+            turn_id: "turn-1".to_string(),
+            engine_id: "rapid".to_string(),
+            prompt_text: "hi".to_string(),
+            model: "sonnet".to_string(),
+            provider: None,
+            history: Vec::new(),
+            project_root: None,
+            remote: None,
+            self_checkpointing: false,
+            autonomy: Default::default(),
+        };
+        let engine: Arc<dyn crate::engines::Engine> = Arc::new(Rapid);
+        let out: Arc<dyn Notifier> = notifier.clone();
+
+        run_turn(state, engine, plan, out).await;
+
+        assert_eq!(
+            notifier.kinds(),
+            vec!["TurnDelta", "TurnCompleted", "SessionUpdated"],
+            "five deltas that never waited for the window should still land as a single push"
+        );
+        assert_eq!(notifier.streamed_text(), "Hello, world");
     }
 
     /// The answer stored for the next turn carries the tool calls: without them a model read its own

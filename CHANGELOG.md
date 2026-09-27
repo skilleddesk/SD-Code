@@ -15,6 +15,65 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [0.11.7] — the 15-second cut, a sign-in without the 13-second wait, and a real terminal
+
+The report: a VPS chat dropped every so often (*"maje maje onk druto disconnect hoye jasse"*), the sign-in
+card after a drop behaved oddly, signing in was slow, the chat stream should follow the text, and there was
+no terminal. Every item below was traced in the daemon's own event log first.
+
+### Fixed — `Connection to … closed by remote host.` fifteen seconds into a quiet command
+
+Every one of those lines in the log came **14.6–15.0 s** after its command started — one
+`ServerAliveInterval`. Commands for a signed-in host run as `ssh -O proxy` clients of the one master
+connection, and each client carried `ServerAliveInterval=15`. After 15 s without output it sent a
+`keepalive@openssh.com` request to the master — and OpenSSH's mux proxy relays only `tcpip-forward`
+global requests (`channels.c`, `channel_proxy_downstream`: `unsupported request`), so it closed that
+client. The command was cut, its channel orphaned on the master, and once the master went down with it:
+every later command fell back to the key and got `Permission denied (keyboard-interactive)`.
+
+* A call that goes through the signed-in connection now sends **no keepalive of its own**
+  (`ServerAliveInterval=0`); the master keeps the real connection alive.
+* The master itself tolerates two minutes of network silence (`ServerAliveCountMax=8`) instead of 45 s.
+
+### Fixed — a lost sign-in is seen in seconds, and the agent stops retrying
+
+* The watcher checks each signed-in master **locally every 5 s** (`-O check`, no network) instead of
+  noticing up to 45 s later with a remote probe. A master left by the daemon an update replaced is
+  adopted and watched the same way.
+* When the connection is gone, an agent's `run` is a tool error that says so and asks the person to sign
+  in again — the report's agent tried four more commands, 3.7 s each, all refused.
+
+### Fixed — signing in took 13 seconds before it started
+
+A sign-in to a host whose key is already pinned now goes **straight to the sign-in**. The 13 s were the
+host-key scan (`ssh-keyscan` fails that host's key exchange, then a full handshake). The sign-in checks
+the same pin itself with `StrictHostKeyChecking=yes`, so a changed key still stops it before a password
+is offered — and it gets the pin's own sentence. The 13 s also ate into a 30-second authenticator code.
+
+### Fixed — the sign-in card after a drop
+
+The card stopped its spinner and re-asked the doctor as soon as the daemon *accepted* the sign-in, while
+the sign-in was still running — so a stale "Sign in" form sat under a "Waiting for the host to answer…"
+header. It now follows the host's own status: "Signing in…" until it lands, then closes with *Signed in*,
+or stays with the host's sentence. The header says *Signed out — sign in to continue* over the form, the
+password field is focused, and Enter moves to the code and then signs in.
+
+### Changed — the chat stream
+
+* Streamed text is pushed every **50 ms** instead of one event per token. One turn in the report's log was
+  14 000 `TurnDelta`s — each written to the database, sent over the bridge and re-rendered. It reads just
+  as live, at a fraction of the work.
+* The view follows **everything** that grows while you are at the bottom — tool output, plans, permission
+  cards, code blocks — not only the answer's length. A new message takes you back to the bottom, and when
+  you have scrolled up a **Jump to latest** chip appears.
+
+### Added — a real terminal
+
+The Terminal tab opens on a live **Shell** (xterm.js), next to the recorded **Commands** log. On a VPS it
+is `ssh -tt` through the **same signed-in connection** — a real prompt, colours, `cd`, `top`, `nano`,
+Ctrl+C, and nothing asked again; on this computer it is the platform's shell. `Ctrl+\`` (or *Open terminal*
+in the palette) opens it. `pty.output` takes a byte cursor (`since` → `data`, `next`) for this.
+
 ## [0.11.6] — the real reason the providers vanished, and an update that replaces the daemon
 
 0.11.5 was installed on the machine the report came from and checked in its window. It came up

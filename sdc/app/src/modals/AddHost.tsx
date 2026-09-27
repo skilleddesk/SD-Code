@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Key, Laptop, Loader, Plug, Server, ShieldCheck } from 'lucide-react';
 
 import { strings } from '../strings';
@@ -53,6 +53,14 @@ export function AddHost() {
   const [trusting, setTrusting] = useState(false);
   /** A key install is in flight (0.7.13): the one call that spends the password. */
   const [installing, setInstalling] = useState(false);
+  /**
+   * A sign-in the daemon accepted and is still running (0.11.7). `host.add` answers at once and signs in
+   * afterwards, so the button's spinner used to stop - and the doctor re-ran - while the sign-in was
+   * still under way, leaving a stale "Sign in" form under a "Waiting…" header. The card now follows the
+   * host's own status until it lands: `sent` → `running` (the host said `connecting`) → done.
+   */
+  const [awaiting, setAwaiting] = useState<'sent' | 'running' | null>(null);
+  const detailAtSubmit = useRef<string | undefined>(undefined);
   /**
    * SDC's **public** key, for the card's manual line. Only the public half is ever read, and only so a
    * host that requires a verification code can be finished by hand instead of being a dead end.
@@ -110,6 +118,8 @@ export function AddHost() {
     setPending(null);
     setTrusting(false);
     setScanned(null);
+    setAwaiting(null);
+    setInstalling(false);
   };
 
   /*
@@ -151,6 +161,73 @@ export function AddHost() {
       reset();
     }
   }, [openFor, pending, host, close]);
+
+  useEffect(() => {
+    if (awaiting === null || pending === null || host === undefined) {
+      return;
+    }
+
+    if (awaiting === 'sent' && (host.status === 'connecting' || host.detail !== detailAtSubmit.current)) {
+      setAwaiting('running');
+    }
+
+    const landed =
+      host.status === 'connected' ||
+      (host.status === 'offline' && (awaiting === 'running' || host.detail !== detailAtSubmit.current));
+
+    if (!landed) {
+      return;
+    }
+
+    setAwaiting(null);
+    setInstalling(false);
+
+    if (host.status === 'connected') {
+      toast(strings.addHost.signIn.signedIn(pending.label));
+      close();
+      reset();
+
+      return;
+    }
+
+    /* Refused: the sentence is the host's detail, and the doctor is asked again so the card shows what
+       is true now. */
+    void runDoctor(pending.hostId);
+  }, [awaiting, pending, host, close]);
+
+  /* A sign-in has a hard budget in the daemon (45 s); the card never spins longer than that and a bit. */
+  useEffect(() => {
+    if (awaiting === null) {
+      return;
+    }
+
+    const timer = globalThis.setTimeout(() => {
+      setAwaiting(null);
+      setInstalling(false);
+    }, 60_000);
+
+    return () => globalThis.clearTimeout(timer);
+  }, [awaiting]);
+
+  const signInNow = (): void => {
+    if (pending === null || password === '' || installing) {
+      return;
+    }
+
+    detailAtSubmit.current = host?.detail;
+    setInstalling(true);
+    setAwaiting('sent');
+
+    void installHostKey(pending.hostId, password, code).then((accepted) => {
+      setPassword('');
+      setCode('');
+
+      if (!accepted) {
+        setAwaiting(null);
+        setInstalling(false);
+      }
+    });
+  };
 
   const submit = (): void => {
     setBusy(true);
@@ -351,6 +428,10 @@ export function AddHost() {
             <div className="grid h-[28px] w-[28px] shrink-0 place-items-center rounded-md bg-accent-subtle text-accent">
               {host?.status === 'untrusted' && !trusting ? (
                 <ShieldCheck size={15} aria-hidden="true" />
+              ) : needsKeyInstall && !installing ? (
+                <Key size={15} aria-hidden="true" />
+              ) : host?.status === 'offline' && !installing ? (
+                <Server size={15} aria-hidden="true" />
               ) : (
                 <Loader size={15} aria-hidden="true" className="animate-spin" />
               )}
@@ -362,7 +443,13 @@ export function AddHost() {
                   ? strings.addHost.trust.rePinTitle(pending.label)
                   : host?.status === 'untrusted' || (scanned !== null && scanned.matches === null)
                     ? strings.addHost.trust.title(pending.label)
-                    : strings.addHost.trust.waiting}
+                    : installing
+                      ? strings.addHost.signIn.signingIn
+                      : signIn
+                        ? strings.addHost.trust.signInNeeded
+                        : host?.status === 'offline'
+                          ? strings.addHost.trust.notConnected
+                          : strings.addHost.trust.waiting}
               </div>
 
               {/* The daemon's own sentence: what it is doing, or what is wrong. */}
@@ -454,7 +541,18 @@ export function AddHost() {
                       className="rounded-md border border-border-default bg-bg-input px-[10px] py-[7px] font-mono text-[12.5px] text-text-primary placeholder:text-text-muted focus:border-border-strong"
                       placeholder={strings.addHost.keyInstall.passwordPlaceholder}
                       value={password}
+                      autoFocus
+                      disabled={installing}
                       onChange={(event) => setPassword(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' && signIn) {
+                          if (code === '') {
+                            document.getElementById('sshSignInCode')?.focus();
+                          } else {
+                            signInNow();
+                          }
+                        }
+                      }}
                     />
                   </label>
 
@@ -469,7 +567,13 @@ export function AddHost() {
                         className="rounded-md border border-border-default bg-bg-input px-[10px] py-[7px] font-mono text-[12.5px] text-text-primary placeholder:text-text-muted focus:border-border-strong"
                         placeholder={strings.addHost.codePlaceholder}
                         value={code}
-                        onChange={(event) => setCode(event.target.value)}
+                        disabled={installing}
+                        onChange={(event) => setCode(event.target.value.replace(/\s+/g, ''))}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter') {
+                            signInNow();
+                          }
+                        }}
                       />
                       <span className="text-[11px] text-text-muted">{strings.addHost.codeHelp}</span>
                     </label>
@@ -482,6 +586,12 @@ export function AddHost() {
                       id="sshKeyInstallBtn"
                       disabled={installing || password === ''}
                       onClick={() => {
+                        if (signIn) {
+                          signInNow();
+
+                          return;
+                        }
+
                         setInstalling(true);
 
                         void installHostKey(pending.hostId, password, code).then(() => {

@@ -230,7 +230,25 @@ impl Workspace {
         let answer: Value = match &self.remote {
             /* The host's own shell: someone asking for a command on a VPS means that machine's `sh`,
                whatever this laptop runs. */
-            Some(ssh) => crate::ssh::ops::shell(ssh, "sh", &["-c".to_string(), line.to_string()], Some(&self.root), timeout)?,
+            Some(ssh) => {
+                let answer = crate::ssh::ops::shell(ssh, "sh", &["-c".to_string(), line.to_string()], Some(&self.root), timeout)?;
+
+                /* The connection itself is gone (0.11.7): the report's agent read `Permission denied
+                   (keyboard-interactive)` as a command's output and tried four more commands, 3.7 s each,
+                   all refused. A lost sign-in is a tool error with the one way out, so the model stops. */
+                if answer["exitCode"].is_null() && !answer["timedOut"].as_bool().unwrap_or(false) {
+                    let stderr = answer["stderr"].as_str().unwrap_or_default();
+
+                    if stderr.contains("(keyboard-interactive)") || !crate::ssh::session::is_open(ssh) && stderr.contains("closed by remote host") {
+                        return Err(ErrorObject::new("not_ready", format!(
+                            "{} Retrying will not help: stop here and tell the person to sign in again from the host's card, then continue.",
+                            crate::ssh::ops::refusal(&ssh.label(), stderr)
+                        )));
+                    }
+                }
+
+                answer
+            }
             None => {
                 let (command, args) = crate::pty::shell_for_line(line);
 

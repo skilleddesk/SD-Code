@@ -1072,11 +1072,15 @@ export interface SdcpMethodMap {
       command?: string;
       args?: string[];
       line?: string;
+      /** The Terminal's interactive shell (0.11.7): `ssh -tt` on a host (`tty: true`), the platform shell here. */
+      shell?: boolean;
+      cols?: number;
+      rows?: number;
       cwd?: string;
       sessionId?: string;
       hostId?: string;
     };
-    result: { ptyId: string; command: string; tty: boolean; hostId?: string };
+    result: { ptyId: string; command: string; tty: boolean; hostId?: string | null };
   };
   'pty.write': { params: { ptyId: string; data: string }; result: Record<string, never> };
   'pty.resize': {
@@ -1085,7 +1089,8 @@ export interface SdcpMethodMap {
   };
   'pty.close': { params: { ptyId: string }; result: Record<string, never> };
   'pty.output': {
-    params: { ptyId: string };
+    /** With `since` (a byte offset), the raw output from there comes back as `data`, and `next` is where to ask from next (0.11.7). */
+    params: { ptyId: string; since?: number };
     result: {
       ptyId: string;
       command: string;
@@ -1093,6 +1098,8 @@ export interface SdcpMethodMap {
       lines: string[];
       lineCount: number;
       ms: number;
+      data?: string;
+      next?: number;
     };
   };
 

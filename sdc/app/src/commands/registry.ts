@@ -234,6 +234,8 @@ export const COMMANDS: readonly Command[] = [
   { id: 'turn.kill', label: 'Force kill', hint: 'Ctrl Shift Esc', icon: 'ban', group: 'session', keys: ['ctrl+shift+escape', 'meta+shift+escape'], inInput: true, run: () => { const turn = latestTurn(); if (turn) { void forceKillTurn(turn.turnId); } } },
   { id: 'turn.rewind', label: 'Rewind last turn', hint: 'Ctrl Z', icon: 'clock', group: 'session', keys: ['ctrl+z', 'meta+z'], run: () => { const checkpoint = latestCheckpoint(); if (checkpoint) { void rewindTo(mainSession(), `turn-${checkpoint.turn}`); } } },
   { id: 'turn.redo', label: 'Redo', hint: 'Ctrl Shift Z', icon: 'clock', group: 'session', keys: ['ctrl+shift+z', 'meta+shift+z'], run: () => void redoRewind(mainSession()) },
+  /* The Terminal (0.11.7): a live shell for the open chat's machine, one key away. */
+  { id: 'terminal.open', label: 'Open terminal', hint: 'Ctrl `', icon: 'keyboard', group: 'session', keys: ['ctrl+`', 'meta+`'], inInput: true, run: () => { useLayoutStore.getState().showRight(); useRightPanelStore.getState().setActiveTab('terminal', usePrefsStore.getState().activeTab); } },
   { id: 'timemachine.open', label: 'Time Machine', hint: 'Ctrl E', icon: 'clock', group: 'session', keys: ['ctrl+e', 'meta+e'], run: () => { useLayoutStore.getState().showRight(); useRightPanelStore.getState().setActiveTab('timemachine', usePrefsStore.getState().activeTab); } },
   { id: 'verify.run', label: 'Run verify', hint: 'Ctrl Enter', icon: 'check', group: 'session', keys: ['ctrl+enter', 'meta+enter'], inInput: true, run: () => runVerifyForActiveChat() },
 

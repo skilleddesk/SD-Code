@@ -186,6 +186,8 @@ export const strings = {
       action: 'Open folder',
     },
     /** A session with no turns yet: what the pane says instead of drawing someone else's chat. */
+    /** The chip over the prompt when the reader scrolled up and the stream kept going (0.11.7). */
+    jumpToLatest: 'Jump to latest',
     emptyPane: {
       title: 'Nothing here yet',
       body:
@@ -1065,6 +1067,9 @@ export const strings = {
       accept: 'Trust and connect',
       accepting: 'Pinning the key…',
       waiting: 'Waiting for the host to answer…',
+      /** The header while the card asks for a sign-in (0.11.7) - it used to say "Waiting…" over a form. */
+      signInNeeded: 'Signed out — sign in to continue',
+      notConnected: 'Not connected',
       rejected: 'The host key changed while you were deciding',
       refused: 'Could not trust that host',
       pinned: (fingerprint: string): string => `Pinned ${fingerprint}`,
@@ -1096,6 +1101,7 @@ export const strings = {
       sub: 'Its host key is pinned. Sign in once with the password — and the verification code, if the server asks for one — and SDC keeps that connection open.',
       button: 'Sign in',
       signingIn: 'Signing in…',
+      signedIn: (label: string): string => `Signed in to ${label}`,
     },
     keyInstall: {
       title: (label: string): string => `SDC cannot sign in to ${label} yet`,
@@ -1493,6 +1499,20 @@ export const strings = {
    * run, run in background, stop, clear.
    */
   terminal: {
+    /** The two faces of the tab (0.11.7): a live shell, and the one-command runs the chat records. */
+    modes: { shell: 'Shell', commands: 'Commands' },
+    commandsHint: 'Each command here is a step in the chat, with a checkpoint first.',
+    shell: {
+      opening: (where: string): string => `Opening a shell · ${where}…`,
+      lineMode: 'This computer’s shell · type a command and press Enter.',
+      ended: '[shell closed — press Open to start a new one]',
+      failed: 'The shell did not start.',
+      open: 'Open',
+      restart: 'Restart',
+      restartHint: 'Start a fresh shell in the open chat’s folder',
+      close: 'Close',
+      otherChat: 'another chat’s shell',
+    },
     /** Where a command runs when the chat has no folder yet: the daemon's own working directory. */
     anywhere: 'where the daemon runs',
     whereOn: (root: string, host: string): string => `${root} on ${host}`,

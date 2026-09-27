@@ -1,5 +1,5 @@
 import { Play, Square, Trash2 } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { Suspense, lazy, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 
 import { strings } from '../../strings';
 import { runCommand, runInBackground, stopBackground, terminalSubjectFrom } from '../../store/intents';
@@ -7,6 +7,8 @@ import { usePrefsStore } from '../../store/prefs';
 import { useSessionsStore } from '../../store/sessions';
 import { useTerminalStore, type TerminalEntry } from '../../store/terminal';
 import { BTN, BTN_GHOST, BTN_PRIMARY, BTN_SM } from '../ui/button';
+/* xterm.js is loaded the first time the tab is drawn, not with the window (0.11.7). */
+const ShellView = lazy(() => import('./ShellView').then((module) => ({ default: module.ShellView })));
 
 /**
  * The Terminal tab - a command surface that runs **here or on the chat's host** (0.7.13).
@@ -87,7 +89,50 @@ function RunRow({ entry, onStop }: { entry: TerminalEntry; onStop: () => void })
 }
 
 
+/**
+ * The tab (0.11.7): a live **Shell** first - what a person means by "terminal" - and the recorded
+ * **Commands** log beside it. Both stay mounted, so switching does not close the shell.
+ */
 export function TerminalTab() {
+  const [mode, setMode] = useState<'shell' | 'commands'>('shell');
+  const chat = usePrefsStore((state) => state.activeTab);
+  const hosts = useSessionsStore((state) => state.hosts);
+  const subject = useMemo(() => terminalSubjectFrom(hosts, chat), [hosts, chat]);
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex items-center gap-[2px] border-b border-border-subtle px-[10px] py-[5px]" role="tablist">
+        {(['shell', 'commands'] as const).map((id) => (
+          <button
+            key={id}
+            type="button"
+            role="tab"
+            aria-selected={mode === id}
+            className={
+              'rounded-sm px-[9px] py-[3px] text-[11px] font-medium ' +
+              (mode === id ? 'bg-bg-hover text-text-primary' : 'text-text-muted hover:text-text-secondary')
+            }
+            onClick={() => setMode(id)}
+          >
+            {strings.terminal.modes[id]}
+          </button>
+        ))}
+      </div>
+
+      <div className={mode === 'shell' ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}>
+        <Suspense fallback={null}>
+          <ShellView subject={subject} />
+        </Suspense>
+      </div>
+
+      <div className={mode === 'commands' ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}>
+        <CommandsView />
+      </div>
+    </div>
+  );
+}
+
+function CommandsView() {
   const { entries, busy, background } = useTerminalStore();
   const [line, setLine] = useState('');
   /*

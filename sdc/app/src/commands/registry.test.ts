@@ -29,10 +29,10 @@ describe('command registry', () => {
     expect(COMMANDS.filter((command) => command.group === 'global')).toHaveLength(10);
   });
 
-  it('registers the six session keys, the two model keys and the approval keys', () => {
+  it('registers the seven session keys (Terminal since 0.11.7), the two model keys and the approval keys', () => {
     const group = (name: string) => COMMANDS.filter((command) => command.group === name);
 
-    expect(group('session')).toHaveLength(6);
+    expect(group('session')).toHaveLength(7);
     expect(group('model')).toHaveLength(2);
     /* Enter, A, Shift+A, S, D and Esc across five entries - Enter and Esc share with others. */
     expect(group('approval')).toHaveLength(5);
