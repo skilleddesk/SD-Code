@@ -15,6 +15,31 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [0.11.9] — measured on the real VPS: a command line that reached it, faster commands, a switch that stays
+
+This release was checked against the report's own VPS (password + verification code, 217 ms away): the
+sign-in took **8.1 s** end to end, a command silent for **25 s** and one silent for **60 s** both finished
+with exit 0 (before 0.11.7 they were cut at 15 s), and the Terminal's shell opened a real prompt there.
+
+### Fixed — a command line sent to a VPS as Windows `cmd /C`
+
+`shell.run { line }` wrapped the line in the *local* platform's shell, so on Windows a VPS was sent
+`cmd /C <line>` and answered `bash: cmd: command not found`. Every line typed into the Terminal's
+**Commands** for a VPS chat failed. On a host the host's shell runs it now (`sh -c`).
+
+### Changed — quicker commands through the signed-in connection
+
+Each command asked `ssh -O check` first (~65 ms). A live answer is now trusted for 2 s, so an agent's
+burst of commands skips it; the watcher still checks afresh every 5 s. Measured on the VPS: a quick
+command went from 550–740 ms to about 460 ms - the rest is the network (2.3 round trips of 217 ms).
+
+### Added / changed
+
+* **Settings → General → "Understand my messages in any language"** (on by default). Off sends the message
+  exactly as typed.
+* **Settings remember their switches.** They were kept in the dialog only and reset every time it opened.
+* The **Understood** card speaks to you - "আপনি চান…", not "ব্যবহারকারী চান…".
+
 ## [0.11.8] — SDC reads you the way you write, and a stream that flows
 
 The report: *"ami jevabe tmake sms kortasi ai vabe sms korle jano SDC bujte pare and promt make kore

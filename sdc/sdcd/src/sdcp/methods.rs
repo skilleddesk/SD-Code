@@ -2432,7 +2432,14 @@ impl Daemon {
                     return Err(ErrorObject::permission_denied(format!("{line}: {reason}")));
                 }
 
-                crate::pty::shell_for_line(line)
+                /* On a host the host's shell runs it (0.11.9). This took the *local* platform's shell, so on
+                   Windows a VPS was sent `cmd /C <line>` and answered `cmd: command not found` - every
+                   line typed into the Terminal's Commands for a VPS chat failed. */
+                if self.host_id_for(envelope)?.is_some() {
+                    ("sh".to_string(), vec!["-c".to_string(), line.to_string()])
+                } else {
+                    crate::pty::shell_for_line(line)
+                }
             }
             None => (envelope.require_str("command")?, args),
         };

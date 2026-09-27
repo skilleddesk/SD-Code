@@ -111,7 +111,7 @@ pub fn control_path(ssh: &Ssh) -> Result<PathBuf, ErrorObject> {
 /// platform). It needs a live master - there is no fallback inside `ssh` - hence the check first
 /// (about 30 ms).
 pub fn mux_options(ssh: &Ssh) -> Result<Vec<String>, ErrorObject> {
-    if program().is_none() || !is_open(ssh) {
+    if program().is_none() || !is_open_recently(ssh) {
         return Ok(Vec::new());
     }
 
@@ -157,8 +157,47 @@ fn remember(ssh: &Ssh) {
     }
 }
 
-/// Is a master open for this host right now?
+/// How long a live `-O check` is trusted by the calls that route through the master (0.11.9).
+///
+/// Measured against the report's VPS: `-O check` is ~65 ms, a whole proxied command ~500 ms (the host is
+/// 217 ms away). An agent runs commands in bursts, and each one paid the check again. Only a *yes* is
+/// remembered, and only briefly: a master that died inside the window makes that one call fail with the
+/// socket's own error, and the watcher - which always checks afresh - reports it within seconds.
+const TRUST_OPEN: Duration = Duration::from_secs(2);
+
+fn checked() -> &'static Mutex<std::collections::HashMap<String, Instant>> {
+    static CHECKED: OnceLock<Mutex<std::collections::HashMap<String, Instant>>> = OnceLock::new();
+
+    CHECKED.get_or_init(Default::default)
+}
+
+/// [`is_open`], answered from a *yes* seen in the last [`TRUST_OPEN`] when there is one.
+pub fn is_open_recently(ssh: &Ssh) -> bool {
+    let fresh = checked()
+        .lock()
+        .ok()
+        .and_then(|seen| seen.get(&ssh.label()).copied())
+        .is_some_and(|at| at.elapsed() < TRUST_OPEN);
+
+    fresh || is_open(ssh)
+}
+
+/// Is a master open for this host right now? Always asks; a *yes* is remembered for [`is_open_recently`].
 pub fn is_open(ssh: &Ssh) -> bool {
+    let open = check_now(ssh);
+
+    if let Ok(mut seen) = checked().lock() {
+        if open {
+            seen.insert(ssh.label(), Instant::now());
+        } else {
+            seen.remove(&ssh.label());
+        }
+    }
+
+    open
+}
+
+fn check_now(ssh: &Ssh) -> bool {
     let Some(program) = program() else {
         return false;
     };
@@ -668,6 +707,25 @@ mod tests {
         assert!(!is_open(&ssh));
         assert!(mux_options(&ssh).unwrap().is_empty());
         assert!(started.elapsed() < Duration::from_millis(500), "{:?}", started.elapsed());
+    }
+
+    /// The limiter (0.11.9): a *yes* seen moments ago is trusted without asking `ssh` again, even for a
+    /// host with no real socket - and once [`TRUST_OPEN`] has passed, the cache stops overriding the real
+    /// (negative) answer.
+    #[test]
+    fn a_recent_yes_is_trusted_until_the_window_passes() {
+        let ssh = Ssh::parse("nobody@203.0.113.88 -p 3").unwrap();
+
+        checked().lock().unwrap().insert(ssh.label(), Instant::now());
+
+        assert!(is_open_recently(&ssh), "a fresh yes must be trusted without a real check");
+
+        checked().lock().unwrap().insert(ssh.label(), Instant::now() - TRUST_OPEN - Duration::from_millis(50));
+
+        assert!(
+            !is_open_recently(&ssh),
+            "a stale yes must fall back to the real check, which finds no socket"
+        );
     }
 
     #[test]
