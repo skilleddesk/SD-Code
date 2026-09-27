@@ -91,7 +91,7 @@ export function Onboarding() {
             />
           ))}
         </ol>
-        <p className="mt-[6px] text-[11.5px] text-text-muted">{k.stepOf(step + 1, steps.length, steps[step] ?? '')}</p>
+        <p className="mt-[6px] text-[11.5px] text-text-secondary">{k.stepOf(step + 1, steps.length, steps[step] ?? '')}</p>
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-[24px] py-[18px] text-[13px]">
@@ -110,7 +110,7 @@ export function Onboarding() {
                 >
                   <Icon size={18} className="text-accent" aria-hidden="true" />
                   <span className="font-semibold text-text-primary">{k.goal[item.id]}</span>
-                  <span className={'text-[11.5px] ' + (goal === item.id ? 'text-text-secondary' : 'text-text-muted')}>{k.goalHelp[item.id]}</span>
+                  <span className="text-[11.5px] text-text-secondary">{k.goalHelp[item.id]}</span>
                 </button>
               );
             })}
@@ -157,7 +157,7 @@ export function Onboarding() {
                 <span className="text-text-secondary">{text}</span>
               </li>
             ))}
-            <li className="rounded-md bg-bg-raised px-[12px] py-[8px] text-[12px] text-text-muted">{k.safety.demo}</li>
+            <li className="rounded-md bg-bg-raised px-[12px] py-[8px] text-[12px] text-text-secondary">{k.safety.demo}</li>
           </ul>
         ) : null}
 

@@ -15,6 +15,15 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [0.12.2] — an accessibility audit that measures a settled screen
+
+0.12.1's Windows and macOS runs still failed the axe-core audit, each time on a *different* piece of text in the
+first-run dialog. The dialog fades in over 220 ms, and on a slow runner axe measured the text half-transparent.
+The audit (`app/scripts/a11y-bundle.mjs`) now waits for the screen to settle: every finite animation finishes
+before it measures, while a spinner is not waited for. It also names the dialog it audited (`open dialogs:
+Welcome to SDC`) and takes `SDC_A11Y_SCHEME=light|dark`, so a green run on one machine says which screen and
+which theme it covered. The dialog's small grey text is secondary text now, for margin in both themes.
+
 ## [0.12.1] — 0.12.0, with the two release checks it failed
 
 0.12.0's release run stopped before the Windows and macOS installers. This is the same release with those two

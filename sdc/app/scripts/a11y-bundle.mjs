@@ -32,6 +32,9 @@ const here = dirname(fileURLToPath(import.meta.url));
 const dist = join(here, '..', 'dist');
 const axe = join(here, '..', 'node_modules', 'axe-core', 'axe.min.js');
 const settleMs = Number(process.env.SDC_A11Y_SETTLE_MS ?? 9000);
+/* The colour scheme the browser reports (`light` or `dark`). Unset, it is the machine's own - which is how
+   0.12.0 passed here (a dark Windows) and failed on CI's runners (light): run both before trusting a green. */
+const scheme = process.env.SDC_A11Y_SCHEME;
 
 if (!existsSync(join(dist, 'index.html'))) {
   console.error(`a11y: no build at ${dist} - run pnpm build first`);
@@ -93,6 +96,19 @@ pre{color:#eee;font:12px monospace}</style>
         await new Promise((resolve) => setTimeout(resolve, 200));
       }
 
+      /* Then for the screen to settle: a dialog that opens on mount (the 0.12 onboarding wizard) fades in over
+         220 ms, and a slow runner measured its text half-transparent - a contrast failure that moved from one
+         element to another between runs. Infinite animations (a spinner) are not waited for. */
+      await new Promise((resolve) => setTimeout(resolve, 500));
+
+      const moving = (page.getAnimations ? page.getAnimations() : []).filter((animation) => {
+        const timing = animation.effect && animation.effect.getComputedTiming ? animation.effect.getComputedTiming() : null;
+
+        return timing !== null && timing.iterations !== Infinity;
+      });
+
+      await Promise.all(moving.map((animation) => animation.finished.catch(() => null)));
+
       const results = await api.run(page, {
         resultTypes: ['violations'],
         runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] },
@@ -100,6 +116,9 @@ pre{color:#eee;font:12px monospace}</style>
 
       report = {
         mounted: Boolean(page.querySelector('#app')),
+        /* Which dialog was open when the audit ran: on a first launch it is the onboarding wizard (0.12), and a
+           green run on a machine that had already seen it audited a different screen from CI. */
+        dialogs: [...page.querySelectorAll('[role="dialog"]')].map((dialog) => dialog.getAttribute('aria-label') ?? '(unlabelled)'),
         violations: results.violations.map((violation) => ({
           impact: violation.impact,
           id: violation.id,
@@ -163,7 +182,7 @@ if (!executable) {
   process.exit(noBrowser('a11y'));
 }
 
-console.log(`a11y: serving ${dist} on ${port}, auditing with ${executable}`);
+console.log(`a11y: serving ${dist} on ${port}, auditing with ${executable}, colour scheme: ${scheme ?? "the machine's"}`);
 
 const child = spawn(
   executable,
@@ -175,6 +194,7 @@ const child = spawn(
     '--no-default-browser-check',
     '--disable-extensions',
     '--dump-dom',
+    ...(scheme ? [`--blink-settings=preferredColorScheme=${scheme === 'dark' ? 0 : 1}`] : []),
     `--virtual-time-budget=${settleMs}`,
     `http://127.0.0.1:${port}/__a11y.html`,
   ],
@@ -267,7 +287,8 @@ for (const name of ['moderate', 'minor']) {
 
 console.log(
   `a11y: ${violations.length} violation(s), ${blocking.length} serious or critical, ` +
-    `axe loaded: ${report.axe === true}, app mounted: ${report.mounted === true}`,
+    `axe loaded: ${report.axe === true}, app mounted: ${report.mounted === true}, ` +
+    `open dialogs: ${(report.dialogs ?? []).join(', ') || 'none'}`,
 );
 
 if (blocking.length > 0) {
