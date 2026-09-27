@@ -1260,6 +1260,13 @@ export const strings = {
           rows: [
             {
               kind: 'toggle',
+              id: 'understand-messages',
+              label: 'Understand my messages in any language',
+              help: 'Banglish, বাংলা, Hindi… - SDC finds every request, restates it and answers in your language',
+              value: true,
+            },
+            {
+              kind: 'toggle',
               id: 'restore-session',
               label: 'Restore last session on launch',
               help: 'Reopen the chats you had open',

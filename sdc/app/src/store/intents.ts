@@ -15,6 +15,7 @@ import { useRightPanelStore } from './rightPanel';
 import { selectActiveSession, dispatch, useAppStore } from './store';
 import { findSession } from './sessions';
 import { useTerminalStore } from './terminal';
+import { setting } from '../lib/settings';
 import type { AppState, HostView, TurnView } from './types';
 
 /**
@@ -2147,6 +2148,8 @@ export interface TurnSeed {
   /** Agent mode, and how much the agent may do without asking (v4). */
   agent?: boolean;
   autonomy?: 'ask' | 'pro' | 'auto';
+  /** Read the message with SDC's brief (0.11.8); Settings → General can turn it off. */
+  understand?: boolean;
 }
 
 /** The app's mode as the agent's autonomy: Simple asks for everything, Pro for commands, Auto for danger. */
@@ -2252,6 +2255,8 @@ export async function sendPrompt(prompt: string, target?: string): Promise<strin
     ...(providerId === null ? {} : { provider: providerId }),
     agent: compose === 'agent',
     autonomy: autonomyFor(useLayoutStore.getState().mode),
+    /* Settings → General (0.11.8): off sends the message exactly as typed. */
+    understand: setting('understand-messages', true),
   });
 
   if (turnId !== null) {

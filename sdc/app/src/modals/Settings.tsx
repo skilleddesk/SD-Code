@@ -22,6 +22,7 @@ import { useAppStore } from '../store/store';
 import { toast } from '../store/toast';
 import { useOverlayStore, type SettingsTab } from '../store/overlays';
 import { BTN, BTN_PRIMARY, BTN_SECONDARY } from '../panels/ui/button';
+import { storedSettings, storeSetting } from '../lib/settings';
 import { Modal } from './Modal';
 
 /**
@@ -81,18 +82,26 @@ export function Settings() {
   const theme = useLayoutStore((state) => state.theme);
   const setLayoutTheme = useLayoutStore((state) => state.setTheme);
 
-  const [values, setValues] = useState<Record<string, RowValue>>(() =>
-    collectDefaults(),
-  );
+  const [values, setValues] = useState<Record<string, RowValue>>(() => ({
+    ...collectDefaults(),
+    ...(storedSettings() as Record<string, RowValue>),
+  }));
 
   const host = localHost(hosts);
 
   const flip = (id: string): void => {
-    setValues((current) => ({ ...current, [id]: current[id] !== true }));
+    setValues((current) => {
+      const next = current[id] !== true;
+
+      storeSetting(id, next);
+
+      return { ...current, [id]: next };
+    });
   };
 
   const choose = (id: string, value: string): void => {
     setValues((current) => ({ ...current, [id]: value }));
+    storeSetting(id, value);
 
     if (id === 'theme') {
       const next = value === 'Light' ? 'light' : 'dark';

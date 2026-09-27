@@ -3933,6 +3933,71 @@ mod tests {
         assert_eq!(notifier.streamed_text(), "x".repeat(4096));
     }
 
+    /// The limiter must not reorder the stream it is smoothing: a delta sat buffered under the window
+    /// has to reach the notifier *before* whatever non-delta event the engine sends next, or a person
+    /// would see `ToolCallStarted` on screen ahead of the words that, in the engine's own timeline,
+    /// came first. That is the `_ => pending.flush(...)` arm above, and until now nothing exercised it.
+    #[tokio::test]
+    async fn a_pending_delta_flushes_before_the_next_non_delta_event() {
+        use crate::sdcp::notifications::RecordingNotifier;
+
+        struct ThenATool;
+
+        #[async_trait::async_trait]
+        impl crate::engines::Engine for ThenATool {
+            fn id(&self) -> &'static str {
+                "then-a-tool"
+            }
+
+            async fn start(&self, _prompt: Prompt, sink: &EventSink) {
+                sink.send(crate::engines::EngineEvent::Delta("checking the tests".to_string()));
+                sink.send(crate::engines::EngineEvent::ToolStarted {
+                    call_id: "c1".into(),
+                    tool: "read".into(),
+                    name: "Read".into(),
+                    target: "tests.rs".into(),
+                });
+                sink.send(crate::engines::EngineEvent::Done { summary: "Done".to_string(), meta: String::new(), pass: None });
+            }
+
+            async fn cancel(&self, _turn_id: &str) -> bool {
+                false
+            }
+
+            fn status(&self, _turn_id: &str) -> EngineStatus {
+                EngineStatus::Idle
+            }
+        }
+
+        let notifier = Arc::new(RecordingNotifier::new());
+        let state = DaemonState::bootstrap(Some(std::path::PathBuf::from(":memory:")))
+            .expect("bootstrapping a daemon for the test");
+        let plan = RunPlan {
+            session_id: "s1".to_string(),
+            turn_id: "turn-1".to_string(),
+            engine_id: "then-a-tool".to_string(),
+            prompt_text: "hi".to_string(),
+            model: "sonnet".to_string(),
+            provider: None,
+            history: Vec::new(),
+            project_root: None,
+            remote: None,
+            self_checkpointing: false,
+            autonomy: Default::default(),
+        };
+        let engine: Arc<dyn crate::engines::Engine> = Arc::new(ThenATool);
+        let out: Arc<dyn Notifier> = notifier.clone();
+
+        run_turn(state, engine, plan, out).await;
+
+        assert_eq!(
+            notifier.kinds(),
+            vec!["TurnDelta", "ToolCallStarted", "TurnCompleted", "SessionUpdated"],
+            "the buffered delta must be flushed ahead of the tool event, not left to trail in behind it"
+        );
+        assert_eq!(notifier.streamed_text(), "checking the tests");
+    }
+
     /// The answer stored for the next turn carries the tool calls: without them a model read its own
     /// "I ran the tests" with no run in sight and apologised for inventing work it had really done.
     #[tokio::test]

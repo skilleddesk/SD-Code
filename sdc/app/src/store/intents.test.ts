@@ -1391,6 +1391,8 @@ describe('sendPrompt in agent mode', () => {
       provider: 'anthropic-api',
       agent: true,
       autonomy: 'ask',
+      /* Settings → General's switch, on unless it was turned off (0.11.8). */
+      understand: true,
     });
   });
 

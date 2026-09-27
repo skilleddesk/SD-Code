@@ -164,7 +164,8 @@ pub fn shape(text: &str, reading: &Reading) -> String {
          missing punctuation and several requests run together.\n\
          1. First work out what they actually want. Read past the spelling, and find every separate request.\n\
          2. Start your answer with exactly one line: `{UNDERSTOOD} ` followed by their request restated clearly and \
-         completely in {reply} (one or two sentences; list the parts if there are several). Then a blank line.\n\
+         completely in {reply}, spoken to them directly as \"you\" (\"you want…\", never \"the user wants…\"; one or two \
+         sentences; list the parts if there are several). Then a blank line.\n\
          3. Then do the work. When there are several parts, handle each one and say what was done for each.\n\
          4. Write the whole answer in {reply}. Keep code, commands, file paths, names and error messages exactly as they are.\n\
          5. If a wrong guess would be costly (deleting, deploying, spending money), ask one short question instead of guessing.\n\
