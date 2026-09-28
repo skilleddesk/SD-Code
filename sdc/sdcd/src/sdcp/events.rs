@@ -310,6 +310,11 @@ pub mod event {
         base("PlanUpdated", json!({ "turnId": turn_id, "steps": steps }))
     }
 
+    /// Words the person sent into a running turn, as the model received them (0.12.5).
+    pub fn turn_steered(turn_id: &str, text: &str) -> Value {
+        base("TurnSteered", json!({ "turnId": turn_id, "text": text }))
+    }
+
     /// A verify run as it stands (v4): its checks, its review, and whether it passed - whole each time.
     pub fn verify_updated(fields: Value) -> Value {
         base("VerifyUpdated", fields)

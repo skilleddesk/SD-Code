@@ -1,6 +1,6 @@
 import { strings } from '../../strings';
 import type { CheckpointView, TurnView, VerifyView } from '../../store/types';
-import type { CollapsedSummaryData, ToolCardData, Turn } from './types';
+import type { CollapsedSummaryData, LiveBarData, TimelineItem, ToolCardData, Turn, TurnCheckpointData } from './types';
 import { OPEN_TURN_WINDOW } from './types';
 
 /**
@@ -60,6 +60,8 @@ export function toTurns(
           ? undefined
           : { text: turn.text, streaming: turn.status === 'running' },
       tools: turn.tools.map(toToolCard),
+      timeline: timelineOf(turn, checkpoints),
+      ...(turn.status === 'running' || turn.status === 'stuck' ? { live: liveBarOf(turn) } : {}),
       plan: turn.plan.map((step) => ({ text: step.text, status: step.status })),
       running: turn.status === 'running' || turn.status === 'stuck',
       /* Running with nothing on screen yet: the pulse that stands in for the answer until the first
@@ -135,6 +137,110 @@ function verifyOf(verifies: readonly VerifyView[], turnId: string): { verify?: T
       issues: run.review?.issues?.length ?? 0,
     },
   };
+}
+
+/**
+ * The turn's stretches in the order they happened (0.12.5), resolved to what each one draws.
+ *
+ * A log written before 0.12.5 has no timeline; it is rebuilt from the totals in the old order
+ * (thinking, tools, answer) so an old chat still reads.
+ */
+function timelineOf(turn: TurnView, checkpoints: readonly CheckpointView[]): TimelineItem[] {
+  const running = turn.status === 'running' || turn.status === 'stuck';
+  const entries: TurnView['timeline'] =
+    (turn.timeline ?? []).length > 0 || (turn.text === '' && turn.thinking === '' && turn.tools.length === 0)
+      ? (turn.timeline ?? [])
+      : [
+          ...(turn.thinking === '' ? [] : [{ kind: 'thinking' as const, text: turn.thinking, startedAt: turn.startedAt, endedAt: turn.startedAt }]),
+          ...turn.tools.map((tool) => ({ kind: 'tool' as const, callId: tool.callId })),
+          ...(turn.text === '' ? [] : [{ kind: 'text' as const, text: turn.text, startedAt: turn.startedAt }]),
+        ];
+  const lastText = entries.map((entry) => entry.kind).lastIndexOf('text');
+  const lastTool = entries.map((entry) => entry.kind).lastIndexOf('tool');
+  const items: TimelineItem[] = [];
+
+  entries.forEach((entry, index) => {
+    const key = `${entry.kind}-${index}`;
+    const newest = index === entries.length - 1;
+
+    if (entry.kind === 'thinking') {
+      const live = running && newest && entry.endedAt === null;
+
+      items.push({
+        kind: 'thinking',
+        key,
+        thinking: {
+          text: entry.text,
+          ms: entry.endedAt === null ? 0 : Math.max(0, Date.parse(entry.endedAt) - Date.parse(entry.startedAt)) || 0,
+          since: entry.endedAt === null && running ? entry.startedAt : null,
+          live,
+        },
+      });
+    } else if (entry.kind === 'text') {
+      items.push({
+        kind: 'text',
+        key,
+        text: entry.text,
+        streaming: running && newest,
+        /* The words after the last tool call, once the turn has ended, are its answer. */
+        final: !running && index === lastText && index > lastTool,
+      });
+    } else if (entry.kind === 'tool') {
+      const tool = turn.tools.find((candidate) => candidate.callId === entry.callId);
+
+      if (tool !== undefined) {
+        items.push({ kind: 'tool', key: `tool-${tool.callId}`, tool: toToolCard(tool) });
+      }
+    } else if (entry.kind === 'steer') {
+      items.push({ kind: 'steer', key, text: entry.text });
+    } else {
+      const checkpoint = checkpoints.find((candidate) => candidate.id === entry.id);
+
+      if (checkpoint !== undefined) {
+        const data: TurnCheckpointData = { id: checkpoint.id, title: checkpoint.title, turn: checkpoint.turn };
+
+        items.push({ kind: 'checkpoint', key: `cp-${checkpoint.id}`, checkpoint: data });
+      }
+    }
+  });
+
+  return items;
+}
+
+/** The sticky bar's line for a running turn (0.12.5): what is happening this second, and since when. */
+function liveBarOf(turn: TurnView): LiveBarData {
+  const steps = turn.plan;
+  const current = steps.findIndex((step) => step.status === 'in_progress');
+  const index = current >= 0 ? current : steps.findIndex((step) => step.status === 'pending');
+  const step = index >= 0 ? { text: steps[index]?.text ?? '', index: index + 1, total: steps.length } : null;
+  const timeline = turn.timeline ?? [];
+  const last = timeline[timeline.length - 1];
+  const running = turn.tools.find((tool) => tool.status === 'running');
+
+  if (running !== undefined) {
+    return { phase: 'tool', detail: `${running.name} ${running.target}`.trim(), step, since: running.startedAt };
+  }
+
+  if (last === undefined) {
+    return { phase: 'waiting', detail: '', step, since: turn.startedAt };
+  }
+
+  if (last.kind === 'thinking' && last.endedAt === null) {
+    const lines = last.text.trim().split(/\r?\n/).filter((line) => line.trim() !== '');
+
+    return { phase: 'thinking', detail: lines[lines.length - 1]?.trim() ?? '', step, since: last.startedAt };
+  }
+
+  if (last.kind === 'text') {
+    return { phase: 'writing', detail: '', step, since: last.startedAt };
+  }
+
+  /* A finished tool, a checkpoint or an ended thought: the model is choosing what to do next - the
+     gap that used to look like nothing was happening. */
+  const endedTool = [...turn.tools].reverse().find((tool) => tool.endedAt !== undefined);
+  const since = last.kind === 'thinking' && last.endedAt !== null ? last.endedAt : (endedTool?.endedAt ?? turn.startedAt);
+
+  return { phase: 'deciding', detail: '', step, since };
 }
 
 /** One tool call, in the card variant that matches what it did. */

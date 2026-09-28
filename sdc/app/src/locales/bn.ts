@@ -24,6 +24,30 @@ export const bn: StringsPack = {
     stop: 'থামান',
     stopHint: 'এই টার্ন থামান (Esc)',
   },
+  turns: {
+    live: {
+      thinking: 'ভাবছে',
+      writing: 'উত্তর লিখছে',
+      tool: 'চালাচ্ছে',
+      deciding: 'পরের ধাপ ঠিক করছে',
+      waiting: (model: string): string => `${model}-এর অপেক্ষায়`,
+      step: (index: number, total: number): string => `ধাপ ${index}/${total}`,
+      jump: 'এখনকার জায়গায় যান',
+    },
+    deciding: 'পরের ধাপ ঠিক করছে…',
+    steered: 'কাজের মাঝে আপনি',
+  },
+  sidebar: {
+    noProject: 'কোনো ফোল্ডার নেই',
+    hostChats: 'চ্যাট',
+    newChatShort: 'নতুন চ্যাট',
+    openFolderRow: 'ফোল্ডার খুলুন…',
+    startChat: 'চ্যাট শুরু করুন',
+    closeFolderConfirm: (name: string, chats: number): string =>
+      chats === 0
+        ? `${name} বন্ধ করবেন? শুধু তালিকা থেকে সরবে; ডিস্কের কিছু বদলাবে না।`
+        : `${name} বন্ধ করবেন? তালিকা থেকে সরবে; এর ${chats}টা চ্যাট থেকে যাবে, আর ডিস্কের কিছু বদলাবে না।`,
+  },
   statusBar: {
     providers: 'প্রোভাইডার',
     chats: 'চ্যাট',

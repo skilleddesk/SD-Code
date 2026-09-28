@@ -172,6 +172,10 @@ export interface Turn {
   /** Absent until the first `TurnDelta` - a turn shows no empty answer block before it answers. */
   answer?: AnswerData;
   tools: ToolCardData[];
+  /** Everything above, in the order it happened (0.12.5) - what the stream draws. */
+  timeline: TimelineItem[];
+  /** Set while the turn runs: the sticky bar's line. */
+  live?: LiveBarData;
   /** The checkpoints this turn wrote, oldest first - the rail's dots and the way back. */
   checkpoints: TurnCheckpointData[];
   /** The agent's checklist (v4); empty when the engine did not make one. */
@@ -199,6 +203,29 @@ export interface Turn {
  * elapsed against the log's own `TurnStarted` stamp, size from the streamed text itself. It exists
  * only while the turn runs; a finished turn's real totals arrive on its footer.
  */
+/**
+ * One stretch of a turn as the stream draws it, in the order it happened (0.12.5). `final` marks the
+ * words the turn ended on - the answer - so they get the answer's card while earlier words read as the
+ * agent talking the person through its work.
+ */
+export type TimelineItem =
+  | { kind: 'thinking'; key: string; thinking: ThinkingData }
+  | { kind: 'text'; key: string; text: string; streaming: boolean; final: boolean }
+  | { kind: 'tool'; key: string; tool: ToolCardData }
+  | { kind: 'checkpoint'; key: string; checkpoint: TurnCheckpointData }
+  | { kind: 'steer'; key: string; text: string };
+
+/** What the sticky live bar shows while a turn runs (0.12.5). */
+export interface LiveBarData {
+  phase: 'thinking' | 'writing' | 'tool' | 'deciding' | 'waiting';
+  /** The tool running, or the latest line of thought - whatever says what is happening right now. */
+  detail: string;
+  /** The plan's step in progress, and where it sits: `2 of 5`. */
+  step: { text: string; index: number; total: number } | null;
+  /** When the current phase began, for its own timer. */
+  since: string;
+}
+
 export interface TurnStatsData {
   startedAt: string;
   chars: number;

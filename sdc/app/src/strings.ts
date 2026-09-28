@@ -105,7 +105,21 @@ const english = {
       toggleHost: (name: string): string => `${name} · fold or unfold`,
       newChatOnHost: 'New chat on this host',
       removeHost: 'Remove this host',
+      /** 0.12.5: every project keeps its own chats. */
+      openFolder: 'Open a folder as a project',
+      newChatInProject: (name: string): string => `New chat in ${name}`,
+      toggleProject: (name: string): string => `${name} · fold or unfold`,
+      closeFolder: 'Close this folder (its chats are kept)',
     },
+    /** The chats that belong to no folder, under their host (0.12.5). */
+    noProject: 'No folder',
+    hostChats: 'Chats',
+    newChatShort: 'New chat',
+    openFolderRow: 'Open folder…',
+    closeFolderConfirm: (name: string, chats: number): string =>
+      chats === 0
+        ? `Close ${name}? It leaves this list; nothing on disk is touched.`
+        : `Close ${name}? It leaves this list; its ${chats} chat${chats === 1 ? '' : 's'} are kept, and nothing on disk is touched.`,
     /** The fork lands on screen with its transcript, and its name says where it came from (0.7.8). */
     forked: (title: string, turns: number): string =>
       turns === 0
@@ -223,6 +237,20 @@ const english = {
         working: 'Working',
       },
     },
+    /** The sticky line above the input while a turn runs (0.12.5). */
+    live: {
+      thinking: 'Thinking',
+      writing: 'Writing the reply',
+      tool: 'Running',
+      deciding: 'Deciding the next step',
+      waiting: (model: string): string => `Waiting for ${model}`,
+      step: (index: number, total: number): string => `Step ${index} of ${total}`,
+      jump: 'Jump to now',
+    },
+    /** A message sent into a running turn, where the agent took it (0.12.5). */
+    steered: 'You, while it worked',
+    /** The row between two actions while the model chooses the next one (0.12.5). */
+    deciding: 'Deciding the next step…',
     /** The chip under a message SDC read with a brief (0.11.8). */
     reading: (label: string, reply: string): string => `Read as ${label} · answering in ${reply}`,
     readingTitle: 'SDC told the model how to read this message - what it asks, in which language to answer - and sent your words unchanged.',
@@ -453,6 +481,8 @@ const english = {
       remove: 'Remove queued prompt',
       /** The toast when Send is pressed while this chat's turn is still running. */
       queuedToast: 'Queued · it is sent when the running turn ends',
+      /** 0.12.5: an agent turn took the words while it ran. */
+      steered: 'Added to the running turn · the agent takes it into account at its next step',
       full: 'Three prompts are already waiting; remove one or wait for the turn to end',
     },
     toolbar: {
@@ -590,6 +620,14 @@ const english = {
       clear: 'Stop previewing this page',
       badUrl: 'That is not an http or https address',
       frameTitle: (url: string): string => `Preview of ${url}`,
+      /** The live switch (0.12.5): on, the page reloads after every change and finds the dev server. */
+      live: 'Live',
+      liveOn: 'Live preview on · reloads after each change the agent makes',
+      liveOff: 'Live preview off · reload by hand',
+      found: 'Found',
+      reloadedAfter: (what: string): string => `Reloaded after ${what}`,
+      emptyLive:
+        'Live preview is on: when the agent (or you) starts a dev server, its address is picked up here and the page reloads after every change. You can also type an address above.',
     },
     console: {
       fixWithAgent: 'Fix with agent',

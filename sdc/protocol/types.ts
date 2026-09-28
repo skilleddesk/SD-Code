@@ -119,6 +119,7 @@ export type SdcpMethod =
   | 'engine.start'
   | 'engine.cancel'
   | 'engine.kill'
+  | 'engine.steer'
   | 'engine.status'
   | 'engine.switch'
   | 'verify.run'
@@ -675,6 +676,13 @@ export interface PlanUpdatedEvent {
   type: 'PlanUpdated';
   turnId: string;
   steps: { text: string; status: 'pending' | 'in_progress' | 'done' }[];
+}
+
+/** Words the person sent into a running turn, as the model received them (0.12.5). */
+export interface TurnSteeredEvent {
+  type: 'TurnSteered';
+  turnId: string;
+  text: string;
 }
 
 export interface ThinkingDeltaEvent {
@@ -1325,6 +1333,7 @@ export type SdcpEvent =
   | DuelResolvedEvent
   | SessionBridgedEvent
   | PlanUpdatedEvent
+  | TurnSteeredEvent
   | VerifyUpdatedEvent
   | ModelsUpdatedEvent
   | CostUpdatedEvent
@@ -1375,6 +1384,7 @@ export const SDCP_EVENT_TYPES = [
   'DuelResolved',
   'SessionBridged',
   'PlanUpdated',
+  'TurnSteered',
   'VerifyUpdated',
   'ModelsUpdated',
   'CostUpdated',
@@ -1604,6 +1614,8 @@ export interface SdcpMethodMap {
   /** `stopped`: whether an engine was found for the turn and told to stop, not only marked. */
   'engine.cancel': { params: { turnId: string }; result: { state: string; engine: string; stopped: boolean } };
   'engine.kill': { params: { turnId: string }; result: { state: string; engine: string; stopped: boolean } };
+  /** Words for a running turn (0.12.5): an agent turn takes them between steps; `accepted: false` otherwise. */
+  'engine.steer': { params: { turnId: string; text: string }; result: { accepted: boolean } };
   'engine.status': {
     params: { turnId: string };
     result: { state: EngineStatusValue; engine: string; model: string };

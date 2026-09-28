@@ -88,6 +88,8 @@ export interface RightPanelState {
   width: number;
   /** The page each chat previews (v4) - a dev server's URL, by session id. */
   previewUrls: Record<string, string>;
+  /** Live preview on or off, by session id (0.12.5): on reloads after each change and finds the dev server. */
+  previewLive: Record<string, boolean>;
 }
 
 export interface RightPanelActions {
@@ -100,6 +102,7 @@ export interface RightPanelActions {
   setWidth: (width: number) => void;
   /** Point a chat's preview at a URL, or clear it with an empty string. */
   setPreviewUrl: (sessionId: string, url: string) => void;
+  setPreviewLive: (sessionId: string, live: boolean) => void;
 }
 
 const initialRightPanelState: RightPanelState = {
@@ -107,6 +110,7 @@ const initialRightPanelState: RightPanelState = {
   tabBySession: {},
   width: 400,
   previewUrls: {},
+  previewLive: {},
 };
 
 export const useRightPanelStore = create<RightPanelState & RightPanelActions>()((set, get) => ({
@@ -123,6 +127,9 @@ export const useRightPanelStore = create<RightPanelState & RightPanelActions>()(
 
   setPreviewUrl: (sessionId, url) =>
     set((state) => ({ previewUrls: { ...state.previewUrls, [sessionId]: url } })),
+
+  setPreviewLive: (sessionId, live) =>
+    set((state) => ({ previewLive: { ...state.previewLive, [sessionId]: live } })),
 
   setWidth: (width) => {
     const clamped = Math.min(PANEL_MAX_WIDTH, Math.max(PANEL_MIN_WIDTH, Math.round(width)));

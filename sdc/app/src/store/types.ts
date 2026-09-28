@@ -128,6 +128,8 @@ export interface ToolView {
   meta: string;
   diff: { lineNumber: string; text: string; change: 'add' | 'rem' }[];
   output: { level: 'ok' | 'fail' | 'dim'; text: string }[];
+  /** The log's stamp of `ToolCallCompleted` (0.12.5) - where "deciding the next step" starts counting. */
+  endedAt?: string;
 }
 
 export interface ErrorView {
@@ -172,11 +174,27 @@ export interface TurnView {
   /** Milliseconds without output, set by `StuckDetected` (spec section 12.9). */
   stuckForMs: number;
   tools: ToolView[];
+  /**
+   * Everything the turn produced, **in the order it happened** (0.12.5): a stretch of thinking, a few
+   * words to the person, a tool call, another stretch of thinking... The fields above keep the totals;
+   * this is what the stream draws, so what the agent is doing now is always at the bottom, next to the
+   * input - not a thinking box at the top that scrolled away while the tool cards grew below it.
+   */
+  timeline: TimelineEntry[];
   error?: ErrorView;
   summary: string;
   meta: string;
   pass: boolean | null;
 }
+
+/** One stretch of a turn, in arrival order. Tools and checkpoints are referenced by id. */
+export type TimelineEntry =
+  | { kind: 'thinking'; text: string; startedAt: string; endedAt: string | null }
+  | { kind: 'text'; text: string; startedAt: string }
+  | { kind: 'tool'; callId: string }
+  | { kind: 'checkpoint'; id: string }
+  /** Words the person sent while the turn ran, where the agent received them (0.12.5). */
+  | { kind: 'steer'; text: string };
 
 /* ------------------------------------------------------------------------------------------------
  * The five differentiators' view state (spec sections 2.5, 14-16)

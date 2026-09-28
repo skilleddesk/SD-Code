@@ -10,7 +10,7 @@ import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 
 import { strings } from '../../strings';
 import { pickFiles, type PickKind, type PickedFile } from '../../lib/picker';
-import { interruptTurn, sendPrompt } from '../../store/intents';
+import { interruptTurn, sendPrompt, steerTurn } from '../../store/intents';
 import { useAppStore } from '../../store/store';
 import { useModelStore } from '../../store/model';
 import { toast } from '../../store/toast';
@@ -189,17 +189,29 @@ export function PromptArea({ sessionId }: PromptAreaProps = {}) {
      */
     const prompt = text;
 
-    /* This chat's turn is still running: the prompt waits its turn instead of racing it. */
+    /* This chat's turn is still running. First the words go **into** it (0.12.5): an agent turn reads
+       them between steps and changes course, as Claude Code does. A turn that cannot take them (a CLI
+       turn) leaves them queued as the next turn, as before. */
     if (running !== null && sessionId !== undefined) {
-      if (!useModelStore.getState().enqueue(sessionId, prompt)) {
-        toast(strings.prompt.queued.full);
-
-        return;
-      }
-
       textarea.value = '';
       textarea.style.height = 'auto';
-      toast(strings.prompt.queued.queuedToast);
+
+      void steerTurn(running, prompt).then((accepted) => {
+        if (accepted) {
+          toast(strings.prompt.queued.steered);
+
+          return;
+        }
+
+        if (!useModelStore.getState().enqueue(sessionId, prompt)) {
+          toast(strings.prompt.queued.full);
+          useModelStore.getState().setDraft(prompt);
+
+          return;
+        }
+
+        toast(strings.prompt.queued.queuedToast);
+      });
 
       return;
     }

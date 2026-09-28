@@ -7,6 +7,7 @@ import { useAppStore } from '../../store/store';
 import { PromptArea } from '../prompt';
 import { collapsedSummary, toTurns } from '../turns/live';
 import { TurnStream } from '../turns';
+import { LiveBar } from '../turns/LiveBar';
 import { HostIcon } from '../ui/HostIcon';
 
 /**
@@ -41,6 +42,9 @@ export function Pane({ session, host, showHeader }: PaneProps) {
   const verifies = useAppStore((state) => state.verifies);
   const streamTurns = toTurns(turns, session.id, checkpoints, verifies);
   const collapsed = collapsedSummary(turns, session.id);
+  /* The turn still running in this chat, if any - what the sticky live bar describes (0.12.5). */
+  const running = streamTurns.length === 0 ? undefined : streamTurns[streamTurns.length - 1];
+  const liveTurn = running?.running === true && running.live !== undefined && running.stats !== undefined ? running : undefined;
 
   /*
    * Spec section 9.7's first two rows: `user at the bottom → auto-scroll follow`, `user above → the
@@ -185,7 +189,11 @@ export function Pane({ session, host, showHeader }: PaneProps) {
         </div>
       </div>
 
-      {behind ? (
+      {liveTurn?.live !== undefined && liveTurn.stats !== undefined ? (
+        <LiveBar live={liveTurn.live} stats={liveTurn.stats} model={liveTurn.meta.model} behind={behind} onJump={jumpToLatest} />
+      ) : null}
+
+      {behind && liveTurn === undefined ? (
         <div className="pointer-events-none relative h-0">
           <button
             type="button"

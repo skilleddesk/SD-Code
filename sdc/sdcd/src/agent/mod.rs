@@ -351,6 +351,23 @@ fn drive(
     };
     let (mut input_tokens, mut output_tokens) = (0u64, 0u64);
     let mut said_something = false;
+    /* Words sent while the turn runs join it between steps (0.12.5) - closed when the loop returns. */
+    let inbox = crate::engines::steer::open(&turn_id);
+    let steer = |messages: &mut Vec<Value>| -> bool {
+        let texts = inbox.take();
+
+        if texts.is_empty() {
+            return false;
+        }
+
+        for text in &texts {
+            sink.send(EngineEvent::Steered(text.clone()));
+        }
+
+        dialect::append_user_text(target.dialect, messages, &crate::engines::steer::as_message(&texts));
+
+        true
+    };
 
     for step in 1..=max_steps {
         if stopped() {
@@ -393,6 +410,11 @@ fn drive(
 
         messages.push(reply.message.clone());
 
+        /* About to finish, but the person said something meanwhile: that is the next thing to do. */
+        if reply.tool_uses.is_empty() && steer(&mut messages) {
+            continue;
+        }
+
         if reply.tool_uses.is_empty() {
             let summary = if reply.stop == "max_tokens" || reply.stop == "length" {
                 "Cut off: the answer reached the model's length limit"
@@ -425,6 +447,7 @@ fn drive(
         }
 
         messages.extend(dialect::tool_results(target.dialect, &results));
+        steer(&mut messages);
     }
 
     /* The step budget ran out with work still going on. That is said, with the way to continue, rather

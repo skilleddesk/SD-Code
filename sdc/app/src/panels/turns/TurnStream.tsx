@@ -3,12 +3,8 @@ import { ChevronRight } from 'lucide-react';
 import { strings } from '../../strings';
 import { toast } from '../../store/toast';
 import { ErrorCard } from './ErrorCard';
-import { LiveStats } from './LiveStats';
-import { AnswerBlock } from './AnswerBlock';
-import { CheckpointRail } from './CheckpointRail';
 import { PlanCard } from './PlanCard';
-import { ThinkingBlock } from './ThinkingBlock';
-import { ToolCard } from './ToolCard';
+import { Timeline } from './Timeline';
 import { TurnFooter } from './TurnFooter';
 import { UserMessage } from './UserMessage';
 import {
@@ -72,27 +68,6 @@ export function TurnStream({ turns, collapsed = null, sessionId }: TurnStreamPro
   );
 }
 
-/** What a running turn is doing this second (0.11.8): the tool that runs, the thinking, or the writing. */
-function phaseOf(turn: Turn): string {
-  const running = turn.tools.find((tool) => tool.status === 'running');
-
-  if (running !== undefined) {
-    const target = running.target.length > 60 ? `${running.target.slice(0, 57)}…` : running.target;
-
-    return strings.turns.stats.phase.running(running.name, target);
-  }
-
-  if (turn.thinking?.since !== null && turn.thinking?.since !== undefined) {
-    return strings.turns.stats.phase.thinking;
-  }
-
-  if (turn.answer?.streaming === true) {
-    return strings.turns.stats.phase.writing;
-  }
-
-  return strings.turns.stats.phase.working;
-}
-
 /** One `.turn`: the user's message, the meta line, then whatever the engine produced. */
 function TurnBlock({ turn, sessionId }: { turn: Turn; sessionId: string }) {
   return (
@@ -113,20 +88,12 @@ function TurnBlock({ turn, sessionId }: { turn: Turn; sessionId: string }) {
         )}
       </div>
 
-      {/* The measured live line (0.9.0): only while the turn runs; the footer carries real totals. */}
-      {turn.stats === undefined ? null : <LiveStats stats={turn.stats} phase={phaseOf(turn)} />}
-
       {/* The plan first: it is the map of everything below it. */}
       <PlanCard steps={turn.plan} running={turn.running} />
 
-      {turn.thinking ? <ThinkingBlock thinking={turn.thinking} /> : null}
-
-      {/* Before the tool cards, because that is when the daemon wrote it: ahead of the first change. */}
-      <CheckpointRail sessionId={sessionId} checkpoints={turn.checkpoints} />
-
-      {turn.tools.map((tool, index) => (
-        <ToolCard key={`${tool.kind}-${index}`} tool={tool} />
-      ))}
+      {/* Everything the turn did, in the order it did it (0.12.5). The live line moved to the sticky bar
+          above the input (`LiveBar`), where it cannot scroll away. */}
+      <Timeline items={turn.timeline} sessionId={sessionId} live={turn.live} />
 
       {/* Between Send and the first event there used to be nothing at all here, and a slow first
           token read as a dead turn. Three pulsing dots and a sentence are the honest version of
@@ -152,8 +119,6 @@ function TurnBlock({ turn, sessionId }: { turn: Turn; sessionId: string }) {
       {/* The answer sits between the work and the totals: thinking, the tool cards the answer came
           out of, then what the engine actually said - and the error card above it, because a failed
           turn has an explanation where its answer would be. */}
-      {turn.answer ? <AnswerBlock answer={turn.answer} /> : null}
-
       {turn.error ? <ErrorCard error={turn.error} /> : null}
 
       <TurnFooter

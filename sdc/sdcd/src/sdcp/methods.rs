@@ -104,6 +104,13 @@ impl Daemon {
             /* Engines ------------------------------------------------------------------------- */
             "engine.start" => self.engine_start(envelope, out),
             "engine.cancel" | "engine.kill" => self.engine_stop(envelope, &*out),
+            /* 0.12.5: words for a turn that is still running - `accepted: false` when it cannot take them. */
+            "engine.steer" => {
+                let turn_id = envelope.require_str("turnId")?;
+                let text = envelope.require_str("text")?;
+
+                Ok(json!({ "accepted": crate::engines::steer::push(&turn_id, &text) }))
+            }
             "engine.status" => self.engine_status(envelope),
             "engine.switch" => self.engine_switch(envelope, &*out),
             "verify.run" => self.verify_run(envelope, out),
@@ -1493,6 +1500,12 @@ impl Daemon {
            words - for this turn only; the stored prompt stays the person's own. */
         let prompt_text = match self.long_task_memory(&session_id, project_root.as_deref(), remote.as_ref(), include_memory_file) {
             Some(memory) => format!("{memory}\n\n{prompt_text}"),
+            None => prompt_text,
+        };
+        /* Continuity (0.12.5): the project's conventions, and - when this model is not the one that wrote
+           the earlier turns - the hand-over, so a second model follows the first one's shape and style. */
+        let prompt_text = match self.continuity_brief(&session_id, &turn_id, project_root.as_deref(), remote.as_ref(), &engine_id, &model) {
+            Some(brief) => format!("{brief}\n\n{prompt_text}"),
             None => prompt_text,
         };
         let plan = RunPlan {
@@ -3293,6 +3306,9 @@ async fn run_turn(
                     session.clone(),
                     turn.clone(),
                 );
+            }
+            crate::engines::EngineEvent::Steered(text) => {
+                out.push(event::turn_steered(&plan.turn_id, &text), session.clone(), turn.clone());
             }
             crate::engines::EngineEvent::Plan(steps) => {
                 /* The plan outlives the turn and the daemon (long-task memory, 0.12): the next agent turn in

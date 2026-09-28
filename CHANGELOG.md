@@ -15,6 +15,56 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [0.12.5] — A live stream in the order it happens, chats per project, and one sign-in for every host
+
+From the report: *"every step every process jano dakha jai AI ki korse ki think korse"*, *"project base
+alada chat"*, *"local a file select korar manual kono option nai"*, *"new chat a je bisoye likbo … rename"*
+and *"CLI and API gula akbar connect korlei jano local and vps sob jaigai kaj kore"*.
+
+* **The turn is drawn in the order it happened.** Before this, a turn drew one thinking box at the top, all
+  the tool cards under it, and every word the agent said joined into one answer at the end. While the agent
+  worked, its newest thought was in a box that had scrolled out of view, and a line like "Now I understand
+  the project, let me…" only appeared once the turn was over. Each thought, remark, tool call and checkpoint
+  now sits where it happened (`TurnView.timeline`, rebuilt from the event log, so older chats read this way
+  too). The thought in progress stays open and streams. A finished thought folds to "Thought for 2.4s" with
+  its first line still showing. The words the turn ends on keep the Answer card.
+* **"Deciding the next step…"** fills the gap between two actions, with its own timer. That pause used to
+  look like a stalled turn.
+* **A sticky live bar above the input** shows what is happening now (thinking, running a named tool,
+  writing, deciding) and for how long. It also shows the plan step in progress, the elapsed time, tokens,
+  tok/s and tool calls, plus "Jump to now" when you have scrolled up. It replaces the stats line that
+  scrolled away.
+* **Chats per project.** In the sidebar, each host now lists its folders, and each folder lists its own
+  chats and has a `+` for a new chat in that folder. `+ New chat` reuses an empty chat only when it is in the
+  same folder, so it no longer takes over another project's chat.
+* **Open a folder from the sidebar.** Each host has "Open a folder…". On this machine it uses the system's
+  own folder picker, and on a VPS it uses the host's folder browser.
+* **Chats name themselves.** A chat that still has its default name (`New chat` or its folder's name) is
+  renamed from the first message sent in it. A name you typed yourself is never changed.
+* **One Claude sign-in for every host.** A Claude Code turn on a VPS now uses this PC's Claude sign-in. The
+  token goes over ssh's stdin into a `umask 077` file, which the turn reads and deletes before `claude`
+  starts. It is never in a command line, and the host's own `~/.claude` is not touched. When the token is
+  close to expiring, a short local `claude` call renews it first. Codex and Gemini are not covered yet. API
+  providers already worked everywhere, because their calls are made from this PC.
+* **One style across models.** Each turn in a folder now starts with a short continuity brief. It carries
+  the project's formatting rules (`.editorconfig`, Prettier, ESLint, Biome, rustfmt, ruff, and others), its
+  stack from the manifest (React, TypeScript, Laravel, WordPress, and so on), and the project's rules file
+  when the engine's CLI would not read it by itself. When the earlier turns in the chat were written by a
+  different model, the brief also includes a hand-over: who wrote them, the files they changed, and an
+  instruction to read those files first and match their layout, naming and formatting instead of restyling
+  them (`continuity.rs`).
+* **Messages sent while a turn is running now join it.** An agent turn (API or Ollama) reads anything you
+  send between steps, after a tool call or just before it would finish, and adjusts. The message appears
+  in the timeline where the agent received it, labelled "You, while it worked". A CLI turn cannot take a
+  message mid-run, so it still queues the message as the next turn, as before (`engine.steer`,
+  `TurnSteered`).
+* **Live preview.** The Preview tab has a Live switch, which is on by default:
+  * The page reloads after each change the agent finishes.
+  * A dev server address in a command's output (`Local: http://localhost:5173/`) is picked up and opened.
+  * Addresses the chat found, and a VPS project's own domain, appear as one-click chips.
+  * The tab shows which change caused the last reload.
+  * Turn the switch off to reload by hand.
+
 ## [0.12.4] — Alibaba Cloud: its latest models, more than one in use, and errors that say which key
 
 From a report with two screenshots. A **claude_code** chat on the VPS failed with `OAuth session expired`,

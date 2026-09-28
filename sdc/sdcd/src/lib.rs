@@ -45,6 +45,7 @@ pub mod auth;
 pub mod checkpoints;
 pub mod cli;
 pub mod console;
+pub mod continuity;
 pub mod crash;
 pub mod duel;
 pub mod engines;

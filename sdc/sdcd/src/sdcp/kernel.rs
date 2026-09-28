@@ -40,6 +40,39 @@ impl Daemon {
     /// **Long-task memory** (0.12): what a turn should know that the conversation alone may not carry - the
     /// plan the agent left unfinished in this chat (kept by the daemon, so it survives a restart) and the
     /// project's own `.sdc/memory.md`. `None` when there is nothing to remember.
+    /// The continuity brief of one turn (0.12.5, `crate::continuity`): conventions from the folder, and a
+    /// hand-over when earlier turns of the chat were written by another model. `None` without a folder.
+    pub(super) fn continuity_brief(
+        &self,
+        session_id: &str,
+        turn_id: &str,
+        root: Option<&str>,
+        remote: Option<&crate::ssh::Ssh>,
+        engine: &str,
+        model: &str,
+    ) -> Option<String> {
+        let root = root?;
+        let facts = match remote {
+            Some(ssh) => crate::continuity::gather_remote(ssh, root, engine),
+            None => crate::continuity::gather_local(std::path::Path::new(root), engine),
+        };
+        let earlier: Vec<crate::continuity::Author> = self
+            .store()
+            .turns(session_id)
+            .unwrap_or_default()
+            .iter()
+            .filter(|turn| turn["turnId"] != turn_id && turn["state"] != "rewound")
+            .map(|turn| crate::continuity::Author {
+                turn_id: turn["turnId"].as_str().unwrap_or_default().to_string(),
+                engine: turn["engine"].as_str().unwrap_or_default().to_string(),
+                model: turn["model"].as_str().unwrap_or_default().to_string(),
+            })
+            .collect();
+        let edited = self.store().edited_files(session_id).unwrap_or_default();
+
+        crate::continuity::brief(&facts, &earlier, &edited, engine, model)
+    }
+
     pub(super) fn long_task_memory(&self, session_id: &str, root: Option<&str>, remote: Option<&crate::ssh::Ssh>, include_file: bool) -> Option<String> {
         let mut parts = Vec::new();
 

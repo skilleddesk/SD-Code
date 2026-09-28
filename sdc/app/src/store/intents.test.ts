@@ -254,6 +254,7 @@ describe('newChatOnHost', () => {
     status: 'done',
     stuckForMs: 0,
     tools: [],
+    timeline: [],
     summary: '',
     meta: '',
     pass: null,
@@ -466,6 +467,7 @@ describe('openFolderIn', () => {
           status: 'done',
           stuckForMs: 0,
           tools: [],
+          timeline: [],
           summary: '',
           meta: '',
           pass: true,
@@ -1435,7 +1437,7 @@ describe('verify', () => {
     useAppStore.setState({
       providers: [connected('claude', 'Claude'), connected('gemini', 'Gemini')] as never,
       turns: [
-        { id: 't1', sessionId: 's1', turnNumber: 1, engine: 'claude_code', model: 'sonnet', tier: 'Balanced', prompt: 'fix the 500', text: 'done', thinking: '', thinkingMs: 0, thinkingSince: null, plan: [], startedAt: '2026-09-25T10:00:00Z', status: 'done', stuckForMs: 0, tools: [], summary: '', meta: '', pass: null },
+        { id: 't1', sessionId: 's1', turnNumber: 1, engine: 'claude_code', model: 'sonnet', tier: 'Balanced', prompt: 'fix the 500', text: 'done', thinking: '', thinkingMs: 0, thinkingSince: null, plan: [], startedAt: '2026-09-25T10:00:00Z', status: 'done', stuckForMs: 0, tools: [], timeline: [], summary: '', meta: '', pass: null },
       ],
       checkpoints: [
         { id: 'cp-late', sessionId: 's1', turnId: 't1', turn: 9, when: 'now', title: 'Before Run', thumbnail: null, filesHash: 'b'.repeat(40) },
@@ -1545,5 +1547,18 @@ describe('projectMentionedIn', () => {
     expect(projectMentionedIn('my example-shop.communications file', projects)).toBeNull();
     /* `SDC` is three characters: too short to claim a word. */
     expect(projectMentionedIn('run sdc here', projects)).toBeNull();
+  });
+});
+
+/* 0.12.5: a chat is named after the first thing asked in it. */
+describe('titleFromPrompt', () => {
+  it('keeps a short prompt, and cuts a long one at a word', async () => {
+    const { titleFromPrompt } = await import('./intents');
+
+    expect(titleFromPrompt('example-shop.com ai project tar access naw.')).toBe('Example-shop.com ai project tar access naw');
+    expect(titleFromPrompt('fix https://example-shop.com/wp-admin/login please')).toBe('Fix example-shop.com please');
+    expect(titleFromPrompt('\n\nCreate a small calc.js with add, sub, mul and div functions and a test file for it')).toBe(
+      'Create a small calc.js with add, sub, mul and…',
+    );
   });
 });

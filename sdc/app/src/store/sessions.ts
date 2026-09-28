@@ -48,7 +48,7 @@ export interface SessionsStore {
   counter: number;
   openSession: (id: string) => void;
   closeTab: (id: string) => void;
-  newChatOnHost: (hostId: string) => void;
+  newChatOnHost: (hostId: string, projectId?: string | null) => void;
   renameSession: (id: string, title: string) => void;
   deleteSession: (id: string) => void;
   /** Branch this chat into a new one, and open it (0.7.8). */
@@ -80,10 +80,10 @@ export const sessionActions = {
     usePrefsStore.getState().closeTab(id);
   },
 
-  newChatOnHost: (hostId: string): void => {
+  newChatOnHost: (hostId: string, projectId?: string | null): void => {
     usePrefsStore.getState().setActiveHost(hostId);
 
-    void newChatIntent(hostId).then((created) => {
+    void newChatIntent(hostId, projectId).then((created) => {
       if (created !== null) {
         usePrefsStore.getState().openTab(created);
       }

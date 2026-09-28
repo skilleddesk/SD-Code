@@ -21,6 +21,7 @@ function turn(overrides: Partial<TurnView>): TurnView {
     status: 'done',
     stuckForMs: 0,
     tools: [],
+    timeline: [],
     summary: 'Done',
     meta: '',
     pass: null,

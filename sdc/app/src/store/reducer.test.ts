@@ -824,6 +824,27 @@ describe('thinking time and checkpoint ownership', () => {
     expect(state.turns[0]?.thinkingSince).toBeNull();
   });
 
+  /* 0.12.5: "every step every process jano dakha jai" - the stream draws the turn in the order it happened. */
+  it('keeps thought, words and actions in the order they happened', () => {
+    let state = at(EMPTY_STATE, 0, started);
+
+    state = at(state, 1, { type: 'ThinkingDelta', turnId: 't1', delta: 'Look ' });
+    state = at(state, 2, { type: 'ThinkingDelta', turnId: 't1', delta: 'first.' });
+    state = at(state, 3, { type: 'TurnDelta', turnId: 't1', delta: 'Checking the folder.' });
+    state = at(state, 4, { type: 'ToolCallStarted', turnId: 't1', callId: 'c1', tool: 'read', name: 'List', target: '.' });
+    state = at(state, 5, { type: 'CheckpointSaved', sessionId: 's1', checkpoint: { id: 'cp1', turn: 1, ts: 'now', title: 'Before', filesHash: 'x' } } as SdcpEvent, 't1');
+    state = at(state, 6, { type: 'ThinkingDelta', turnId: 't1', delta: 'Now write it.' });
+    state = at(state, 8, { type: 'TurnDelta', turnId: 't1', delta: 'Done.' });
+
+    const timeline = state.turns[0]?.timeline ?? [];
+
+    expect(timeline.map((entry) => entry.kind)).toEqual(['thinking', 'text', 'tool', 'checkpoint', 'thinking', 'text']);
+    expect(timeline[0]).toMatchObject({ text: 'Look first.', endedAt: '2026-09-25T10:00:03.500Z' });
+    expect(timeline[4]).toMatchObject({ text: 'Now write it.', endedAt: '2026-09-25T10:00:08.500Z' });
+    /* The totals are what they were: one text, one thinking. */
+    expect(state.turns[0]?.text).toBe('Checking the folder.Done.');
+  });
+
   it('measures nothing when a stamp is not a date, rather than inventing a time', () => {
     let state = applyEvent(EMPTY_STATE, { seq: 1, ts: 'now', event: started });
 

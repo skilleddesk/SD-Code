@@ -110,6 +110,16 @@ pub fn translate(tool: &str, output: &str) -> Translation {
         );
     }
 
+    /* 0.12.5: a turn on a provider with no key stored at all. */
+    if haystack.contains("no api key for") {
+        return rule(
+            "No API key is saved for this provider",
+            format!("`{first_line}`. Open Providers, paste the key on that provider's card and press Test - or pick a model from a provider that is connected."),
+            false,
+            "api-key-missing",
+        );
+    }
+
     /* `env: 'gemini': No such file or directory` - a CLI that is not installed on the machine the chat
        runs on (a VPS, usually). */
     if let Some(program) = haystack

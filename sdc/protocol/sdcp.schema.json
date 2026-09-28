@@ -207,6 +207,7 @@
           "engine.start",
           "engine.cancel",
           "engine.kill",
+          "engine.steer",
           "engine.status",
           "engine.switch",
           "verify.run",
@@ -356,6 +357,7 @@
           "DuelResolved",
           "SessionBridged",
           "PlanUpdated",
+          "TurnSteered",
           "VerifyUpdated",
           "ModelsUpdated",
           "CostUpdated",
@@ -767,6 +769,15 @@
             "state": "string",
             "engine": "string",
             "stopped": "boolean"
+          }
+        },
+        "engine.steer": {
+          "params": {
+            "turnId": "string",
+            "text": "string"
+          },
+          "result": {
+            "accepted": "boolean"
           }
         },
         "engine.status": {

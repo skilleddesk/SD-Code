@@ -111,6 +111,25 @@ pub fn user_message(text: &str) -> Value {
     json!({ "role": "user", "content": text })
 }
 
+/// Adds the person's words after the last message (0.12.5, steering). Anthropic's tool results are a
+/// user message already, and two user messages in a row are refused there - so the words join it as a
+/// text block. After an OpenAI `tool` message, or an assistant reply, they are a message of their own.
+pub fn append_user_text(dialect: Dialect, messages: &mut Vec<Value>, text: &str) {
+    if dialect == Dialect::Anthropic {
+        if let Some(last) = messages.last_mut() {
+            if last["role"] == "user" {
+                if let Some(blocks) = last["content"].as_array_mut() {
+                    blocks.push(json!({ "type": "text", "text": text }));
+
+                    return;
+                }
+            }
+        }
+    }
+
+    messages.push(user_message(text));
+}
+
 /// A plain assistant message (a replayed earlier answer), in either dialect.
 pub fn assistant_message(text: &str) -> Value {
     json!({ "role": "assistant", "content": text })

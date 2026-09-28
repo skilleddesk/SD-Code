@@ -12,6 +12,7 @@ import type {
   ProviderView,
   SessionView,
   ToastRecord,
+  TimelineEntry,
   TurnView,
 } from './types';
 import { applyKernel, EMPTY_KERNEL, KERNEL_EVENTS } from './kernel';
@@ -117,7 +118,33 @@ function endThinking(turn: TurnView, ts: string): TurnView {
     return turn;
   }
 
-  return { ...turn, thinkingMs: turn.thinkingMs + between(turn.thinkingSince, ts), thinkingSince: null };
+  return {
+    ...turn,
+    thinkingMs: turn.thinkingMs + between(turn.thinkingSince, ts),
+    thinkingSince: null,
+    timeline: turn.timeline.map((entry, index) =>
+      index === turn.timeline.length - 1 && entry.kind === 'thinking' && entry.endedAt === null
+        ? { ...entry, endedAt: ts }
+        : entry,
+    ),
+  };
+}
+
+/**
+ * Appends streamed text to the turn's timeline (0.12.5): to the newest stretch when it is the same kind,
+ * or as a new stretch when something else happened in between - which is what keeps "thought, said,
+ * ran, thought again" in the order it happened.
+ */
+function appendStretch(timeline: readonly TimelineEntry[], kind: 'thinking' | 'text', delta: string, ts: string): TimelineEntry[] {
+  const last = timeline[timeline.length - 1];
+
+  if (last !== undefined && last.kind === kind && (kind === 'text' || (last.kind === 'thinking' && last.endedAt === null))) {
+    return [...timeline.slice(0, -1), { ...last, text: last.text + delta }];
+  }
+
+  return kind === 'thinking'
+    ? [...timeline, { kind, text: delta, startedAt: ts, endedAt: null }]
+    : [...timeline, { kind, text: delta, startedAt: ts }];
 }
 
 /** The switch. One arm per catalogue entry; each arm returns the whole next state. */
@@ -379,11 +406,19 @@ function reduce(state: AppState, entry: AppEvent): AppState {
       };
 
       const others = state.checkpoints.filter((entryPoint) => entryPoint.id !== checkpoint.id);
-
-      return {
+      const placed = {
         ...state,
         checkpoints: [checkpoint, ...others].sort((a, b) => b.turn - a.turn),
       };
+
+      /* In the turn's timeline too (0.12.5), where it was written: just before the change it guards. */
+      return checkpoint.turnId === null
+        ? placed
+        : patchTurn(placed, checkpoint.turnId, (turn) =>
+            turn.timeline.some((item) => item.kind === 'checkpoint' && item.id === checkpoint.id)
+              ? turn
+              : { ...turn, timeline: [...turn.timeline, { kind: 'checkpoint', id: checkpoint.id }] },
+          );
     }
 
     case 'RewindApplied': {
@@ -436,6 +471,7 @@ function reduce(state: AppState, entry: AppEvent): AppState {
         status: 'running',
         stuckForMs: 0,
         tools: [],
+        timeline: [],
         summary: '',
         /* The totals line is filled by `TurnCompleted`, which carries what the run actually cost.
            Nothing here guesses a price: this build has no way to know one. */
@@ -447,18 +483,24 @@ function reduce(state: AppState, entry: AppEvent): AppState {
     }
 
     case 'TurnDelta':
-      return patchTurn(state, event.turnId, (turn) => ({
-        ...endThinking(turn, entry.ts),
-        text: turn.text + event.delta,
-        status: 'running',
-        stuckForMs: 0,
-      }));
+      return patchTurn(state, event.turnId, (turn) => {
+        const ended = endThinking(turn, entry.ts);
+
+        return {
+          ...ended,
+          text: turn.text + event.delta,
+          timeline: appendStretch(ended.timeline, 'text', event.delta, entry.ts),
+          status: 'running',
+          stuckForMs: 0,
+        };
+      });
 
     case 'ThinkingDelta':
       return patchTurn(state, event.turnId, (turn) => ({
         ...turn,
         thinking: turn.thinking + event.delta,
         thinkingSince: turn.thinkingSince ?? entry.ts,
+        timeline: appendStretch(turn.timeline, 'thinking', event.delta, entry.ts),
         status: 'running',
         stuckForMs: 0,
       }));
@@ -466,6 +508,7 @@ function reduce(state: AppState, entry: AppEvent): AppState {
     case 'ToolCallStarted':
       return patchTurn(state, event.turnId, (turn) => ({
         ...endThinking(turn, entry.ts),
+        timeline: [...endThinking(turn, entry.ts).timeline, { kind: 'tool', callId: event.callId }],
         tools: [
           ...turn.tools,
           {
@@ -497,7 +540,7 @@ function reduce(state: AppState, entry: AppEvent): AppState {
         ...turn,
         tools: turn.tools.map((tool) =>
           tool.callId === event.callId
-            ? { ...tool, status: event.status, meta: event.meta, diff: event.diff ?? tool.diff }
+            ? { ...tool, status: event.status, meta: event.meta, diff: event.diff ?? tool.diff, endedAt: entry.ts }
             : tool,
         ),
       }));
@@ -518,6 +561,13 @@ function reduce(state: AppState, entry: AppEvent): AppState {
 
       return { ...state, verifies: [...others, run] };
     }
+
+    case 'TurnSteered':
+      return patchTurn(state, event.turnId, (turn) => {
+        const ended = endThinking(turn, entry.ts);
+
+        return { ...ended, timeline: [...ended.timeline, { kind: 'steer', text: event.text }] };
+      });
 
     case 'PlanUpdated':
       /* Whole each time: the newest checklist replaces the last, so a step that finished is ticked. */

@@ -1,7 +1,11 @@
-import { ChevronDown, Plus, ServerOff } from 'lucide-react';
+import { useState } from 'react';
+import { ChevronDown, Folder, FolderOpen, FolderPlus, MessageSquare, Plus, ServerOff, X } from 'lucide-react';
 
 import { strings } from '../../strings';
-import { removeHost } from '../../store/intents';
+import { closeFolder, openFolder, removeHost } from '../../store/intents';
+import { useOverlayStore } from '../../store/overlays';
+import { useAppStore } from '../../store/store';
+import type { ProjectView } from '../../store/types';
 import { matchesFilter, orderedSessions, useSessionsStore, type Host } from '../../store/sessions';
 import { HostIcon } from '../ui/HostIcon';
 import { HOST_STATUS_CLASS, HOST_STATUS_LABEL } from '../ui/status';
@@ -38,6 +42,38 @@ export function HostGroup({ host, filter, activeTab, collapsed }: HostGroupProps
   const { toggleHostCollapsed, newChatOnHost } = useSessionsStore();
 
   const visible = orderedSessions(host.sessions).filter((session) => matchesFilter(session, filter));
+  const listed = useAppStore((state) => state.projects).filter((project) => project.hostId === host.id);
+  /* A chat bound to a folder the project list has not brought yet (it loads after the chats) still sits
+     under its folder, named from its own root - never loose for a moment and then jumping. */
+  const projects: ProjectView[] = [
+    ...listed,
+    ...host.sessions
+      .filter((session) => session.projectId != null && !listed.some((project) => project.id === session.projectId))
+      .filter((session, index, all) => all.findIndex((other) => other.projectId === session.projectId) === index)
+      .map((session) => ({
+        id: session.projectId ?? '',
+        hostId: host.id,
+        root: session.projectRoot ?? '',
+        name: (session.projectRoot ?? '').split(/[\\/]/).filter((part) => part !== '').pop() ?? session.title,
+        chats: 0,
+      })),
+  ];
+  const openRemoteFolder = useOverlayStore((state) => state.openRemoteFolder);
+  /* A local folder comes from this machine's own picker; a VPS folder from the host's browser. */
+  const addFolder = (): void => {
+    if (host.type === 'local') {
+      void openFolder(host.id);
+    } else {
+      openRemoteFolder(host.id);
+    }
+  };
+  /* Each project with its own chats (0.12.5): "project base alada chat ... multiple vps, project thakle
+     everytar jonno alada hobe". A project with no chat yet still shows, so a chat can be started in it. */
+  const groups = projects
+    .map((project) => ({ project, sessions: visible.filter((session) => session.projectId === project.id) }))
+    .filter((group) => filter.trim() === '' || group.sessions.length > 0)
+    .sort((left, right) => left.project.name.localeCompare(right.project.name));
+  const loose = visible.filter((session) => !projects.some((project) => project.id === session.projectId));
 
   /**
    * `host.remove` - spec section 9.12's other half, and the control that was missing.
@@ -92,6 +128,15 @@ export function HostGroup({ host, filter, activeTab, collapsed }: HostGroupProps
         </button>
         <button
           type="button"
+          className="host-folder grid h-[18px] w-[18px] shrink-0 place-items-center rounded-sm text-text-muted opacity-0 transition-all duration-fast ease-ease group-hover:opacity-100 hover:bg-bg-active hover:text-text-primary"
+          title={strings.sidebar.actions.openFolder}
+          aria-label={strings.sidebar.actions.openFolder}
+          onClick={addFolder}
+        >
+          <FolderPlus size={11} aria-hidden="true" />
+        </button>
+        <button
+          type="button"
           className="host-add grid h-[18px] w-[18px] shrink-0 place-items-center rounded-sm text-text-muted opacity-0 transition-all duration-fast ease-ease group-hover:opacity-100 hover:bg-bg-active hover:text-text-primary"
           title={strings.sidebar.actions.newChatOnHost}
           aria-label={strings.sidebar.actions.newChatOnHost}
@@ -121,31 +166,143 @@ export function HostGroup({ host, filter, activeTab, collapsed }: HostGroupProps
       </div>
 
       {collapsed ? null : (
-        <div className="host-sessions">
-          {host.sessions.length === 0 ? (
-            <div
-              className="host-empty flex cursor-pointer items-center gap-[6px] rounded-md py-[8px] pr-[12px] pl-[26px] text-[11.5px] italic text-text-muted transition-all duration-fast ease-ease hover:bg-bg-hover hover:not-italic hover:text-text-secondary"
-              role="button"
-              tabIndex={0}
-              onClick={() => newChatOnHost(host.id)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') {
-                  newChatOnHost(host.id);
-                }
-              }}
+        <div className="host-sessions ml-[10px] border-l border-border-subtle pl-[4px]">
+          {/* 1. The host's projects (sites, apps, folders), each with its own chats (0.12.5). */}
+          {groups.map(({ project, sessions }) => (
+            <ProjectGroup
+              key={project.id}
+              project={project}
+              hostId={host.id}
+              sessions={sessions}
+              activeTab={activeTab}
+              onNewChat={() => newChatOnHost(host.id, project.id)}
+            />
+          ))}
+
+          {/* 2. Chats that belong to no folder - the host's own chats. */}
+          {loose.length > 0 ? (
+            <>
+              {groups.length > 0 ? (
+                <div className="flex items-center gap-[6px] px-[10px] pb-[2px] pt-[8px] text-[9.5px] font-semibold uppercase tracking-[.08em] text-text-muted">
+                  <MessageSquare size={10} aria-hidden="true" />
+                  {strings.sidebar.hostChats}
+                </div>
+              ) : null}
+              {loose.map((session) => (
+                <SessionRow key={session.id} session={session} active={session.id === activeTab} />
+              ))}
+            </>
+          ) : null}
+
+          {/* 3. The two ways to begin, always in view: a chat on this machine, or a folder to work in. */}
+          <div className="host-actions flex gap-[4px] px-[6px] pb-[6px] pt-[4px]">
+            <button
+              type="button"
+              className="host-new-chat flex min-w-0 flex-1 items-center justify-center gap-[5px] rounded-md border border-dashed border-border-subtle py-[4px] text-[10.5px] text-text-muted transition-colors duration-fast ease-ease hover:border-solid hover:border-border-default hover:bg-bg-hover hover:text-text-primary"
+              title={strings.sidebar.actions.newChatOnHost}
+              onClick={() => newChatOnHost(host.id, null)}
             >
-              <Plus size={11} aria-hidden="true" />
-              {strings.sidebar.startChat}
-            </div>
+              <Plus size={10} aria-hidden="true" />
+              <span className="truncate">{strings.sidebar.newChatShort}</span>
+            </button>
+            <button
+              type="button"
+              className="host-open-folder flex min-w-0 flex-1 items-center justify-center gap-[5px] rounded-md border border-dashed border-border-subtle py-[4px] text-[10.5px] text-text-muted transition-colors duration-fast ease-ease hover:border-solid hover:border-border-default hover:bg-bg-hover hover:text-text-primary"
+              title={strings.sidebar.actions.openFolder}
+              onClick={addFolder}
+            >
+              <FolderPlus size={10} aria-hidden="true" />
+              <span className="truncate">{strings.sidebar.openFolderRow}</span>
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * One project under its host (0.12.5): the folder's name and its chat count, a `+` for a new chat **in this
+ * folder**, a way to close the folder (its chats are kept), and its chats under a guide line.
+ */
+function ProjectGroup({
+  project,
+  hostId,
+  sessions,
+  activeTab,
+  onNewChat,
+}: {
+  project: ProjectView;
+  hostId: string;
+  sessions: readonly Host['sessions'][number][];
+  activeTab: string | null;
+  onNewChat: () => void;
+}) {
+  /* A folder with no chat yet starts folded: its row and `+` are enough until it has one. */
+  const [folded, setFolded] = useState(sessions.length === 0);
+  const close = (): void => {
+    if (window.confirm(strings.sidebar.closeFolderConfirm(project.name, sessions.length))) {
+      void closeFolder(project.id, project.name);
+    }
+  };
+
+  return (
+    <div className="project-group mb-[1px]" data-project={project.id} data-project-host={hostId}>
+      <div className="project-header group/project flex min-w-0 items-center gap-[6px] rounded-md py-[4px] pr-[4px] pl-[6px] text-[11.5px] text-text-secondary hover:bg-bg-hover hover:text-text-primary">
+        <button
+          type="button"
+          className="flex min-w-0 flex-1 items-center gap-[6px] text-left"
+          aria-expanded={!folded}
+          aria-label={strings.sidebar.actions.toggleProject(project.name)}
+          title={project.root}
+          onClick={() => setFolded(!folded)}
+        >
+          <ChevronDown
+            size={10}
+            aria-hidden="true"
+            className={'shrink-0 text-text-muted transition-transform duration-200 ease-ease ' + (folded ? '-rotate-90' : '')}
+          />
+          {folded ? (
+            <Folder size={12} aria-hidden="true" className="shrink-0 text-accent" />
           ) : (
-            visible.map((session) => (
-              <SessionRow
-                key={session.id}
-                session={session}
-                active={session.id === activeTab}
-              />
-            ))
+            <FolderOpen size={12} aria-hidden="true" className="shrink-0 text-accent" />
           )}
+          <span className="min-w-0 flex-1 truncate font-medium">{project.name}</span>
+          <span className="shrink-0 font-mono text-[9.5px] text-text-muted group-hover/project:hidden">{sessions.length}</span>
+        </button>
+        <button
+          type="button"
+          className="project-add grid h-[18px] w-[18px] shrink-0 place-items-center rounded-sm text-text-muted opacity-0 transition-all duration-fast ease-ease group-hover/project:opacity-100 hover:bg-bg-active hover:text-text-primary focus-visible:opacity-100"
+          title={strings.sidebar.actions.newChatInProject(project.name)}
+          aria-label={strings.sidebar.actions.newChatInProject(project.name)}
+          onClick={onNewChat}
+        >
+          <Plus size={11} aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          className="project-close grid h-[18px] w-[18px] shrink-0 place-items-center rounded-sm text-text-muted opacity-0 transition-all duration-fast ease-ease group-hover/project:opacity-100 hover:bg-red-subtle hover:text-state-error focus-visible:opacity-100"
+          title={strings.sidebar.actions.closeFolder}
+          aria-label={`${strings.sidebar.actions.closeFolder} ${project.name}`}
+          onClick={close}
+        >
+          <X size={11} aria-hidden="true" />
+        </button>
+      </div>
+
+      {folded ? null : (
+        <div className="project-sessions ml-[12px] border-l border-border-subtle pl-[4px]">
+          {sessions.map((session) => (
+            <SessionRow key={session.id} session={session} active={session.id === activeTab} />
+          ))}
+          <button
+            type="button"
+            className="project-new-chat flex w-full items-center gap-[6px] rounded-md py-[4px] pr-[10px] pl-[10px] text-left text-[10.5px] text-text-muted hover:bg-bg-hover hover:text-text-secondary"
+            onClick={onNewChat}
+          >
+            <Plus size={10} aria-hidden="true" />
+            {strings.sidebar.actions.newChatInProject(project.name)}
+          </button>
         </div>
       )}
     </div>

@@ -660,7 +660,46 @@ pub fn turn_line(
     env: &[(&str, &str)],
     pid_file: &str,
 ) -> Result<String, ErrorObject> {
-    let mut text = "exec env".to_string();
+    turn_line_with_secrets(program, args, root, env, pid_file, None)
+}
+
+/// The secrets file of one turn (0.12.5), beside its pid file: `run/<turn>.env`.
+pub fn secrets_file(turn_id: &str) -> String {
+    pid_file(turn_id).replace(".pid", ".env")
+}
+
+/// The line that writes a turn's secrets file: `umask 077`, so only the account can read it, and the
+/// text on **stdin** - a token never appears in a command line, where `ps` on the host would show it.
+pub fn secrets_write_line(secrets_file: &str) -> String {
+    format!("umask 077; mkdir -p {dir}/run && cat > {dir}/{secrets_file}", dir = state_dir())
+}
+
+/// The secrets file's text: one `export KEY='value'` per line, every value through [`super::sh_quote`].
+pub fn secrets_text(secrets: &[(String, String)]) -> String {
+    secrets
+        .iter()
+        .map(|(key, value)| format!("export {key}={}\n", sh_quote(value)))
+        .collect()
+}
+
+/// [`turn_line`], with the turn's secrets file read and **deleted** before the CLI starts (0.12.5). The
+/// values live in the CLI's environment for the turn and nowhere on the host's disk after it began.
+pub fn turn_line_with_secrets(
+    program: &str,
+    args: &[String],
+    root: Option<&str>,
+    env: &[(&str, &str)],
+    pid_file: &str,
+    secrets_file: Option<&str>,
+) -> Result<String, ErrorObject> {
+    let mut text = match secrets_file {
+        Some(file) => {
+            let path = format!("{}/{file}", state_dir());
+
+            format!(". {path}; rm -f {path}; exec env")
+        }
+        None => "exec env".to_string(),
+    };
 
     for (key, value) in env {
         text.push(' ');
@@ -1165,6 +1204,28 @@ mod tests {
     /// The `setsid` branch is what makes Stop mean stop: `kill -TERM -<pid>` reaches everything the turn
     /// started, not just the CLI. The fallback is in the same round trip, so a host without `setsid` still
     /// gets a working turn - and the pid it writes is then the session's, which the kill line handles.
+    /// 0.12.5: a forwarded sign-in is never a word in a command line, and is deleted before the CLI runs.
+    #[test]
+    fn a_turns_secrets_travel_on_stdin_and_are_deleted_first() {
+        let file = secrets_file("turn-9");
+
+        assert_eq!(file, "run/turn-9.env");
+        assert!(secrets_write_line(&file).starts_with("umask 077;"));
+
+        let text = secrets_text(&[("CLAUDE_CODE_OAUTH_TOKEN".to_string(), "tok'1".to_string())]);
+
+        assert_eq!(text, "export CLAUDE_CODE_OAUTH_TOKEN='tok'\\''1'\n");
+
+        let line = turn_line_with_secrets("claude", &[], None, &[], "run/turn-9.pid", Some(&file)).unwrap();
+
+        assert!(!line.contains("tok"), "{line}");
+        let read = line.find(". \"$HOME\"/.sdc/run/turn-9.env").expect("read");
+        let removed = line.find("rm -f \"$HOME\"/.sdc/run/turn-9.env").expect("removed");
+        let started = line.find("exec env").expect("started");
+
+        assert!(read < removed && removed < started, "{line}");
+    }
+
     #[test]
     fn a_turn_starts_its_own_process_group_where_the_host_can() {
         let args = vec!["--print".to_string(), "--include-partial-messages".to_string()];

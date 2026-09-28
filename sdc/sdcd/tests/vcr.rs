@@ -50,6 +50,7 @@ fn kind_of(event: &EngineEvent) -> &'static str {
         EngineEvent::Permission { .. } => "Permission",
         EngineEvent::Plan(_) => "Plan",
         EngineEvent::Usage { .. } => "Usage",
+        EngineEvent::Steered(_) => "Steered",
     }
 }
 

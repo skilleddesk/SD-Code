@@ -312,6 +312,31 @@ impl Store {
         Ok(())
     }
 
+    /// The files a session's turns changed, as `(turn id, path)`, oldest first and each path once
+    /// (0.12.5, `continuity`): the `edit` tool calls in the session's log.
+    pub fn edited_files(&self, session_id: &str) -> Result<Vec<(String, String)>> {
+        let connection = self.connection.lock().unwrap();
+        let mut statement = connection.prepare(
+            "SELECT turn_id, payload FROM events WHERE session_id = ?1 AND type = 'ToolCallStarted' ORDER BY seq ASC",
+        )?;
+        let rows = statement.query_map(params![session_id], |row| {
+            Ok((row.get::<_, Option<String>>(0)?.unwrap_or_default(), row.get::<_, String>(1)?))
+        })?;
+        let mut files: Vec<(String, String)> = Vec::new();
+
+        for row in rows {
+            let (turn, payload) = row?;
+            let event: Value = serde_json::from_str(&payload).unwrap_or(Value::Null);
+            let target = event["target"].as_str().unwrap_or_default().trim().to_string();
+
+            if event["tool"] == "edit" && !target.is_empty() && !files.iter().any(|(_, path)| *path == target) {
+                files.push((turn, target));
+            }
+        }
+
+        Ok(files)
+    }
+
     /// Everything after `since`, oldest first - what `EventLog::hydrate` and `event.list` read.
     pub fn recent_events(&self, since: i64) -> Result<Vec<StoredEvent>> {
         let connection = self.connection.lock().unwrap();

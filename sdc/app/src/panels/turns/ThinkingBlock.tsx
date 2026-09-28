@@ -70,6 +70,7 @@ export function ThinkingBlock({ thinking }: ThinkingBlockProps) {
       ? strings.turns.thinking.thought
       : strings.turns.thinking.thoughtFor(time);
   const toggle = (): void => setChosen(!open);
+  const preview = thinking.text.trim().split(/\r?\n/)[0]?.trim() ?? '';
 
   return (
     <div
@@ -91,10 +92,17 @@ export function ThinkingBlock({ thinking }: ThinkingBlockProps) {
         {thinking.live && time !== '' ? (
           <span className="font-mono font-normal normal-case tracking-normal tabular-nums text-text-muted">{time}</span>
         ) : null}
+        {/* Folded, the first line of the thought stays readable (0.12.5): a timeline of "Thought for 3s"
+            rows says nothing about what was thought. */}
+        {!open && !thinking.live && preview !== '' ? (
+          <span className="thinking-preview min-w-0 flex-1 truncate font-normal normal-case italic tracking-normal text-text-secondary">
+            {preview}
+          </span>
+        ) : null}
         <ChevronRight
           size={12}
           aria-hidden="true"
-          className={'ml-auto transition-transform duration-200 ease-ease ' + (open ? 'rotate-90' : '')}
+          className={'ml-auto shrink-0 transition-transform duration-200 ease-ease ' + (open ? 'rotate-90' : '')}
         />
       </button>
 
@@ -103,7 +111,7 @@ export function ThinkingBlock({ thinking }: ThinkingBlockProps) {
           ref={body}
           className={
             'thinking-body whitespace-pre-wrap px-[13px] pb-[10px] text-[12px] italic leading-[1.65] text-text-secondary ' +
-            (thinking.live ? 'max-h-[180px] overflow-y-auto' : '')
+            (thinking.live ? 'max-h-[240px] overflow-y-auto' : '')
           }
           aria-live={thinking.live ? 'polite' : undefined}
         >

@@ -120,18 +120,35 @@ impl CliAdapter {
     /// The `ssh` binary itself is resolved through `host::program`, like every other program this daemon
     /// starts - and `get_program`/`get_args` are how the batch-file wrap (`cmd.exe /c …` on Windows)
     /// survives the move from `std::process::Command` to tokio's.
-    fn remote_command(&self, prompt: &Prompt, args: &[String]) -> Result<Command, ErrorObject> {
+    ///
+    /// `secrets` is this machine's sign-in for the CLI (0.12.5, `engines::credentials`): written to the
+    /// host over stdin into a private file the turn reads and deletes, so one sign-in serves every host.
+    fn remote_command(&self, prompt: &Prompt, args: &[String], secrets: &[(String, String)]) -> Result<Command, ErrorObject> {
         let Some(ssh) = prompt.remote.as_ref() else {
             return Err(ErrorObject::internal("a remote turn without a host"));
         };
 
         let pid_file = crate::ssh::ops::pid_file(&prompt.turn_id);
-        let line = crate::ssh::ops::turn_line(
+        let secrets_file = if secrets.is_empty() {
+            None
+        } else {
+            let file = crate::ssh::ops::secrets_file(&prompt.turn_id);
+            let written = ssh.run_with_stdin(
+                &crate::ssh::ops::secrets_write_line(&file),
+                &crate::ssh::ops::secrets_text(secrets),
+                std::time::Duration::from_secs(30),
+            );
+
+            /* A host that would not take the file still runs the turn, on its own sign-in, as before. */
+            written.ok().filter(|output| output.code == Some(0)).map(|_| file)
+        };
+        let line = crate::ssh::ops::turn_line_with_secrets(
             self.spec.program,
             args,
             prompt.project_root.as_deref(),
             self.spec.env,
             &pid_file,
+            secrets_file.as_deref(),
         )?;
         let launcher = crate::ssh::program().map(|path| crate::host::program::command_for(&path)).ok_or_else(|| {
             ErrorObject::not_found("`ssh` is not on this machine's PATH, so no turn can run on a host")
@@ -234,7 +251,13 @@ impl CliAdapter {
            turn goes over `ssh` instead: same args, same prompt placement, same stream - a different
            machine (0.7.13). */
         let mut command = match prompt.remote {
-            Some(_) => match self.remote_command(prompt, &args) {
+            Some(_) => match self.remote_command(prompt, &args, &{
+                let program = self.spec.program;
+
+                tokio::task::spawn_blocking(move || crate::engines::credentials::forwarded(program))
+                    .await
+                    .unwrap_or_default()
+            }) {
                 Ok(command) => command,
                 Err(error) => {
                     sink.send(EngineEvent::Failed(error.message));
@@ -689,7 +712,7 @@ mod tests {
         remote.turn_id = "turn-9".to_string();
         remote.remote = Some(ssh);
 
-        let command = adapter.remote_command(&remote, &["--print".to_string()]).unwrap();
+        let command = adapter.remote_command(&remote, &["--print".to_string()], &[]).unwrap();
         let args: Vec<String> = command.as_std().get_args().map(|arg| arg.to_string_lossy().to_string()).collect();
         let line = args.last().cloned().unwrap_or_default();
 

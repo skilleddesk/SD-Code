@@ -21,8 +21,10 @@ pub mod cancel;
 pub mod claude_code;
 pub mod cli;
 pub mod codex;
+pub mod credentials;
 pub mod gemini;
 pub mod native_api;
+pub mod steer;
 pub mod ollama;
 
 use std::collections::HashMap;
@@ -148,6 +150,8 @@ pub enum EngineEvent {
     /// What the turn has used so far, as the provider reported it (0.12, the cost governor). Totals, not
     /// increments: a later `Usage` of the same turn supersedes an earlier one field by field.
     Usage { input_tokens: u64, output_tokens: u64, cost_usd: Option<f64> },
+    /// Words the person sent while the turn ran, now handed to the model (0.12.5, `steer`).
+    Steered(String),
     Failed(String),
     Done {
         summary: String,

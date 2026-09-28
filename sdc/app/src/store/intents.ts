@@ -394,6 +394,8 @@ export function emptySessionOn(
   turns: readonly Pick<TurnView, 'sessionId'>[],
   hostId: string,
   activeTab: string | null,
+  /** 0.12.5: only an empty chat **of this project** is reused (`null`: a chat with no folder). */
+  projectId?: string | null,
 ): string | null {
   const host = hosts.find((candidate) => candidate.id === hostId);
 
@@ -402,7 +404,9 @@ export function emptySessionOn(
   }
 
   const empty = host.sessions.filter(
-    (session) => !turns.some((turn) => turn.sessionId === session.id),
+    (session) =>
+      !turns.some((turn) => turn.sessionId === session.id) &&
+      (projectId === undefined || (session.projectId ?? null) === projectId),
   );
 
   /* The chat the caret is already in wins - a click while an untouched chat is open then costs nothing
@@ -676,13 +680,17 @@ function projectOn(hosts: readonly HostView[], hostId: string, activeTab: string
  * engines would have run in the daemon's own directory - which is the same bug 0.7.6 fixed for the first
  * chat, still there for every chat after it.
  */
-export async function newChatOnHost(hostId: string): Promise<string | null> {
+export async function newChatOnHost(hostId: string, inProject?: string | null): Promise<string | null> {
   const state = useAppStore.getState();
+  /* The project the chat belongs to: the one asked for (a project row's `+`, 0.12.5), else the one
+     the person is working in on that host. */
+  const projectId = inProject !== undefined ? inProject : projectOn(state.hosts, hostId, usePrefsStore.getState().activeTab);
   const existing = emptySessionOn(
     state.hosts,
     state.turns,
     hostId,
     usePrefsStore.getState().activeTab,
+    projectId,
   );
 
   if (existing !== null) {
@@ -691,7 +699,6 @@ export async function newChatOnHost(hostId: string): Promise<string | null> {
     return existing;
   }
 
-  const projectId = projectOn(state.hosts, hostId, usePrefsStore.getState().activeTab);
 
   try {
     const { sessionId } = await sdcpCall('session.open', {
@@ -1711,12 +1718,11 @@ export async function openFolderIn(root: string, hostId = 'local'): Promise<stri
     await loadProjects();
 
     const state = useAppStore.getState();
-    const empty = emptySessionOn(
-      state.hosts,
-      state.turns,
-      hostId,
-      usePrefsStore.getState().activeTab,
-    );
+    /* An empty chat already in this folder is reused; one that belongs to another project is not
+       taken over (0.12.5) - each project keeps its own chats. A folderless empty chat is given it. */
+    const empty =
+      emptySessionOn(state.hosts, state.turns, hostId, usePrefsStore.getState().activeTab, projectId) ??
+      emptySessionOn(state.hosts, state.turns, hostId, usePrefsStore.getState().activeTab, null);
 
     if (empty !== null) {
       await sdcpCall('session.update', { sessionId: empty, projectId });
@@ -2290,6 +2296,9 @@ export async function sendPrompt(prompt: string, target?: string): Promise<strin
     return null;
   }
 
+  /* Named as soon as it is asked - before the contract card, which may wait on the person. */
+  void autoTitle(sessionId, prompt);
+
   const seed: TurnSeed = {
     sessionId,
     prompt,
@@ -2401,10 +2410,80 @@ export async function startTurn(seed: TurnSeed): Promise<string | null> {
   try {
     const { turnId } = await sdcpCall('engine.start', seed);
 
+    void autoTitle(seed.sessionId, seed.prompt);
+
     return turnId;
   } catch (error) {
     reportFailure(error, 'The engine did not start');
     return null;
+  }
+}
+
+/**
+ * A chat's name, from the first thing asked in it (0.12.5): "new chat a je bisoye likbo oi chat ar rename
+ * ... automatically". Only a chat still wearing a default name - `New chat`, or the folder it was opened
+ * on - is renamed, and only on its first turn; a name the person typed is never touched.
+ */
+async function autoTitle(sessionId: string, prompt: string): Promise<void> {
+  const state = useAppStore.getState();
+  const found = findSession(state.hosts, sessionId);
+
+  if (found === null) {
+    return;
+  }
+
+  const { session } = found;
+  const project = state.projects.find((candidate) => candidate.id === session.projectId);
+  const defaults = [strings.sidebar.sessions.newChat.title, project?.name ?? '', session.projectRoot?.split(/[\\/]/).pop() ?? ''];
+  const earlier = state.turns.filter((turn) => turn.sessionId === sessionId).length;
+
+  /* The turn just started may already be in the log (the daemon appends before it answers). */
+  if (earlier > 1 || !defaults.includes(session.title)) {
+    return;
+  }
+
+  const title = titleFromPrompt(prompt);
+
+  if (title !== '' && title !== session.title) {
+    await renameSession(sessionId, title);
+  }
+}
+
+/** A short title from a prompt: its first line, links and code dropped, cut at a word near 48 characters. */
+export function titleFromPrompt(prompt: string): string {
+  const line =
+    prompt
+      .replace(/```[\s\S]*?```/g, ' ')
+      .split(/\r?\n/)
+      .map((part) => part.trim())
+      .find((part) => part !== '') ?? '';
+  const clean = line
+    .replace(/https?:\/\/\S+/g, (url) => url.replace(/^https?:\/\//, '').split('/')[0] ?? '')
+    .replace(/[`*_#>]+/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/[.?!,;:]+$/, '');
+
+  if (clean.length <= 48) {
+    return clean.charAt(0).toUpperCase() + clean.slice(1);
+  }
+
+  const cut = clean.slice(0, 48);
+  const space = cut.lastIndexOf(' ');
+  const short = (space > 24 ? cut.slice(0, space) : cut).replace(/[.?!,;:]+$/, '');
+
+  return `${short.charAt(0).toUpperCase()}${short.slice(1)}…`;
+}
+
+/** Words for a turn that is still running (0.12.5). `false` when it cannot take them - queue them instead. */
+export async function steerTurn(turnId: string, text: string): Promise<boolean> {
+  try {
+    const { accepted } = await sdcpCall('engine.steer', { turnId, text });
+
+    return accepted;
+  } catch {
+    /* An older daemon has no `engine.steer`: the queue is the answer, not an error card. */
+    return false;
   }
 }
 
