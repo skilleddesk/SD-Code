@@ -132,6 +132,27 @@ pub fn turn_args(spec: &CliSpec, prompt: &Prompt, body: &str) -> Vec<String> {
         }
     }
 
+    /* Claude Code opens an attached image with its own Read tool, and the image is kept outside the
+       project (the attachments folder): without the folder named here, Read waits for a permission that
+       `-p` can never ask for - measured on the VPS, "I need permission to read the image file". */
+    if spec.program == "claude" {
+        let mut folders: Vec<String> = Vec::new();
+
+        for image in &prompt.images {
+            let path = image.for_engine();
+            let folder = path.rsplit_once(['/', '\\']).map(|(folder, _)| folder.to_string()).unwrap_or_default();
+
+            if !folder.is_empty() && !folders.contains(&folder) {
+                folders.push(folder);
+            }
+        }
+
+        for folder in folders {
+            args.push("--add-dir".to_string());
+            args.push(folder);
+        }
+    }
+
     match (resume, spec.resume) {
         (Some(id), Resume::Flag(flag)) => {
             args.push(flag.to_string());
@@ -838,6 +859,26 @@ mod tests {
             resume: None,
             images: Vec::new(),
         }
+    }
+
+    /// 0.13.2: an attached image's folder is opened to Claude Code, or its Read waits for a permission.
+    #[test]
+    fn claude_is_allowed_to_read_the_attached_images() {
+        let mut prompt = prompt_in(Some("/p"));
+
+        prompt.images = vec![crate::engines::Attachment {
+            name: "1-swatch.png".into(),
+            path: "C:/data/attachments/turn-9/1-swatch.png".into(),
+            media_type: "image/png".into(),
+            remote_path: Some("/home/me/.sdc/attachments/turn-9/1-swatch.png".into()),
+        }];
+
+        let args = turn_args(&CLAUDE_SPEC, &prompt, "");
+        let at = args.iter().position(|arg| arg == "--add-dir").expect("--add-dir");
+
+        assert_eq!(args[at + 1], "/home/me/.sdc/attachments/turn-9");
+        assert!(turn_body(&CLAUDE_SPEC, &prompt).contains("/home/me/.sdc/attachments/turn-9/1-swatch.png"));
+        assert!(!turn_args(&CODEX_SPEC, &prompt, "").contains(&"--add-dir".to_string()), "codex takes -i instead");
     }
 
     /// 0.13: a resumed turn names the conversation the CLI's own way, and is sent only what it missed.

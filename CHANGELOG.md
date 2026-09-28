@@ -15,6 +15,19 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [0.13.2] — Measured on the VPS: an attached image reaches Claude Code
+
+On the owner's VPS, with a 2FA sign-in, 0.13's host paths were run for real, and 6 of 6 checks now pass.
+The SDC Agent (DeepSeek) ran grep and glob on the host and fixed the bug there. It also started a server
+with `start_process`, reached it with curl and stopped it. The project's MCP server ran on the VPS and
+answered `HELLO from vmi2978466`. Claude Code on the VPS resumed its own conversation on the next turn.
+
+One check failed first, and that failure is this release's fix. An image attached to a Claude Code turn is
+saved in SDC's attachments folder, which is outside the project. Claude Code answered "I need permission to
+read the image file", and in `-p` mode it can never be given that permission. The folder is now passed with
+`--add-dir`. This was measured on the VPS (a red swatch was answered "Red") and on this machine (a green
+swatch was answered "Green").
+
 ## [0.13.1] — 0.13.0 on every platform
 
 0.13.0 built only for Windows. On macOS and Linux, two tests failed that never run on Windows:
