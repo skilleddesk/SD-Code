@@ -261,5 +261,5 @@ function toToolCard(tool: TurnView['tools'][number]): ToolCardData {
     return { kind: 'run', ...base, output: tool.output };
   }
 
-  return { kind: 'read', ...base };
+  return { kind: 'read', ...base, output: tool.output };
 }

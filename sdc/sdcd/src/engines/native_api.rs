@@ -730,6 +730,8 @@ mod tests {
             project_root: None,
             remote: None,
                     autonomy: Default::default(),
+                    resume: None,
+                    images: Vec::new(),
         }
     }
 

@@ -12,6 +12,7 @@
  * They are still strings, still here, still the only place that knows the wording.
  */
 import { currentLocale, merge } from './i18n';
+import { agentStrings } from './agentStrings';
 import { kernelStrings } from './kernelStrings';
 import { PACKS } from './locales';
 
@@ -262,6 +263,10 @@ const english = {
     },
     /** A message sent into a running turn, where the agent took it (0.12.5). */
     steered: 'You, while it worked',
+    /** 0.13: reads folded into one line, and the files a turn changed. */
+    explored: 'Explored',
+    exploredFailed: (count: number): string => `${count} failed`,
+    changed: (count: number): string => `Changed ${count} ${count === 1 ? 'file' : 'files'}`,
     /** The row between two actions while the model chooses the next one (0.12.5). */
     deciding: 'Deciding the next step…',
     /** The chip under a message SDC read with a brief (0.11.8). */
@@ -1635,6 +1640,8 @@ const english = {
 
   /** The Trust Kernel, the Intent Engine and the agency layer (0.12) - see kernelStrings.ts. */
   kernel: kernelStrings,
+  /** 0.13: commands, files, images, context, questions, memory, processes - see agentStrings.ts. */
+  agent: agentStrings,
 } as const;
 
 export type Strings = typeof english;

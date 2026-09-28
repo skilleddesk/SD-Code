@@ -6,6 +6,7 @@ import { ErrorCard } from './ErrorCard';
 import { PlanCard } from './PlanCard';
 import { Timeline } from './Timeline';
 import { TurnFooter } from './TurnFooter';
+import { ChangedFiles } from './ChangedFiles';
 import { UserMessage } from './UserMessage';
 import {
   type CollapsedSummaryData,
@@ -120,6 +121,8 @@ function TurnBlock({ turn, sessionId }: { turn: Turn; sessionId: string }) {
           out of, then what the engine actually said - and the error card above it, because a failed
           turn has an explanation where its answer would be. */}
       {turn.error ? <ErrorCard error={turn.error} /> : null}
+
+      {turn.running ? null : <ChangedFiles items={turn.timeline} />}
 
       <TurnFooter
         footer={turn.footer}

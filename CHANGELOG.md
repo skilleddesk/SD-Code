@@ -15,6 +15,73 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [0.13.0] — Everything Claude Code and Codex do that SDC did not, and a cleaner live stream
+
+From the report: *"claude code ar thakaw better hoi"*. Every item below was run against real engines (Claude
+Code, DeepSeek, Qwen) through `_verify/live-013.mjs`, and 16 of its 16 checks passed.
+
+### Memory and context
+* **Claude Code and Codex remember their own conversation.** Before this, each turn restarted the CLI and
+  pasted the whole chat back in as plain text. The chat now resumes the CLI's own session (`claude
+  --resume`, `codex exec resume`) on the same machine and folder, and sends only the turns it has not seen.
+  In the measured case, turn 2 recalled a word from turn 1 and sent 16 tokens. If the old session is gone,
+  the turn restarts with the full history instead of failing.
+* **A long chat no longer outgrows the model.** History is fitted to the model's context window: the newest
+  turns are kept whole and older ones are summarised. `/compact` asks the chat's own model for a summary to
+  continue from. During a long agent turn, old tool output is folded away. A meter in the composer shows how
+  full the context is once that matters.
+* **Memory.** The agent's `remember` tool, `/remember <fact>`, `/memory` (an editor for project and global
+  memory), and a global memory that every project reads.
+
+### The agent's tools (API and local models)
+`grep` (regular expression), `glob`, `read_file` by line range, `web_search` and `web_fetch` (public pages
+only, with every redirect re-checked), `start_process` / `process_output` / `stop_process` for dev servers,
+`ask_user` (a question card with options), `task` (read-only sub-agents; several run in parallel), and
+`view_image` / `screenshot` for models that can see images (a headless Edge or Chrome renders the page).
+Images can be pasted or attached to a message. A project's `.sdc/mcp.json` servers also run on a VPS, over
+the same ssh connection. Skills (`SKILL.md` in `.sdc/`, `.claude/`, `.codex/` or `.agents/skills`) and
+`[hooks] after_edit` in `.sdc/policy.toml` work the way they do in Claude Code and Codex.
+
+### Finishing the work
+* The default step limit rose from 25 to 60, so a task can finish in one turn.
+* If the agent says it is done while its plan still has open steps, it is reminded once.
+* If it changed code and ran nothing afterwards, it is told the project's checks and asked to run them,
+  unless the person said not to. That case was measured: *"test chalanor dorkar nai"* ("no need to run
+  tests") was respected. If a check fails in code the agent did not touch, it reports the failure instead
+  of changing unrelated code.
+* The answer stays in the person's language. DeepSeek had drifted into Chinese.
+
+### The composer and the stream
+* **Composer.** `/` opens the command list (SDC's own commands, plus the project's `.sdc/commands` and
+  `.claude/commands`). `@` finds files in the project. The controls sit on one row at every width. The
+  Chat | Agent switch is gone: every turn is an agent turn, which answers a question without using tools,
+  the way Claude Code works.
+* **Stream.** Consecutive reads fold into one line (`Explored · Grep add · Read math.js, test.js`). A short
+  edit shows its diff inline, with indentation kept. A sub-agent's card lists what it read, and a question
+  stays in the turn with its answer. Every finished turn ends with `Changed 2 files +13 −2`. Claude Code's
+  TodoWrite list and Codex's todo list both appear as the plan card.
+* **Notifications.** The Notifications settings, and the "Test sound" button, did nothing before this
+  release. A turn that finishes, or needs you, while SDC is not in front now shows a desktop notification.
+  Sound cues play when they are turned on.
+
+### Fixed along the way
+* On Windows, a command with double quotes in it (`node -e "…"`, `git commit -m "…"`) reached `cmd` mangled.
+  Commands now go through `cmd /S /C` with the line passed through as written.
+* Qwen-VL sends each tool call's arguments cumulatively (the whole text so far, every chunk). They were
+  appended, which produced broken JSON.
+* A message sent the moment a turn ended (a queued prompt) could miss that turn's answer. The answer is now
+  stored before the turn is announced as finished.
+* Nothing that erases data can reach the OS keychain in a test build any more. A test did exactly that on
+  the developer's machine during this work.
+
+### Your data
+* An installer never carried anyone's data. Chats, hosts and settings are in `%APPDATA%\sdc`, and keys are
+  in the OS keychain. Before this release, though, uninstalling and installing again brought all of it back.
+  The uninstaller's "Delete the application data" box now removes SDC's folder and keys, and **Settings →
+  Safety → Erase all SDC data** does the same from inside the app. An update never erases anything.
+* The owner's real VPS address and username have been removed from the test files in this public
+  repository.
+
 ## [0.12.8] — An update to a closed chat is refused, not silently accepted
 
 Found while checking 0.12.7 installed over the running app. To restore example-shop.com's chat, a

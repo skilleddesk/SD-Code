@@ -1,8 +1,13 @@
-//! The eight tools the agent has, and what each one does to the window.
+//! The tools the agent has, and what each one does to the window.
 //!
-//! Eight, deliberately (docs/ROADMAP-v4.md, "risks"): every tool is one more thing a model can get
-//! wrong and one more thing a person has to be able to read in a tool card. These are the four verbs of
-//! a coding loop - read, write, run, observe - plus the plan:
+//! v4 had eight, deliberately (docs/ROADMAP-v4.md, "risks"): every tool is one more thing a model can get
+//! wrong and one more thing a person has to be able to read in a tool card. 0.13 adds the ones whose
+//! absence cost more than their risk - each measured against what Claude Code's agent does with its own:
+//! `grep`/`glob` (find by pattern, not by a dozen listings), `read_file` by line range, `web_fetch`/
+//! `web_search` (read the docs instead of guessing), `start_process`/`process_output`/`stop_process`
+//! (a dev server that keeps running), `ask_user` (a question with choices, mid-task), `remember`,
+//! `task` (sub-agents that explore in parallel), and - for a model that can see - `view_image` and
+//! `screenshot`. The first eight:
 //!
 //! | tool           | card   | asks first                      |
 //! | -------------- | ------ | ------------------------------- |
@@ -35,14 +40,214 @@ const RESULT_CAP: usize = 24_000;
 /// Lines of a diff drawn on an Edit card; the rest is counted, not dropped silently.
 const DIFF_CARD_LINES: usize = 160;
 
+/// What the model of a turn can be given (0.13): a model that sees gets the image tools, and a
+/// sub-agent gets only the tools that read.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Caps {
+    pub vision: bool,
+    pub subagent: bool,
+}
+
+/// The tools a sub-agent (`task`) may use: they read, search and look - they never change anything.
+pub const READ_ONLY: &[&str] = &["read_file", "list_dir", "search", "grep", "glob", "git_diff", "web_fetch", "web_search", "view_image", "process_output"];
+
+/// Every tool, for a turn whose model cannot see and which is not a sub-agent.
 pub fn specs() -> Vec<ToolSpec> {
+    specs_for(Caps::default())
+}
+
+/// The tools for a turn with `caps`.
+pub fn specs_for(caps: Caps) -> Vec<ToolSpec> {
+    let mut all = base_specs();
+
+    all.extend(more_specs());
+
+    if caps.vision {
+        all.extend(vision_specs());
+    }
+
+    if caps.subagent {
+        all.retain(|spec| READ_ONLY.contains(&spec.name));
+    } else {
+        all.push(task_spec());
+    }
+
+    all
+}
+
+/// The `task` tool: a sub-agent with its own fresh context, read-only, for exploring and researching.
+pub fn task_spec() -> ToolSpec {
+    ToolSpec {
+        name: "task",
+        description: "Hand a self-contained research or exploration job to a sub-agent with its own fresh context and read-only tools (read, list, grep, glob, web). It answers with a report. Use it to explore a large codebase or look something up without filling your own context; several task calls in one reply run in parallel. Give it everything it needs to know in prompt - it has not seen this conversation.",
+        schema: json!({
+            "type": "object",
+            "properties": {
+                "description": { "type": "string", "description": "Three to six words: what the sub-agent is doing (shown on its card)." },
+                "prompt": { "type": "string", "description": "The full job: what to find out, where to look, and what the report must contain." },
+            },
+            "required": ["description", "prompt"],
+            "additionalProperties": false,
+        }),
+    }
+}
+
+fn vision_specs() -> Vec<ToolSpec> {
+    vec![
+        ToolSpec {
+            name: "view_image",
+            description: "Look at an image file in the project folder (png, jpg, gif, webp): a mock-up, a screenshot the person saved, an icon.",
+            schema: json!({
+                "type": "object",
+                "properties": { "path": { "type": "string", "description": "Image path, relative to the project folder." } },
+                "required": ["path"],
+                "additionalProperties": false,
+            }),
+        },
+        ToolSpec {
+            name: "screenshot",
+            description: "Render a web page in a headless browser on the person's machine and look at it - to check the page you built looks right. Works with http://localhost addresses of a dev server you started with start_process, public URLs, and file:/// paths.",
+            schema: json!({
+                "type": "object",
+                "properties": {
+                    "url": { "type": "string", "description": "The address to render." },
+                    "width": { "type": "integer", "description": "Viewport width in pixels (default 1280; 390 for a phone)." },
+                    "height": { "type": "integer", "description": "Viewport height in pixels (default 900)." },
+                },
+                "required": ["url"],
+                "additionalProperties": false,
+            }),
+        },
+    ]
+}
+
+fn more_specs() -> Vec<ToolSpec> {
+    vec![
+        ToolSpec {
+            name: "grep",
+            description: "Search file contents with a regular expression (Rust/PCRE-like syntax). Answers path:line: text, up to 200 hits. Skips node_modules, .git, build output and secrets. Prefer it over reading files one by one to find where something is defined or used.",
+            schema: json!({
+                "type": "object",
+                "properties": {
+                    "pattern": { "type": "string", "description": "The regular expression, for example function\\s+charge\\w+ or TODO|FIXME." },
+                    "path": { "type": "string", "description": "Directory to search in, relative to the folder. Defaults to the whole folder." },
+                    "glob": { "type": "string", "description": "Only files matching this pattern, for example *.tsx or src/**/*.php." },
+                    "ignore_case": { "type": "boolean", "description": "Match without regard to case." },
+                },
+                "required": ["pattern"],
+                "additionalProperties": false,
+            }),
+        },
+        ToolSpec {
+            name: "glob",
+            description: "Find files by name pattern: **/*.tsx, src/**/test_*.py, *.config.js. Answers paths relative to the folder, most recently changed first, up to 200.",
+            schema: json!({
+                "type": "object",
+                "properties": {
+                    "pattern": { "type": "string", "description": "The pattern. ** crosses folders, * and ? do not, {a,b} is either." },
+                    "path": { "type": "string", "description": "Directory to look in, relative to the folder. Defaults to the whole folder." },
+                },
+                "required": ["pattern"],
+                "additionalProperties": false,
+            }),
+        },
+        ToolSpec {
+            name: "web_fetch",
+            description: "Read a public web page (documentation, an API reference, an error's discussion) as text. http(s) only; not this machine or a private network.",
+            schema: json!({
+                "type": "object",
+                "properties": { "url": { "type": "string", "description": "The full address, starting with https://." } },
+                "required": ["url"],
+                "additionalProperties": false,
+            }),
+        },
+        ToolSpec {
+            name: "web_search",
+            description: "Search the web. Answers titles, addresses and snippets; read a result with web_fetch.",
+            schema: json!({
+                "type": "object",
+                "properties": { "query": { "type": "string", "description": "What to search for." } },
+                "required": ["query"],
+                "additionalProperties": false,
+            }),
+        },
+        ToolSpec {
+            name: "start_process",
+            description: "Start a command that keeps running - a dev server, a watcher, a worker - in the background, in the project folder. Answers its id and its first output (for a server, usually the address). It keeps running after your answer; read it with process_output and end it with stop_process.",
+            schema: json!({
+                "type": "object",
+                "properties": {
+                    "command": { "type": "string", "description": "The command line, for the shell named in the system prompt." },
+                    "wait_seconds": { "type": "integer", "description": "How long to wait for its first output before answering (default 6, max 60)." },
+                },
+                "required": ["command"],
+                "additionalProperties": false,
+            }),
+        },
+        ToolSpec {
+            name: "process_output",
+            description: "The latest output of a background process, and whether it is still running.",
+            schema: json!({
+                "type": "object",
+                "properties": {
+                    "process_id": { "type": "string", "description": "The id start_process answered." },
+                    "lines": { "type": "integer", "description": "How many of the last lines (default 60)." },
+                },
+                "required": ["process_id"],
+                "additionalProperties": false,
+            }),
+        },
+        ToolSpec {
+            name: "stop_process",
+            description: "Stop a background process.",
+            schema: json!({
+                "type": "object",
+                "properties": { "process_id": { "type": "string", "description": "The id start_process answered." } },
+                "required": ["process_id"],
+                "additionalProperties": false,
+            }),
+        },
+        ToolSpec {
+            name: "ask_user",
+            description: "Ask the person a question and wait for the answer - when a decision is theirs to make (which design, which data to keep, which of two readings they meant) and guessing wrong would waste the work. Offer 2-4 short options when you can; they can always write their own answer. Ask in the person's language. Do not use it for permission to run a tool: the tools ask for that themselves.",
+            schema: json!({
+                "type": "object",
+                "properties": {
+                    "question": { "type": "string", "description": "The question, complete and short." },
+                    "options": { "type": "array", "items": { "type": "string" }, "description": "Two to four short choices." },
+                },
+                "required": ["question"],
+                "additionalProperties": false,
+            }),
+        },
+        ToolSpec {
+            name: "remember",
+            description: "Keep a fact for every later chat: a preference the person stated, a convention of the project, a decision. project scope writes .sdc/memory.md; global scope is SDC's memory for all projects. Only lasting facts - not the progress of this task.",
+            schema: json!({
+                "type": "object",
+                "properties": {
+                    "fact": { "type": "string", "description": "One short, self-contained sentence." },
+                    "scope": { "type": "string", "enum": ["project", "global"], "description": "project (default) or global." },
+                },
+                "required": ["fact"],
+                "additionalProperties": false,
+            }),
+        },
+    ]
+}
+
+fn base_specs() -> Vec<ToolSpec> {
     vec![
         ToolSpec {
             name: "read_file",
-            description: "Read a text file in the project folder. Paths are relative to the folder. Large files are cut at 256 KB and the answer says so.",
+            description: "Read a text file in the project folder, with line numbers. Paths are relative to the folder. For a large file, read a range with offset and limit; a whole read is cut at 256 KB and says so.",
             schema: json!({
                 "type": "object",
-                "properties": { "path": { "type": "string", "description": "File path, relative to the project folder." } },
+                "properties": {
+                    "path": { "type": "string", "description": "File path, relative to the project folder." },
+                    "offset": { "type": "integer", "description": "The first line to read, counting from 1. Omit to start at the top." },
+                    "limit": { "type": "integer", "description": "How many lines to read from offset. Omit to read to the end." },
+                },
                 "required": ["path"],
                 "additionalProperties": false,
             }),
@@ -146,6 +351,10 @@ pub fn specs() -> Vec<ToolSpec> {
 /// What a turn's tools share: the folder, the window, the permission rule and what was already allowed.
 pub struct ToolContext<'a> {
     pub workspace: &'a Workspace,
+    /// The chat the turn belongs to - a background process is listed under it.
+    pub session_id: &'a str,
+    /// A sub-agent's context: tools that change anything are refused, whatever the model asks.
+    pub read_only: bool,
     pub sink: &'a EventSink,
     pub turn_id: &'a str,
     pub autonomy: Autonomy,
@@ -162,6 +371,26 @@ pub struct ToolContext<'a> {
     pub changed: HashSet<String>,
     /// The person allowed this turn to go past the blast radius.
     pub radius_allowed: bool,
+    /// The agent's checklist as it last sent it (0.13): the completion gate reads its open steps.
+    pub plan: Option<Value>,
+    /// How many file changes this turn has made - the completion gate asks again only after new ones.
+    pub edits: usize,
+    /// The edit count when the agent last ran a command: equal to `edits`, it ran something after its last change.
+    pub ran_at: Option<usize>,
+}
+
+impl ToolContext<'_> {
+    /// The plan's steps that are not done, one per line - `None` when there is no plan or all are done.
+    pub fn open_plan_steps(&self) -> Option<String> {
+        let steps = self.plan.as_ref()?.as_array()?;
+        let open: Vec<String> = steps
+            .iter()
+            .filter(|step| step["status"] != "done")
+            .map(|step| format!("- {}", step["text"].as_str().unwrap_or_default()))
+            .collect();
+
+        (!open.is_empty()).then(|| open.join("\n"))
+    }
 }
 
 /// The Trust Kernel's word on a file change before it happens: a protected path, a turn past its blast
@@ -215,6 +444,7 @@ fn guard_edit(context: &mut ToolContext, path: &str, content: Option<&str>) -> O
     }
 
     context.changed.insert(path.to_string());
+    context.edits += 1;
 
     None
 }
@@ -260,15 +490,27 @@ fn checkpoint_first(context: &mut ToolContext, title: &str) {
 pub struct Outcome {
     pub content: String,
     pub is_error: bool,
+    /// An image the model is shown with the answer (0.13): `(media type, base64)`.
+    pub image: Option<(String, String)>,
 }
 
 impl Outcome {
-    fn ok(content: impl Into<String>) -> Self {
-        Self { content: cap(&content.into()), is_error: false }
+    pub fn ok(content: impl Into<String>) -> Self {
+        Self { content: cap(&content.into()), is_error: false, image: None }
     }
 
-    fn error(content: impl Into<String>) -> Self {
-        Self { content: cap(&content.into()), is_error: true }
+    pub fn error(content: impl Into<String>) -> Self {
+        Self { content: cap(&content.into()), is_error: true, image: None }
+    }
+
+    fn picture(content: impl Into<String>, media_type: &str, bytes: &[u8]) -> Self {
+        use base64::Engine as _;
+
+        Self {
+            content: content.into(),
+            is_error: false,
+            image: Some((media_type.to_string(), base64::engine::general_purpose::STANDARD.encode(bytes))),
+        }
     }
 }
 
@@ -287,8 +529,28 @@ pub fn execute(context: &mut ToolContext, call: &ToolUse) -> Outcome {
     let call_id = format!("{}-{}", context.turn_id, context.calls);
     let text = |key: &str| call.input[key].as_str().unwrap_or_default().to_string();
 
+    if context.read_only && !READ_ONLY.contains(&call.name.as_str()) {
+        return Outcome::error(format!("`{}` is not available to a sub-agent: it only reads. Report what should be changed instead.", call.name));
+    }
+
+    let number = |key: &str| call.input[key].as_u64();
+
     match call.name.as_str() {
+        "read_file" if number("offset").is_some() || number("limit").is_some() => {
+            read_range(context, &call_id, &text("path"), number("offset").unwrap_or(1) as usize, number("limit").map(|limit| limit as usize))
+        }
         "read_file" => read_file(context, &call_id, &text("path")),
+        "grep" => grep(context, &call_id, &text("pattern"), &text("path"), call.input["glob"].as_str(), call.input["ignore_case"].as_bool().unwrap_or(false)),
+        "glob" => glob(context, &call_id, &text("pattern"), &text("path")),
+        "web_fetch" => web_fetch(context, &call_id, &text("url")),
+        "web_search" => web_search(context, &call_id, &text("query")),
+        "start_process" => start_process(context, &call_id, &text("command"), number("wait_seconds").unwrap_or(6).min(60)),
+        "process_output" => process_output(context, &call_id, &text("process_id"), number("lines").unwrap_or(60) as usize),
+        "stop_process" => stop_process(context, &call_id, &text("process_id")),
+        "ask_user" => ask_user(context, &call_id, &text("question"), &call.input["options"]),
+        "remember" => remember(context, &call_id, &text("fact"), call.input["scope"].as_str().unwrap_or("project")),
+        "view_image" => view_image(context, &call_id, &text("path")),
+        "screenshot" => screenshot(context, &call_id, &text("url"), number("width").unwrap_or(1280) as u32, number("height").unwrap_or(900) as u32),
         "list_dir" => list_dir(context, &call_id, &text("path")),
         "search" => search(context, &call_id, &text("query"), &text("path"), call.input["glob"].as_str()),
         "git_diff" => git_diff(context, &call_id),
@@ -313,7 +575,7 @@ pub fn execute(context: &mut ToolContext, call: &ToolUse) -> Outcome {
 }
 
 fn names() -> Vec<&'static str> {
-    specs().iter().map(|spec| spec.name).collect()
+    specs_for(Caps { vision: true, subagent: false }).iter().map(|spec| spec.name).collect()
 }
 
 fn started(context: &ToolContext, call_id: &str, tool: &str, name: &str, target: &str) {
@@ -422,6 +684,43 @@ fn git_diff(context: &mut ToolContext, call_id: &str) -> Outcome {
     }
 }
 
+/// The project's `after_edit` hooks for one written file (0.13): each runs in the folder, its last lines
+/// go on the card, and a failure is added to what the model is told - a formatter that rewrote the file
+/// or a linter that objects is something it has to know before its next edit.
+fn after_edit(context: &mut ToolContext, call_id: &str, path: &str) -> Option<String> {
+    let mut failures = Vec::new();
+
+    for hook in context.policy.after_edit.clone() {
+        let quoted = if context.workspace.is_remote() || !cfg!(windows) { crate::ssh::sh_quote(path) } else { format!("\"{path}\"") };
+        let line = hook.replace("{file}", &quoted);
+
+        if crate::pty::denied_reason_line(&line).is_some() || context.policy.denies(&line).is_some() {
+            continue;
+        }
+
+        match context.workspace.run(&line, Duration::from_secs(120)) {
+            Ok(report) => {
+                let combined = format!("{}{}", report.stdout, report.stderr);
+
+                context.sink.send(EngineEvent::ToolOutput {
+                    call_id: call_id.to_string(),
+                    level: if report.ok { "dim" } else { "fail" }.to_string(),
+                    text: format!("hook: {line} → {}", if report.ok { "ok".to_string() } else { format!("exit {}", report.exit_code.unwrap_or(-1)) }),
+                });
+
+                if !report.ok {
+                    let tail: Vec<&str> = combined.lines().rev().take(25).collect::<Vec<_>>().into_iter().rev().collect();
+
+                    failures.push(format!("The project's after_edit hook `{line}` failed:\n{}", tail.join("\n")));
+                }
+            }
+            Err(error) => failures.push(format!("The project's after_edit hook `{line}` could not run: {}", error.message)),
+        }
+    }
+
+    (!failures.is_empty()).then(|| failures.join("\n\n"))
+}
+
 fn write_file(context: &mut ToolContext, call_id: &str, path: &str, content: &str) -> Outcome {
     if path.trim().is_empty() {
         return Outcome::error("write_file needs a path.");
@@ -460,9 +759,16 @@ fn write_file(context: &mut ToolContext, call_id: &str, path: &str, content: &st
 
     match context.workspace.write(path, content) {
         Ok(()) => {
+            let hooks = after_edit(context, call_id, path);
+
             completed(context, call_id, true, &format!("done · +{added} −{removed}"), Some(card(&diff)));
 
-            Outcome::ok(format!("{} {path} ({} lines).", if existed { "Replaced" } else { "Created" }, content.lines().count()))
+            let said = format!("{} {path} ({} lines).", if existed { "Replaced" } else { "Created" }, content.lines().count());
+
+            Outcome::ok(match hooks {
+                Some(failed) => format!("{said}\n\n{failed}"),
+                None => said,
+            })
         }
         Err(error) => {
             completed(context, call_id, false, "failed", None);
@@ -526,9 +832,16 @@ fn edit_file(context: &mut ToolContext, call_id: &str, path: &str, old: &str, ne
 
     match context.workspace.write(path, &after) {
         Ok(()) => {
+            let hooks = after_edit(context, call_id, path);
+
             completed(context, call_id, true, &format!("done · +{added} −{removed}"), Some(card(&diff)));
 
-            Outcome::ok(format!("Edited {path}: {} replacement(s).", if all { found } else { 1 }))
+            let said = format!("Edited {path}: {} replacement(s).", if all { found } else { 1 });
+
+            Outcome::ok(match hooks {
+                Some(failed) => format!("{said}\n\n{failed}"),
+                None => said,
+            })
         }
         Err(error) => {
             completed(context, call_id, false, "failed", None);
@@ -581,6 +894,7 @@ fn run_command(context: &mut ToolContext, call_id: &str, line: &str, timeout: Du
     }
 
     checkpoint_first(context, &format!("Before Run {line}"));
+    context.ran_at = Some(context.edits);
 
     match context.workspace.run(line, timeout) {
         Ok(report) => {
@@ -658,6 +972,7 @@ fn update_plan(context: &mut ToolContext, input: &Value) -> Outcome {
     let done = steps.iter().filter(|step| step["status"] == "done").count();
 
     context.sink.send(EngineEvent::Plan(json!(steps)));
+    context.plan = Some(json!(steps));
 
     let total = steps.len();
 
@@ -705,6 +1020,353 @@ pub fn mcp_call(context: &mut ToolContext, servers: &mut super::mcp::McpTools, c
 
             Outcome::error(error)
         }
+    }
+}
+
+fn failed_with(context: &ToolContext, call_id: &str, error: impl Into<String>) -> Outcome {
+    completed(context, call_id, false, "failed", None);
+
+    Outcome::error(error)
+}
+
+/// `read_file` with a range: the lines from `offset` (1-based), `limit` of them, with their real numbers.
+fn read_range(context: &mut ToolContext, call_id: &str, path: &str, offset: usize, limit: Option<usize>) -> Outcome {
+    let offset = offset.max(1);
+
+    started(context, call_id, "read", "Read", &format!("{path}:{offset}{}", limit.map(|limit| format!("+{limit}")).unwrap_or_default()));
+
+    match context.workspace.read_lines(path, offset, limit.unwrap_or(2_000).clamp(1, 5_000)) {
+        Ok((lines, total)) => {
+            completed(context, call_id, true, &format!("done · {} of {total} ln", lines.len()), None);
+
+            if lines.is_empty() {
+                return Outcome::ok(format!("{path} has {total} lines; there is nothing from line {offset}."));
+            }
+
+            let body = lines
+                .iter()
+                .enumerate()
+                .map(|(index, line)| format!("{:>5}\t{line}", offset + index))
+                .collect::<Vec<_>>()
+                .join("\n");
+            let end = offset + lines.len() - 1;
+
+            Outcome::ok(if end < total { format!("{body}\n[lines {offset}-{end} of {total}]") } else { body })
+        }
+        Err(error) => failed_with(context, call_id, error.message),
+    }
+}
+
+fn grep(context: &mut ToolContext, call_id: &str, pattern: &str, path: &str, glob: Option<&str>, ignore_case: bool) -> Outcome {
+    if pattern.is_empty() {
+        return Outcome::error("grep needs a pattern.");
+    }
+
+    started(context, call_id, "read", "Grep", pattern);
+
+    match super::search::grep(context.workspace.root(), context.workspace.remote(), path, pattern, glob, ignore_case, 200) {
+        Ok(hits) => {
+            completed(context, call_id, true, &format!("done · {} hits", hits.len()), None);
+
+            if hits.is_empty() {
+                return Outcome::ok(format!("No line matches `{pattern}`."));
+            }
+
+            let mut lines: Vec<String> = hits.iter().map(|hit| format!("{}:{}: {}", hit.path, hit.line, hit.text)).collect();
+
+            if hits.len() >= 200 {
+                lines.push("[200 hits shown - narrow the pattern, the path or the glob]".to_string());
+            }
+
+            Outcome::ok(lines.join("\n"))
+        }
+        Err(error) => failed_with(context, call_id, error.message),
+    }
+}
+
+fn glob(context: &mut ToolContext, call_id: &str, pattern: &str, path: &str) -> Outcome {
+    if pattern.is_empty() {
+        return Outcome::error("glob needs a pattern.");
+    }
+
+    started(context, call_id, "read", "Glob", pattern);
+
+    match super::search::glob(context.workspace.root(), context.workspace.remote(), path, pattern, 200) {
+        Ok((files, total)) => {
+            completed(context, call_id, true, &format!("done · {total} files"), None);
+
+            if files.is_empty() {
+                return Outcome::ok(format!("No file matches `{pattern}`."));
+            }
+
+            let mut text = files.join("\n");
+
+            if total > files.len() {
+                text.push_str(&format!("\n[{} of {total} shown, newest first]", files.len()));
+            }
+
+            Outcome::ok(text)
+        }
+        Err(error) => failed_with(context, call_id, error.message),
+    }
+}
+
+fn web_fetch(context: &mut ToolContext, call_id: &str, url: &str) -> Outcome {
+    started(context, call_id, "read", "Fetch", url);
+
+    if context.policy.privacy_local() {
+        return failed_with(context, call_id, "This project's policy keeps everything on this machine (privacy = local), so the web is not read.");
+    }
+
+    match super::web::fetch(url) {
+        Ok((final_url, text)) => {
+            completed(context, call_id, true, &format!("done · {} ln", text.lines().count()), None);
+
+            Outcome::ok(format!("[{final_url}]\n{text}"))
+        }
+        Err(error) => failed_with(context, call_id, error),
+    }
+}
+
+fn web_search(context: &mut ToolContext, call_id: &str, query: &str) -> Outcome {
+    started(context, call_id, "read", "Search web", query);
+
+    if context.policy.privacy_local() {
+        return failed_with(context, call_id, "This project's policy keeps everything on this machine (privacy = local), so the web is not searched.");
+    }
+
+    match super::web::search(query, 8) {
+        Ok(results) if results.is_empty() => {
+            completed(context, call_id, true, "done · 0 results", None);
+
+            Outcome::ok(format!("No results for `{query}`."))
+        }
+        Ok(results) => {
+            completed(context, call_id, true, &format!("done · {} results", results.len()), None);
+
+            let lines: Vec<String> = results
+                .iter()
+                .enumerate()
+                .map(|(index, result)| {
+                    format!(
+                        "{}. {}\n   {}\n   {}",
+                        index + 1,
+                        result["title"].as_str().unwrap_or_default(),
+                        result["url"].as_str().unwrap_or_default(),
+                        result["snippet"].as_str().unwrap_or_default()
+                    )
+                })
+                .collect();
+
+            Outcome::ok(lines.join("\n"))
+        }
+        Err(error) => failed_with(context, call_id, error),
+    }
+}
+
+fn start_process(context: &mut ToolContext, call_id: &str, line: &str, wait: u64) -> Outcome {
+    if line.trim().is_empty() {
+        return Outcome::error("start_process needs a command.");
+    }
+
+    started(context, call_id, "run", "Start", line);
+
+    if let Some(reason) = crate::pty::denied_reason_line(line) {
+        completed(context, call_id, false, "refused", None);
+
+        return Outcome::error(format!("Refused: {reason}. This command is on SDC's deny list and cannot be run."));
+    }
+
+    if let Some(rule) = context.policy.denies(line) {
+        completed(context, call_id, false, "refused", None);
+
+        return Outcome::error(format!("Refused: this project's policy (.sdc/policy.toml) denies commands matching `{rule}`."));
+    }
+
+    let risk = if gate::looks_dangerous(line) || context.policy.always_asks(line).is_some() { "DANGEROUS" } else { "MUTATING" };
+
+    if let Some(refused) = ask(
+        context,
+        "run",
+        "Start a background process",
+        &format!("The agent wants to start a command that keeps running on {}", context.workspace.place()),
+        line,
+        risk,
+        "It keeps running after the turn (a dev server, a watcher) until it is stopped - from the agent, or from the chat's process list.",
+    ) {
+        completed(context, call_id, false, "declined", None);
+
+        return refused;
+    }
+
+    checkpoint_first(context, &format!("Before Start {line}"));
+
+    let id = match super::background::start(context.session_id, context.workspace.root(), context.workspace.remote(), line) {
+        Ok(id) => id,
+        Err(error) => return failed_with(context, call_id, error.message),
+    };
+
+    /* Its first words, which for a server are the address: waited for, up to `wait` seconds. */
+    let deadline = std::time::Instant::now() + Duration::from_secs(wait);
+    let (mut text, mut running, mut exit) = (String::new(), true, None);
+
+    while std::time::Instant::now() < deadline && !crate::engines::cancel::requested(context.turn_id) {
+        std::thread::sleep(Duration::from_millis(if context.workspace.is_remote() { 1_500 } else { 300 }));
+
+        if let Ok((now, alive, code)) = super::background::output(&id, 40) {
+            (text, running, exit) = (now, alive, code);
+        }
+
+        if !running || text.to_lowercase().contains("http://") || text.to_lowercase().contains("listening") || text.to_lowercase().contains("ready") {
+            break;
+        }
+    }
+
+    for line in text.lines().rev().take(12).collect::<Vec<_>>().into_iter().rev() {
+        context.sink.send(EngineEvent::ToolOutput { call_id: call_id.to_string(), level: "dim".to_string(), text: line.to_string() });
+    }
+
+    completed(context, call_id, running, &if running { format!("running · {id}") } else { format!("exited {}", exit.map(|code| code.to_string()).unwrap_or_default()) }, None);
+
+    Outcome::ok(format!(
+        "process_id: {id}\nstatus: {}\n--- first output ---\n{}",
+        if running { "running".to_string() } else { format!("exited with code {}", exit.map(|code| code.to_string()).unwrap_or_else(|| "?".into())) },
+        if text.trim().is_empty() { "(nothing yet)" } else { text.as_str() }
+    ))
+}
+
+fn process_output(context: &mut ToolContext, call_id: &str, id: &str, lines: usize) -> Outcome {
+    started(context, call_id, "read", "Output", id);
+
+    match super::background::output(id, lines.clamp(1, 500)) {
+        Ok((text, running, exit)) => {
+            completed(context, call_id, true, if running { "running" } else { "exited" }, None);
+
+            Outcome::ok(format!(
+                "status: {}\n{}",
+                if running { "running".to_string() } else { format!("exited with code {}", exit.map(|code| code.to_string()).unwrap_or_else(|| "?".into())) },
+                if text.trim().is_empty() { "(no output)" } else { text.as_str() }
+            ))
+        }
+        Err(error) => failed_with(context, call_id, error.message),
+    }
+}
+
+fn stop_process(context: &mut ToolContext, call_id: &str, id: &str) -> Outcome {
+    started(context, call_id, "run", "Stop", id);
+
+    if super::background::stop(id) {
+        completed(context, call_id, true, "stopped", None);
+
+        Outcome::ok(format!("Stopped {id}."))
+    } else {
+        failed_with(context, call_id, format!("There is no running process `{id}`."))
+    }
+}
+
+fn ask_user(context: &mut ToolContext, call_id: &str, question: &str, options: &Value) -> Outcome {
+    if question.trim().is_empty() {
+        return Outcome::error("ask_user needs a question.");
+    }
+
+    /* Some models escape twice, and "\n" arrives as a backslash and an n (measured on DeepSeek). */
+    let question = question.replace("\\n", "\n");
+    let question = question.trim();
+    let options: Vec<String> = options
+        .as_array()
+        .map(|items| items.iter().filter_map(|item| item.as_str()).map(str::trim).filter(|item| !item.is_empty()).take(6).map(str::to_string).collect())
+        .unwrap_or_default();
+
+    started(context, call_id, "read", "Question", question);
+
+    match gate::ask_question(context.sink, context.turn_id, context.calls, question, &options) {
+        Some(answer) if !answer.is_empty() => {
+            /* The answer stays on the card, whole, as the record of what was decided. */
+            context.sink.send(EngineEvent::ToolOutput { call_id: call_id.to_string(), level: "ok".to_string(), text: answer.clone() });
+            completed(context, call_id, true, &format!("answered · {}", answer.chars().take(40).collect::<String>()), None);
+
+            Outcome::ok(format!("The person answered: {answer}"))
+        }
+        Some(_) => {
+            completed(context, call_id, true, "no answer", None);
+
+            Outcome::ok("The person closed the question without answering. Use your best judgement, and say which choice you made and why.")
+        }
+        None => {
+            completed(context, call_id, false, "stopped", None);
+
+            Outcome::error("The turn was stopped.")
+        }
+    }
+}
+
+fn remember(context: &mut ToolContext, call_id: &str, fact: &str, scope: &str) -> Outcome {
+    if fact.trim().is_empty() {
+        return Outcome::error("remember needs a fact.");
+    }
+
+    let global = scope == "global";
+
+    /* SDC's own memory, not a change to the project: no checkpoint, not in the turn's changed files. */
+    started(context, call_id, "read", "Remember", fact);
+
+    let result = if global {
+        crate::sdcp::methods::agent_methods::global_memory_path().and_then(|path| {
+            let existing = std::fs::read_to_string(&path).unwrap_or_default();
+
+            std::fs::write(&path, crate::sdcp::methods::agent_methods::append_fact(&existing, fact)).map_err(crate::sdcp::envelope::ErrorObject::internal)
+        })
+    } else {
+        context.workspace.append_memory(fact)
+    };
+
+    match result {
+        Ok(()) => {
+            completed(context, call_id, true, if global { "global memory" } else { ".sdc/memory.md" }, None);
+
+            Outcome::ok(format!("Remembered in {}.", if global { "SDC's global memory" } else { ".sdc/memory.md" }))
+        }
+        Err(error) => failed_with(context, call_id, error.message),
+    }
+}
+
+/// The media type of an image file, from its name.
+fn image_type(path: &str) -> Option<&'static str> {
+    let lowered = path.to_ascii_lowercase();
+
+    [(".png", "image/png"), (".jpg", "image/jpeg"), (".jpeg", "image/jpeg"), (".gif", "image/gif"), (".webp", "image/webp")]
+        .iter()
+        .find(|(extension, _)| lowered.ends_with(extension))
+        .map(|(_, media)| *media)
+}
+
+fn view_image(context: &mut ToolContext, call_id: &str, path: &str) -> Outcome {
+    let Some(media_type) = image_type(path) else {
+        return Outcome::error("view_image reads .png, .jpg, .gif and .webp files.");
+    };
+
+    started(context, call_id, "read", "View", path);
+
+    match context.workspace.read_bytes(path, 5 * 1024 * 1024) {
+        Ok(bytes) => {
+            completed(context, call_id, true, &format!("done · {} KB", bytes.len() / 1024), None);
+
+            Outcome::picture(format!("The image {path} is attached."), media_type, &bytes)
+        }
+        Err(error) => failed_with(context, call_id, error.message),
+    }
+}
+
+fn screenshot(context: &mut ToolContext, call_id: &str, url: &str, width: u32, height: u32) -> Outcome {
+    started(context, call_id, "read", "Screenshot", url);
+
+    match super::browser::screenshot(url, width.clamp(320, 2560), height.clamp(320, 4000)) {
+        Ok(bytes) => {
+            completed(context, call_id, true, &format!("done · {width}×{height}"), None);
+
+            Outcome::picture(format!("A screenshot of {url} at {width}×{height} is attached."), "image/png", &bytes)
+        }
+        Err(error) => failed_with(context, call_id, error),
     }
 }
 
@@ -818,6 +1480,8 @@ mod tests {
 
         ToolContext {
             workspace,
+            session_id: "s-test",
+            read_only: false,
             sink,
             turn_id: "turn-t",
             autonomy,
@@ -828,6 +1492,9 @@ mod tests {
             policy: POLICY.get_or_init(Default::default),
             changed: HashSet::new(),
             radius_allowed: false,
+            plan: None,
+            edits: 0,
+            ran_at: None,
         }
     }
 
@@ -935,9 +1602,11 @@ mod tests {
 
     #[test]
     fn every_tool_has_a_strict_object_schema() {
-        let specs = specs();
+        let specs = specs_for(Caps { vision: true, subagent: false });
 
-        assert_eq!(specs.len(), 8);
+        assert_eq!(specs.len(), 20);
+        assert_eq!(specs_for(Caps { vision: false, subagent: true }).len(), 9, "a sub-agent only reads");
+        assert!(specs_for(Caps { vision: false, subagent: true }).iter().all(|spec| READ_ONLY.contains(&spec.name)));
 
         for spec in specs {
             assert_eq!(spec.schema["type"], "object", "{}", spec.name);
@@ -1043,6 +1712,51 @@ mod tests {
 
         assert!(execute(&mut context, &call("delete_everything", json!({}))).content.contains("no tool called"));
         assert!(execute(&mut context, &call("read_file", json!({ "__invalid_json": "{\"pa" }))).content.contains("not valid JSON"));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_range_read_numbers_its_lines_and_says_where_it_stopped() {
+        let (root, workspace) = folder("range");
+        let sink = EventSink::discarding();
+        let mut context = context(&workspace, &sink, Autonomy::Auto);
+        let text: String = (1..=50).map(|n| format!("line {n}\n")).collect();
+
+        workspace.write("big.txt", &text).unwrap();
+
+        let outcome = execute(&mut context, &call("read_file", json!({ "path": "big.txt", "offset": 10, "limit": 3 })));
+
+        assert_eq!(outcome.content, "   10\tline 10\n   11\tline 11\n   12\tline 12\n[lines 10-12 of 50]");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_sub_agent_cannot_change_anything() {
+        let (root, workspace) = folder("readonly");
+        let sink = EventSink::discarding();
+        let mut context = context(&workspace, &sink, Autonomy::Auto);
+
+        context.read_only = true;
+
+        let outcome = execute(&mut context, &call("write_file", json!({ "path": "a.txt", "content": "x" })));
+
+        assert!(outcome.is_error && outcome.content.contains("sub-agent"));
+        assert!(!root.join("a.txt").exists());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn remember_writes_the_project_memory() {
+        let (root, workspace) = folder("remember");
+        let sink = EventSink::discarding();
+        let mut context = context(&workspace, &sink, Autonomy::Ask);
+        let outcome = execute(&mut context, &call("remember", json!({ "fact": "Use pnpm, never npm" })));
+
+        assert!(!outcome.is_error, "{}", outcome.content);
+        assert!(std::fs::read_to_string(root.join(".sdc/memory.md")).unwrap().contains("- Use pnpm, never npm"));
 
         let _ = std::fs::remove_dir_all(&root);
     }

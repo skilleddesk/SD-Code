@@ -156,7 +156,7 @@ pub fn plan(files: &[String], read: &dyn Fn(&str) -> Option<String>, posix: bool
 
 /// A command with `CI=true`, which is what makes test runners run once instead of watching, and stops
 /// colour codes and prompts - spelled for the shell it runs in.
-fn non_interactive(command: &str, posix: bool) -> String {
+pub fn non_interactive(command: &str, posix: bool) -> String {
     if posix {
         format!("CI=true {command}")
     } else {
@@ -715,6 +715,8 @@ async fn review(state: &Arc<DaemonState>, workspace: &Arc<Workspace>, request: &
         remote: request.remote.clone(),
         /* A review only reads; the careful level is the right one for it. */
         autonomy: crate::agent::gate::Autonomy::Ask,
+        resume: None,
+        images: Vec::new(),
     };
     let recorder = Recorder::new();
 

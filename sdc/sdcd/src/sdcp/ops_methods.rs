@@ -70,7 +70,7 @@ impl Daemon {
             "status.share" => self.status_share(envelope),
             "timeline.branches" => self.timeline_branches(envelope),
             "timeline.switch" => self.timeline_switch(envelope, &*out),
-            other => Err(ErrorObject::unsupported(other)),
+            _ => self.dispatch_agent(envelope, out),
         }
     }
 

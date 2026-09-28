@@ -39,6 +39,8 @@ mod kernel;
 mod intent_methods;
 #[path = "ops_methods.rs"]
 mod ops_methods;
+#[path = "agent_methods.rs"]
+pub(crate) mod agent_methods;
 
 /// One connection's request handler. It holds the shared daemon state and nothing else, so a second
 /// connection is a second `Daemon` over the same state rather than a second source of truth.
@@ -1335,7 +1337,10 @@ impl Daemon {
          * unless the daemon runs the loop for it: that is `agent::SdcAgent`, built per turn with the
          * autonomy level the person chose, on the same turn pipeline (events, checkpoint, Stop).
          */
-        let agent_mode = envelope.params.get("agent").and_then(Value::as_bool).unwrap_or(false);
+        /* `/compact` (0.13): the chat's own model writes the summary later turns start from - as a plain
+           answer, never with tools. */
+        let compact = envelope.params.get("compact").and_then(Value::as_bool).unwrap_or(false);
+        let agent_mode = envelope.params.get("agent").and_then(Value::as_bool).unwrap_or(false) && !compact;
         let requested_autonomy = crate::agent::gate::Autonomy::parse(&envelope.opt_str("autonomy").unwrap_or_default());
 
         /*
@@ -1353,9 +1358,12 @@ impl Daemon {
             .map_err(ErrorObject::permission_denied)?;
 
         let (autonomy, capped) = policy.cap_autonomy(requested_autonomy);
-        let history_chars: usize = session_bridge::history_for(self.store(), &session_id)
-            .map(|history| history.iter().map(|message| message.text.len()).sum())
-            .unwrap_or(0);
+        /* What the conversation is sent as (0.13, `context`): fitted to this model's window - a `/compact`
+           summary, a digest of the oldest turns, the newest verbatim - instead of the whole chat every time. */
+        let window_tokens = crate::context::window_tokens(&engine_id, provider.as_deref(), &model);
+        let history_budget = crate::context::history_budget(window_tokens);
+        let fitted = crate::context::history(self.store(), &session_id, "", history_budget);
+        let history_chars: usize = fitted.messages.iter().map(|message| message.text.len()).sum();
         let estimate = crate::trust::cost::estimate(&engine_id, provider.as_deref(), &model, &prompt_text, history_chars, agent_mode);
         let estimate_usd = estimate["usd"].as_f64();
 
@@ -1381,9 +1389,11 @@ impl Daemon {
                     .unwrap_or(crate::agent::DEFAULT_STEPS),
             )
             .with_policy(policy.clone())
+            /* Settings → Agent → "Check the work when it says it is done" (0.13), on unless turned off. */
+            .with_auto_check(!matches!(self.store().setting("agent.autoCheck").ok().flatten().as_deref(), Some("false" | "off")))
         });
 
-        let history = session_bridge::history_for(self.store(), &session_id)?;
+        let history = fitted.messages.clone();
 
         /* A turn may arrive for a session the daemon has not seen yet (the app seeds its chats in the
            UI), so the row is made to exist before the turn references it. */
@@ -1491,6 +1501,36 @@ impl Daemon {
         let state = self.state.clone();
         let notifier = out.clone();
         let answer_turn_id = turn_id.clone();
+        /*
+         * The CLI's own conversation (0.13): Claude Code and Codex continue the chat's earlier conversation
+         * by id, on the machine and in the folder it ran in, and are sent only the turns they have not seen.
+         * Their memory of what they read and ran survives from turn to turn, and a long chat stops being
+         * pasted in again at every message.
+         */
+        let place = remote.as_ref().map(|ssh| ssh.label()).unwrap_or_else(|| "local".to_string());
+        let resume = if matches!(engine_id.as_str(), "claude_code" | "codex") {
+            crate::context::load_resume(self.store(), &session_id, &engine_id).and_then(|record| {
+                let turns = crate::context::live_turns(self.store(), &session_id, &turn_id);
+                let missed: Vec<crate::context::TurnRecord> =
+                    crate::context::resumable(&record, &place, project_root.as_deref().unwrap_or_default(), &turns)?.into_iter().cloned().collect();
+
+                Some(crate::engines::ResumeRef { id: record.id, unseen: crate::context::fit(&missed, None, history_budget).messages })
+            })
+        } else {
+            None
+        };
+        let images = self.save_attachments(envelope, &turn_id, remote.as_ref());
+        let sent_tokens = match &resume {
+            Some(resume) => resume.unseen.iter().map(|message| crate::context::tokens_of(&message.text)).sum::<u64>(),
+            None => fitted.tokens,
+        } + crate::context::tokens_of(&prompt_text);
+
+        out.push(
+            event::context_updated(&session_id, &turn_id, sent_tokens, window_tokens, fitted.compacted, resume.is_some()),
+            Some(session_id.clone()),
+            Some(turn_id.clone()),
+        );
+
         /* The engine reads the brief and the message; the store and the history keep the message alone. */
         /* A confirmed Intent Contract (0.12) wins over the reading brief: the person already saw and agreed
            to what SDC understood, and the Prompt Compiler writes it the way this engine works best. */
@@ -1501,7 +1541,14 @@ impl Daemon {
         let prompt_text = match compiled {
             Some(compiled) => compiled,
             None if briefed => crate::understand::shape(&prompt_text, &reading),
-            None => prompt_text,
+            /* A short follow-up ("ok", "continue") in a chat the person writes in Bengali is still answered
+               in Bengali (0.13): the chat's language, not the four words', decides. */
+            None => match self.chat_language(&session_id, &turn_id) {
+                Some(language) if understand && !prompt_text.trim().starts_with('/') => {
+                    format!("{prompt_text}\n\n[SDC: this chat is in {language}; answer in it.]")
+                }
+                _ => prompt_text,
+            },
         };
         /* Long-task memory (0.12): an unfinished plan and the project's .sdc/memory.md travel in front of the
            words - for this turn only; the stored prompt stays the person's own. */
@@ -1515,6 +1562,7 @@ impl Daemon {
             Some(brief) => format!("{brief}\n\n{prompt_text}"),
             None => prompt_text,
         };
+        let prompt_text = if compact { crate::context::COMPACT_PROMPT.to_string() } else { prompt_text };
         let plan = RunPlan {
             session_id,
             turn_id,
@@ -1530,6 +1578,10 @@ impl Daemon {
             policy,
             first_seq,
             estimate_usd,
+            resume,
+            images,
+            compact,
+            place,
         };
 
         tokio::spawn(async move {
@@ -2991,6 +3043,14 @@ struct RunPlan {
     first_seq: i64,
     /// What the turn was estimated to cost before it ran - kept to compare with what it did cost.
     estimate_usd: Option<f64>,
+    /// The CLI conversation this turn continues (0.13).
+    resume: Option<crate::engines::ResumeRef>,
+    /// The images attached to the turn, saved where the engine can open them (0.13).
+    images: Vec<crate::engines::Attachment>,
+    /// A `/compact` turn: its answer becomes the chat's summary (0.13).
+    compact: bool,
+    /// `local` or the host - where a CLI conversation this turn starts lives.
+    place: String,
 }
 
 /// How long streamed text is gathered before it is pushed as one delta (0.11.7).
@@ -3055,6 +3115,8 @@ async fn run_turn(
         project_root: plan.project_root.clone(),
         remote: plan.remote.clone(),
         autonomy: plan.autonomy,
+        resume: plan.resume.clone(),
+        images: plan.images.clone(),
     };
     let mut answer = String::new();
     let mut checkpoint_written = false;
@@ -3066,6 +3128,9 @@ async fn run_turn(
     let mut changed: Vec<String> = Vec::new();
     let mut runaway = crate::trust::cost::Runaway::default();
     let mut halted = false;
+    /* The CLI's conversation id, when it said one (0.13): the next turn resumes it. */
+    let mut conversation: Option<String> = None;
+    let mut completed: Option<Value> = None;
     let turn_cap = crate::trust::cost::turn_cap(&state.store, plan.policy.max_turn_usd);
     let stopper = engine.clone();
 
@@ -3317,6 +3382,36 @@ async fn run_turn(
             crate::engines::EngineEvent::Steered(text) => {
                 out.push(event::turn_steered(&plan.turn_id, &text), session.clone(), turn.clone());
             }
+            crate::engines::EngineEvent::SessionRef(id) => {
+                /* Kept the moment the CLI names it, not when the turn ends: the next message can be sent
+                   the instant this one completes (a queued prompt is), and it must find the record. */
+                if !plan.compact {
+                    let turns = crate::context::live_turns(&state.store, &plan.session_id, "").into_iter().map(|turn| turn.id).collect();
+
+                    crate::context::save_resume(
+                        &state.store,
+                        &plan.session_id,
+                        &plan.engine_id,
+                        &crate::context::ResumeRecord { id: id.clone(), place: plan.place.clone(), root: plan.project_root.clone().unwrap_or_default(), turns },
+                    );
+                }
+
+                conversation = Some(id);
+            }
+            crate::engines::EngineEvent::Question { question_id, question, options } => {
+                out.push(
+                    event::question_asked(&plan.session_id, &plan.turn_id, &question_id, &question, &options),
+                    session.clone(),
+                    turn.clone(),
+                );
+            }
+            crate::engines::EngineEvent::Context { used_tokens, window_tokens, compacted } => {
+                out.push(
+                    event::context_updated(&plan.session_id, &plan.turn_id, used_tokens, window_tokens, compacted, false),
+                    session.clone(),
+                    turn.clone(),
+                );
+            }
             crate::engines::EngineEvent::Plan(steps) => {
                 /* The plan outlives the turn and the daemon (long-task memory, 0.12): the next agent turn in
                    this chat is told where it left off. */
@@ -3343,11 +3438,9 @@ async fn run_turn(
                 );
             }
             crate::engines::EngineEvent::Done { summary, meta, pass } => {
-                out.push(
-                    event::turn_completed(&plan.turn_id, &summary, &meta, pass),
-                    session.clone(),
-                    turn.clone(),
-                );
+                /* Pushed after the answer is stored (0.13, below): the window sends a queued prompt the
+                   moment a turn completes, and that turn must already see this one's answer. */
+                completed = Some(event::turn_completed(&plan.turn_id, &summary, &meta, pass));
             }
         }
     }
@@ -3365,6 +3458,42 @@ async fn run_turn(
 
     crate::engines::cancel::clear(&plan.turn_id);
     crate::trust::kill::end(&plan.turn_id);
+
+    /*
+     * The stored answer is what the *next* turn is told this one said (session_bridge::history_for), and
+     * a turn is more than its last paragraph: without its tool calls the next turn read "I ran the tests,
+     * 5 passed" with no trace of a test run, and a model decided it had invented the result and apologised
+     * for work it had really done. The window draws the turn from its events, so this record is for the
+     * conversation, not for the screen.
+     */
+    let recorded = if tools.is_empty() {
+        answer.clone()
+    } else {
+        let lines: Vec<String> = tools.iter().map(|(_, line)| format!("- {line}")).collect();
+
+        format!("{answer}\n\n[Tool calls in this turn, as SDC recorded them:\n{}]", lines.join("\n"))
+    };
+
+    let _ = state.store.finish_turn(&plan.turn_id, &recorded, summary, state_name);
+
+    /*
+     * The chat's memory after the turn (0.13). A `/compact` answer becomes the summary every later turn
+     * starts from, and the CLI conversations end with it - that is the point of compacting. Otherwise a
+     * CLI that named its conversation is resumed next time, holding every live turn of the chat so far.
+     */
+    if plan.compact {
+        if state_name == "success" && !answer.trim().is_empty() {
+            crate::context::save_compaction(&state.store, &plan.session_id, &plan.turn_id, &answer);
+            crate::context::forget_resume(&state.store, &plan.session_id);
+        }
+    } else if conversation.is_some() {
+        /* The record written when the CLI named its conversation already holds this turn. */
+    }
+
+    if let Some(done) = completed {
+        out.push(done, session.clone(), turn.clone());
+    }
+
 
     /* The cost governor's record (0.12): measured when the provider said, priced from the catalogue when it
        sent only tokens, and never a made-up number. "Saved" exists only against a baseline and measured tokens. */
@@ -3414,22 +3543,6 @@ async fn run_turn(
     /* The turn's Trust score, from its own events - recomputed when Verify runs for it. */
     score_turn(&state, &*out, &plan.session_id, &plan.turn_id, plan.first_seq, &plan.policy, plan.project_root.as_deref());
 
-    /*
-     * The stored answer is what the *next* turn is told this one said (session_bridge::history_for), and
-     * a turn is more than its last paragraph: without its tool calls the next turn read "I ran the tests,
-     * 5 passed" with no trace of a test run, and a model decided it had invented the result and apologised
-     * for work it had really done. The window draws the turn from its events, so this record is for the
-     * conversation, not for the screen.
-     */
-    let recorded = if tools.is_empty() {
-        answer.clone()
-    } else {
-        let lines: Vec<String> = tools.iter().map(|(_, line)| format!("- {line}")).collect();
-
-        format!("{answer}\n\n[Tool calls in this turn, as SDC recorded them:\n{}]", lines.join("\n"))
-    };
-
-    let _ = state.store.finish_turn(&plan.turn_id, &recorded, summary, state_name);
     let _ = state.store.update_session(&plan.session_id, None, Some(state_name), None, Some(0), None);
 
     out.push(
@@ -4027,6 +4140,31 @@ mod tests {
         pending.since = Some(std::time::Instant::now() - LOW_BANDWIDTH_WINDOW);
 
         assert!(pending.due(), "the wider window has now elapsed");
+    }
+
+    /// The other half of `the_delta_limiter_is_due_on_size_or_time_and_flushes_only_what_is_not_empty`:
+    /// an answer alone is pushed as its own delta with nothing for `thinking`, and a `flush` with
+    /// neither field holding anything pushes nothing at all - the no-op the loop falls into on every
+    /// tick that finds no pending bytes.
+    #[test]
+    fn the_delta_limiter_flushes_answer_alone_and_nothing_when_both_are_empty() {
+        use crate::sdcp::notifications::RecordingNotifier;
+
+        let mut pending = Pending { answer: "hi".to_string(), ..Pending::default() };
+
+        let notifier = RecordingNotifier::new();
+
+        pending.flush(&notifier, "turn-1", &None, &None);
+
+        assert_eq!(notifier.kinds(), vec!["TurnDelta"], "a thinking-less answer is never pushed as a ThinkingDelta");
+        assert_eq!(notifier.streamed_text(), "hi");
+        assert!(pending.answer.is_empty(), "flush takes what it pushed");
+
+        let notifier = RecordingNotifier::new();
+
+        pending.flush(&notifier, "turn-1", &None, &None);
+
+        assert!(notifier.kinds().is_empty(), "nothing pending means nothing pushed");
     }
 
     /// The sentence a `host.add` puts on screen when the machine's key is one SDC has never seen, and

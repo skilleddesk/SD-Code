@@ -1,4 +1,4 @@
-import { ChevronRight, FilePen, FileText, Loader, Play } from 'lucide-react';
+import { Bot, ChevronRight, FilePen, FileText, Loader, MessageCircleQuestion, Play } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 import { strings } from '../../strings';
@@ -80,11 +80,29 @@ function RunningFor({ since }: { since: string }) {
 }
 
 export function ToolCard({ tool }: ToolCardProps) {
-  /* A run is open by default; a diff waits to be asked for. */
-  const [open, setOpen] = useState(tool.kind === 'run');
+  /* A run is open by default, and so is a short diff (0.13, as Claude Code shows an edit inline); a long
+     diff waits to be asked for. A sub-agent's card is open while it works. */
+  const [open, setOpen] = useState(
+    tool.kind === 'run' || (tool.kind === 'edit' && tool.diff.length > 0 && tool.diff.length <= 16) || (tool.kind === 'read' && tool.name === 'Agent'),
+  );
 
-  const Icon = tool.kind === 'read' ? FileText : tool.kind === 'edit' ? FilePen : Play;
-  const hasBody = tool.kind !== 'read';
+  /* A short diff opens when it arrives - the card was drawn before the edit finished - unless the person
+     already opened or closed it themselves. */
+  const [touched, setTouched] = useState(false);
+  const smallDiff = tool.kind === 'edit' && tool.diff.length > 0 && tool.diff.length <= 16;
+
+  useEffect(() => {
+    if (smallDiff && !touched) {
+      setOpen(true);
+    }
+  }, [smallDiff, touched]);
+
+  if (tool.kind === 'read' && tool.name === 'Question') {
+    return <QuestionAsked tool={tool} />;
+  }
+
+  const Icon = tool.kind === 'read' ? (tool.name === 'Agent' ? Bot : FileText) : tool.kind === 'edit' ? FilePen : Play;
+  const hasBody = tool.kind !== 'read' || (tool.output?.length ?? 0) > 0;
   const spinning = tool.status === 'running';
 
   return (
@@ -102,11 +120,13 @@ export function ToolCard({ tool }: ToolCardProps) {
         aria-expanded={hasBody ? open : undefined}
         onClick={() => {
           if (hasBody) {
+            setTouched(true);
             setOpen((current) => !current);
           }
         }}
         onKeyDown={(event) => {
           if (hasBody && event.key === 'Enter') {
+            setTouched(true);
             setOpen((current) => !current);
           }
         }}
@@ -161,13 +181,50 @@ export function ToolCard({ tool }: ToolCardProps) {
 }
 
 /**
+ * The agent's question, as it stays in the turn (0.13): the whole question and the person's answer - the
+ * card above the input that asked it has gone, and this is the record of what was decided.
+ */
+function QuestionAsked({ tool }: { tool: Extract<ToolCardData, { kind: 'read' }> }) {
+  const answer = tool.output?.find((line) => line.level === 'ok')?.text;
+
+  return (
+    <div className="question-asked mb-[6px] rounded-md border border-border-subtle border-l-[3px] border-l-accent bg-bg-raised px-[13px] py-[9px]" data-question>
+      <div className="flex items-center gap-[8px] font-mono text-[10.5px] uppercase tracking-wide text-accent">
+        <MessageCircleQuestion size={12} aria-hidden="true" />
+        {strings.agent.question.label}
+        {tool.status === 'running' ? <Loader size={11} className="animate-spin" aria-hidden="true" /> : null}
+      </div>
+      <p className="mt-[4px] whitespace-pre-wrap text-[12.5px] leading-[1.55] text-text-primary">{tool.target}</p>
+      {answer === undefined ? null : (
+        <p className="mt-[5px] text-[12.5px] text-text-secondary">
+          <span className="font-semibold text-accent">→ </span>
+          {answer}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
  * The body: a diff for an Edit, an output window for a Run.
  *
  * Both are the same box - `--font-mono`, 12px at 1.7, a 220px ceiling and its own scrollbar - which
  * is why the padding differs rather than the shape: a diff's rows carry their own 13px inset so the
  * add/remove tint can run the full width of the card, and an output line is plain text.
  */
-function ToolBody({ tool }: { tool: Exclude<ToolCardData, { kind: 'read' }> }) {
+function ToolBody({ tool }: { tool: ToolCardData }) {
+  if (tool.kind === 'read') {
+    return (
+      <div className="tool-body max-h-[220px] overflow-y-auto border-t border-border-subtle px-[13px] py-[8px] font-mono text-[11.5px] leading-[1.65] text-text-muted">
+        {(tool.output ?? []).map((line, index) => (
+          <div key={`${index}-${line.text}`} className="truncate" title={line.text}>
+            {line.text}
+          </div>
+        ))}
+      </div>
+    );
+  }
+
   if (tool.kind === 'edit') {
     return (
       <div className="tool-body max-h-[220px] overflow-y-auto border-t border-border-subtle font-mono text-[12px] leading-[1.7] text-text-secondary">
@@ -184,7 +241,7 @@ function ToolBody({ tool }: { tool: Exclude<ToolCardData, { kind: 'read' }> }) {
             <span className="ln min-w-[30px] shrink-0 select-none pr-[12px] text-right text-text-muted">
               {line.lineNumber}
             </span>
-            <span>{line.text}</span>
+            <span className="whitespace-pre">{line.text}</span>
           </div>
         ))}
       </div>

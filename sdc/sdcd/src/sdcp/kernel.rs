@@ -110,6 +110,13 @@ impl Daemon {
             }
         }
 
+        /* The global memory (0.13): what the person asked SDC to keep in mind in every chat, every project. */
+        let global = super::agent_methods::global_memory();
+
+        if !global.trim().is_empty() {
+            parts.push(format!("What the person asked SDC to remember everywhere (global memory):\n{}", global.chars().take(3000).collect::<String>()));
+        }
+
         (!parts.is_empty()).then(|| format!("[Long-task memory - from SDC, not from the person]\n{}\n[End of memory]", parts.join("\n\n")))
     }
 

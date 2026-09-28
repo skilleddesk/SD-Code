@@ -321,7 +321,17 @@
           "cli.selfcheck",
           "status.share",
           "timeline.branches",
-          "timeline.switch"
+          "timeline.switch",
+          "question.answer",
+          "memory.get",
+          "memory.set",
+          "memory.add",
+          "commands.list",
+          "files.find",
+          "process.list",
+          "process.stop",
+          "context.get",
+          "app.erase"
         ]
       }
     },
@@ -377,7 +387,10 @@
           "ApprovalRecorded",
           "XrayReady",
           "ShadowDbUpdated",
-          "StagingUpdated"
+          "StagingUpdated",
+          "ContextUpdated",
+          "QuestionAsked",
+          "QuestionAnswered"
         ]
       }
     },
@@ -1949,6 +1962,107 @@
           },
           "result": {
             "switched": "boolean"
+          }
+        },
+        "question.answer": {
+          "params": {
+            "questionId": "string",
+            "answer": "string",
+            "turnId": "string",
+            "sessionId": "string"
+          },
+          "result": {
+            "answered": "boolean"
+          }
+        },
+        "memory.get": {
+          "params": {
+            "sessionId": "string",
+            "scope": "string"
+          },
+          "result": {
+            "text": "string",
+            "path": "string"
+          }
+        },
+        "memory.set": {
+          "params": {
+            "sessionId": "string",
+            "scope": "string",
+            "text": "string"
+          },
+          "result": {
+            "saved": "boolean",
+            "path": "string"
+          }
+        },
+        "memory.add": {
+          "params": {
+            "sessionId": "string",
+            "scope": "string",
+            "text": "string"
+          },
+          "result": {
+            "saved": "boolean",
+            "path": "string",
+            "text": "string"
+          }
+        },
+        "commands.list": {
+          "params": {
+            "sessionId": "string"
+          },
+          "result": {
+            "commands": "array"
+          }
+        },
+        "files.find": {
+          "params": {
+            "sessionId": "string",
+            "query": "string",
+            "limit": "number"
+          },
+          "result": {
+            "files": "array"
+          }
+        },
+        "process.list": {
+          "params": {
+            "sessionId": "string"
+          },
+          "result": {
+            "processes": "array"
+          }
+        },
+        "process.stop": {
+          "params": {
+            "processId": "string"
+          },
+          "result": {
+            "stopped": "boolean"
+          }
+        },
+        "context.get": {
+          "params": {
+            "sessionId": "string",
+            "engine": "string",
+            "model": "string",
+            "provider": "string"
+          },
+          "result": {
+            "usedTokens": "number",
+            "windowTokens": "number",
+            "percent": "number",
+            "compacted": "boolean",
+            "resumed": "boolean"
+          }
+        },
+        "app.erase": {
+          "params": {
+            "confirm": "string"
+          },
+          "result": {
+            "erasing": "boolean"
           }
         }
       }

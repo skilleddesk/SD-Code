@@ -249,7 +249,17 @@ export type SdcpMethod =
   | 'cli.selfcheck'
   | 'status.share'
   | 'timeline.branches'
-  | 'timeline.switch';
+  | 'timeline.switch'
+  | 'question.answer'
+  | 'memory.get'
+  | 'memory.set'
+  | 'memory.add'
+  | 'commands.list'
+  | 'files.find'
+  | 'process.list'
+  | 'process.stop'
+  | 'context.get'
+  | 'app.erase';
 
 /**
  * Host lifecycle (schema `$defs.eventTypes` → `HostStatus`).
@@ -685,6 +695,40 @@ export interface TurnSteeredEvent {
   text: string;
 }
 
+/**
+ * How full the model's context is for a turn (0.13): what it is sent against what the model holds.
+ * `compacted` - older turns (or older tool output) were folded; `resumed` - a CLI continues its own
+ * conversation, so it holds more than SDC sends.
+ */
+export interface ContextUpdatedEvent {
+  type: 'ContextUpdated';
+  sessionId: string;
+  turnId: string;
+  usedTokens: number;
+  windowTokens: number;
+  percent: number;
+  compacted: boolean;
+  resumed: boolean;
+}
+
+/** The agent asks the person something and waits (0.13, `ask_user`); `question.answer` replies. */
+export interface QuestionAskedEvent {
+  type: 'QuestionAsked';
+  sessionId: string;
+  turnId: string;
+  questionId: string;
+  question: string;
+  options: string[];
+}
+
+/** A question was answered - its card closes. */
+export interface QuestionAnsweredEvent {
+  type: 'QuestionAnswered';
+  turnId: string;
+  questionId: string;
+  answer: string;
+}
+
 export interface ThinkingDeltaEvent {
   type: 'ThinkingDelta';
   turnId: string;
@@ -888,6 +932,8 @@ export interface Policy {
   denyCommands: string[];
   maxTurnUsd: number | null;
   autoRollback: boolean;
+  /** Commands run after the agent writes a file (0.13), `{file}` for its path: `[hooks] after_edit`. */
+  afterEdit?: string[];
   source: string;
   error: string | null;
 }
@@ -1334,6 +1380,9 @@ export type SdcpEvent =
   | SessionBridgedEvent
   | PlanUpdatedEvent
   | TurnSteeredEvent
+  | ContextUpdatedEvent
+  | QuestionAskedEvent
+  | QuestionAnsweredEvent
   | VerifyUpdatedEvent
   | ModelsUpdatedEvent
   | CostUpdatedEvent
@@ -1385,6 +1434,9 @@ export const SDCP_EVENT_TYPES = [
   'SessionBridged',
   'PlanUpdated',
   'TurnSteered',
+  'ContextUpdated',
+  'QuestionAsked',
+  'QuestionAnswered',
   'VerifyUpdated',
   'ModelsUpdated',
   'CostUpdated',
@@ -1573,8 +1625,12 @@ export interface SdcpMethodMap {
       agent?: boolean;
       /** Which actions wait for the person: `ask` (every change), `pro` (commands), `auto` (only dangerous ones). */
       autonomy?: 'ask' | 'pro' | 'auto';
-      /** Model calls one agent turn may make before it pauses (default 25). */
+      /** Model calls one agent turn may make before it pauses (default 60 since 0.13). */
       maxSteps?: number;
+      /** `/compact` (0.13): the chat's model summarises the conversation; later turns start from the summary. */
+      compact?: boolean;
+      /** Images attached to the turn (0.13): base64, with their media type. */
+      images?: { name: string; mediaType: string; data?: string; path?: string }[];
       /** A confirmed Intent Contract: the Prompt Compiler writes the engine's prompt from it (0.12). */
       intentId?: string;
       /** Read the message with SDC's brief - its language, every request in it, the answer's language (default true, 0.11.8). */
@@ -2015,6 +2071,24 @@ export interface SdcpMethodMap {
   'status.share': { params: { enabled: boolean; port?: number }; result: { enabled: boolean; port?: number; url?: string; error?: string } };
   'timeline.branches': { params: { sessionId: string }; result: { branches: TimelineBranch[] } };
   'timeline.switch': { params: { sessionId: string; frameId: number }; result: { switched: boolean; turn?: number } };
+  /** The person's answer to an agent's `ask_user` (0.13). */
+  'question.answer': { params: { questionId: string; answer: string; turnId?: string; sessionId?: string }; result: { answered: boolean } };
+  /** The project's `.sdc/memory.md` (scope `project`, on the chat's machine) or SDC's global memory (0.13). */
+  'memory.get': { params: { sessionId?: string; scope?: 'project' | 'global' }; result: { text: string; path: string } };
+  'memory.set': { params: { sessionId?: string; scope?: 'project' | 'global'; text: string }; result: { saved: boolean; path: string } };
+  /** `/remember <fact>`: one line appended. */
+  'memory.add': { params: { sessionId?: string; scope?: 'project' | 'global'; text: string }; result: { saved: boolean; path: string; text: string } };
+  /** The composer's `/` list: SDC's commands, then the project's `.sdc/commands` and `.claude/commands` files. */
+  'commands.list': { params: { sessionId?: string }; result: { commands: { name: string; description: string; source: string; body?: string }[] } };
+  /** The composer's `@` list: files under the chat's folder whose name contains the query. */
+  'files.find': { params: { sessionId: string; query: string; limit?: number }; result: { files: { path: string; dir: boolean }[] } };
+  /** Processes an agent left running (a dev server), per chat. */
+  'process.list': { params: { sessionId?: string }; result: { processes: { processId: string; sessionId: string; command: string; place: string; seconds: number; running: boolean }[] } };
+  'process.stop': { params: { processId: string }; result: { stopped: boolean } };
+  /** The context meter before a turn: what the next turn of the chat would send to this model. */
+  'context.get': { params: { sessionId: string; engine?: string; model?: string; provider?: string }; result: { usedTokens: number; windowTokens: number; percent: number; compacted: boolean; resumed: boolean } };
+  /** Settings → Erase all SDC data: keys now, the data folder on the daemon's next start. `confirm` must be `ERASE`. */
+  'app.erase': { params: { confirm: 'ERASE' }; result: { erasing: boolean } };
 }
 
 export type MethodParams<M extends SdcpMethod> = SdcpMethodMap[M]['params'];

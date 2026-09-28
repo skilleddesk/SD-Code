@@ -7,7 +7,7 @@
 
 use async_trait::async_trait;
 
-use crate::engines::cli::{CliAdapter, CliSpec, PromptPlacement};
+use crate::engines::cli::{CliAdapter, CliSpec, PromptPlacement, Resume};
 use crate::engines::{Engine, EngineStatus, EventSink, Prompt};
 
 /// The one flag that makes this adapter honest.
@@ -49,6 +49,8 @@ pub const CLAUDE_SPEC: CliSpec = CliSpec {
         &["--permission-mode", "acceptEdits", "--allowedTools", "Bash"],
         &["--dangerously-skip-permissions"],
     ],
+    resume: Resume::Flag("--resume"),
+    image_flag: None,
 };
 
 pub struct ClaudeCode {

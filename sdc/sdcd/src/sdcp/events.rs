@@ -315,6 +315,42 @@ pub mod event {
         base("TurnSteered", json!({ "turnId": turn_id, "text": text }))
     }
 
+    /// How full the model's context is for a turn (0.13): what it is sent against what it holds, whether
+    /// older turns were folded, and whether a CLI continues its own conversation.
+    pub fn context_updated(session_id: &str, turn_id: &str, used: u64, window: u64, compacted: bool, resumed: bool) -> Value {
+        base(
+            "ContextUpdated",
+            json!({
+                "sessionId": session_id,
+                "turnId": turn_id,
+                "usedTokens": used,
+                "windowTokens": window,
+                "percent": (used * 100).checked_div(window).unwrap_or(0).min(100),
+                "compacted": compacted,
+                "resumed": resumed,
+            }),
+        )
+    }
+
+    /// The agent asks the person something and waits (0.13, `ask_user`); `question.answer` replies.
+    pub fn question_asked(session_id: &str, turn_id: &str, question_id: &str, question: &str, options: &[String]) -> Value {
+        base(
+            "QuestionAsked",
+            json!({
+                "sessionId": session_id,
+                "turnId": turn_id,
+                "questionId": question_id,
+                "question": question,
+                "options": options,
+            }),
+        )
+    }
+
+    /// A question was answered (or the turn stopped asking it): the card closes.
+    pub fn question_answered(turn_id: &str, question_id: &str, answer: &str) -> Value {
+        base("QuestionAnswered", json!({ "turnId": turn_id, "questionId": question_id, "answer": answer }))
+    }
+
     /// A verify run as it stands (v4): its checks, its review, and whether it passed - whole each time.
     pub fn verify_updated(fields: Value) -> Value {
         base("VerifyUpdated", fields)

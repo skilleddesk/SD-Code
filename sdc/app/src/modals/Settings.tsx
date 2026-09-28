@@ -29,6 +29,8 @@ import { storedSettings, storeSetting } from '../lib/settings';
 import { Modal } from './Modal';
 import { LanguageTab, TeamTab, UpdatesTab } from '../kernel/SettingsTabs';
 import { useKernelUi } from '../store/kernelUi';
+import { AgentSettings } from '../kernel/AgentSettings';
+import { playCue } from '../lib/alerts';
 
 /**
  * `#settingsBd` - Settings, seven tabs (spec section 9.11).
@@ -175,6 +177,8 @@ export function Settings() {
         {tab === 'team' ? <TeamTab /> : null}
         {tab === 'updates' ? <UpdatesTab /> : null}
 
+        {tab === 'safety' ? <AgentSettings /> : null}
+
         {tab === 'safety' ? (
           <button
             type="button"
@@ -304,7 +308,10 @@ function RowControl({ row, value, onFlip, onChoose, theme }: RowControlProps) {
       <button
         type="button"
         className={BTN + ' ' + BTN_SECONDARY}
-        onClick={() => toast('🔔 played')}
+        onClick={() => {
+          playCue('done');
+          window.setTimeout(() => playCue('attention'), 700);
+        }}
       >
         {row.button ?? 'Play'}
       </button>

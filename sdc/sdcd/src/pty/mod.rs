@@ -146,6 +146,37 @@ pub fn shell_for_line(line: &str) -> (String, Vec<String>) {
     }
 }
 
+/// The process for one command **line**, in this machine's shell, with the line reaching the shell
+/// exactly as written (0.13).
+///
+/// On Windows, `Command::new("cmd").args(["/C", line])` is wrong for any line with a double quote in it:
+/// std quotes the argument the C runtime's way, turning `node -e "console.log(1)"` into
+/// `"node -e \"console.log(1)\""`, and cmd.exe does not read backslashes - node was handed a JavaScript
+/// *string* and printed nothing, `git commit -m "fix"` committed `\"fix\"`. Measured by the agent's first
+/// `start_process` of a node server. `/S /C "<line>"` with the line passed raw is cmd's documented form:
+/// it strips the outer quotes and runs the rest verbatim.
+pub fn line_command(line: &str) -> Command {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+
+        let mut command = Command::new("cmd");
+
+        command.args(["/D", "/S", "/C"]).raw_arg(format!("\"{line}\""));
+
+        command
+    }
+
+    #[cfg(not(windows))]
+    {
+        let mut command = Command::new("sh");
+
+        command.args(["-c", line]);
+
+        command
+    }
+}
+
 /// Why a whole command **line** is refused, or `None` when it is allowed through (0.7.13).
 ///
 /// `denied_reason` checks a program and its arguments, which is right for an engine's `run` step. A
@@ -346,9 +377,18 @@ impl PtyManager {
             return Err(ErrorObject::permission_denied(format!("{command}: {reason}")));
         }
 
-        let mut process = Command::new(command);
+        /* A whole line for this machine's shell goes through `line_command`, so its quotes survive (0.13). */
+        let mut process = match (command, args) {
+            ("cmd", [flag, line]) if cfg!(windows) && flag == "/C" => line_command(line),
+            _ => {
+                let mut process = Command::new(command);
 
-        process.args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+                process.args(args);
+                process
+            }
+        };
+
+        process.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
 
         if let Some(cwd) = cwd {
             process.current_dir(cwd);
@@ -952,3 +992,22 @@ mod tests {
 }
 
 
+
+#[cfg(test)]
+mod line_tests {
+    use super::*;
+
+    /// 0.13: a line with double quotes reaches the shell as written - `node -e "..."` prints, and a
+    /// `>` inside the quotes is JavaScript, not a redirect.
+    #[test]
+    fn quotes_in_a_line_survive_the_shell() {
+        if std::process::Command::new("node").arg("--version").output().is_err() {
+            return;
+        }
+
+        let (command, args) = shell_for_line("node -e \"const f=(a,b)=>a+b; console.log('sum ' + f(2, 3))\"");
+        let answer = PtyManager::new().run_once(&command, &args, None, Duration::from_secs(30)).unwrap();
+
+        assert_eq!(answer["stdout"].as_str().unwrap().trim(), "sum 5", "{answer}");
+    }
+}

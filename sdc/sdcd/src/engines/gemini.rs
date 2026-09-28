@@ -5,7 +5,7 @@
 
 use async_trait::async_trait;
 
-use crate::engines::cli::{CliAdapter, CliSpec, PromptPlacement};
+use crate::engines::cli::{CliAdapter, CliSpec, PromptPlacement, Resume};
 use crate::engines::{Engine, EngineStatus, EventSink, Prompt};
 
 /// `gemini -p <prompt> --output-format stream-json --skip-trust` is the headless form.
@@ -42,6 +42,10 @@ pub const GEMINI_SPEC: CliSpec = CliSpec {
         &["--approval-mode", "auto_edit"],
         &["--yolo"],
     ],
+    /* Gemini's `--resume` takes "latest" or an index into a per-folder list, not an id a chat can keep:
+       two chats in one folder would resume each other. It gets the transcript, fitted to its context. */
+    resume: Resume::None,
+    image_flag: None,
 };
 
 /// What a local Gemini turn should do about signing in, decided from three facts.

@@ -1398,13 +1398,13 @@ describe('sendPrompt in agent mode', () => {
     });
   });
 
-  it('sends a plain chat turn when Chat is chosen', async () => {
+  it('sends an agent turn even when an old Chat preference is stored (0.13: one mode)', async () => {
     useModelStore.setState({ compose: 'chat' });
     useLayoutStore.setState({ mode: 'auto' });
 
     await sendPrompt('what does this do?', 's7');
 
-    expect(sdcpCall.mock.calls[0]?.[1]).toMatchObject({ agent: false, autonomy: 'auto' });
+    expect(sdcpCall.mock.calls[0]?.[1]).toMatchObject({ agent: true, autonomy: 'auto' });
   });
 
   it('maps the three modes to the three autonomy levels', () => {

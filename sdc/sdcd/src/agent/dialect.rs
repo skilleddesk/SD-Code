@@ -135,26 +135,152 @@ pub fn assistant_message(text: &str) -> Value {
     json!({ "role": "assistant", "content": text })
 }
 
+/// One tool's answer on its way back: the call's id, the text, whether it failed, and an image to show.
+pub type ToolResult = (String, String, bool, Option<(String, String)>);
+
+/// An image block, in the dialect's own shape: `(media type, base64)`.
+fn image_block(dialect: Dialect, (media_type, data): &(String, String)) -> Value {
+    match dialect {
+        Dialect::Anthropic => json!({ "type": "image", "source": { "type": "base64", "media_type": media_type, "data": data } }),
+        Dialect::OpenAi => json!({ "type": "image_url", "image_url": { "url": format!("data:{media_type};base64,{data}") } }),
+    }
+}
+
+/// The person's message with the images they attached (0.13), for a model that can see.
+pub fn user_message_with_images(dialect: Dialect, text: &str, images: &[(String, String)]) -> Value {
+    if images.is_empty() {
+        return user_message(text);
+    }
+
+    let mut content = vec![json!({ "type": "text", "text": text })];
+
+    content.extend(images.iter().map(|image| image_block(dialect, image)));
+
+    json!({ "role": "user", "content": content })
+}
+
 /// The tool answers of one step, as the message(s) that carry them back.
 ///
 /// Anthropic wants **one** user message holding every `tool_result` of the step - splitting them teaches
-/// the model to stop calling tools in parallel. OpenAI wants one `role: "tool"` message per call.
-pub fn tool_results(dialect: Dialect, results: &[(String, String, bool)]) -> Vec<Value> {
+/// the model to stop calling tools in parallel - and a result may hold an image. OpenAI wants one
+/// `role: "tool"` message per call, whose content is text only: an image travels in one user message
+/// after them, labelled with the call it belongs to.
+pub fn tool_results(dialect: Dialect, results: &[ToolResult]) -> Vec<Value> {
     match dialect {
         Dialect::Anthropic => vec![json!({
             "role": "user",
-            "content": results.iter().map(|(id, content, is_error)| json!({
-                "type": "tool_result",
-                "tool_use_id": id,
-                "content": content,
-                "is_error": is_error,
-            })).collect::<Vec<_>>(),
+            "content": results.iter().map(|(id, content, is_error, image)| {
+                let content = match image {
+                    Some(image) => json!([{ "type": "text", "text": content }, image_block(dialect, image)]),
+                    None => json!(content),
+                };
+
+                json!({ "type": "tool_result", "tool_use_id": id, "content": content, "is_error": is_error })
+            }).collect::<Vec<_>>(),
         })],
-        Dialect::OpenAi => results
-            .iter()
-            .map(|(id, content, _)| json!({ "role": "tool", "tool_call_id": id, "content": content }))
-            .collect(),
+        Dialect::OpenAi => {
+            let mut messages: Vec<Value> = results
+                .iter()
+                .map(|(id, content, _, _)| json!({ "role": "tool", "tool_call_id": id, "content": content }))
+                .collect();
+            let images: Vec<Value> = results
+                .iter()
+                .filter_map(|(id, _, _, image)| image.as_ref().map(|image| (id, image)))
+                .flat_map(|(id, image)| [json!({ "type": "text", "text": format!("The image from tool call {id}:") }), image_block(dialect, image)])
+                .collect();
+
+            if !images.is_empty() {
+                messages.push(json!({ "role": "user", "content": images }));
+            }
+
+            messages
+        }
     }
+}
+
+/// A rough token count of a conversation: its text, with each image counted as about 1,600 tokens
+/// (its base64 would otherwise count a hundred times more than it costs).
+pub fn tokens(messages: &[Value]) -> u64 {
+    fn walk(value: &Value, total: &mut u64) {
+        match value {
+            Value::String(text) => *total += crate::context::tokens_of(text),
+            Value::Array(items) => items.iter().for_each(|item| walk(item, total)),
+            Value::Object(map) => {
+                if map.get("type").and_then(Value::as_str).is_some_and(|kind| kind == "image" || kind == "image_url") {
+                    *total += 1_600;
+
+                    return;
+                }
+
+                map.values().for_each(|item| walk(item, total));
+            }
+            _ => {}
+        }
+    }
+
+    let mut total = 0;
+
+    messages.iter().for_each(|message| walk(message, &mut total));
+    total
+}
+
+/// Makes room in a long turn (0.13): the output of older tool calls - a file read twenty steps ago, a
+/// build log since fixed - is replaced by a line saying it was, newest `keep` results untouched, and
+/// older images dropped. The calls themselves stay, so the model still knows what it did. Answers how
+/// many results were folded.
+pub fn fold_old_results(dialect: Dialect, messages: &mut [Value], keep: usize) -> usize {
+    const FOLDED: &str = "[Output folded by SDC to keep the context small. Run the tool again if you need it.]";
+
+    /* Every result's place, oldest first: (message index, block index for Anthropic). */
+    let mut places: Vec<(usize, Option<usize>)> = Vec::new();
+
+    for (index, message) in messages.iter().enumerate() {
+        match dialect {
+            Dialect::OpenAi if message["role"] == "tool" => places.push((index, None)),
+            Dialect::Anthropic if message["role"] == "user" => {
+                if let Some(blocks) = message["content"].as_array() {
+                    for (block, item) in blocks.iter().enumerate() {
+                        if item["type"] == "tool_result" {
+                            places.push((index, Some(block)));
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut folded = 0;
+    let fold_until = places.len().saturating_sub(keep);
+
+    for (index, block) in places.into_iter().take(fold_until) {
+        let slot = match block {
+            Some(block) => &mut messages[index]["content"][block]["content"],
+            None => &mut messages[index]["content"],
+        };
+
+        if slot.as_str() != Some(FOLDED) && crate::context::tokens_of(&slot.to_string()) > 200 {
+            *slot = json!(FOLDED);
+            folded += 1;
+        }
+    }
+
+    /* OpenAI's image messages after tool results: all but the newest go. */
+    if dialect == Dialect::OpenAi {
+        let image_messages: Vec<usize> = messages
+            .iter()
+            .enumerate()
+            .filter(|(_, message)| message["role"] == "user" && message["content"].as_array().is_some_and(|items| items.iter().any(|item| item["type"] == "image_url")))
+            .map(|(index, _)| index)
+            .collect();
+
+        for index in image_messages.iter().rev().skip(1) {
+            messages[*index]["content"] = json!("[An image was shown here; folded by SDC to keep the context small.]");
+            folded += 1;
+        }
+    }
+
+    folded
 }
 
 /// Reads one reply off the stream, pushing text and thinking to `sink` as they arrive.
@@ -417,12 +543,27 @@ impl OpenAiState {
                 slot.0 = id.to_string();
             }
 
-            if let Some(name) = call.pointer("/function/name").and_then(Value::as_str) {
-                slot.1.push_str(name);
+            /*
+             * Two shapes are in use (measured 2026-09-28): most providers send each piece once - `{"pa`,
+             * `th": "a`… - but Qwen-VL on DashScope sends the whole text so far every time - `{"path": "`,
+             * `{"path": "hello`… - and repeats the name on every chunk. Appended, the second shape is
+             * `write_filewrite_file` and broken JSON, and the model is told its call was invalid until it
+             * gives up. A piece that starts with what is already there is the whole so far, and replaces it.
+             */
+            if let Some(name) = call.pointer("/function/name").and_then(Value::as_str).filter(|name| !name.is_empty()) {
+                if name.starts_with(slot.1.as_str()) && !slot.1.is_empty() {
+                    slot.1 = name.to_string();
+                } else if slot.1 != name {
+                    slot.1.push_str(name);
+                }
             }
 
-            if let Some(arguments) = call.pointer("/function/arguments").and_then(Value::as_str) {
-                slot.2.push_str(arguments);
+            if let Some(arguments) = call.pointer("/function/arguments").and_then(Value::as_str).filter(|piece| !piece.is_empty()) {
+                if !slot.2.is_empty() && arguments.starts_with(slot.2.as_str()) {
+                    slot.2 = arguments.to_string();
+                } else {
+                    slot.2.push_str(arguments);
+                }
             }
         }
 
@@ -568,6 +709,30 @@ mod tests {
         assert_eq!((reply.input_tokens, reply.output_tokens), (80, 12));
     }
 
+    /// Qwen-VL's shape (measured on DashScope): every chunk carries the name again and the arguments so far.
+    #[test]
+    fn cumulative_tool_calls_are_read_as_the_whole_so_far() {
+        let reply = read_reply(
+            Dialect::OpenAi,
+            stream(&[
+                r#"data: {"choices":[{"delta":{"content":"","tool_calls":[{"index":0,"id":"call_q","type":"function","function":{"name":"write_file","arguments":""}}]}}]}"#,
+                r#"data: {"choices":[{"delta":{"tool_calls":[{"id":"call_q","index":0,"function":{"name":"","arguments":""}}]}}]}"#,
+                r#"data: {"choices":[{"delta":{"tool_calls":[{"id":"call_q","index":0,"function":{"name":"write_file","arguments":"{\"path\": \""}}]}}]}"#,
+                r#"data: {"choices":[{"delta":{"tool_calls":[{"id":"call_q","index":0,"function":{"name":"write_file","arguments":"{\"path\": \"hello.txt"}}]}}]}"#,
+                r#"data: {"choices":[{"delta":{"tool_calls":[{"id":"call_q","index":0,"function":{"name":"write_file","arguments":"{\"path\": \"hello.txt"}}]}}]}"#,
+                r#"data: {"choices":[{"delta":{"tool_calls":[{"id":"call_q","index":0,"function":{"name":"write_file","arguments":"{\"path\": \"hello.txt\", \"content\": \"hi\"}"}}]}}]}"#,
+                r#"data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}"#,
+                "data: [DONE]",
+            ]),
+            &EventSink::discarding(),
+            &|| false,
+        )
+        .unwrap();
+
+        assert_eq!(reply.tool_uses[0].name, "write_file");
+        assert_eq!(reply.tool_uses[0].input, json!({ "path": "hello.txt", "content": "hi" }));
+    }
+
     #[test]
     fn a_provider_error_inside_the_stream_is_its_own_sentence() {
         let reply = read_reply(
@@ -606,11 +771,46 @@ mod tests {
 
     #[test]
     fn tool_results_are_one_message_for_anthropic_and_one_per_call_for_openai() {
-        let results = vec![("a".to_string(), "ok".to_string(), false), ("b".to_string(), "no".to_string(), true)];
+        let results = vec![("a".to_string(), "ok".to_string(), false, None), ("b".to_string(), "no".to_string(), true, None)];
 
         assert_eq!(tool_results(Dialect::Anthropic, &results).len(), 1);
         assert_eq!(tool_results(Dialect::Anthropic, &results)[0]["content"][1]["is_error"], true);
         assert_eq!(tool_results(Dialect::OpenAi, &results).len(), 2);
         assert_eq!(tool_results(Dialect::OpenAi, &results)[1]["tool_call_id"], "b");
+    }
+
+    #[test]
+    fn an_image_travels_in_the_result_for_anthropic_and_after_the_results_for_openai() {
+        let image = Some(("image/png".to_string(), "AAAA".to_string()));
+        let results = vec![("a".to_string(), "shot".to_string(), false, image)];
+        let anthropic = tool_results(Dialect::Anthropic, &results);
+
+        assert_eq!(anthropic[0]["content"][0]["content"][1]["source"]["data"], "AAAA");
+
+        let openai = tool_results(Dialect::OpenAi, &results);
+
+        assert_eq!(openai.len(), 2);
+        assert_eq!(openai[1]["content"][1]["image_url"]["url"], "data:image/png;base64,AAAA");
+    }
+
+    #[test]
+    fn old_results_are_folded_and_the_newest_kept() {
+        let long = "x".repeat(4_000);
+        let mut messages: Vec<Value> = (0..6)
+            .flat_map(|n| {
+                vec![
+                    json!({ "role": "assistant", "content": [{ "type": "tool_use", "id": format!("c{n}"), "name": "read_file", "input": {} }] }),
+                    json!({ "role": "user", "content": [{ "type": "tool_result", "tool_use_id": format!("c{n}"), "content": long, "is_error": false }] }),
+                ]
+            })
+            .collect();
+        let before = tokens(&messages);
+        let folded = fold_old_results(Dialect::Anthropic, &mut messages, 2);
+
+        assert_eq!(folded, 4);
+        assert!(tokens(&messages) < before / 2);
+        assert_eq!(messages[11]["content"][0]["content"], long, "the newest result is whole");
+        assert!(messages[1]["content"][0]["content"].as_str().unwrap().starts_with("[Output folded"));
+        assert_eq!(fold_old_results(Dialect::Anthropic, &mut messages, 2), 0, "folding twice changes nothing");
     }
 }

@@ -51,6 +51,9 @@ fn kind_of(event: &EngineEvent) -> &'static str {
         EngineEvent::Plan(_) => "Plan",
         EngineEvent::Usage { .. } => "Usage",
         EngineEvent::Steered(_) => "Steered",
+        EngineEvent::SessionRef(_) => "SessionRef",
+        EngineEvent::Question { .. } => "Question",
+        EngineEvent::Context { .. } => "Context",
     }
 }
 

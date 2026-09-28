@@ -969,3 +969,27 @@ describe('a tool card ends with its turn', () => {
     expect(state.turns[0]?.tools[0]).toMatchObject({ status: 'done', meta: 'ended with the turn' });
   });
 });
+
+describe('0.13: the agent asks, and the context meter', () => {
+  it('opens a question, closes it when answered, and a turn that ends takes its question with it', () => {
+    let state = fold(EMPTY_STATE, { type: 'TurnStarted', turnId: 't1', sessionId: 's1', engine: 'native_api', model: 'm', tier: 'Deep', prompt: 'make a shop' });
+
+    state = fold(state, { type: 'QuestionAsked', sessionId: 's1', turnId: 't1', questionId: 'q-t1-3', question: 'Which colour?', options: ['Blue', 'Green'] });
+    expect(state.questions).toEqual([{ questionId: 'q-t1-3', sessionId: 's1', turnId: 't1', question: 'Which colour?', options: ['Blue', 'Green'] }]);
+
+    state = fold(state, { type: 'QuestionAnswered', turnId: 't1', questionId: 'q-t1-3', answer: 'Green' });
+    expect(state.questions).toEqual([]);
+
+    state = fold(state, { type: 'QuestionAsked', sessionId: 's1', turnId: 't1', questionId: 'q-t1-4', question: 'Delete the old table?', options: [] });
+    state = fold(state, { type: 'TurnCompleted', turnId: 't1', summary: 'Interrupted', meta: '' });
+    expect(state.questions).toEqual([]);
+  });
+
+  it('keeps the newest context reading per chat', () => {
+    let state = fold(EMPTY_STATE, { type: 'ContextUpdated', sessionId: 's1', turnId: 't1', usedTokens: 1200, windowTokens: 128000, percent: 0, compacted: false, resumed: true });
+
+    state = fold(state, { type: 'ContextUpdated', sessionId: 's1', turnId: 't1', usedTokens: 96000, windowTokens: 128000, percent: 75, compacted: true, resumed: false });
+
+    expect(state.contexts['s1']).toEqual({ usedTokens: 96000, windowTokens: 128000, percent: 75, compacted: true, resumed: false });
+  });
+});

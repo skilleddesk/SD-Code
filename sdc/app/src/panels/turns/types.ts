@@ -33,7 +33,7 @@ export interface RunLine {
   text: string;
 }
 
-/** `Read` - file-text icon, a target path, and a `done · 42 ln` pill. No body. */
+/** `Read` - file-text icon, a target path, and a `done · 42 ln` pill. A body only when it has lines. */
 export interface ReadToolData {
   kind: 'read';
   /** The log's `ToolCallStarted` stamp - the running pill ticks against it (0.9.0). */
@@ -43,6 +43,8 @@ export interface ReadToolData {
   status: ToolStatus;
   /** The right-hand status pill's text, already formatted by the producer. */
   meta: string;
+  /** What a sub-agent did, or the answer to a question (0.13); empty for a plain read. */
+  output?: RunLine[];
 }
 
 /** `Edit` - file-pen icon, a target path, `done · +18 −2`, and a diff body. */

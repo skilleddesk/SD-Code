@@ -45,6 +45,7 @@ pub mod auth;
 pub mod checkpoints;
 pub mod cli;
 pub mod console;
+pub mod context;
 pub mod continuity;
 pub mod crash;
 pub mod duel;
@@ -57,6 +58,7 @@ pub mod intent;
 pub mod ops;
 pub mod paths;
 pub mod providers;
+pub mod reset;
 pub mod pty;
 pub mod rewind;
 pub mod sdcp;
@@ -118,7 +120,12 @@ impl DaemonState {
     pub fn bootstrap(database: Option<std::path::PathBuf>) -> Result<Arc<Self>> {
         let path = match database {
             Some(explicit) => explicit,
-            None => paths::database_path()?,
+            None => {
+                /* Settings → Erase all SDC data (0.13) left a marker: the data goes before the database opens. */
+                reset::erase_if_marked(&paths::data_dir()?);
+
+                paths::database_path()?
+            }
         };
 
         let store = Arc::new(Store::open(&path).with_context(|| format!("opening {}", path.display()))?);

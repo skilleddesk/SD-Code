@@ -30,6 +30,8 @@ fn prompt(text: &str) -> Prompt {
         /* A live API check talks to a provider from this machine; a folder on a host is irrelevant to it. */
         remote: None,
         autonomy: Default::default(),
+        resume: None,
+        images: Vec::new(),
     }
 }
 

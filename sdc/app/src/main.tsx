@@ -14,6 +14,9 @@ import '@fontsource/jetbrains-mono/500.css';
 import './styles/globals.css';
 
 import { App } from './App';
+import { startAlerts } from './lib/alerts';
+
+startAlerts();
 
 const container = document.getElementById('root');
 

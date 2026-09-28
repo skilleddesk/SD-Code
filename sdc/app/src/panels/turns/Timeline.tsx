@@ -4,10 +4,12 @@ import { CornerDownRight, Sparkles } from 'lucide-react';
 import { strings } from '../../strings';
 import { AnswerBlock } from './AnswerBlock';
 import { CheckpointRail } from './CheckpointRail';
+import { ExploreGroup } from './ExploreGroup';
 import { Markdown } from './Markdown';
 import { useSmoothText } from './smooth';
 import { ThinkingBlock } from './ThinkingBlock';
 import { ToolCard } from './ToolCard';
+import { gather } from './grouping';
 import type { LiveBarData, TimelineItem } from './types';
 
 /**
@@ -30,8 +32,10 @@ export function Timeline({
 }) {
   return (
     <div className="timeline flex flex-col" data-timeline>
-      {items.map((item) => {
+      {gather(items).map((item) => {
         switch (item.kind) {
+          case 'explore':
+            return <ExploreGroup key={item.key} tools={item.tools} />;
           case 'thinking':
             return <ThinkingBlock key={item.key} thinking={item.thinking} />;
           case 'text':

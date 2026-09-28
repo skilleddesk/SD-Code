@@ -197,7 +197,7 @@ pub fn writable_home(ssh: &Ssh) -> Result<bool, ErrorObject> {
  * ------------------------------------------------------------------------------------------ */
 
 /// `fs.list`'s guard, for a single path: the same refusal the local read and write get.
-fn guard(path: &str) -> Result<(), ErrorObject> {
+pub fn guard(path: &str) -> Result<(), ErrorObject> {
     match crate::fs::blocked_reason(std::path::Path::new(path)) {
         Some(reason) => Err(ErrorObject::blocked(&format!("{path} was refused because {reason}"))),
         None => Ok(()),

@@ -1874,7 +1874,7 @@ export async function openRemoteFolder(hostId: string, root: string): Promise<st
 }
 
 /** Opens the chat's tab and puts the caret in its prompt - where a person wants to be after a folder. */
-function landIn(sessionId: string): void {
+export function landIn(sessionId: string): void {
   usePrefsStore.getState().openTab(sessionId);
 
   /* A window-less context (the unit tests) has no DOM to focus; the tab is still open, which is the part
@@ -2200,6 +2200,26 @@ export interface TurnSeed {
   understand?: boolean;
   /** A confirmed Intent Contract (0.12): the daemon compiles the engine's prompt from it. */
   intentId?: string;
+  /** `/compact` (0.13): the answer becomes the chat's summary. */
+  compact?: boolean;
+  /** Images attached to the turn (0.13), base64. */
+  images?: TurnImage[];
+}
+
+/** An image on its way to a turn (0.13): pasted or picked, as base64 with its media type. */
+export interface TurnImage {
+  name: string;
+  mediaType: string;
+  /** The bytes, for a pasted image. */
+  data?: string;
+  /** A file on this machine, for a picked one - the daemon reads it. */
+  path?: string;
+}
+
+/** What a send carries besides the words (0.13). */
+export interface SendExtras {
+  images?: TurnImage[];
+  compact?: boolean;
 }
 
 /** The app's mode as the agent's autonomy: Simple asks for everything, Pro for commands, Auto for danger. */
@@ -2224,8 +2244,8 @@ export function autonomyFor(mode: 'simple' | 'pro' | 'auto'): 'ask' | 'pro' | 'a
  * An engine that is not installed is not an error here: the daemon raises `ErrorRaised` with the
  * translator's plain sentence for it, which lands in the turn stream like any other event.
  */
-export async function sendPrompt(prompt: string, target?: string): Promise<string | null> {
-  const { tier, engine, model, providerId, compose } = useModelStore.getState();
+export async function sendPrompt(prompt: string, target?: string, extras: SendExtras = {}): Promise<string | null> {
+  const { tier, engine, model, providerId } = useModelStore.getState();
 
   /* The pane's own chat when it says which (split view has two boxes), else the active one. */
   let sessionId = target ?? selectActiveSession()?.session.id ?? null;
@@ -2306,10 +2326,13 @@ export async function sendPrompt(prompt: string, target?: string): Promise<strin
     model,
     tier: tierName(tier),
     ...(providerId === null ? {} : { provider: providerId }),
-    agent: compose === 'agent',
+    /* Always an agent (0.13): it answers a question without tools and uses them when a task needs them. */
+    agent: true,
     autonomy: autonomyFor(useLayoutStore.getState().mode),
     /* Settings → General (0.11.8): off sends the message exactly as typed. */
     understand: setting('understand-messages', true),
+    ...(extras.compact === true ? { compact: true } : {}),
+    ...(extras.images !== undefined && extras.images.length > 0 ? { images: extras.images } : {}),
   };
 
   /*

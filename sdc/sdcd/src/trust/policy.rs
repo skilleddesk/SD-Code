@@ -86,6 +86,11 @@ pub struct Policy {
     pub max_turn_usd: Option<f64>,
     /// The Night Guardian may roll back to the last good deploy without asking.
     pub auto_rollback: bool,
+    /// Hooks (0.13, as Claude Code's and Codex's): commands the agent's tools run after a file is written -
+    /// a formatter, a linter - with `{file}` for the file. Their output is shown on the card, and a failing
+    /// one goes back to the model with the write's answer.
+    #[serde(default)]
+    pub after_edit: Vec<String>,
     /// Where this policy came from: `default`, or the file's path.
     pub source: String,
     /// The file's own text had a problem; the defaults are in force and this says why.
@@ -103,6 +108,7 @@ impl Default for Policy {
             deny_commands: Vec::new(),
             max_turn_usd: None,
             auto_rollback: false,
+            after_edit: Vec::new(),
             source: "default".to_string(),
             error: None,
         }
@@ -121,6 +127,21 @@ struct PolicyFile {
     replace_defaults: Option<bool>,
     max_turn_usd: Option<f64>,
     guardian: Option<GuardianFile>,
+    hooks: Option<HooksFile>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct HooksFile {
+    after_edit: Option<HookList>,
+}
+
+/// A hook is one command or a list of them.
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum HookList {
+    One(String),
+    Many(Vec<String>),
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -171,6 +192,15 @@ impl Policy {
         extend(&mut policy.deny_commands, file.deny_commands, false);
         policy.max_turn_usd = file.max_turn_usd.filter(|usd| *usd > 0.0);
         policy.auto_rollback = file.guardian.and_then(|guardian| guardian.auto_rollback).unwrap_or(false);
+        policy.after_edit = match file.hooks.and_then(|hooks| hooks.after_edit) {
+            Some(HookList::One(line)) => vec![line],
+            Some(HookList::Many(lines)) => lines,
+            None => Vec::new(),
+        }
+        .into_iter()
+        .map(|line| line.trim().to_string())
+        .filter(|line| !line.is_empty())
+        .collect();
 
         /* The policy file itself is always protected: an AI that can rewrite its own rules has none. */
         if !policy.protected_paths.iter().any(|path| path == POLICY_FILE) {
@@ -246,6 +276,10 @@ impl Policy {
 
         text.push_str(&format!("\n[guardian]\nauto_rollback = {}\n", self.auto_rollback));
 
+        if !self.after_edit.is_empty() {
+            text.push_str(&format!("\n[hooks]\nafter_edit = {}\n", list(&self.after_edit)));
+        }
+
         text
     }
 
@@ -288,6 +322,11 @@ impl Policy {
         }
 
         (requested, None)
+    }
+
+    /// A `local-only` project: nothing of it leaves the machine - the agent's web tools stay shut too (0.13).
+    pub fn privacy_local(&self) -> bool {
+        self.privacy == "local-only"
     }
 
     /// Whether an engine may read this project. A `local-only` project refuses anything that sends it off

@@ -12,8 +12,10 @@
 //! goes through the same gate as a command: an MCP tool can do anything its server can, so it is a `run`
 //! for the permission rules, with the card, the checkpoint and the ledger row that come with one.
 //!
-//! Local folders only: a server a project names is a program on the machine the project is on, and a VPS
-//! chat's agent runs its commands there through `ssh`, where no MCP client is attached.
+//! A server is a program on the machine the project is on. For a folder on a VPS (0.13) that machine is the
+//! VPS: the server is started there through `ssh` - the same connection the agent's commands use - and its
+//! stdio travels back over it, so the protocol is unchanged and the server sees the host's files, database
+//! and network, which is what a project's server is for.
 
 use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader, Write};
@@ -55,6 +57,29 @@ struct Server {
     next: u64,
 }
 
+/// A server's arguments, as strings.
+fn args_of(spec: &Value) -> Vec<String> {
+    spec["args"].as_array().map(|args| args.iter().filter_map(|arg| arg.as_str().map(str::to_string)).collect()).unwrap_or_default()
+}
+
+/// The line a host runs for a server: into the folder, its environment, the program and its arguments,
+/// every piece quoted for `sh`.
+pub fn remote_line(spec: &Value, root: &str) -> Result<String, String> {
+    let command = spec["command"].as_str().ok_or("no `command`")?;
+    let folder = crate::ssh::ops::remote_expr(root).map_err(|error| error.message)?;
+    let env: Vec<String> = spec["env"]
+        .as_object()
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|(key, _)| key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'))
+        .filter_map(|(key, value)| value.as_str().map(|value| format!("{key}={}", crate::ssh::sh_quote(value))))
+        .collect();
+    let words: Vec<String> = std::iter::once(command.to_string()).chain(args_of(spec)).map(|word| crate::ssh::sh_quote(&word)).collect();
+
+    Ok(format!("cd {folder} && exec env {} {}", env.join(" "), words.join(" ")).replace("env  ", "env "))
+}
+
 impl Server {
     fn start(name: &str, spec: &Value, root: &std::path::Path) -> Result<Self, String> {
         let command = spec["command"].as_str().ok_or_else(|| format!("{name}: no `command`"))?;
@@ -63,12 +88,7 @@ impl Server {
             None => Command::new(command),
         };
 
-        process
-            .args(spec["args"].as_array().map(|args| args.iter().filter_map(|arg| arg.as_str().map(str::to_string)).collect::<Vec<_>>()).unwrap_or_default())
-            .current_dir(root)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null());
+        process.args(args_of(spec)).current_dir(root);
 
         for (key, value) in spec["env"].as_object().cloned().unwrap_or_default() {
             if let Some(value) = value.as_str() {
@@ -76,7 +96,33 @@ impl Server {
             }
         }
 
-        let mut child = process.spawn().map_err(|error| format!("{name}: `{command}` did not start ({error})"))?;
+        Self::launch(name, process)
+    }
+
+    /// A server on a host, over `ssh` (0.13).
+    fn start_remote(name: &str, spec: &Value, root: &str, ssh: &crate::ssh::Ssh) -> Result<Self, String> {
+        let line = remote_line(spec, root).map_err(|error| format!("{name}: {error}"))?;
+        let launcher = crate::ssh::program()
+            .map(|path| crate::host::program::command_for(&path))
+            .ok_or_else(|| format!("{name}: `ssh` is not on this machine, so a server on {} cannot start", ssh.label()))?;
+        let mut process = Command::new(launcher.get_program());
+
+        process.args(launcher.get_args()).args(ssh.base_args().map_err(|error| error.message)?).arg(line);
+
+        Self::launch(name, process)
+    }
+
+    fn launch(name: &str, mut process: Command) -> Result<Self, String> {
+        process.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
+
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+
+            process.creation_flags(0x0800_0000);
+        }
+
+        let mut child = process.spawn().map_err(|error| format!("{name}: `{:?}` did not start ({error})", process.get_program()))?;
         let stdin = child.stdin.take().ok_or("no stdin")?;
         let stdout = child.stdout.take().ok_or("no stdout")?;
         let (sender, lines) = channel();
@@ -166,7 +212,22 @@ impl McpTools {
         let Ok(text) = std::fs::read_to_string(root.join(CONFIG)) else {
             return (None, Vec::new());
         };
-        let config: Value = match serde_json::from_str(&text) {
+
+        Self::from_config(&text, &|name, spec| Server::start(name, spec, root))
+    }
+
+    /// The servers of a folder on a host (0.13): its `.sdc/mcp.json` read there, each server started there.
+    pub fn start_remote(root: &str, ssh: &crate::ssh::Ssh) -> (Option<Self>, Vec<String>) {
+        let path = format!("{}/{CONFIG}", root.trim_end_matches('/'));
+        let Some(text) = crate::ssh::ops::read(ssh, &path, 64 * 1024).ok().and_then(|value| value["text"].as_str().map(str::to_string)) else {
+            return (None, Vec::new());
+        };
+
+        Self::from_config(&text, &|name, spec| Server::start_remote(name, spec, root, ssh))
+    }
+
+    fn from_config(text: &str, start: &dyn Fn(&str, &Value) -> Result<Server, String>) -> (Option<Self>, Vec<String>) {
+        let config: Value = match serde_json::from_str(text) {
             Ok(config) => config,
             Err(error) => return (None, vec![format!("{CONFIG} is not valid JSON: {error}")]),
         };
@@ -175,7 +236,7 @@ impl McpTools {
         let mut warnings = Vec::new();
 
         for (name, spec) in servers {
-            let mut server = match Server::start(&name, &spec, root) {
+            let mut server = match start(&name, &spec) {
                 Ok(server) => server,
                 Err(warning) => {
                     warnings.push(warning);
@@ -253,6 +314,21 @@ impl McpTools {
         } else {
             Ok(joined)
         }
+    }
+}
+
+#[cfg(test)]
+mod remote_tests {
+    use super::*;
+
+    #[test]
+    fn a_host_server_line_goes_into_the_folder_and_quotes_every_word() {
+        let spec = json!({ "command": "npx", "args": ["-y", "@modelcontextprotocol/server-postgres", "postgres://u:p@localhost/shop db"], "env": { "PGSSL": "no" } });
+        let line = remote_line(&spec, "/var/www/shop").unwrap();
+
+        assert!(line.starts_with("cd "), "{line}");
+        assert!(line.contains("exec env PGSSL='no' 'npx' '-y'"), "{line}");
+        assert!(line.contains("'postgres://u:p@localhost/shop db'"), "{line}");
     }
 }
 

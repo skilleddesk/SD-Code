@@ -29,6 +29,9 @@ export const bn: StringsPack = {
     steerPlaceholder: 'কাজ চলার মাঝেই কিছু যোগ করুন - পরের ধাপে সেটা মাথায় নেবে…',
   },
   turns: {
+    explored: 'দেখে নিল',
+    exploredFailed: (count: number): string => `${count}টা ব্যর্থ`,
+    changed: (count: number): string => `${count}টা ফাইল বদলেছে`,
     live: {
       thinking: 'ভাবছে',
       writing: 'উত্তর লিখছে',
@@ -530,6 +533,88 @@ export const bn: StringsPack = {
       skip: 'এড়িয়ে যান',
       back: 'পেছনে',
       next: 'পরের ধাপ',
+    },
+  },
+  agent: {
+    commands: {
+      title: 'কমান্ড',
+      empty: 'কোনো কমান্ড মেলেনি',
+      hint: '↑↓ বাছুন · ↵ চালান · Esc বন্ধ',
+      fromProject: 'প্রজেক্ট',
+      help: 'কমান্ড: /compact মডেলের কনটেক্সট খালি করে · /init প্রজেক্টের নিয়ম লেখে · /review পরিবর্তন যাচাই করে · /remember <তথ্য> · /memory · /clear নতুন চ্যাট',
+      remembered: (path: string): string => `মনে রাখা হলো · ${path}`,
+      rememberEmpty: '/remember-এর পরে যা মনে রাখতে হবে তা লিখুন',
+      rememberFailed: 'মেমরিতে সেভ করা যায়নি',
+      noFolder: 'এই চ্যাটে এখনো কোনো ফোল্ডার নেই - আগে একটা খুলুন',
+      compacting: 'কমপ্যাক্ট হচ্ছে: মডেল এই চ্যাটের সারাংশ লিখছে…',
+      agentNeeded: 'নিয়মের ফাইল লিখতে API মডেলের জন্য Agent মোড লাগবে - Chat থেকে Agent-এ যান, বা একটা CLI ইঞ্জিন নিন',
+    },
+    mention: {
+      title: 'ফাইল',
+      empty: 'কোনো ফাইল মেলেনি',
+      searching: 'খুঁজছে…',
+    },
+    images: {
+      attached: (count: number): string => `${count}টা ছবি`,
+      remove: 'ছবি সরান',
+      tooBig: 'ছবিটা ১০ MB-এর বেশি বড়',
+      pasted: 'ছবি যোগ হয়েছে',
+    },
+    context: {
+      chip: (percent: number): string => `কনটেক্সট ${percent}%`,
+      title: (used: string, window: string, compacted: boolean, resumed: boolean): string =>
+        `পরের টার্ন মডেলের ${window} টোকেনের প্রায় ${used} পাঠাবে।` +
+        (compacted ? ' পুরনো টার্নগুলো সারাংশে ভাঁজ করা আছে।' : '') +
+        (resumed ? ' CLI নিজের আগের কথোপকথন চালিয়ে যাচ্ছে, তাই এর চেয়ে বেশি মনে রাখে।' : '') +
+        ' /compact জায়গা খালি করে।',
+      full: 'কনটেক্সট প্রায় ভরে গেছে - /compact চ্যাটের সারাংশ করে জায়গা খালি করে',
+    },
+    question: {
+      label: 'এজেন্ট জানতে চাইছে',
+      placeholder: 'অথবা নিজের উত্তর লিখুন…',
+      send: 'উত্তর দিন',
+      skip: 'ও-ই ঠিক করুক',
+      failed: 'উত্তরটা এজেন্টের কাছে পৌঁছায়নি',
+    },
+    memory: {
+      title: 'মেমরি',
+      subtitle: 'প্রতিটা চ্যাটে SDC যা মাথায় রাখে। এজেন্ট “remember” দিয়ে যোগ করে; আপনি এখানে বদলাতে পারেন।',
+      project: 'এই প্রজেক্ট (.sdc/memory.md)',
+      global: 'সব জায়গায় (সব প্রজেক্ট)',
+      noProject: 'এই চ্যাটে কোনো ফোল্ডার নেই, তাই শুধু গ্লোবাল মেমরি বদলানো যাবে।',
+      save: 'সেভ করুন',
+      saved: 'মেমরি সেভ হয়েছে',
+      loading: 'পড়ছে…',
+    },
+    processes: {
+      chip: (count: number): string => `${count}টা চলছে`,
+      title: 'ব্যাকগ্রাউন্ড প্রসেস',
+      stop: 'থামান',
+      stopped: 'থামানো হয়েছে',
+      none: 'ব্যাকগ্রাউন্ডে কিছু চলছে না।',
+    },
+    alerts: {
+      done: (chat: string): string => `শেষ · ${chat}`,
+      doneBody: 'টার্ন শেষ হয়েছে।',
+      needsYou: (chat: string): string => `SDC আপনার উত্তর চায় · ${chat}`,
+      problem: (chat: string): string => `থেমে গেছে · ${chat}`,
+      stuck: 'টার্ন আটকে আছে মনে হচ্ছে।',
+      budget: 'বাজেট শেষ হওয়ায় টার্ন থামানো হয়েছে।',
+    },
+    settings: {
+      title: 'এজেন্ট',
+      desc: 'এজেন্ট কীভাবে কাজ শেষ করে, আর SDC কী মনে রাখে।',
+      autoCheck: 'শেষ করার আগে কাজ যাচাই করুক',
+      autoCheckHelp: 'এজেন্ট ফাইল বদলে যখন বলে কাজ শেষ, SDC প্রজেক্টের নিজের চেক চালায় (typecheck, lint, test, build)। কোনোটা ফেল করলে এজেন্ট কারণ পড়ে আগে সেটা ঠিক করে।',
+      memory: 'মেমরি',
+      memoryHelp: 'প্রতিটা চ্যাট যা জানে: এই প্রজেক্টের, আর সব প্রজেক্টের জন্য আপনার নিজের।',
+      openMemory: 'মেমরি বদলান',
+      erase: 'SDC-র সব ডেটা মুছুন',
+      eraseHelp: 'এই কম্পিউটারে SDC যা রাখে - সব চ্যাট, হোস্ট, প্রজেক্ট, সেটিং, চেকপয়েন্ট, মেমরি আর রাখা API key - সব মুছে যাবে। আপনার প্রজেক্টের ফাইলে হাত দেওয়া হবে না। SDC খালি অবস্থায় আবার চালু হবে।',
+      eraseConfirm: 'এই কম্পিউটারে SDC যা রাখে সব মুছতে ERASE লিখুন। এটা আর ফেরানো যাবে না।',
+      eraseButton: 'সব মুছে ফেলুন',
+      erasing: 'মুছছে… SDC একটু পরে আবার চালু হবে',
+      eraseFailed: 'SDC নিজের ডেটা মুছতে পারেনি',
     },
   },
 };

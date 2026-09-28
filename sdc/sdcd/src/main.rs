@@ -73,6 +73,16 @@ async fn main() -> Result<()> {
             "--idle-exit" => {
                 idle_exit = arguments.next().and_then(|value| value.parse().ok()).unwrap_or(idle_exit)
             }
+            /* The uninstaller's "Delete the application data" box (0.13): keys and the data folder. */
+            "--forget-everything" => {
+                let dir = paths::data_dir()?;
+
+                for line in sdcd::reset::forget_everything(&dir) {
+                    println!("removed {line}");
+                }
+
+                return Ok(());
+            }
             "--version" => {
                 println!("sdcd {VERSION} (SDCP {SDCP_VERSION})");
                 return Ok(());

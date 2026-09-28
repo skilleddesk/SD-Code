@@ -174,10 +174,52 @@ pub fn ask(
     decision
 }
 
+/// Asks the person a question of the agent's own (0.13, `ask_user`) and waits for the reply - their
+/// words, or one of `options` - or `None` when the turn is stopped first.
+pub fn ask_question(sink: &EventSink, turn_id: &str, call: usize, question: &str, options: &[String]) -> Option<String> {
+    let question_id = format!("q-{turn_id}-{call}");
+    let answers = open(&question_id);
+
+    sink.send(EngineEvent::Question { question_id: question_id.clone(), question: question.to_string(), options: options.to_vec() });
+
+    let answer = loop {
+        match answers.recv_timeout(Duration::from_millis(250)) {
+            Ok(answer) => break Some(answer.strip_prefix("answer:").unwrap_or(&answer).trim().to_string()),
+            Err(RecvTimeoutError::Timeout) => {
+                if crate::engines::cancel::requested(turn_id) {
+                    break None;
+                }
+            }
+            Err(RecvTimeoutError::Disconnected) => break None,
+        }
+    };
+
+    close(&question_id);
+
+    answer
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::engines::Recorder;
+
+    #[test]
+    fn a_question_waits_for_the_persons_words() {
+        let recorder = Recorder::new();
+        let sink = recorder.sink();
+        let options = vec!["Blue".to_string(), "Green".to_string()];
+        let waiter = std::thread::spawn(move || ask_question(&sink, "turn-q", 3, "Which colour?", &options));
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+
+        while !resolve("q-turn-q-3", "answer:Green, but darker") {
+            assert!(std::time::Instant::now() < deadline, "the question was never registered");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        assert_eq!(waiter.join().unwrap().as_deref(), Some("Green, but darker"));
+        assert!(matches!(&recorder.events()[0], EngineEvent::Question { question, options, .. } if question == "Which colour?" && options.len() == 2));
+    }
 
     #[test]
     fn each_level_asks_for_what_the_table_says() {

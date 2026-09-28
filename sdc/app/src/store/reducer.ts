@@ -67,6 +67,8 @@ export const EMPTY_STATE: AppState = {
   doctor: {},
   verifies: [],
   kernel: EMPTY_KERNEL,
+  questions: [],
+  contexts: {},
 };
 
 
@@ -562,6 +564,33 @@ function reduce(state: AppState, entry: AppEvent): AppState {
       return { ...state, verifies: [...others, run] };
     }
 
+    case 'QuestionAsked':
+      return {
+        ...state,
+        questions: [
+          ...state.questions.filter((open) => open.questionId !== event.questionId),
+          { questionId: event.questionId, sessionId: event.sessionId, turnId: event.turnId, question: event.question, options: event.options },
+        ],
+      };
+
+    case 'QuestionAnswered':
+      return { ...state, questions: state.questions.filter((open) => open.questionId !== event.questionId) };
+
+    case 'ContextUpdated':
+      return {
+        ...state,
+        contexts: {
+          ...state.contexts,
+          [event.sessionId]: {
+            usedTokens: event.usedTokens,
+            windowTokens: event.windowTokens,
+            percent: event.percent,
+            compacted: event.compacted,
+            resumed: event.resumed,
+          },
+        },
+      };
+
     case 'TurnSteered':
       return patchTurn(state, event.turnId, (turn) => {
         const ended = endThinking(turn, entry.ts);
@@ -591,8 +620,13 @@ function reduce(state: AppState, entry: AppEvent): AppState {
       }));
 
       /* A question the turn was still asking ends with it: a stopped agent is no longer waiting, and a
-         dialog left open would ask the person to approve something nothing will do. */
-      return next.permission !== null && next.permission.turnId === event.turnId ? { ...next, permission: null } : next;
+         dialog left open would ask the person to approve something nothing will do. The same for an
+         agent's own question (0.13). */
+      const asked = next.questions.some((open) => open.turnId === event.turnId)
+        ? { ...next, questions: next.questions.filter((open) => open.turnId !== event.turnId) }
+        : next;
+
+      return asked.permission !== null && asked.permission.turnId === event.turnId ? { ...asked, permission: null } : asked;
     }
 
     case 'StuckDetected':

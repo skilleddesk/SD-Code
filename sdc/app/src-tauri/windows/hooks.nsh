@@ -22,4 +22,14 @@
   nsExec::Exec 'taskkill /F /T /IM sdcd.exe'
   Pop $0
   Sleep 1000
+
+  ; "Delete the application data" (0.13). Tauri's own box removes the folder named after the bundle id;
+  ; SDC's chats, hosts and settings are in %APPDATA%\sdc and its keys in the Windows credential store, so an
+  ; uninstall-and-reinstall used to bring every one of them back. The daemon forgets its own keys, then the
+  ; folder goes. An update (/UPDATE) never shows the box, so an update never erases anything.
+  ${If} $DeleteAppDataCheckboxState = 1
+    nsExec::Exec '"$INSTDIR\sdcd.exe" --forget-everything'
+    Pop $0
+    RMDir /r "$APPDATA\sdc"
+  ${EndIf}
 !macroend

@@ -21,6 +21,7 @@ import { Agency } from './kernel/Agency';
 import { CostCenter } from './kernel/CostCenter';
 import { Onboarding } from './kernel/Onboarding';
 import { PolicyEditor } from './kernel/PolicyEditor';
+import { MemoryDialog } from './kernel/MemoryDialog';
 import { onboardedAlready, useKernelUi } from './store/kernelUi';
 import { connectDaemon, watchBackground, watchDaemon, watchHosts } from './store/intents';
 import { useLayoutStore, workspaceClassName } from './store/layout';
@@ -137,6 +138,7 @@ export function App() {
       <Agency />
       <CostCenter />
       <PolicyEditor />
+      <MemoryDialog />
       <Onboarding />
 
       <Toast />

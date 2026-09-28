@@ -13,6 +13,9 @@
 //! returned in an event. `mask()` is what a card shows, and it is the only transformation of a secret
 //! that leaves this module.
 
+/* A test build keeps secrets in memory (`test_store`), so the OS-store half is unused there. */
+#![cfg_attr(test, allow(dead_code))]
+
 use std::path::{Path, PathBuf};
 
 use crate::sdcp::envelope::ErrorObject;
@@ -192,6 +195,11 @@ fn restrict_to_owner(path: &Path) -> Result<(), ErrorObject> {
 }
 /// Stores a secret under a name. `sdc.provider.<id>` is the naming the provider backend uses.
 pub fn set(name: &str, secret: &str) -> Result<(), ErrorObject> {
+    #[cfg(test)]
+    return test_store::set(name, secret);
+
+    #[cfg(not(test))]
+    {
     if secret.is_empty() {
         return delete(name);
     }
@@ -207,10 +215,16 @@ pub fn set(name: &str, secret: &str) -> Result<(), ErrorObject> {
     /* After the write, because the file has to exist - and the error is *returned*, not swallowed: a key
        saved into a readable file is worse than a save that failed. */
     restrict_to_owner(&path)
+    }
 }
 
 /// Reads a secret, or `None` when there is not one.
 pub fn get(name: &str) -> Option<String> {
+    #[cfg(test)]
+    return test_store::get(name);
+
+    #[cfg(not(test))]
+    {
     /* Trimmed on both stores (0.12.3): the file store always was, the OS store was not - so a key pasted with
        a trailing newline worked on Linux and was refused with 401 on Windows and macOS. */
     if os_store_works() {
@@ -220,10 +234,16 @@ pub fn get(name: &str) -> Option<String> {
     let path = key_path(name).ok()?;
 
     std::fs::read_to_string(path).ok().map(|secret| secret.trim().to_string())
+    }
 }
 
 /// Removes a secret. A missing one is not an error.
 pub fn delete(name: &str) -> Result<(), ErrorObject> {
+    #[cfg(test)]
+    return test_store::delete(name);
+
+    #[cfg(not(test))]
+    {
     if os_store_works() {
         os_delete(name);
 
@@ -237,6 +257,46 @@ pub fn delete(name: &str) -> Result<(), ErrorObject> {
     }
 
     Ok(())
+    }
+}
+
+/// The keychain of a **test build** (0.13): a map in memory. A test that saved or removed a provider key
+/// used to do it in the real OS keychain (or the real data folder), and on 2026-09-28 a test of the erase
+/// deleted the developer's own provider keys. No test can reach the machine's secrets now.
+#[cfg(test)]
+mod test_store {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+
+    use crate::sdcp::envelope::ErrorObject;
+
+    fn map() -> &'static Mutex<HashMap<String, String>> {
+        static MAP: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+
+        MAP.get_or_init(|| Mutex::new(HashMap::new()))
+    }
+
+    pub fn set(name: &str, secret: &str) -> Result<(), ErrorObject> {
+        let mut map = map().lock().unwrap_or_else(|poison| poison.into_inner());
+
+        if secret.trim().is_empty() {
+            map.remove(name);
+        } else {
+            map.insert(name.to_string(), secret.trim().to_string());
+        }
+
+        Ok(())
+    }
+
+    pub fn get(name: &str) -> Option<String> {
+        map().lock().unwrap_or_else(|poison| poison.into_inner()).get(name).cloned()
+    }
+
+    pub fn delete(name: &str) -> Result<(), ErrorObject> {
+        map().lock().unwrap_or_else(|poison| poison.into_inner()).remove(name);
+
+        Ok(())
+    }
 }
 
 /// The masked label a card shows: `sk-…4f8a`. Never the secret, and short enough to read.

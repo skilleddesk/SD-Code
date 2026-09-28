@@ -24,6 +24,7 @@ pub fn run() {
         // not here: registering a plugin does not grant its permissions.
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .invoke_handler(tauri::generate_handler![
             sdcp_status,
             sdcp_connect,

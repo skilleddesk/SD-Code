@@ -350,6 +350,29 @@ export interface AppState {
 
   /** The Trust Kernel's slice (0.12): costs, scores, the agency's deploys and health. */
   kernel: import('./kernel').KernelState;
+
+  /** Questions an agent is waiting on (0.13, `ask_user`) - open until answered or the turn ends. */
+  questions: QuestionView[];
+  /** How full the model's context is, per chat, as the newest `ContextUpdated` said (0.13). */
+  contexts: Record<string, ContextView>;
+}
+
+/** An agent's question on its card (0.13). */
+export interface QuestionView {
+  questionId: string;
+  sessionId: string;
+  turnId: string;
+  question: string;
+  options: string[];
+}
+
+/** The context meter of one chat (0.13). */
+export interface ContextView {
+  usedTokens: number;
+  windowTokens: number;
+  percent: number;
+  compacted: boolean;
+  resumed: boolean;
 }
 
 /** A verify run as the Verify tab and the turn footer draw it: `VerifyUpdated` without its `type`. */

@@ -67,6 +67,128 @@ pub struct CliSpec {
     /// checkpointed before every change and Rewind exists, so the careful level maps to "edits inside
     /// the folder are fine, anything wider is not", not to "fail everything without saying so".
     pub autonomy: [&'static [&'static str]; 3],
+    /// How the CLI continues a conversation it had before (0.13).
+    pub resume: Resume,
+    /// The flag that attaches an image file to the prompt, when the CLI has one (`codex -i <file>`).
+    pub image_flag: Option<&'static str>,
+}
+
+/// How a CLI picks up its own earlier conversation (0.13) - measured on each, 2026-09-28:
+///
+/// ```text
+/// $ claude -p --output-format stream-json --verbose --resume bc1240c5-…   → same session_id, remembers
+/// $ codex exec resume <thread id> --json -                                → `exec`'s flags, fewer of them
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Resume {
+    /// The CLI cannot resume by an id SDC can keep; the transcript is sent instead.
+    None,
+    /// A flag before the prompt: `claude … --resume <id>`.
+    Flag(&'static str),
+    /// Codex: `exec` becomes `exec resume <id>`, and the sandbox flags `resume` does not take become `-c`.
+    CodexExec,
+}
+
+/// The whole argument list for a turn: the spec's args (or the resume form), the model and the autonomy.
+pub fn turn_args(spec: &CliSpec, prompt: &Prompt, body: &str) -> Vec<String> {
+    let resume = prompt.resume.as_ref().map(|resume| resume.id.as_str()).filter(|id| !id.trim().is_empty() && spec.resume != Resume::None);
+    let base: Vec<String> = spec
+        .args
+        .iter()
+        .map(|arg| {
+            if *arg == "{prompt}" && spec.prompt == PromptPlacement::Argument {
+                body.to_string()
+            } else {
+                (*arg).to_string()
+            }
+        })
+        .collect();
+    let mut args = match (resume, spec.resume) {
+        (Some(_), Resume::CodexExec) => {
+            /* `codex exec resume [OPTIONS] <id> -`: the prompt marker stays last. */
+            let mut args: Vec<String> = base.into_iter().filter(|arg| arg != "-").collect();
+            let at = args.iter().position(|arg| arg == "exec").map(|index| index + 1).unwrap_or(0);
+
+            args.insert(at, "resume".to_string());
+            args
+        }
+        _ => base,
+    };
+
+    args.extend(model_args(spec.model_flag, &prompt.model));
+
+    match (resume, spec.resume) {
+        (Some(_), Resume::CodexExec) => match prompt.autonomy {
+            crate::agent::gate::Autonomy::Auto => args.push("--dangerously-bypass-approvals-and-sandbox".to_string()),
+            _ => args.extend(["-c".to_string(), "sandbox_mode=workspace-write".to_string()]),
+        },
+        _ => args.extend(autonomy_args(spec, prompt.autonomy).iter().map(|arg| (*arg).to_string())),
+    }
+
+    if let Some(flag) = spec.image_flag {
+        for image in &prompt.images {
+            args.push(flag.to_string());
+            args.push(image.for_engine().to_string());
+        }
+    }
+
+    match (resume, spec.resume) {
+        (Some(id), Resume::Flag(flag)) => {
+            args.push(flag.to_string());
+            args.push(id.to_string());
+        }
+        (Some(id), Resume::CodexExec) => {
+            args.push(id.to_string());
+            args.push("-".to_string());
+        }
+        _ => {}
+    }
+
+    args
+}
+
+/// What goes on stdin (or into `{prompt}`): the turns the CLI has not seen, as a transcript with who said
+/// what, then the words of this turn - and, for a CLI with no image flag, where the attached images are.
+pub fn turn_body(spec: &CliSpec, prompt: &Prompt) -> String {
+    let mut body = String::new();
+    let resumed = prompt.resume.is_some() && spec.resume != Resume::None;
+    let history = match &prompt.resume {
+        Some(resume) if resumed => &resume.unseen,
+        _ => &prompt.history,
+    };
+
+    if !history.is_empty() {
+        body.push_str(if resumed {
+            "[Meanwhile in this chat - turns you did not see, from SDC]\n"
+        } else {
+            "[Earlier in this chat - from SDC, so you know what was already said and done]\n"
+        });
+
+        for message in history {
+            let who = match message.role {
+                crate::engines::Role::User => "Person",
+                crate::engines::Role::Assistant => "Assistant",
+            };
+
+            body.push_str(&format!("{who}: {}\n\n", message.text.trim()));
+        }
+
+        body.push_str("[Now - the person's new message]\n");
+    }
+
+    body.push_str(&prompt.text);
+
+    if spec.image_flag.is_none() && !prompt.images.is_empty() {
+        body.push_str("\n\n[The person attached these images - open them with your file-reading tool:\n");
+
+        for image in &prompt.images {
+            body.push_str(&format!("- {}\n", image.for_engine()));
+        }
+
+        body.push(']');
+    }
+
+    body
 }
 
 /// The autonomy flags of `spec` for `level` - its own function so the tests can hold the mapping.
@@ -220,30 +342,72 @@ impl CliAdapter {
     ///   talking. The prompt is still the only thing written to stdin, and stdin is still closed right
     ///   after it - the CLIs read the prompt, not the stream, from there.
     pub async fn run(&self, prompt: &Prompt, sink: &EventSink) {
-        /* The body is built first, because an argument-placed prompt has to go in with the flags. */
-        let mut body = String::new();
-
-        for message in &prompt.history {
-            body.push_str(&message.text);
-            body.push('\n');
+        if prompt.resume.is_none() || self.spec.resume == Resume::None {
+            return self.attempt(prompt, sink).await;
         }
 
-        body.push_str(&prompt.text);
+        /*
+         * A resumed turn (0.13) whose conversation the CLI no longer has - its files were cleaned, or the
+         * CLI was reinstalled - fails at once: `No conversation found with session ID` and a `result`
+         * with `is_error`, before a single word. Its events are held until the CLI says something real;
+         * a failure before that is not shown, and the turn runs again, fresh, with the whole chat.
+         */
+        let held = std::sync::Arc::new(Mutex::new((false, false, Vec::<EngineEvent>::new())));
+        let gate = {
+            let held = held.clone();
+            let sink = sink.clone();
 
-        let args: Vec<String> = self
-            .spec
-            .args
-            .iter()
-            .map(|arg| {
-                if *arg == "{prompt}" && self.spec.prompt == PromptPlacement::Argument {
-                    body.clone()
+            EventSink::new(move |event| {
+                let Ok(mut state) = held.lock() else {
+                    return;
+                };
+                let (open, failed, buffer) = &mut *state;
+
+                if *open {
+                    sink.send(event);
+                } else if event.is_terminal() {
+                    *failed = true;
+                    buffer.clear();
+                } else if matches!(event, EngineEvent::Usage { .. }) {
+                    buffer.push(event);
                 } else {
-                    (*arg).to_string()
+                    *open = true;
+
+                    for early in buffer.drain(..) {
+                        sink.send(early);
+                    }
+
+                    sink.send(event);
                 }
             })
-            .chain(model_args(self.spec.model_flag, &prompt.model))
-            .chain(autonomy_args(&self.spec, prompt.autonomy).iter().map(|arg| (*arg).to_string()))
-            .collect();
+        };
+
+        self.attempt(prompt, &gate).await;
+
+        let failed_early = held.lock().map(|state| !state.0 && state.1).unwrap_or(false);
+
+        if failed_early && !crate::engines::cancel::requested(&prompt.turn_id) {
+            sink.send(EngineEvent::Thinking(
+                "The earlier conversation could not be resumed; starting it again with this chat's history.
+".to_string(),
+            ));
+
+            let mut fresh = prompt.clone();
+
+            fresh.resume = None;
+            self.attempt(&fresh, sink).await;
+        } else if let Ok(mut state) = held.lock() {
+            /* Nothing real and nothing terminal (a silent exit): whatever was held goes out as it was. */
+            for event in state.2.drain(..) {
+                sink.send(event);
+            }
+        }
+    }
+
+    async fn attempt(&self, prompt: &Prompt, sink: &EventSink) {
+        /* The body is built first, because an argument-placed prompt has to go in with the flags. */
+        let body = turn_body(&self.spec, prompt);
+        let args = turn_args(&self.spec, prompt, &body);
 
         /* `host::program` resolves the name the way the shell does - which is what makes an
            npm-installed CLI (`claude.cmd`, `codex.cmd`, `gemini.cmd` on Windows) startable at all. The
@@ -671,7 +835,44 @@ mod tests {
             project_root: folder.map(str::to_string),
             remote: None,
             autonomy: Default::default(),
+            resume: None,
+            images: Vec::new(),
         }
+    }
+
+    /// 0.13: a resumed turn names the conversation the CLI's own way, and is sent only what it missed.
+    #[test]
+    fn a_resumed_turn_names_its_conversation_and_sends_only_what_it_missed() {
+        let mut prompt = prompt_in(Some("/p"));
+
+        prompt.history = vec![crate::engines::Message::user("old question"), crate::engines::Message::assistant("old answer")];
+        prompt.resume = Some(crate::engines::ResumeRef {
+            id: "bc1240c5".into(),
+            unseen: vec![crate::engines::Message::user("asked DeepSeek meanwhile")],
+        });
+
+        let claude = turn_args(&CLAUDE_SPEC, &prompt, "");
+        assert!(claude.ends_with(&["--resume".to_string(), "bc1240c5".to_string()]), "{claude:?}");
+        assert_eq!(claude[0], "-p");
+
+        let body = turn_body(&CLAUDE_SPEC, &prompt);
+        assert!(body.contains("Meanwhile in this chat") && body.contains("asked DeepSeek meanwhile"), "{body}");
+        assert!(!body.contains("old question"), "the conversation already holds it");
+        assert!(body.ends_with("hello"));
+
+        let codex = turn_args(&CODEX_SPEC, &prompt, "");
+        assert_eq!(&codex[..2], &["exec".to_string(), "resume".to_string()]);
+        assert!(codex.ends_with(&["bc1240c5".to_string(), "-".to_string()]), "{codex:?}");
+        assert!(codex.contains(&"sandbox_mode=workspace-write".to_string()), "resume takes no --sandbox: {codex:?}");
+
+        /* Gemini cannot resume by id: it gets the whole chat, with who said what. */
+        let gemini = turn_body(&GEMINI_SPEC, &prompt);
+        assert!(gemini.contains("Person: old question") && gemini.contains("Assistant: old answer"), "{gemini}");
+
+        /* Without a resume, the fresh transcript. */
+        prompt.resume = None;
+        assert!(turn_body(&CLAUDE_SPEC, &prompt).contains("Earlier in this chat"));
+        assert!(!turn_args(&CLAUDE_SPEC, &prompt, "").contains(&"--resume".to_string()));
     }
 
     /// 0.9.0: the autonomy level travels to each CLI's own permission flags - measured first on

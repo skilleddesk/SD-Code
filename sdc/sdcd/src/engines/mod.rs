@@ -89,6 +89,47 @@ pub struct Prompt {
     /// a tool that would need permission simply fails - so the level a person chose has to travel to
     /// the flags each CLI takes (`cli::autonomy_args`). SDC's own gate keeps using it unchanged.
     pub autonomy: crate::agent::gate::Autonomy,
+    /// The CLI conversation this turn continues (0.13), when the chat has one that is still true to it:
+    /// `claude --resume <id>` / `codex exec resume <id>`. With it, `history` holds only the turns the CLI
+    /// has not seen (another engine's, in between) - never the whole transcript again.
+    pub resume: Option<ResumeRef>,
+    /// Images the person attached to this turn (0.13), saved on this machine by the daemon.
+    pub images: Vec<Attachment>,
+}
+
+/// A CLI conversation to continue, and what it has not seen yet.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResumeRef {
+    pub id: String,
+    /// The turns since the conversation's last one (another engine's), oldest first. `Prompt::history`
+    /// still holds the whole fitted chat, which is what a resume that fails falls back to.
+    pub unseen: Vec<Message>,
+}
+
+/// A file the person attached to a turn: where the daemon saved it, and what it is.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Attachment {
+    pub name: String,
+    /// An absolute path on this machine.
+    pub path: String,
+    /// `image/png`, `image/jpeg`, `image/gif`, `image/webp`.
+    pub media_type: String,
+    /// The copy on the chat's host, for a CLI that runs there.
+    pub remote_path: Option<String>,
+}
+
+impl Attachment {
+    /// The path the engine opens: the host's copy for a turn on a host, this machine's otherwise.
+    pub fn for_engine(&self) -> &str {
+        self.remote_path.as_deref().unwrap_or(&self.path)
+    }
+
+    /// The file's bytes as base64 - what an API model is sent.
+    pub fn base64(&self) -> Option<String> {
+        use base64::Engine as _;
+
+        std::fs::read(&self.path).ok().map(|bytes| base64::engine::general_purpose::STANDARD.encode(bytes))
+    }
 }
 
 /// Who said a message of the conversation.
@@ -152,6 +193,13 @@ pub enum EngineEvent {
     Usage { input_tokens: u64, output_tokens: u64, cost_usd: Option<f64> },
     /// Words the person sent while the turn ran, now handed to the model (0.12.5, `steer`).
     Steered(String),
+    /// The CLI's own conversation id (0.13): Claude Code's `session_id`, Codex's `thread_id`. The next
+    /// turn of the chat resumes it instead of pasting the transcript back in.
+    SessionRef(String),
+    /// The agent asks the person a question and waits (0.13, `ask_user`): answered by `question.answer`.
+    Question { question_id: String, question: String, options: Vec<String> },
+    /// How full the model's context is (0.13): what the turn is sending, against what the model holds.
+    Context { used_tokens: u64, window_tokens: u64, compacted: bool },
     Failed(String),
     Done {
         summary: String,
@@ -382,9 +430,25 @@ pub fn parse_stream_line(line: &str) -> Vec<EngineEvent> {
         /* Claude Code wraps every event; only the inner one is interesting. */
         "stream_event" => value.get("event").map(parse_claude_event).unwrap_or_default(),
 
-        /* Claude's finished message, which the partial deltas already carried. Dropping it is
-           deliberate: emitting both prints every answer twice. */
-        "assistant" => Vec::new(),
+        /* The conversation's id (0.13): Claude's `init` line, Codex's first line. It is what the next
+           turn resumes, so the CLI keeps its own memory of the files it read and the commands it ran. */
+        "system" if value.get("subtype").and_then(Value::as_str) == Some("init") => value
+            .get("session_id")
+            .and_then(Value::as_str)
+            .filter(|id| !id.is_empty())
+            .map(|id| vec![EngineEvent::SessionRef(id.to_string())])
+            .unwrap_or_default(),
+        "thread.started" => value
+            .get("thread_id")
+            .and_then(Value::as_str)
+            .filter(|id| !id.is_empty())
+            .map(|id| vec![EngineEvent::SessionRef(id.to_string())])
+            .unwrap_or_default(),
+
+        /* Claude's finished message, which the partial deltas already carried. Dropping its text is
+           deliberate: emitting both prints every answer twice. Its TodoWrite call is the exception (0.13):
+           the whole list is only here, and it becomes SDC's plan card. */
+        "assistant" => claude_todos(&value),
 
         /* Claude's tool results travel back as a `user` message of `tool_result` blocks, once the tool
            has run. This line was ignored, so every CLI tool card kept spinning after the turn was done. */
@@ -613,6 +677,11 @@ fn parse_claude_event(event: &Value) -> Vec<EngineEvent> {
             let name = block.get("name").and_then(Value::as_str).unwrap_or("tool").to_string();
             let input = block.get("input").cloned().unwrap_or(Value::Null);
 
+            /* The checklist is drawn as the plan card (`claude_todos`), not as a card of its own (0.13). */
+            if name == "TodoWrite" {
+                return Vec::new();
+            }
+
             vec![EngineEvent::ToolStarted {
                 call_id: block.get("id").and_then(Value::as_str).unwrap_or("call").to_string(),
                 tool: tool_kind(&name).to_string(),
@@ -626,10 +695,64 @@ fn parse_claude_event(event: &Value) -> Vec<EngineEvent> {
 }
 
 /// One Codex `item`.
+/// Claude Code's own checklist (`TodoWrite`, `{todos: [{content, status}]}`) as SDC's plan (0.13).
+fn claude_todos(value: &Value) -> Vec<EngineEvent> {
+    let Some(blocks) = value.pointer("/message/content").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+
+    blocks
+        .iter()
+        .filter(|block| block["type"] == "tool_use" && block["name"] == "TodoWrite")
+        .filter_map(|block| block.pointer("/input/todos").and_then(Value::as_array))
+        .map(|todos| {
+            let steps: Vec<Value> = todos
+                .iter()
+                .filter_map(|todo| {
+                    let text = todo["content"].as_str().or_else(|| todo["activeForm"].as_str())?;
+                    let status = match todo["status"].as_str().unwrap_or("pending") {
+                        "completed" => "done",
+                        "in_progress" => "in_progress",
+                        _ => "pending",
+                    };
+
+                    Some(serde_json::json!({ "text": text, "status": status }))
+                })
+                .collect();
+
+            EngineEvent::Plan(Value::Array(steps))
+        })
+        .collect()
+}
+
 fn parse_codex_item(item: &Value) -> Vec<EngineEvent> {
     let text = item.get("text").and_then(Value::as_str);
 
     match item.get("type").and_then(Value::as_str).unwrap_or("") {
+        /* Codex's own checklist (0.13): `{items: [{text, completed}]}`, as SDC's plan. The item in progress
+           is the first one not completed. */
+        "todo_list" => {
+            let items = item.get("items").and_then(Value::as_array).cloned().unwrap_or_default();
+            let first_open = items.iter().position(|entry| !entry["completed"].as_bool().unwrap_or(false));
+            let steps: Vec<Value> = items
+                .iter()
+                .enumerate()
+                .filter_map(|(index, entry)| {
+                    let text = entry["text"].as_str()?;
+                    let status = if entry["completed"].as_bool().unwrap_or(false) {
+                        "done"
+                    } else if Some(index) == first_open {
+                        "in_progress"
+                    } else {
+                        "pending"
+                    };
+
+                    Some(serde_json::json!({ "text": text, "status": status }))
+                })
+                .collect();
+
+            vec![EngineEvent::Plan(Value::Array(steps))]
+        }
         "agent_message" => text.map(|text| vec![EngineEvent::Delta(text.to_string())]).unwrap_or_default(),
         "reasoning" => text.map(|text| vec![EngineEvent::Thinking(text.to_string())]).unwrap_or_default(),
         "command_execution" => {
@@ -836,6 +959,39 @@ pub fn collect_stream<I: IntoIterator<Item = String>>(lines: I) -> Vec<EngineEve
 }
 
 #[cfg(test)]
+mod todo_tests {
+    use super::*;
+
+    #[test]
+    fn claude_and_codex_checklists_become_the_plan() {
+        let claude = r#"{"type":"assistant","message":{"content":[{"type":"text","text":"x"},{"type":"tool_use","name":"TodoWrite","input":{"todos":[{"content":"Read the code","status":"completed"},{"content":"Fix add","status":"in_progress"},{"content":"Run tests","status":"pending"}]}}]}}"#;
+
+        assert_eq!(
+            parse_stream_line(claude),
+            vec![EngineEvent::Plan(serde_json::json!([
+                { "text": "Read the code", "status": "done" },
+                { "text": "Fix add", "status": "in_progress" },
+                { "text": "Run tests", "status": "pending" }
+            ]))]
+        );
+
+        let codex = r#"{"type":"item.updated","item":{"id":"item_2","type":"todo_list","items":[{"text":"Find the bug","completed":true},{"text":"Fix it","completed":false},{"text":"Test","completed":false}]}}"#;
+
+        assert_eq!(
+            parse_stream_line(codex),
+            vec![EngineEvent::Plan(serde_json::json!([
+                { "text": "Find the bug", "status": "done" },
+                { "text": "Fix it", "status": "in_progress" },
+                { "text": "Test", "status": "pending" }
+            ]))]
+        );
+
+        /* A plain finished message still adds nothing: its text came as deltas. */
+        assert!(parse_stream_line(r#"{"type":"assistant","message":{"content":[{"type":"text","text":"hi"}]}}"#).is_empty());
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -982,6 +1138,7 @@ mod tests {
         assert_eq!(
             events,
             vec![
+                EngineEvent::SessionRef("01a0bee0".into()),
                 EngineEvent::Delta("OK".into()),
                 EngineEvent::Usage { input_tokens: 12926, output_tokens: 5, cost_usd: None },
                 EngineEvent::Done {
@@ -1056,7 +1213,7 @@ mod tests {
         ]);
 
         assert!(
-            matches!(events.as_slice(), [EngineEvent::ToolOutput { .. }, EngineEvent::Delta(text), EngineEvent::Usage { .. }, EngineEvent::Done { .. }] if text == "OK"),
+            matches!(events.as_slice(), [EngineEvent::SessionRef(_), EngineEvent::ToolOutput { .. }, EngineEvent::Delta(text), EngineEvent::Usage { .. }, EngineEvent::Done { .. }] if text == "OK"),
             "{events:?}"
         );
     }

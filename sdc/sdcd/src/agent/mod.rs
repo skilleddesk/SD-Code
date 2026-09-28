@@ -20,10 +20,15 @@
 //! Bounds, because an unbounded loop is a bill: `max_steps` model calls per turn (default 25), a
 //! Stop that drops the connection mid-answer, and a token count on the turn's footer.
 
+pub mod background;
+pub mod browser;
 pub mod dialect;
 pub mod gate;
 pub mod mcp;
+pub mod search;
+pub mod skills;
 pub mod tools;
+pub mod web;
 pub mod workspace;
 
 use std::collections::HashSet;
@@ -38,8 +43,12 @@ use tools::ToolContext;
 use workspace::Workspace;
 
 /// The default number of model calls one turn may make, and the ceiling a caller may raise it to.
-pub const DEFAULT_STEPS: usize = 25;
-pub const MAX_STEPS: usize = 80;
+///
+/// 0.13 raised both: with older tool output folded as a turn grows (`keep_small`), a long turn no longer
+/// outgrows the model's window, and a project is finished in one turn rather than in "continue"s. The cost
+/// governor and the runaway detector still stop a turn that goes wrong.
+pub const DEFAULT_STEPS: usize = 60;
+pub const MAX_STEPS: usize = 200;
 
 /// Where the model for this turn lives.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -54,6 +63,7 @@ pub struct SdcAgent {
     backend: Backend,
     autonomy: Autonomy,
     max_steps: usize,
+    auto_check: bool,
     checkpoint: Option<tools::Checkpointer>,
     /// The folder's policy (0.12): what the tools must ask about or refuse before they act.
     policy: crate::trust::policy::Policy,
@@ -61,7 +71,13 @@ pub struct SdcAgent {
 
 impl SdcAgent {
     pub fn new(backend: Backend, autonomy: Autonomy, max_steps: usize) -> Self {
-        Self { backend, autonomy, max_steps: max_steps.clamp(1, MAX_STEPS), checkpoint: None, policy: Default::default() }
+        Self { backend, autonomy, max_steps: max_steps.clamp(1, MAX_STEPS), auto_check: true, checkpoint: None, policy: Default::default() }
+    }
+
+    /// Whether SDC runs the project's checks when the agent says it is done (Settings → Agent, 0.13).
+    pub fn with_auto_check(mut self, auto_check: bool) -> Self {
+        self.auto_check = auto_check;
+        self
     }
 
     /// The Trust Kernel's policy for this turn's folder.
@@ -85,13 +101,14 @@ impl crate::engines::Engine for SdcAgent {
 
     async fn start(&self, prompt: Prompt, sink: &EventSink) {
         let sink = sink.clone();
-        let (backend, autonomy, max_steps) = (self.backend, self.autonomy, self.max_steps);
+        let backend = self.backend;
+        let options = Options { autonomy: self.autonomy, max_steps: self.max_steps, auto_check: self.auto_check };
         let checkpoint = self.checkpoint.clone();
         let policy = self.policy.clone();
 
         /* Every step blocks - a streaming HTTP read, a file read over ssh, a command - so the whole loop
            runs on the blocking pool, and its events travel through the sink while it does. */
-        let _ = tokio::task::spawn_blocking(move || run(backend, autonomy, max_steps, checkpoint, &policy, &prompt, &sink)).await;
+        let _ = tokio::task::spawn_blocking(move || run(backend, options, checkpoint, &policy, &prompt, &sink)).await;
     }
 
     async fn cancel(&self, turn_id: &str) -> bool {
@@ -218,7 +235,35 @@ fn meta(steps: usize, input: u64, output: u64, price: Option<(f64, f64)>) -> Str
     meta
 }
 
-fn system_prompt(workspace: &Workspace) -> String {
+/// The language the person writes in, read from their own words - not from SDC's brief around them, which
+/// is English and would make every chat look English.
+fn person_language(prompt: &Prompt) -> crate::understand::Reading {
+    let words = prompt.text.rsplit("[The person's message]").next().unwrap_or(&prompt.text);
+    let reading = crate::understand::Reading::of(words);
+
+    if reading.code != "en" {
+        return reading;
+    }
+
+    /* A short English follow-up in a chat written in Bengali is still a Bengali chat. */
+    prompt
+        .history
+        .iter()
+        .rev()
+        .filter(|message| message.role == Role::User)
+        .take(6)
+        .map(|message| crate::understand::Reading::of(&message.text))
+        .find(|earlier| earlier.code != "en")
+        .unwrap_or(reading)
+}
+
+fn system_prompt(workspace: &Workspace, vision: bool, language: &crate::understand::Reading) -> String {
+    let look = if vision {
+        "\n- For a web page or UI you built, start its dev server with start_process and look at it with screenshot: check that it looks right, on a phone width (390) too, and fix what does not."
+    } else {
+        ""
+    };
+
     format!(
         "You are SDC Agent, a coding agent working inside a person's project through the tools you are given.\n\
          \n\
@@ -227,18 +272,40 @@ fn system_prompt(workspace: &Workspace) -> String {
          Shell for run_command: {shell}\n\
          \n\
          How to work:\n\
-         - Understand before changing: list the folder and read the files that matter first.\n\
+         - Understand before changing: find the files that matter with glob and grep, then read them (offset and limit for long files).\n\
+         - For broad exploration or research, hand self-contained jobs to task sub-agents - several in one reply run in parallel - instead of reading everything yourself.\n\
          - For anything with more than two steps, call update_plan first. The person watches that checklist: call update_plan again each time a step starts or finishes, and mark every step done before your final answer.\n\
-         - Change files with edit_file (exact text replacement); use write_file for new files or full rewrites.\n\
+         - Change files with edit_file (exact text replacement); use write_file for new files or full rewrites. Match the project's existing style.\n\
          - Verify your work: build it, run the tests or run the program with run_command, read the output, and fix what fails.\n\
-         - Never start a command that does not exit on its own (a dev server, a watcher). Say how to start it instead.\n\
+         - A command that does not exit on its own (a dev server, a watcher) goes in start_process, never in run_command. Stop what you started when you no longer need it, unless the person will want it running.{look}\n\
+         - When you are unsure how a library, framework or API works, look it up with web_search and web_fetch instead of guessing.\n\
+         - When a decision belongs to the person (a design choice, deleting data, two readings of the request), ask with ask_user and offer options. Do not ask about what you can find out yourself.\n\
+         - When the person states a lasting preference or a project convention, keep it with remember.\n\
          - Stay inside the project folder. Secrets (.env, keys) are hidden from you on purpose; do not try to read them.\n\
          - If the person declines an action, do not try it another way; explain what you wanted to do.\n\
-         - When you are done, stop calling tools and answer with a short summary: what you changed, how you verified it, and anything the person must do themselves.\n\
-         - If the task is unclear or needs a decision only the person can make, ask in your answer instead of guessing.",
+         - Keep going until the task is completely done; do not stop half-way to ask whether to continue. When you are done, stop calling tools and answer with a short summary: what you changed, how you verified it, and anything the person must do themselves.\n\
+         - Language: the person writes in {label}. Write every answer, summary and question to them in {reply} - never switch to another language (not Chinese, not German, not English unless that is theirs). Keep code, commands, paths and error messages exactly as they are.",
+        label = language.label,
+        reply = if language.code == "en" { "English" } else { language.reply_in },
         root = workspace.root(),
         place = workspace.place(),
         shell = workspace.shell(),
+    )
+}
+
+fn sub_agent_prompt(workspace: &Workspace) -> String {
+    format!(
+        "You are a research sub-agent of SDC Agent, working in a person's project with read-only tools.\n\
+         \n\
+         Project folder: {root}\n\
+         Machine: {place}\n\
+         \n\
+         Do the job you are given - find, read, compare, look up - and answer with a report: the facts found, \
+         with file paths and line numbers, and the answer to the question. You cannot change anything; if something \
+         should change, say what and where. Be thorough but stop as soon as you can answer. Your report is read by \
+         another model, not by the person: no pleasantries.",
+        root = workspace.root(),
+        place = workspace.place(),
     )
 }
 
@@ -264,11 +331,19 @@ fn step_sink(sink: &EventSink, separate: bool) -> EventSink {
     })
 }
 
+/// How one turn of the agent runs: the person's autonomy, how many model calls it may make, and
+/// whether SDC runs the project's checks when the agent says it is done.
+#[derive(Debug, Clone, Copy)]
+pub struct Options {
+    pub autonomy: Autonomy,
+    pub max_steps: usize,
+    pub auto_check: bool,
+}
+
 /// The loop.
 pub fn run(
     backend: Backend,
-    autonomy: Autonomy,
-    max_steps: usize,
+    options: Options,
     checkpoint: Option<tools::Checkpointer>,
     policy: &crate::trust::policy::Policy,
     prompt: &Prompt,
@@ -293,7 +368,233 @@ pub fn run(
         }
     };
 
-    drive(backend, &target, &workspace, autonomy, max_steps, checkpoint, policy, prompt, sink);
+    drive(backend, &target, &workspace, options, checkpoint, policy, prompt, sink);
+}
+
+/// One model call: the request, the stream, the assembled reply.
+fn ask_model(backend: Backend, target: &Target, system: &str, messages: &[Value], specs: &[dialect::ToolSpec], sink: &EventSink, stopped: &dyn Fn() -> bool) -> Result<Reply, String> {
+    let body = dialect::body(target.dialect, &target.model, system, messages, specs, target.thinking).to_string();
+    let lines = crate::engines::native_api::open_stream(&target.url, &target.headers, &body).map_err(|reason| unreachable(backend, &reason))?;
+
+    dialect::read_reply(target.dialect, lines, sink, stopped)
+}
+
+/// Keeps a turn's conversation inside the model's window (0.13): older tool output is folded when the
+/// conversation passes 55% of the window, harder past 75%. Answers whether anything was folded.
+fn keep_small(target: &Target, window: u64, messages: &mut [Value]) -> bool {
+    let used = dialect::tokens(messages);
+
+    if used * 100 < window * 55 {
+        return false;
+    }
+
+    let mut folded = dialect::fold_old_results(target.dialect, messages, 6);
+
+    if dialect::tokens(messages) * 100 >= window * 75 {
+        folded += dialect::fold_old_results(target.dialect, messages, 2);
+    }
+
+    folded > 0
+}
+
+/// A sub-agent (`task`, 0.13): its own conversation and read-only tools, reporting into one card of the
+/// parent's turn. Answers the report, and the tokens it used.
+#[allow(clippy::too_many_arguments)]
+fn sub_agent(
+    backend: Backend,
+    target: &Target,
+    workspace: &Workspace,
+    policy: &crate::trust::policy::Policy,
+    parent: &Prompt,
+    vision: bool,
+    card: &str,
+    job: &str,
+    sink: &EventSink,
+) -> (tools::Outcome, u64, u64) {
+    const SUB_STEPS: usize = 24;
+
+    let stopped = || crate::engines::cancel::requested(&parent.turn_id);
+    let system = sub_agent_prompt(workspace);
+    let specs = tools::specs_for(tools::Caps { vision, subagent: true });
+    let window = crate::context::window_tokens("native_api", parent.provider.as_deref(), &parent.model);
+    /* What the sub-agent does shows as lines on its card; its words and thinking stay its own. */
+    let lines = {
+        let sink = sink.clone();
+        let card = card.to_string();
+
+        EventSink::new(move |event| {
+            if let EngineEvent::ToolStarted { name, target, .. } = event {
+                sink.send(EngineEvent::ToolOutput { call_id: card.clone(), level: "dim".to_string(), text: format!("{name} {target}") });
+            }
+        })
+    };
+    let mut context = ToolContext {
+        workspace,
+        session_id: &parent.session_id,
+        read_only: true,
+        sink: &lines,
+        turn_id: &parent.turn_id,
+        autonomy: Autonomy::Auto,
+        always: HashSet::new(),
+        calls: 0,
+        checkpoint: None,
+        checkpointed: true,
+        policy,
+        changed: HashSet::new(),
+        radius_allowed: false,
+        plan: None,
+        edits: 0,
+        ran_at: None,
+    };
+    let mut messages = vec![dialect::user_message(job)];
+    let (mut input, mut output) = (0u64, 0u64);
+
+    for _ in 0..SUB_STEPS {
+        if stopped() {
+            return (tools::Outcome::error("The turn was stopped."), input, output);
+        }
+
+        let reply = match ask_model(backend, target, &system, &messages, &specs, &EventSink::discarding(), &stopped) {
+            Ok(reply) => reply,
+            Err(reason) => return (tools::Outcome::error(format!("The sub-agent failed: {reason}")), input, output),
+        };
+
+        input += reply.input_tokens;
+        output += reply.output_tokens;
+        messages.push(reply.message.clone());
+
+        if reply.tool_uses.is_empty() {
+            let report = if reply.text.trim().is_empty() { "The sub-agent finished without a report.".to_string() } else { reply.text };
+
+            return (tools::Outcome::ok(report), input, output);
+        }
+
+        let results: Vec<dialect::ToolResult> = reply
+            .tool_uses
+            .iter()
+            .map(|call| {
+                let outcome = tools::execute(&mut context, call);
+
+                (call.id.clone(), outcome.content, outcome.is_error, outcome.image)
+            })
+            .collect();
+
+        messages.extend(dialect::tool_results(target.dialect, &results));
+        keep_small(target, window, &mut messages);
+    }
+
+    /* Out of steps: one last call without tools, for whatever it found. */
+    dialect::append_user_text(target.dialect, &mut messages, "[SDC: you are out of steps. Write your report now from what you found, without calling tools.]");
+
+    match ask_model(backend, target, &system, &messages, &[], &EventSink::discarding(), &stopped) {
+        Ok(reply) => {
+            input += reply.input_tokens;
+            output += reply.output_tokens;
+
+            (tools::Outcome::ok(reply.text), input, output)
+        }
+        Err(reason) => (tools::Outcome::error(format!("The sub-agent ran out of steps: {reason}")), input, output),
+    }
+}
+
+/// The `task` calls of one reply, run at the same time (0.13): each draws its card, runs, and closes it.
+#[allow(clippy::too_many_arguments)]
+fn run_tasks(
+    backend: Backend,
+    target: &Target,
+    workspace: &Workspace,
+    policy: &crate::trust::policy::Policy,
+    prompt: &Prompt,
+    vision: bool,
+    calls: &[(usize, &dialect::ToolUse)],
+    sink: &EventSink,
+) -> Vec<(usize, tools::Outcome, u64, u64)> {
+    std::thread::scope(|scope| {
+        let running: Vec<_> = calls
+            .iter()
+            .map(|(index, call)| {
+                let card = format!("{}-task-{}", prompt.turn_id, call.id);
+                let description = call.input["description"].as_str().unwrap_or("Research").to_string();
+                let job = call.input["prompt"].as_str().unwrap_or_default().to_string();
+
+                sink.send(EngineEvent::ToolStarted { call_id: card.clone(), tool: "read".to_string(), name: "Agent".to_string(), target: description });
+
+                let index = *index;
+
+                scope.spawn(move || {
+                    if job.trim().is_empty() {
+                        return (index, card, tools::Outcome::error("task needs a prompt: the whole job, as the sub-agent has seen nothing of this conversation."), 0, 0);
+                    }
+
+                    let (outcome, input, output) = sub_agent(backend, target, workspace, policy, prompt, vision, &card, &job, sink);
+
+                    (index, card, outcome, input, output)
+                })
+            })
+            .collect();
+
+        running
+            .into_iter()
+            .filter_map(|handle| handle.join().ok())
+            .map(|(index, card, outcome, input, output)| {
+                sink.send(EngineEvent::ToolCompleted {
+                    call_id: card,
+                    status: if outcome.is_error { "failed" } else { "done" }.to_string(),
+                    meta: format!("{} · {}k tokens", if outcome.is_error { "failed" } else { "reported" }, (input + output) / 1000),
+                    diff: None,
+                });
+
+                (index, outcome, input, output)
+            })
+            .collect()
+    })
+}
+
+/// Whether a changed file is one a build or a test could care about: notes, images and SDC's own
+/// memory are not worth a test run.
+fn checkable(path: &str) -> bool {
+    let lowered = path.to_ascii_lowercase();
+
+    !(lowered.starts_with(".sdc/")
+        || [".md", ".txt", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".ico", ".pdf", ".log"].iter().any(|extension| lowered.ends_with(extension)))
+}
+
+/// The completion gate's check (0.13): the agent changed files and says it is done, but ran nothing since
+/// its last change. `Some(note)` names the project's own checks and asks it to run them - unless the
+/// person said not to, which the model reads in their words, in whatever language they wrote them.
+///
+/// SDC used to run the checks itself here. Measured: a person who wrote "test chalanor dorkar nai" (no need
+/// to run the tests) had `npm test` run anyway. The agent decides, because it has read the person.
+fn completion_note(context: &ToolContext) -> Option<String> {
+    if context.ran_at == Some(context.edits) {
+        return None;
+    }
+
+    let workspace = context.workspace;
+    let names: Vec<String> = workspace
+        .list(".")
+        .map(|(entries, _)| entries.iter().map(|entry| entry.split(" (").next().unwrap_or(entry).trim_end_matches('/').to_string()).collect())
+        .unwrap_or_default();
+    let posix = workspace.is_remote() || !cfg!(windows);
+    let checks = crate::verify::plan(&names, &|name| workspace.read(name).ok().map(|(text, _)| text), posix);
+
+    if checks.is_empty() {
+        return None;
+    }
+
+    let mut changed: Vec<&String> = context.changed.iter().collect();
+
+    changed.sort();
+
+    Some(format!(
+        "[SDC: a note from SDC, not from the person]\n\
+         You changed {} and have not run anything since. This project's own checks are: {}.\n\
+         Run the ones that cover your change with run_command before you finish - unless the person told you not to \
+         run tests or builds, in which case just give your summary. If a check fails because of your change, fix it. \
+         If it fails in code you did not touch that was already broken, do NOT fix it - say so in your summary and offer to.",
+        changed.iter().map(|path| format!("`{path}`")).collect::<Vec<_>>().join(", "),
+        checks.iter().map(|check| format!("`{}`", check.command)).collect::<Vec<_>>().join(", ")
+    ))
 }
 
 /// The loop over a resolved endpoint - separate from `run` so a test can point it at a loopback
@@ -303,8 +604,7 @@ fn drive(
     backend: Backend,
     target: &Target,
     workspace: &Workspace,
-    autonomy: Autonomy,
-    max_steps: usize,
+    options: Options,
     checkpoint: Option<tools::Checkpointer>,
     policy: &crate::trust::policy::Policy,
     prompt: &Prompt,
@@ -312,15 +612,22 @@ fn drive(
 ) {
     let turn_id = prompt.turn_id.clone();
     let stopped = || crate::engines::cancel::requested(&turn_id);
-    let system = system_prompt(workspace);
-    /* The project's own MCP servers (0.12), local folders only: their tools join the eight for this turn. */
-    let (mut mcp, warnings) = if workspace.is_remote() { (None, Vec::new()) } else { mcp::McpTools::start(std::path::Path::new(workspace.root())) };
+    let vision = browser::vision(target.dialect == Dialect::Anthropic, &target.model);
+    /* The project's skills (0.13): their names and when to use them; the agent reads one when it applies. */
+    let system = system_prompt(workspace, vision, &person_language(prompt)) + &skills::brief(&skills::find(workspace));
+    let window = crate::context::window_tokens(if backend == Backend::Ollama { "ollama" } else { "native_api" }, prompt.provider.as_deref(), &target.model);
+    /* The project's own MCP servers (0.12; on a host too since 0.13): their tools join the agent's for this turn. */
+    let (mut mcp, warnings) = match workspace.remote() {
+        /* On a host, the servers run there, over the same ssh (0.13). */
+        Some(ssh) => mcp::McpTools::start_remote(workspace.root(), ssh),
+        None => mcp::McpTools::start(std::path::Path::new(workspace.root())),
+    };
 
     for warning in warnings {
         sink.send(EngineEvent::Thinking(format!("MCP: {warning}\n")));
     }
 
-    let mut specs = tools::specs();
+    let mut specs = tools::specs_for(tools::Caps { vision, subagent: false });
 
     if let Some(servers) = &mcp {
         specs.extend(servers.specs().iter().cloned());
@@ -334,13 +641,31 @@ fn drive(
         })
         .collect();
 
-    messages.push(dialect::user_message(&prompt.text));
+    /* The images the person attached (0.13): shown to a model that can see, and said out loud to one that cannot. */
+    let images: Vec<(String, String)> = if vision {
+        prompt.images.iter().filter_map(|image| image.base64().map(|data| (image.media_type.clone(), data))).collect()
+    } else {
+        Vec::new()
+    };
+    let text = if !vision && !prompt.images.is_empty() {
+        format!(
+            "{}\n\n[SDC: the person attached {} image(s), but this model cannot see images. If they matter, say so and suggest a model that can.]",
+            prompt.text,
+            prompt.images.len()
+        )
+    } else {
+        prompt.text.clone()
+    };
+
+    messages.push(dialect::user_message_with_images(target.dialect, &text, &images));
 
     let mut context = ToolContext {
         workspace,
+        session_id: &prompt.session_id,
+        read_only: false,
         sink,
         turn_id: &turn_id,
-        autonomy,
+        autonomy: options.autonomy,
         always: HashSet::new(),
         calls: 0,
         checkpoint,
@@ -348,9 +673,16 @@ fn drive(
         policy,
         changed: HashSet::new(),
         radius_allowed: false,
+        plan: None,
+        edits: 0,
+        ran_at: None,
     };
     let (mut input_tokens, mut output_tokens) = (0u64, 0u64);
     let mut said_something = false;
+    let mut plan_nudged = false;
+    let mut check_rounds = 0;
+    /* The edit count when the checks last ran: they run again only after the agent changed something. */
+    let mut checked_at = usize::MAX;
     /* Words sent while the turn runs join it between steps (0.12.5) - closed when the loop returns. */
     let inbox = crate::engines::steer::open(&turn_id);
     let steer = |messages: &mut Vec<Value>| -> bool {
@@ -369,21 +701,12 @@ fn drive(
         true
     };
 
-    for step in 1..=max_steps {
+    for step in 1..=options.max_steps {
         if stopped() {
             return;
         }
 
-        let body = dialect::body(target.dialect, &target.model, &system, &messages, &specs, target.thinking).to_string();
-        let lines = match crate::engines::native_api::open_stream(&target.url, &target.headers, &body) {
-            Ok(lines) => lines,
-            Err(reason) => {
-                sink.send(EngineEvent::Failed(unreachable(backend, &reason)));
-
-                return;
-            }
-        };
-        let reply: Reply = match dialect::read_reply(target.dialect, lines, &step_sink(sink, said_something), &stopped) {
+        let reply: Reply = match ask_model(backend, target, &system, &messages, &specs, &step_sink(sink, said_something), &stopped) {
             Ok(reply) => reply,
             Err(reason) if reason == "stopped" => return,
             Err(reason) => {
@@ -415,6 +738,37 @@ fn drive(
             continue;
         }
 
+        if reply.tool_uses.is_empty() && reply.stop != "max_tokens" && reply.stop != "length" {
+            /*
+             * The completion gate (0.13). An agent that says "done" with steps of its own plan still open is
+             * reminded once; one that changed files and ran nothing since is told the project's checks and
+             * asked to run them - unless the person said not to - at most twice, and only after new changes.
+             */
+            if !plan_nudged {
+                if let Some(open) = context.open_plan_steps() {
+                    plan_nudged = true;
+                    dialect::append_user_text(
+                        target.dialect,
+                        &mut messages,
+                        &format!("[SDC: your plan still has open steps:\n{open}\nFinish them, or call update_plan to mark the ones no longer needed - then give your summary.]"),
+                    );
+
+                    continue;
+                }
+            }
+
+            if options.auto_check && check_rounds < 2 && checked_at != context.edits && context.changed.iter().any(|path| checkable(path)) && !stopped() {
+                check_rounds += 1;
+                checked_at = context.edits;
+
+                if let Some(note) = completion_note(&context) {
+                    dialect::append_user_text(target.dialect, &mut messages, &note);
+
+                    continue;
+                }
+            }
+        }
+
         if reply.tool_uses.is_empty() {
             let summary = if reply.stop == "max_tokens" || reply.stop == "length" {
                 "Cut off: the answer reached the model's length limit"
@@ -431,11 +785,17 @@ fn drive(
             return;
         }
 
-        let mut results = Vec::new();
+        /* The step's calls, in order - except `task`, whose sub-agents run all at once. */
+        let mut results: Vec<Option<dialect::ToolResult>> = vec![None; reply.tool_uses.len()];
+        let tasks: Vec<(usize, &dialect::ToolUse)> = reply.tool_uses.iter().enumerate().filter(|(_, call)| call.name == "task").collect();
 
-        for call in &reply.tool_uses {
+        for (index, call) in reply.tool_uses.iter().enumerate() {
             if stopped() {
                 return;
+            }
+
+            if call.name == "task" {
+                continue;
             }
 
             let outcome = match mcp.as_mut() {
@@ -443,21 +803,42 @@ fn drive(
                 _ => tools::execute(&mut context, call),
             };
 
-            results.push((call.id.clone(), outcome.content, outcome.is_error));
+            results[index] = Some((call.id.clone(), outcome.content, outcome.is_error, outcome.image));
         }
+
+        if !tasks.is_empty() {
+            for (index, outcome, input, output) in run_tasks(backend, target, workspace, policy, prompt, vision, &tasks, sink) {
+                input_tokens += input;
+                output_tokens += output;
+                results[index] = Some((reply.tool_uses[index].id.clone(), outcome.content, outcome.is_error, outcome.image));
+            }
+
+            sink.send(EngineEvent::Usage { input_tokens, output_tokens, cost_usd: None });
+        }
+
+        let results: Vec<dialect::ToolResult> = results
+            .into_iter()
+            .enumerate()
+            .map(|(index, result)| result.unwrap_or_else(|| (reply.tool_uses[index].id.clone(), "The turn was stopped.".to_string(), true, None)))
+            .collect();
 
         messages.extend(dialect::tool_results(target.dialect, &results));
         steer(&mut messages);
+
+        let folded = keep_small(target, window, &mut messages);
+
+        sink.send(EngineEvent::Context { used_tokens: dialect::tokens(&messages), window_tokens: window, compacted: folded });
     }
 
     /* The step budget ran out with work still going on. That is said, with the way to continue, rather
        than dressed up as a finished turn. */
     sink.send(EngineEvent::Delta(format!(
-        "\n\nI stopped after {max_steps} steps, the limit for one turn. Send \"continue\" to let me keep going from here."
+        "\n\nI stopped after {} steps, the limit for one turn. Send \"continue\" to let me keep going from here.",
+        options.max_steps
     )));
     sink.send(EngineEvent::Done {
         summary: "Paused at the step limit".to_string(),
-        meta: meta(max_steps, input_tokens, output_tokens, target.price),
+        meta: meta(options.max_steps, input_tokens, output_tokens, target.price),
         pass: None,
     });
 }
@@ -505,9 +886,11 @@ mod tests {
             project_root: None,
             remote: None,
                     autonomy: Default::default(),
+                    resume: None,
+                    images: Vec::new(),
         };
 
-        run(Backend::Ollama, Autonomy::Ask, 5, None, &Default::default(), &prompt, &recorder.sink());
+        run(Backend::Ollama, Options { autonomy: Autonomy::Ask, max_steps: 5, auto_check: false }, None, &Default::default(), &prompt, &recorder.sink());
 
         assert!(matches!(&recorder.events()[..], [EngineEvent::Failed(reason)] if reason.contains("Open a folder")));
     }
@@ -625,6 +1008,8 @@ mod end_to_end {
             project_root: Some(root.to_str().unwrap().to_string()),
             remote: None,
                     autonomy: Default::default(),
+                    resume: None,
+                    images: Vec::new(),
         };
         let recorder = crate::engines::Recorder::new();
 
@@ -636,7 +1021,7 @@ mod end_to_end {
             probe.lock().unwrap().push((title.to_string(), file.exists()));
         });
 
-        drive(Backend::Api, &target, &workspace, Autonomy::Auto, 10, Some(checkpoint), &Default::default(), &prompt, &recorder.sink());
+        drive(Backend::Api, &target, &workspace, Options { autonomy: Autonomy::Auto, max_steps: 10, auto_check: false }, Some(checkpoint), &Default::default(), &prompt, &recorder.sink());
 
         assert_eq!(
             *seen.lock().unwrap(),
@@ -656,7 +1041,7 @@ mod end_to_end {
         /* The conversation carried the history with its roles, the system prompt first. */
         assert_eq!(bodies[0]["messages"][0]["role"], "system");
         assert_eq!(bodies[0]["messages"][2]["role"], "assistant");
-        assert_eq!(bodies[0]["tools"].as_array().unwrap().len(), 8);
+        assert_eq!(bodies[0]["tools"].as_array().unwrap().len(), tools::specs().len());
 
         /* The window saw two cards (Create, Run), the answer, and a footer with what the turn used. */
         let cards: Vec<String> = events
@@ -703,10 +1088,12 @@ mod end_to_end {
             project_root: Some(root.to_str().unwrap().to_string()),
             remote: None,
                     autonomy: Default::default(),
+                    resume: None,
+                    images: Vec::new(),
         };
         let recorder = crate::engines::Recorder::new();
 
-        drive(Backend::Api, &target, &workspace, Autonomy::Ask, 2, None, &Default::default(), &prompt, &recorder.sink());
+        drive(Backend::Api, &target, &workspace, Options { autonomy: Autonomy::Ask, max_steps: 2, auto_check: false }, None, &Default::default(), &prompt, &recorder.sink());
         server.join().unwrap();
 
         assert!(matches!(recorder.events().last(), Some(EngineEvent::Done { summary, .. }) if summary == "Paused at the step limit"));

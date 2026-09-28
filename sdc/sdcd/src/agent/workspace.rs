@@ -62,6 +62,94 @@ impl Workspace {
         self.remote.is_some()
     }
 
+    /// The host, for the tools that talk to it themselves (grep, glob, background processes).
+    pub fn remote(&self) -> Option<&Ssh> {
+        self.remote.as_ref()
+    }
+
+    /// Lines `offset..offset+limit` of a file (1-based), and how many lines it has (0.13, a range read).
+    /// A range reads past the 256 KB cap of a whole read - that is what it is for.
+    pub fn read_lines(&self, path: &str, offset: usize, limit: usize) -> Result<(Vec<String>, usize), ErrorObject> {
+        let resolved = self.resolve(path)?;
+        let text = match &self.remote {
+            Some(ssh) => {
+                let expr = crate::ssh::ops::remote_expr(&resolved)?;
+                crate::ssh::ops::stat(ssh, &resolved)?;
+                let output = ssh.run(&format!("wc -l < {expr}; sed -n '{},{}p' {expr}", offset, offset + limit - 1), Duration::from_secs(60))?;
+                let mut lines = output.stdout.lines();
+                let total = lines.next().and_then(|count| count.trim().parse::<usize>().ok()).unwrap_or(0);
+
+                return Ok((lines.map(str::to_string).collect(), total.max(offset.saturating_sub(1))));
+            }
+            None => {
+                crate::fs::guard(Path::new(&resolved))?;
+
+                let bytes = std::fs::read(&resolved).map_err(|error| ErrorObject::not_found(format!("{path}: {error}")))?;
+
+                String::from_utf8_lossy(&bytes).to_string()
+            }
+        };
+        let all: Vec<&str> = text.lines().collect();
+        let lines = all.iter().skip(offset - 1).take(limit).map(|line| line.to_string()).collect();
+
+        Ok((lines, all.len()))
+    }
+
+    /// A file's bytes, up to `cap` (an image for a model that can see).
+    pub fn read_bytes(&self, path: &str, cap: usize) -> Result<Vec<u8>, ErrorObject> {
+        use base64::Engine as _;
+
+        let resolved = self.resolve(path)?;
+
+        match &self.remote {
+            Some(ssh) => {
+                let expr = crate::ssh::ops::remote_expr(&resolved)?;
+                let output = ssh.run(&format!("head -c {cap} {expr} | base64 | tr -d '\n'"), Duration::from_secs(60))?;
+
+                if !output.ok() {
+                    return Err(ErrorObject::not_found(format!("{path} could not be read on {}", ssh.label())));
+                }
+
+                base64::engine::general_purpose::STANDARD
+                    .decode(output.stdout.trim())
+                    .map_err(|error| ErrorObject::internal(format!("{path}: {error}")))
+            }
+            None => {
+                crate::fs::guard(Path::new(&resolved))?;
+
+                let bytes = std::fs::read(&resolved).map_err(|error| ErrorObject::not_found(format!("{path}: {error}")))?;
+
+                if bytes.len() > cap {
+                    return Err(ErrorObject::bad_request(format!("{path} is larger than {} MB", cap / 1024 / 1024)));
+                }
+
+                Ok(bytes)
+            }
+        }
+    }
+
+    /// One fact appended to the project's `.sdc/memory.md` - SDC's own file, written past the tools' guard.
+    pub fn append_memory(&self, fact: &str) -> Result<(), ErrorObject> {
+        match &self.remote {
+            Some(ssh) => {
+                let path = format!("{}/.sdc/memory.md", self.root);
+                let existing = crate::ssh::ops::read(ssh, &path, 64 * 1024)
+                    .ok()
+                    .and_then(|value| value["text"].as_str().map(str::to_string))
+                    .unwrap_or_default();
+
+                crate::ssh::ops::write(ssh, &path, &crate::sdcp::methods::agent_methods::append_fact(&existing, fact)).map(|_| ())
+            }
+            None => {
+                let path = Path::new(&self.root).join(".sdc").join("memory.md");
+                let existing = std::fs::read_to_string(&path).unwrap_or_default();
+
+                std::fs::create_dir_all(path.parent().expect("a parent")).map_err(ErrorObject::internal)?;
+                std::fs::write(&path, crate::sdcp::methods::agent_methods::append_fact(&existing, fact)).map_err(ErrorObject::internal)
+            }
+        }
+    }
+
     /// The shell a command line runs in, for the system prompt.
     pub fn shell(&self) -> &'static str {
         if self.remote.is_some() || !cfg!(windows) {

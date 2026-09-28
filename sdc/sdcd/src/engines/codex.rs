@@ -6,7 +6,7 @@
 
 use async_trait::async_trait;
 
-use crate::engines::cli::{CliAdapter, CliSpec, PromptPlacement};
+use crate::engines::cli::{CliAdapter, CliSpec, PromptPlacement, Resume};
 use crate::engines::{Engine, EngineStatus, EventSink, Prompt};
 
 /// `codex exec --json -` is the non-interactive form, measured against the installed CLI.
@@ -41,6 +41,8 @@ pub const CODEX_SPEC: CliSpec = CliSpec {
         &["--full-auto"],
         &["--dangerously-bypass-approvals-and-sandbox"],
     ],
+    resume: Resume::CodexExec,
+    image_flag: Some("-i"),
 };
 
 pub struct Codex {

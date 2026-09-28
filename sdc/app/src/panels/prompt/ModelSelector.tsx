@@ -65,7 +65,7 @@ export function ModelSelector() {
     <div className="model-selector relative" ref={rootRef}>
       <div
         className={
-          'model-trigger flex h-[26px] max-w-[300px] cursor-pointer items-center gap-[6px] rounded-full border px-[9px] pl-[4px] text-[11.5px] transition-all duration-fast ease-ease ' +
+          'model-trigger flex h-[26px] min-w-0 max-w-[220px] cursor-pointer items-center gap-[6px] rounded-full border px-[9px] pl-[4px] text-[11.5px] transition-all duration-fast ease-ease ' +
           (dropdownOpen
             ? 'open border-border-strong bg-bg-overlay text-text-primary'
             : 'border-transparent text-text-secondary hover:border-border-subtle hover:bg-bg-hover hover:text-text-primary')
