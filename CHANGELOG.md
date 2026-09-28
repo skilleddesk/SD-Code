@@ -15,6 +15,15 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [0.14.3] — Reading a long file in pieces is not a loop
+
+* **Found after installing 0.14.2, in a real chat on skilleddesk.com:** "Stopped a loop: `Read
+  …/check-duplicate-content.js` ran 5 times in a row without anything changing." Claude was reading a long
+  script in pieces - the same path with a new `offset` each time - and the loop guard compares only the
+  tool's name and target. A Claude Code `Read` card now names the lines it read (`check.js · lines 101–200`),
+  so five pieces are five different reads, and reading the same piece five times still stops. Only a read
+  carries the range; an edit's path and a command stay bare, because those are what the policy checks.
+
 ## [0.14.2] — A file is shown while it is written, Enter starts the work, and web search is allowed
 
 The report came with two screenshots: *"live steamming omg lvl ar bad ... monai hosse nah je live steamming

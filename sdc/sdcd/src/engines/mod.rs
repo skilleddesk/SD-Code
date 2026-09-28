@@ -765,7 +765,7 @@ fn claude_tool_calls(value: &Value) -> Vec<EngineEvent> {
             Some(EngineEvent::ToolStarted {
                 call_id: block.get("id").and_then(Value::as_str).unwrap_or("call").to_string(),
                 tool: tool_kind(&name).to_string(),
-                target: target_of(block.get("input").unwrap_or(&Value::Null)),
+                target: read_range(&name, block.get("input").unwrap_or(&Value::Null)),
                 name,
             })
         })
@@ -984,6 +984,33 @@ fn tool_kind(name: &str) -> &'static str {
 }
 
 /// What a tool is acting on, from the JSON its input carries.
+/// A Claude Code tool's target, with the lines a `Read` asked for (0.14.2).
+///
+/// Found in a real chat: Claude read a long script in pieces - the same path, a new `offset` each time -
+/// and the loop guard, which compares name and target, stopped the turn as "ran 5 times in a row without
+/// anything changing". The pieces are different reads, and the card now says which lines each one read.
+/// Only a read carries the range: an edit's or a command's target is what the policy checks, and stays bare.
+fn read_range(name: &str, input: &Value) -> String {
+    let target = target_of(input);
+
+    if name != "Read" {
+        return target;
+    }
+
+    let offset = input.get("offset").and_then(Value::as_u64);
+    let limit = input.get("limit").and_then(Value::as_u64);
+
+    match (offset, limit) {
+        (None, None) => target,
+        (start, Some(limit)) => {
+            let start = start.unwrap_or(1).max(1);
+
+            format!("{target} · lines {start}–{}", start + limit.saturating_sub(1))
+        }
+        (Some(start), None) => format!("{target} · from line {start}"),
+    }
+}
+
 fn target_of(input: &Value) -> String {
     for key in ["file_path", "path", "command", "pattern", "url", "query", "description"] {
         if let Some(text) = input.get(key).and_then(Value::as_str) {
@@ -1358,6 +1385,34 @@ mod tests {
                 EngineEvent::ToolCompleted { call_id: "toolu_2".into(), status: "failed".into(), meta: "failed".into(), diff: None },
             ]
         );
+    }
+
+    /// The skilleddesk.com chat (0.14.2): a long script read in five pieces was stopped as a loop. Each
+    /// piece names its lines, so the guard sees five different reads - and a true repeat still stops.
+    #[test]
+    fn reading_a_file_in_pieces_is_not_a_loop() {
+        let read = |offset: u64| {
+            let line = format!(
+                r#"{{"type":"assistant","message":{{"content":[{{"type":"tool_use","id":"t{offset}","name":"Read","input":{{"file_path":"/srv/check.js","offset":{offset},"limit":100}}}}]}}}}"#
+            );
+            match parse_stream_line(&line).remove(0) {
+                EngineEvent::ToolStarted { target, .. } => target,
+                other => panic!("{other:?}"),
+            }
+        };
+
+        assert_eq!(read(101), "/srv/check.js · lines 101–200");
+
+        let mut guard = crate::trust::cost::Runaway::default();
+
+        for offset in [1, 101, 201, 301, 401, 501] {
+            assert_eq!(guard.observe("Read", &read(offset)), None);
+        }
+
+        let mut guard = crate::trust::cost::Runaway::default();
+        let stops: Vec<_> = (0..5).filter_map(|_| guard.observe("Read", &read(101))).collect();
+
+        assert_eq!(stops.len(), 1, "the same piece five times is still a loop");
     }
 
     /// The screenshot's card (0.14.2): Claude's "you haven't granted it yet" points at a prompt nobody can
