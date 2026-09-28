@@ -822,7 +822,8 @@ mod tests {
 
         let mut text = String::new();
 
-        for _ in 0..100 {
+        /* 30 s, not 10: a cold PowerShell on a CI runner has taken longer than 10 s to read the answer. */
+        for _ in 0..300 {
             let output = pty.output(&pty_id).unwrap();
 
             text = output["lines"]
