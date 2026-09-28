@@ -23,6 +23,10 @@ export const bn: StringsPack = {
     send: 'পাঠান',
     stop: 'থামান',
     stopHint: 'এই টার্ন থামান (Esc)',
+    sendHint: '↵ পাঠান · ⇧↵ নতুন লাইন',
+    steerHint: '↵ চলমান কাজে যোগ করুন',
+    steerSend: 'চলমান কাজে যোগ করুন',
+    steerPlaceholder: 'কাজ চলার মাঝেই কিছু যোগ করুন - পরের ধাপে সেটা মাথায় নেবে…',
   },
   turns: {
     live: {
@@ -39,6 +43,14 @@ export const bn: StringsPack = {
   },
   sidebar: {
     noProject: 'কোনো ফোল্ডার নেই',
+    machines: 'মেশিন',
+    thisComputer: 'এই কম্পিউটার',
+    projects: 'প্রজেক্ট',
+    clearSearch: 'খোঁজা মুছুন',
+    noMatches: 'এই খোঁজার সাথে কোনো চ্যাট মেলেনি',
+    noLooseChats: 'ফোল্ডারের বাইরে কোনো চ্যাট নেই',
+    noProjectsLocal: 'এই কম্পিউটারের একটা ফোল্ডার বেছে নিন - তার চ্যাটগুলো তার নিচেই থাকবে।',
+    noProjectsHost: 'এই সার্ভারের একটা ফোল্ডার বা সাইট বেছে নিন - তার চ্যাটগুলো তার নিচেই থাকবে।',
     hostChats: 'চ্যাট',
     newChatShort: 'নতুন চ্যাট',
     openFolderRow: 'ফোল্ডার খুলুন…',

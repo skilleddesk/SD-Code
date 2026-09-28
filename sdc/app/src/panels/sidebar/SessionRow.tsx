@@ -65,8 +65,8 @@ export function SessionRow({ session, active }: SessionRowProps) {
   return (
     <div
       className={
-        'session-item group relative flex min-h-[32px] min-w-0 cursor-pointer items-center gap-[8px] ' +
-        'rounded-md py-[6px] pr-[8px] pl-[26px] transition-colors duration-fast ease-ease ' +
+        'session-item group relative flex min-h-[30px] min-w-0 cursor-pointer items-center gap-[8px] ' +
+        'rounded-md py-[5px] pr-[8px] pl-[24px] transition-colors duration-fast ease-ease ' +
         (active ? 'active bg-bg-active' : 'hover:bg-bg-hover')
       }
       role="button"
@@ -82,7 +82,7 @@ export function SessionRow({ session, active }: SessionRowProps) {
     >
       <span
         className={
-          'sdot absolute left-[6px] top-1/2 h-[7px] w-[7px] -translate-y-1/2 rounded-full ' +
+          'sdot absolute left-[9px] top-1/2 h-[7px] w-[7px] -translate-y-1/2 rounded-full ' +
           SESSION_STATE_CLASS[session.state]
         }
         aria-hidden="true"

@@ -16,7 +16,7 @@ export function previewCandidates(turns: readonly TurnView[], sessionId: string,
   const found: string[] = [];
   const add = (raw: string): void => {
     /* `0.0.0.0` is where a server listens, not an address a browser can open. */
-    const url = raw.replace('://0.0.0.0', '://localhost').replace(/[.,;:]+$/, '');
+    const url = raw.replace('://0.0.0.0', '://localhost').replace(/[.,;:*_~]+$/, '');
 
     if (!found.includes(url)) {
       found.push(url);

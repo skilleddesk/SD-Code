@@ -22,7 +22,7 @@ export function ComposeSwitch() {
 
   return (
     <div
-      className="compose-switch inline-flex h-[28px] overflow-hidden rounded-md border border-border-default bg-bg-raised"
+      className="compose-switch inline-flex h-[26px] items-center gap-[1px] rounded-full border border-border-subtle bg-bg-base p-[2px]"
       role="radiogroup"
       aria-label={strings.prompt.compose.label}
     >
@@ -37,12 +37,12 @@ export function ComposeSwitch() {
             aria-checked={on}
             title={strings.prompt.compose.hint[id]}
             className={
-              'flex items-center gap-[5px] px-[10px] text-[11.5px] font-medium transition-colors duration-fast focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-border-focus ' +
-              (on ? 'bg-accent-fill text-text-on-accent' : 'text-text-muted hover:bg-bg-hover hover:text-text-primary')
+              'flex h-full items-center gap-[4px] rounded-full px-[9px] text-[11px] font-medium transition-all duration-fast focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-border-focus ' +
+              (on ? 'bg-accent-fill text-text-on-accent shadow-sm' : 'text-text-muted hover:text-text-primary')
             }
             onClick={() => setCompose(id)}
           >
-            <Icon size={12} aria-hidden="true" />
+            <Icon size={11} aria-hidden="true" />
             {strings.prompt.compose[id]}
           </button>
         );

@@ -65,14 +65,15 @@ export function ModelSelector() {
     <div className="model-selector relative" ref={rootRef}>
       <div
         className={
-          'model-trigger flex h-[28px] cursor-pointer items-center gap-[8px] rounded-md border bg-bg-raised px-[10px] py-[5px] pl-[8px] font-mono text-[11.5px] transition-all duration-fast ease-ease ' +
+          'model-trigger flex h-[26px] max-w-[300px] cursor-pointer items-center gap-[6px] rounded-full border px-[9px] pl-[4px] text-[11.5px] transition-all duration-fast ease-ease ' +
           (dropdownOpen
             ? 'open border-border-strong bg-bg-overlay text-text-primary'
-            : 'border-border-subtle text-text-secondary hover:border-border-default hover:bg-bg-hover hover:text-text-primary')
+            : 'border-transparent text-text-secondary hover:border-border-subtle hover:bg-bg-hover hover:text-text-primary')
         }
         role="button"
         tabIndex={0}
         aria-haspopup="dialog"
+        title={`${tierLabel(tier)} · ${engine} · ${model}`}
         aria-expanded={dropdownOpen}
         onClick={toggleDropdown}
         onKeyDown={(event) => {
@@ -84,23 +85,23 @@ export function ModelSelector() {
       >
         <span
           className={
-            'tier-icon ' + tier + ' grid h-[18px] w-[18px] shrink-0 place-items-center rounded-sm ' + TIER_TONE[tier]
+            'tier-icon ' + tier + ' grid h-[18px] w-[18px] shrink-0 place-items-center rounded-full ' + TIER_TONE[tier]
           }
         >
           <Icon size={11} aria-hidden="true" />
         </span>
 
-        <span className="mlabel font-semibold text-text-primary">{tierLabel(tier)}</span>
-        <span className="msep text-border-strong max-900:hidden">·</span>
-        <span className="mengine text-text-secondary max-900:hidden">{engine}</span>
-        <span className="msep text-border-strong max-900:hidden">·</span>
-        <span className="mmodel text-text-muted max-900:hidden">{model}</span>
+        {/* The model is the headline; the tier and the engine are how it runs, in a quieter voice. */}
+        <span className="mmodel min-w-0 truncate font-medium text-text-primary">{model}</span>
+        <span className="mlabel sr-only">
+          {tierLabel(tier)} · <span className="mengine">{engine}</span>
+        </span>
 
         <ChevronDown
           size={12}
           aria-hidden="true"
           className={
-            'mchev ml-[2px] text-text-muted transition-transform duration-200 ease-ease ' +
+            'mchev shrink-0 text-text-muted transition-transform duration-200 ease-ease ' +
             (dropdownOpen ? 'rotate-180' : '')
           }
         />

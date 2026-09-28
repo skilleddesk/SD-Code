@@ -113,6 +113,15 @@ const english = {
     },
     /** The chats that belong to no folder, under their host (0.12.5). */
     noProject: 'No folder',
+    /** The redesigned sidebar (0.12.5). */
+    machines: 'Machines',
+    thisComputer: 'This computer',
+    projects: 'Projects',
+    clearSearch: 'Clear the search',
+    noMatches: 'No chat matches that search',
+    noLooseChats: 'No chat outside a folder',
+    noProjectsLocal: 'Pick a folder on this computer - its chats stay together under it.',
+    noProjectsHost: 'Pick a folder or site on this server - its chats stay together under it.',
     hostChats: 'Chats',
     newChatShort: 'New chat',
     openFolderRow: 'Open folder…',
@@ -497,6 +506,11 @@ const english = {
     /** The Stop button that replaces Send while this chat's turn runs. */
     stop: 'Stop',
     stopHint: 'Stop this turn (Esc)',
+    /** The composer's hints (0.12.5). While a turn runs, Send adds to it rather than waiting. */
+    sendHint: '↵ send · ⇧↵ new line',
+    steerHint: '↵ add to the running turn',
+    steerSend: 'Add to the running turn',
+    steerPlaceholder: 'Add something while it works - it takes it into account at its next step…',
     /** Chat | Agent (v4). */
     compose: {
       label: 'How to answer',

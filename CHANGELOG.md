@@ -15,6 +15,29 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [0.12.6] — A new sidebar, and a composer that holds its own controls
+
+From the report: *"side bar ar style and sytem ta valo lagse nah … new design"* and *"chat box ar vitore
+ARO better quality kore"*.
+
+* **The sidebar is redesigned.** From top to bottom:
+  * New chat and the search.
+  * **Machines**: this computer and each VPS as a row, showing status and chat count, with a spinner while
+    one of its chats is working. "Add host" sits below them.
+  * **Projects** for the machine you selected. Each project has a coloured badge, and the one worked on
+    most recently comes first. Opening a project shows its chats and a New chat for it; hovering it offers
+    New chat and Close.
+  * **Chats** outside any folder.
+  * **Files**, as before.
+
+  Only one machine is shown at a time, instead of one long tree of every host, folder and chat. A search
+  still looks through every machine at once and groups the results by machine. New chat opens in the
+  machine and project you are looking at.
+* **The composer holds its own controls.** Chat or Agent, the model and the folder moved from the row
+  above the box into the box itself. The row inside the box is now: attach, image, voice | Chat or Agent |
+  model | folder | a round Send button. While a turn is running, the box offers to add your message to
+  that turn, and shows Stop beside Send.
+
 ## [0.12.5] — A live stream in the order it happens, chats per project, and one sign-in for every host
 
 From the report: *"every step every process jano dakha jai AI ki korse ki think korse"*, *"project base

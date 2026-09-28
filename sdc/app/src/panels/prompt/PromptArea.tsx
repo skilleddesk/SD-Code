@@ -1,5 +1,5 @@
 import {
-  CornerDownLeft,
+  ArrowUp,
   Square,
   Database,
   Hash,
@@ -58,7 +58,7 @@ import { usePrefsStore } from '../../store/prefs';
  * wide monitor.
  */
 const CHIP =
-  'chip inline-flex h-[28px] items-center gap-[5px] rounded-md border border-border-subtle bg-bg-raised px-[8px] py-[3px] font-mono text-[11px] text-text-secondary';
+  'chip inline-flex h-[26px] items-center gap-[5px] rounded-full px-[9px] font-mono text-[11px] text-text-muted';
 
 export interface PromptAreaProps {
   /** The chat this box sends to - in split view there are two, and each pane's box is its own chat's. */
@@ -248,70 +248,42 @@ export function PromptArea({ sessionId }: PromptAreaProps = {}) {
        running turn for real; this box used to catch it first and only toast "Interrupted". */
   };
 
+  const typing = running !== null;
+
   return (
-    <div className="prompt-area shrink-0 border-t border-border-subtle bg-bg-base px-[24px] pb-[12px] pt-[10px] max-600:px-[14px]">
+    <div className="prompt-area shrink-0 bg-bg-base px-[24px] pb-[14px] pt-[6px] max-600:px-[14px]">
       <div className="prompt-inner mx-auto max-w-[780px]">
-        <div className="prompt-toolbar mb-[8px] flex flex-wrap items-center gap-[6px]">
-          <ComposeSwitch />
-
-          <ModelSelector />
-
-          {/* Which folder this chat works in (0.7.6) - and the way to change it. The pane's own
-              chat, so split view's second box never shows the first box's folder (0.10.0). */}
-          <FolderChip sessionId={sessionId} />
-
-          {/*
-            The two context chips, and the reason they are conditional.
-            They used to be fixed strings - `1 file` and `12.4k ctx` - printed under every prompt in
-            every window, including an empty one, because they were the prototype's decoration. A
-            window that says it will carry a file it has not got is lying about the next turn, so
-            each chip now waits for a real count: the daemon reports the context it loaded, and an
-            attachment shows up when `@` actually attaches one.
-          */}
-          {context.files > 0 ? (
-            <span className={CHIP}>
-              <Hash size={10} aria-hidden="true" />
-              <span>{strings.prompt.filesChip(context.files)}</span>
-            </span>
-          ) : null}
-
-          {context.tokens === null ? null : (
-            <span className={CHIP}>
-              <Database size={10} aria-hidden="true" />
-              <span>{strings.prompt.contextChip(context.tokens)}</span>
-            </span>
-          )}
-        </div>
-
         {cardSession === null ? null : <IntentCard sessionId={cardSession} />}
 
         <QueuedChips sessionId={sessionId} />
 
-        <div className="prompt-box flex flex-col gap-[8px] rounded-lg border border-border-default bg-bg-input px-[13px] py-[11px] transition-all duration-base ease-ease focus-within:border-border-strong">
+        {/*
+          The composer (0.12.5): one box with everything in it - the words on top, and under them the
+          attachments, Chat / Agent, the model and the folder, then Send. The controls used to sit in a
+          row above the box, which read as a second toolbar rather than as part of what is being sent.
+        */}
+        <div
+          className={
+            'prompt-box rounded-xl border bg-bg-raised shadow-sm transition-all duration-base ease-ease ' +
+            (typing
+              ? 'border-accent/40'
+              : 'border-border-default focus-within:border-accent/60 focus-within:shadow-[0_0_0_3px_var(--accent-glow)]')
+          }
+        >
           <textarea
             ref={textareaRef}
-            rows={1}
-            className="max-h-[200px] min-h-[22px] w-full resize-none bg-transparent text-[14px] leading-[1.55] text-text-primary placeholder:text-text-muted"
-            placeholder={strings.prompt.placeholder}
+            rows={2}
+            className="block max-h-[240px] min-h-[52px] w-full resize-none bg-transparent px-[15px] pb-[4px] pt-[13px] text-[14px] leading-[1.6] text-text-primary placeholder:text-text-muted"
+            placeholder={typing ? strings.prompt.steerPlaceholder : strings.prompt.placeholder}
             aria-label={strings.prompt.placeholder}
             onInput={grow}
             onKeyDown={handleKeyDown}
           />
 
-          <div className="prompt-actions flex items-center gap-[6px]">
-            <div className="toolbar flex gap-[2px]">
-              <IconButton
-                icon={Paperclip}
-                label={strings.prompt.toolbar.attach}
-                iconSize={14}
-                onClick={() => attach('file')}
-              />
-              <IconButton
-                icon={ImageIcon}
-                label={strings.prompt.toolbar.image}
-                iconSize={14}
-                onClick={() => attach('image')}
-              />
+          <div className="prompt-footer flex flex-wrap items-center gap-[4px] px-[8px] pb-[8px] pt-[2px]">
+            <div className="toolbar flex items-center gap-[1px]">
+              <IconButton icon={Paperclip} label={strings.prompt.toolbar.attach} iconSize={15} onClick={() => attach('file')} />
+              <IconButton icon={ImageIcon} label={strings.prompt.toolbar.image} iconSize={15} onClick={() => attach('image')} />
               <VoiceButton
                 {...(sessionId === undefined ? {} : { sessionId })}
                 onText={(spoken) => {
@@ -330,26 +302,67 @@ export function PromptArea({ sessionId }: PromptAreaProps = {}) {
               />
             </div>
 
-            {running === null ? (
-              <button
-                type="button"
-                className="send-btn ml-auto flex items-center gap-[6px] rounded-md bg-accent-fill px-[13px] py-[6px] text-[12px] font-semibold text-text-on-accent transition-all duration-fast ease-ease hover:bg-accent-hover hover:shadow-[0_3px_12px_var(--accent-glow)] active:scale-[.97]"
-                onClick={send}
-              >
-                {strings.prompt.send}
-                <CornerDownLeft size={12} aria-hidden="true" />
-              </button>
-            ) : (
-              <button
-                type="button"
-                className="stop-btn ml-auto flex items-center gap-[6px] rounded-md border border-state-error bg-red-subtle px-[13px] py-[6px] text-[12px] font-semibold text-state-error transition-all duration-fast ease-ease hover:bg-state-error hover:text-text-on-accent active:scale-[.97]"
-                title={strings.prompt.stopHint}
-                onClick={() => void interruptTurn(running)}
-              >
-                <Square size={11} aria-hidden="true" fill="currentColor" />
-                {strings.prompt.stop}
-              </button>
+            <span className="mx-[4px] h-[16px] w-px bg-border-subtle" aria-hidden="true" />
+
+            <ComposeSwitch />
+            <ModelSelector />
+            {/* Which folder this chat works in (0.7.6) - and the way to change it. The pane's own chat, so
+                split view's second box never shows the first box's folder (0.10.0). */}
+            <FolderChip sessionId={sessionId} />
+
+            {/* Real counts only: an attachment the box does not have is not shown (0.7.x). */}
+            {context.files > 0 ? (
+              <span className={CHIP}>
+                <Hash size={11} aria-hidden="true" />
+                <span>{strings.prompt.filesChip(context.files)}</span>
+              </span>
+            ) : null}
+
+            {context.tokens === null ? null : (
+              <span className={CHIP}>
+                <Database size={11} aria-hidden="true" />
+                <span>{strings.prompt.contextChip(context.tokens)}</span>
+              </span>
             )}
+
+            <div className="ml-auto flex items-center gap-[8px]">
+              <span className="send-hint hidden font-mono text-[10px] text-text-muted 2xl:inline">
+                {typing ? strings.prompt.steerHint : strings.prompt.sendHint}
+              </span>
+
+              {typing ? (
+                <>
+                  <button
+                    type="button"
+                    className="send-btn grid h-[32px] w-[32px] place-items-center rounded-full bg-accent-fill text-text-on-accent transition-all duration-fast ease-ease hover:bg-accent-hover active:scale-[.94]"
+                    title={strings.prompt.steerSend}
+                    aria-label={strings.prompt.steerSend}
+                    onClick={send}
+                  >
+                    <ArrowUp size={16} aria-hidden="true" />
+                  </button>
+                  <button
+                    type="button"
+                    className="stop-btn grid h-[32px] w-[32px] place-items-center rounded-full border border-state-error/60 bg-red-subtle text-state-error transition-all duration-fast ease-ease hover:bg-state-error hover:text-text-on-accent active:scale-[.94]"
+                    title={strings.prompt.stopHint}
+                    aria-label={strings.prompt.stop}
+                    onClick={() => void interruptTurn(running)}
+                  >
+                    <Square size={11} aria-hidden="true" fill="currentColor" />
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  className="send-btn grid h-[32px] w-[32px] place-items-center rounded-full bg-accent-fill text-text-on-accent shadow-sm transition-all duration-fast ease-ease hover:bg-accent-hover hover:shadow-[0_3px_12px_var(--accent-glow)] active:scale-[.94]"
+                  title={strings.prompt.send}
+                  aria-label={strings.prompt.send}
+                  onClick={send}
+                >
+                  <ArrowUp size={16} aria-hidden="true" />
+                </button>
+              )}
+            </div>
           </div>
         </div>
       </div>

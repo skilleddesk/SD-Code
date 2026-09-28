@@ -47,15 +47,15 @@ export function FolderChip({ sessionId }: FolderChipProps = {}) {
   return (
     <button
       type="button"
-      className="folder-chip chip inline-flex h-[28px] max-w-[260px] items-center gap-[5px] rounded-md border border-border-subtle bg-bg-raised px-[8px] py-[3px] font-mono text-[11px] text-text-secondary transition-all duration-fast ease-ease hover:border-border-default hover:bg-bg-hover hover:text-text-primary"
+      className="folder-chip chip inline-flex h-[26px] max-w-[220px] items-center gap-[5px] rounded-full border border-transparent px-[9px] text-[11.5px] text-text-secondary transition-all duration-fast ease-ease hover:border-border-subtle hover:bg-bg-hover hover:text-text-primary"
       /* The tooltip is the whole path, which is the part the label had to drop. */
       title={root === null ? strings.folder.change : `${root} · ${strings.folder.change}`}
       aria-label={root === null ? strings.folder.change : `${root} · ${strings.folder.change}`}
       onClick={() => void changeFolder(session.id)}
     >
-      <FolderOpen size={10} aria-hidden="true" className="shrink-0" />
+      <FolderOpen size={12} aria-hidden="true" className="shrink-0 text-accent" />
       <span className="truncate">
-        {name === null ? strings.folder.none : strings.folder.workingIn(name)}
+        {name === null ? strings.folder.none : name}
       </span>
     </button>
   );
