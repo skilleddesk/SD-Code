@@ -1014,6 +1014,13 @@ impl Daemon {
         let project_id = envelope.opt_str("projectId").filter(|id| !id.trim().is_empty());
         let root = self.project_root_of(project_id.as_deref())?;
 
+        /* A chat that was closed (or never existed) is refused (0.12.8): an update to it used to be
+           accepted and announced, and a folder bound to a deleted chat looked like a fix that never
+           reached the chat on screen. */
+        if self.store().session(&session_id).map_err(ErrorObject::internal)?.is_none() {
+            return Err(ErrorObject::not_found(format!("no chat `{session_id}` - it was closed, or never opened")));
+        }
+
         self.store()
             .update_session(
                 &session_id,

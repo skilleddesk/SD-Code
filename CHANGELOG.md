@@ -15,6 +15,14 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [0.12.8] — An update to a closed chat is refused, not silently accepted
+
+Found while checking 0.12.7 installed over the running app. To restore example-shop.com's chat, a
+`session.update` bound the folder to `n49400`, a chat closed hours earlier. The real chat was `n49430`. The
+daemon accepted the update and announced it, so the fix looked done while the chat on screen still had no
+folder. `session.update` now refuses a chat that was closed or never opened, and names it. example-shop.com's
+chat is bound to `/var/www/example-shop.com` again.
+
 ## [0.12.7] — A project cannot be removed by one slip, and one Claude sign-in measured on a real VPS
 
 * **Removing a project now takes two deliberate clicks.** In 0.12.6 an ✕ appeared right beside a project's
