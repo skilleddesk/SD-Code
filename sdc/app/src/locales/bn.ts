@@ -45,7 +45,10 @@ export const bn: StringsPack = {
   connect: {
     baseUrlLabel: 'Base URL (আপনার Model Studio workspace)',
     baseUrlHint:
-      'খালি রাখলে আন্তর্জাতিক endpoint (dashscope-intl) ব্যবহার হবে। workspace-এর key শুধু নিজের workspace URL-এ কাজ করে — Model Studio console থেকে কপি করে বসান। Kimi, DeepSeek, GLM, MiniMax আর Qwen সবই এখানে উত্তর দেয়।',
+      'খালি রাখলে আন্তর্জাতিক endpoint (dashscope-intl) ব্যবহার হবে। workspace-এর key শুধু নিজের workspace URL-এ কাজ করে — Model Studio console থেকে কপি করে বসান। Qwen, DeepSeek, Kimi আর GLM সবই এখানে উত্তর দেয়, আর Alibaba নতুন মডেল আনলে তালিকা নিজে থেকেই আপডেট হয়। যত খুশি মডেলে Use চাপুন।',
+    selected: 'ব্যবহারে আছে',
+    use: 'ব্যবহার করুন',
+    remove: 'সরান',
   },
   settings: {
     nav: [

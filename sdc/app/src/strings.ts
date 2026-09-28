@@ -866,7 +866,7 @@ const english = {
     baseUrlLabel: 'Base URL (your Model Studio workspace)',
     baseUrlPlaceholder: 'https://ws-xxxx.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1',
     baseUrlHint:
-      'Leave empty for the international endpoint (dashscope-intl). A workspace key works only on its own workspace URL - paste it from the Model Studio console. Kimi, DeepSeek, GLM, MiniMax and Qwen all answer here.',
+      'Leave empty for the international endpoint (dashscope-intl). A workspace key works only on its own workspace URL - paste it from the Model Studio console. Qwen, DeepSeek, Kimi and GLM all answer here, and the list updates itself when Alibaba adds a model. Press Use on as many models as you like.',
     saveKey: 'Save key',
     refresh: 'Refresh',
     modelsHint: (shown: number, total: number, snapshot: string): string =>
@@ -908,6 +908,8 @@ const english = {
     },
     selected: 'In use',
     use: 'Use',
+    /** Takes a model out of use (0.12.4); more than one can be in use at once. */
+    remove: 'Remove',
     modelsFailed: 'Could not load the models',
     modelFailed: 'Could not record that model',
     context: (ctx: number) => (ctx <= 0 ? 'context not listed' : `${Math.round(ctx / 1000)}K context`),

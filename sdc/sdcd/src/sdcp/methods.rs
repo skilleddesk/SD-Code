@@ -2495,8 +2495,14 @@ impl Daemon {
     /// `models.select`: record the chosen model. A setting, not an event - see `providers::models`.
     fn models_select(&self, _envelope: &Envelope, _out: &dyn Notifier) -> Result<Value, ErrorObject> {
         let model_id = _envelope.require_str("modelId")?;
+        let provider_id = _envelope.opt_str("providerId");
 
-        crate::providers::models::select(self.store(), &model_id, _envelope.opt_str("providerId").as_deref())
+        /* `remove: true` takes the model out of use (0.12.4); without it, `Use` adds it and chooses it. */
+        if _envelope.params.get("remove").and_then(Value::as_bool).unwrap_or(false) {
+            return crate::providers::models::release(self.store(), &model_id, provider_id.as_deref());
+        }
+
+        crate::providers::models::select(self.store(), &model_id, provider_id.as_deref())
     }
 
     /// `shell.run`: one command, run to completion, with its output captured and its failure

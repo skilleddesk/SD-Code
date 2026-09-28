@@ -80,6 +80,36 @@ pub fn translate(tool: &str, output: &str) -> Translation {
         );
     }
 
+    /* 0.12.4: the engine's own sign-in, not SSH's. `claude` on a VPS keeps its OAuth token in that
+       machine's `~/.claude`, apart from this PC's - the report was signed in here, expired there. */
+    if haystack.contains("failed to authenticate")
+        || haystack.contains("oauth session expired")
+        || haystack.contains("oauth token has expired")
+        || haystack.contains("please run /login")
+    {
+        return rule(
+            &format!("{tool} is signed out where this chat runs"),
+            format!("`{first_line}`. The CLI's sign-in on the machine this chat runs on has expired. A sign-in on this PC does not reach a VPS - each machine keeps its own. Open a terminal on that machine, run `claude` and type `/login` (or pick another engine), then send the message again."),
+            false,
+            "engine-signed-out",
+        );
+    }
+
+    /* 0.12.4: a provider that refused the stored key - Alibaba says `Invalid API-key provided`, OpenAI
+       and DeepSeek `Incorrect API key`. Nothing an agent can fix: the key itself has to change. */
+    if haystack.contains("invalid api-key")
+        || haystack.contains("invalid api key")
+        || haystack.contains("incorrect api key")
+        || haystack.contains("invalid_api_key")
+    {
+        return rule(
+            "The provider refused the API key",
+            format!("`{first_line}`. The key saved for this provider is wrong, expired or was made for another region or workspace. Open Providers, paste a fresh key on that provider's card and press Test, then send the message again."),
+            false,
+            "api-key-rejected",
+        );
+    }
+
     /* `env: 'gemini': No such file or directory` - a CLI that is not installed on the machine the chat
        runs on (a VPS, usually). */
     if let Some(program) = haystack
@@ -211,6 +241,24 @@ mod tests {
 
         /* A real file permission problem keeps its own sentence. */
         assert_eq!(translate("npm", "EACCES: permission denied, open '/srv/app/x'").rule, "permission-denied");
+    }
+
+    /// The 0.12.4 report: signed in to `claude` on the PC, the chat ran on the VPS where it had expired.
+    #[test]
+    fn an_expired_engine_sign_in_says_which_machine() {
+        let translated = translate("claude_code", "Failed to authenticate: OAuth session expired and could not be refreshed");
+
+        assert_eq!(translated.rule, "engine-signed-out");
+        assert!(translated.explanation.contains("/login"), "{}", translated.explanation);
+        assert!(translated.explanation.contains("VPS"), "{}", translated.explanation);
+
+        /* The same round's second card: Alibaba refusing the stored key. */
+        let refused = translate(
+            "native_api",
+            "Invalid API-key provided. For details, see: https://www.alibabacloud.com/help/en/model-studio/error-code#apikey-error (401)",
+        );
+
+        assert_eq!(refused.rule, "api-key-rejected");
     }
 
     #[test]

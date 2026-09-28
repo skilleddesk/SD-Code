@@ -220,6 +220,13 @@ export interface ModelsView {
   refreshed: boolean;
   notes: string[];
   selected: { modelId: string | null; providerId: string | null };
+  /** The models a person put in use (0.12.4) - more than one; the chat's menu offers these first. */
+  inUse?: InUseModel[];
+}
+
+export interface InUseModel {
+  modelId: string;
+  providerId: string | null;
 }
 
 /**
@@ -232,9 +239,10 @@ export interface ModelsView {
  */
 export async function refreshCatalog(): Promise<void> {
   try {
-    const { models } = (await sdcpCall('models.list', {})) as ModelsView;
+    const { models, inUse } = (await sdcpCall('models.list', {})) as ModelsView;
 
     useModelStore.getState().setCatalog(models.map((row) => ({ ...row, tier: tierFromName(row.tier) })));
+    useModelStore.getState().setInUse(inUse ?? []);
   } catch {
     /* A window with no daemon keeps its fallback list; the boot toast has already explained why. */
   }
@@ -311,9 +319,16 @@ export async function loadModels(providerId: string | null, refresh: boolean): P
  */
 export async function chooseModel(modelId: string, providerId: string): Promise<boolean> {
   try {
-    await sdcpCall('models.select', { modelId, providerId });
+    const answer = (await sdcpCall('models.select', { modelId, providerId })) as { inUse?: InUseModel[] } | undefined;
 
-    const { catalog, choose } = useModelStore.getState();
+    const { catalog, choose, setInUse, inUse } = useModelStore.getState();
+
+    setInUse(
+      answer?.inUse ??
+        (inUse.some((entry) => entry.modelId === modelId && entry.providerId === providerId)
+          ? inUse
+          : [...inUse, { modelId, providerId }]),
+    );
     const row = catalog.find((model) => model.id === modelId && model.providerId === providerId);
 
     choose({
@@ -329,6 +344,28 @@ export async function chooseModel(modelId: string, providerId: string): Promise<
   } catch (error) {
     reportFailure(error, strings.connect.modelFailed);
     return false;
+  }
+}
+
+/**
+ * Takes a model out of use (0.12.4). The chat keeps running what it runs; the model only leaves the
+ * menu's in-use list. Answers the list as it now stands, or `null` when the daemon refused.
+ */
+export async function releaseModel(modelId: string, providerId: string): Promise<InUseModel[] | null> {
+  try {
+    const answer = (await sdcpCall('models.select', { modelId, providerId, remove: true })) as {
+      inUse?: InUseModel[];
+    };
+    const inUse =
+      answer.inUse ??
+      useModelStore.getState().inUse.filter((entry) => !(entry.modelId === modelId && entry.providerId === providerId));
+
+    useModelStore.getState().setInUse(inUse);
+
+    return inUse;
+  } catch (error) {
+    reportFailure(error, strings.connect.modelFailed);
+    return null;
   }
 }
 

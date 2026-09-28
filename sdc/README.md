@@ -359,8 +359,8 @@ it is reached.
 * **0.12's Trust Kernel is code; some parts of the plan are not.** Code signing (a certificate), a notarised
   macOS build (an Apple account), pilot agencies, legal review of the client approval page, A/B tests and
   pricing are outside this repository. Team roles are enforced by the daemon on one machine: a shared team
-  server is not built. The Qwen (Alibaba) provider follows Alibaba's OpenAI-compatible sample but has not run a
-  live turn from here without a key. Of the ten UI languages, Bengali covers every screen, and the other eight
+  server is not built. The Alibaba Cloud provider was measured live on 2026-09-28 (a workspace key: the
+  live list of 172 ids, and chat turns on qwen3.8-max and deepseek-v4.1-flash). Of the ten UI languages, Bengali covers every screen, and the other eight
   cover the chrome and the new screens, with English for the rest.
 
 ## Next step

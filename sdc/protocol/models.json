@@ -1,6 +1,6 @@
 {
   "$comment": "The model catalogue, as data (master spec section 9.10: 'the model list is always up to date'). This file is what the daemon ships with, so a fresh install can offer sensible models with no network at all. It is NOT the source of truth: `models.list { refresh: true }` asks each provider's own endpoint and caches what it answers, and a model the provider has that this file has never heard of is still shown. Editing this file is how a curated row (tier, context, price) is added or corrected - no code change, no rebuild of the daemon's logic.",
-  "snapshot": "2026-09-25",
+  "snapshot": "2026-09-28",
   "providers": [
     {
       "id": "ollama",
@@ -287,16 +287,58 @@
     },
     {
       "id": "qwen",
-      "label": "Qwen (Alibaba)",
+      "label": "Alibaba Cloud",
       "live": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/models",
       "protocol": "openai",
       "models": [
         {
-          "id": "qwen3-max",
+          "id": "qwen3.8-max",
           "tier": "deep",
-          "ctx": 256000,
-          "cost": "$1.20 / $6",
-          "name": "Qwen3 Max"
+          "ctx": 0,
+          "cost": "",
+          "name": "Qwen3.8 Max"
+        },
+        {
+          "id": "qwen3.8-flash",
+          "tier": "fast",
+          "ctx": 0,
+          "cost": "",
+          "name": "Qwen3.8 Flash"
+        },
+        {
+          "id": "qwen3.7-max",
+          "tier": "deep",
+          "ctx": 0,
+          "cost": "",
+          "name": "Qwen3.7 Max"
+        },
+        {
+          "id": "qwen3.7-plus",
+          "tier": "balanced",
+          "ctx": 0,
+          "cost": "",
+          "name": "Qwen3.7 Plus"
+        },
+        {
+          "id": "qwen3.7-flash",
+          "tier": "fast",
+          "ctx": 0,
+          "cost": "",
+          "name": "Qwen3.7 Flash"
+        },
+        {
+          "id": "qwen3.6-plus",
+          "tier": "balanced",
+          "ctx": 0,
+          "cost": "",
+          "name": "Qwen3.6 Plus"
+        },
+        {
+          "id": "qwen3-coder-next",
+          "tier": "balanced",
+          "ctx": 0,
+          "cost": "",
+          "name": "Qwen3 Coder Next"
         },
         {
           "id": "qwen3-coder-plus",
@@ -304,6 +346,13 @@
           "ctx": 1000000,
           "cost": "$1 / $5",
           "name": "Qwen3 Coder Plus"
+        },
+        {
+          "id": "qwen3-max",
+          "tier": "deep",
+          "ctx": 256000,
+          "cost": "$1.20 / $6",
+          "name": "Qwen3 Max"
         },
         {
           "id": "qwen-plus",
@@ -327,42 +376,28 @@
           "name": "Kimi K3"
         },
         {
-          "id": "kimi-k2-thinking",
+          "id": "kimi-k2.7-code",
+          "tier": "balanced",
+          "ctx": 0,
+          "cost": "",
+          "name": "Kimi K2.7 Code"
+        },
+        {
+          "id": "glm-5.3",
+          "tier": "balanced",
+          "ctx": 0,
+          "cost": "",
+          "name": "GLM-5.3"
+        },
+        {
+          "id": "glm-5.3-prime",
           "tier": "deep",
-          "ctx": 256000,
+          "ctx": 0,
           "cost": "",
-          "name": "Kimi K2 Thinking"
-        },
-        {
-          "id": "deepseek-v3.2",
-          "tier": "balanced",
-          "ctx": 128000,
-          "cost": "",
-          "name": "DeepSeek V3.2"
-        },
-        {
-          "id": "deepseek-r1",
-          "tier": "deep",
-          "ctx": 128000,
-          "cost": "",
-          "name": "DeepSeek R1"
-        },
-        {
-          "id": "glm-4.6",
-          "tier": "balanced",
-          "ctx": 200000,
-          "cost": "",
-          "name": "GLM-4.6"
-        },
-        {
-          "id": "MiniMax-M2",
-          "tier": "balanced",
-          "ctx": 200000,
-          "cost": "",
-          "name": "MiniMax M2"
+          "name": "GLM-5.3 Prime"
         }
       ],
-      "$comment": "Alibaba Cloud Model Studio (DashScope), OpenAI-compatible. The base URL can be set per workspace in Connect (ws-<id>.<region>.maas.aliyuncs.com/compatible-mode/v1). Besides Qwen it serves Kimi, DeepSeek, GLM and MiniMax; Wan and HappyHorse are image/video models the live list also shows, which the chat does not run. Prices left empty are unknown to this build and are not guessed."
+      "$comment": "Alibaba Cloud Model Studio (DashScope; id stays qwen so a stored key keeps working), OpenAI-compatible. The base URL can be set per workspace in Connect (ws-<id>.<region>.maas.aliyuncs.com/compatible-mode/v1). Besides Qwen it serves Kimi, DeepSeek, GLM and MiniMax; Wan and HappyHorse are image/video models the live list also shows, which the chat does not run. Prices left empty are unknown to this build and are not guessed. The list refreshes from the live /models at start, every 12 h and when a key is saved; these rows were taken from that list on 2026-09-28. DeepSeek V4 ids are left to the live list: DeepSeek uses the same ids, and a bundled row would pull a provider-less turn to Alibaba."
     },
     {
       "id": "zai",

@@ -175,7 +175,12 @@ export const VERSIONS_PER_FAMILY = 2;
  * run a coding turn, so they are left out of the menu rather than labelled.
  */
 const NOT_A_CHAT_MODEL =
-  /(embed|tts|whisper|dall-e|davinci|babbage|moderation|image|audio|realtime|transcribe|search|speech|vision-preview|guard|^wan[0-9.]|wanx|happyhorse|t2i|t2v|i2v)/i;
+  /(embed|tts|whisper|dall-e|davinci|babbage|moderation|image|audio|realtime|transcribe|search|speech|vision-preview|guard|^wan[0-9.]|wanx|happyhorse|t2i|t2v|i2v|asr|livetranslate|-ocr|captioner|s2s|tingwu|ccai|^qwen-mt|character)/i;
+
+/** Can this id run a chat turn? The Connect list and the chat's menu use the same answer. */
+export function isChatModel(id: string): boolean {
+  return !NOT_A_CHAT_MODEL.test(id);
+}
 
 /** A model id taken apart: the family it belongs to, and where it sits in that family. */
 export interface ModelVersion {
@@ -372,6 +377,7 @@ export function filterGroups(groups: readonly CatalogGroup[], query: string): Ca
 export function groupCatalog(
   catalog: readonly CatalogModel[],
   providers: readonly { id: string; name: string; status: string }[],
+  inUse: readonly { modelId: string; providerId: string | null }[] = [],
 ): ConnectedCatalog {
   const connected = new Set(
     providers.filter((provider) => provider.status === 'connected').map((provider) => provider.id),
@@ -401,7 +407,15 @@ export function groupCatalog(
       continue;
     }
 
-    const { current, older } = latestVersions(entry.models);
+    /* The models a person put in use are this provider's menu; everything else it lists is one
+       click away. With none in use, the newest versions of each family, as before. */
+    const chosen = entry.models.filter((row) =>
+      inUse.some((use) => use.modelId === row.id && use.providerId === providerId),
+    );
+    const { current, older } =
+      chosen.length > 0
+        ? { current: chosen, older: entry.models.filter((row) => !chosen.includes(row)) }
+        : latestVersions(entry.models);
     const byTier = (left: CatalogModel, right: CatalogModel): number =>
       TIER_ORDER[right.tier] - TIER_ORDER[left.tier] || left.name.localeCompare(right.name);
 
@@ -557,6 +571,11 @@ export interface ModelState {
   providerId: string | null;
   /** The daemon's catalogue, as `models.list` last answered it. */
   catalog: CatalogModel[];
+  /**
+   * The models a person put in use from Connect (0.12.4) - more than one. A provider with any in use
+   * shows those in the menu, and the rest of its list behind `Older versions…`.
+   */
+  inUse: { modelId: string; providerId: string | null }[];
   /** The dropdown's own open flag, so an outside click can close it from anywhere. */
   dropdownOpen: boolean;
   /**
@@ -591,6 +610,7 @@ export interface ModelActions {
   setModel: (model: string) => void;
   /** Fold a `models.list` answer in - called on boot and whenever the dropdown opens. */
   setCatalog: (models: readonly CatalogModel[]) => void;
+  setInUse: (inUse: readonly { modelId: string; providerId: string | null }[]) => void;
   /** One row of the dropdown: engine, provider, model and tier together. */
   choose: (choice: { engine: EngineId; providerId: string; model: string; tier: Tier }) => void;
   openDropdown: () => void;
@@ -617,6 +637,7 @@ const initialModelState: ModelState = {
   model: 'sonnet',
   providerId: 'claude',
   catalog: [],
+  inUse: [],
   dropdownOpen: false,
   queued: [],
   /* Agent by default: the product's promise is "describe it and it gets built". */
@@ -668,6 +689,10 @@ export const useModelStore = create<ModelState & ModelActions>()((set, get) => (
     const known = catalog.some((model) => model.id === state.model);
 
     set(known || catalog.length === 0 ? { catalog } : { catalog, model: catalog[0]?.id ?? state.model });
+  },
+
+  setInUse: (inUse) => {
+    set({ inUse: [...inUse] });
   },
 
   choose: ({ engine, providerId, model, tier }) => {

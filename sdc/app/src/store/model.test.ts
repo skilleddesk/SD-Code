@@ -122,6 +122,23 @@ describe('groupCatalog', () => {
     expect(groups[0]?.models.map((model) => model.id)).toEqual(['gpt-5']);
   });
 
+  /* 0.12.4: "multiple use ar option rakba" - the models put in use are the provider's menu. */
+  it('shows every model in use for a provider, and the rest behind older', () => {
+    const alibaba = [
+      row('qwen3.8-max', 'qwen'),
+      row('qwen3.8-flash', 'qwen'),
+      row('deepseek-v4.1-flash', 'qwen'),
+      row('qwen3-tts-flash', 'qwen'),
+    ];
+    const { groups } = groupCatalog(alibaba, connected('qwen'), [
+      { modelId: 'qwen3.8-max', providerId: 'qwen' },
+      { modelId: 'deepseek-v4.1-flash', providerId: 'qwen' },
+    ]);
+
+    expect(groups[0]?.models.map((model) => model.id).sort()).toEqual(['deepseek-v4.1-flash', 'qwen3.8-max']);
+    expect(groups[0]?.older.map((model) => model.id)).toEqual(['qwen3.8-flash']);
+  });
+
   it('has no groups when nothing is connected', () => {
     const { groups, disconnected } = groupCatalog(catalog, []);
 

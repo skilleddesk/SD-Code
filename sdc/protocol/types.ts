@@ -1789,11 +1789,18 @@ export interface SdcpMethodMap {
       /** Why a refresh could not reach a provider, in words. Empty when every one was reached. */
       notes: string[];
       selected: { modelId: string | null; providerId: string | null };
+      /** The models in use (0.12.4): more than one, oldest first. */
+      inUse: { modelId: string; providerId: string | null }[];
     };
   };
+  /** Choose a model and put it in use - or, with `remove`, take it out of use without switching. */
   'models.select': {
-    params: { modelId: string; providerId?: string };
-    result: { modelId: string; providerId?: string | null };
+    params: { modelId: string; providerId?: string; remove?: boolean };
+    result: {
+      modelId: string;
+      providerId?: string | null;
+      inUse: { modelId: string; providerId: string | null }[];
+    };
   };
 
   /**

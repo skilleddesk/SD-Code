@@ -48,7 +48,7 @@ pub const CATALOG: &[(&str, &str, &str, &str, &str, &str)] = &[
     ("xai", "xAI Grok", "api-key", "xai", "X", "Direct API key · pay per token"),
     ("moonshot", "Moonshot Kimi", "api-key", "moonshot", "K", "Direct API key · pay per token"),
     ("mistral", "Mistral", "api-key", "mistral", "M", "Direct API key · pay per token"),
-    ("qwen", "Qwen (Alibaba)", "api-key", "qwen", "Q", "Alibaba Cloud Model Studio · Qwen, Kimi, DeepSeek, GLM, MiniMax"),
+    ("qwen", "Alibaba Cloud", "api-key", "qwen", "A", "Model Studio · Qwen, DeepSeek, Kimi, GLM · list updates itself"),
     ("zai", "Z.ai GLM", "api-key", "zai", "Z", "Direct API key · pay per token"),
     ("openrouter", "OpenRouter", "api-key", "openrouter", "O", "One key · 200+ models"),
     ("ollama", "Ollama", "local", "ollama", "O", "Local models · auto-detected on this machine"),

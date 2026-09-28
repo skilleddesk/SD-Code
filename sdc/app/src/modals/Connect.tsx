@@ -16,6 +16,7 @@ import {
   cancelCliLogin,
   chooseModel,
   connectApiKey,
+  releaseModel,
   loadCliRecipe,
   loadModels,
   pollCliLogin,
@@ -27,7 +28,7 @@ import {
 } from '../store/intents';
 import { useOverlayStore } from '../store/overlays';
 import { useProviderStore } from '../store/providers';
-import { tierFromName, tierLabel } from '../store/model';
+import { isChatModel, tierFromName, tierLabel, useModelStore } from '../store/model';
 import { toast } from '../store/toast';
 import { Badge, type BadgeTone } from '../panels/ui/Badge';
 import { BTN, BTN_GHOST, BTN_LG, BTN_PRIMARY, BTN_SECONDARY, BTN_SM, BTN_SM_LG } from '../panels/ui/button';
@@ -202,14 +203,23 @@ export function Connect() {
     return () => window.clearTimeout(timer);
   }, [login, close]);
 
+  /* 0.12.4: more than one model can be in use, and the ones in use sit at the top. Speech, image and
+     embedding models are left out here as they are in the chat's menu - Alibaba lists 170 ids, most of
+     which cannot run a coding turn. */
+  const isInUse = (modelId: string): boolean =>
+    models !== null &&
+    (models.inUse ?? []).some((entry) => entry.modelId === modelId && entry.providerId === (providerId ?? null));
   const shown =
     models === null
       ? []
-      : models.models.filter((model) =>
-          filter.trim() === ''
-            ? true
-            : `${model.id} ${model.name}`.toLowerCase().includes(filter.trim().toLowerCase()),
-        );
+      : models.models
+          .filter((model) => isChatModel(model.id))
+          .filter((model) =>
+            filter.trim() === ''
+              ? true
+              : `${model.id} ${model.name}`.toLowerCase().includes(filter.trim().toLowerCase()),
+          )
+          .sort((left, right) => Number(isInUse(right.id)) - Number(isInUse(left.id)));
 
   const copy = (text: string): void => {
     void navigator.clipboard?.writeText(text).then(() => toast(strings.connect.copied));
@@ -259,10 +269,20 @@ export function Connect() {
   const use = (modelId: string): void => {
     void chooseModel(modelId, providerId ?? '').then((ok) => {
       if (ok) {
+        const inUse = useModelStore.getState().inUse;
+
         setModels((current) =>
-          current === null ? current : { ...current, selected: { modelId, providerId: providerId ?? null } },
+          current === null ? current : { ...current, selected: { modelId, providerId: providerId ?? null }, inUse },
         );
         toast(`${modelId} · ${strings.connect.selected}`);
+      }
+    });
+  };
+
+  const remove = (modelId: string): void => {
+    void releaseModel(modelId, providerId ?? '').then((inUse) => {
+      if (inUse !== null) {
+        setModels((current) => (current === null ? current : { ...current, inUse }));
       }
     });
   };
@@ -646,7 +666,7 @@ export function Connect() {
                     ) : (
                       <ul className="flex max-h-[240px] flex-col gap-[4px] overflow-y-auto" id="connectModels">
                         {shown.map((model) => {
-                          const inUse = models.selected.modelId === model.id;
+                          const inUse = isInUse(model.id);
                           const tier = tierLabel(tierFromName(String(model.tier)));
 
                           return (
@@ -684,8 +704,18 @@ export function Connect() {
                               </div>
 
                               {inUse ? (
-                                <span className="flex h-[24px] shrink-0 items-center gap-[5px] rounded-md bg-green-subtle px-[9px] text-[10.5px] font-semibold text-state-success">
-                                  <Check size={11} aria-hidden="true" /> {strings.connect.selected}
+                                <span className="flex shrink-0 items-center gap-[5px]">
+                                  <span className="flex h-[24px] items-center gap-[5px] rounded-md bg-green-subtle px-[9px] text-[10.5px] font-semibold text-state-success">
+                                    <Check size={11} aria-hidden="true" /> {strings.connect.selected}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    className={BTN_SM + ' ' + BTN_SECONDARY}
+                                    aria-label={`${strings.connect.remove} ${model.id}`}
+                                    onClick={() => remove(model.id)}
+                                  >
+                                    {strings.connect.remove}
+                                  </button>
                                 </span>
                               ) : (
                                 <button

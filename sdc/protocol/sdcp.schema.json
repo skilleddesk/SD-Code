@@ -1107,17 +1107,24 @@
             "notes": [
               "string"
             ],
-            "selected": "object"
+            "selected": "object",
+            "inUse": [
+              "object"
+            ]
           }
         },
         "models.select": {
           "params": {
             "modelId": "string",
-            "providerId": "string?"
+            "providerId": "string?",
+            "remove": "boolean?"
           },
           "result": {
             "modelId": "string",
-            "providerId": "string?"
+            "providerId": "string?",
+            "inUse": [
+              "object"
+            ]
           }
         },
         "event.list": {

@@ -95,7 +95,7 @@ function viaOf(group: CatalogGroup): 'cli' | 'api' | 'local' {
 }
 
 export function ModelDropdown() {
-  const { tier, providerId, model, catalog, setTier, choose } = useModelStore();
+  const { tier, providerId, model, catalog, inUse, setTier, choose } = useModelStore();
   const providers = useProviderStore((state) => state.providers);
   const openHub = useOverlayStore((state) => state.openHub);
   /* Which groups have their older versions open. Local: it is a view choice, not a fact. */
@@ -114,7 +114,10 @@ export function ModelDropdown() {
     void refreshCatalog();
   }, []);
 
-  const { groups, disconnected } = useMemo(() => groupCatalog(catalog, providers), [catalog, providers]);
+  const { groups, disconnected } = useMemo(
+    () => groupCatalog(catalog, providers, inUse),
+    [catalog, providers, inUse],
+  );
   const searching = query.trim() !== '';
   const shown = useMemo(() => filterGroups(groups, query), [groups, query]);
 

@@ -322,6 +322,7 @@ pub fn list_blocks(
         "refreshed": refresh,
         "notes": notes,
         "selected": selected(store),
+        "inUse": in_use(store),
     }))
 }
 
@@ -506,7 +507,41 @@ pub fn select(store: &Arc<Store>, model_id: &str, provider_id: Option<&str>) -> 
         store.set_setting("model.provider", provider_id).map_err(ErrorObject::internal)?;
     }
 
-    Ok(json!({ "modelId": model_id, "providerId": provider_id }))
+    /* 0.12.4: `Use` adds to the models in use rather than replacing the one - "multiple use ar option
+       rakba". The chosen one is still one; the set is what the chat's menu offers first. */
+    let mut models = in_use(store);
+    let entry = json!({ "modelId": model_id, "providerId": provider_id });
+
+    if !models.contains(&entry) {
+        models.push(entry);
+        store.set_setting(IN_USE_KEY, &Value::Array(models).to_string()).map_err(ErrorObject::internal)?;
+    }
+
+    Ok(json!({ "modelId": model_id, "providerId": provider_id, "inUse": in_use(store) }))
+}
+
+/// The `settings` key the models in use live under: a JSON array of `{ modelId, providerId }`.
+pub const IN_USE_KEY: &str = "model.inUse";
+
+/// The models a person put in use, oldest first. Empty until the first `Use`.
+pub fn in_use(store: &Store) -> Vec<Value> {
+    store
+        .setting(IN_USE_KEY)
+        .ok()
+        .flatten()
+        .and_then(|raw| serde_json::from_str::<Vec<Value>>(&raw).ok())
+        .unwrap_or_default()
+}
+
+/// Takes a model out of use. The chosen model stays chosen - taking it off the menu does not switch
+/// what the chat runs underneath the person.
+pub fn release(store: &Arc<Store>, model_id: &str, provider_id: Option<&str>) -> Result<Value, ErrorObject> {
+    let entry = json!({ "modelId": model_id, "providerId": provider_id });
+    let models: Vec<Value> = in_use(store).into_iter().filter(|model| *model != entry).collect();
+
+    store.set_setting(IN_USE_KEY, &Value::Array(models).to_string()).map_err(ErrorObject::internal)?;
+
+    Ok(json!({ "modelId": model_id, "providerId": provider_id, "inUse": in_use(store) }))
 }
 
 /// The chosen model, or `null`s when the user has not picked one.
@@ -543,6 +578,24 @@ mod tests {
         }
 
         assert_eq!(snapshot_date().len(), 10, "the bundle carries an ISO date");
+    }
+
+    /// "multiple use ar option rakba" (0.12.4): `Use` adds, `remove` takes out, the choice stays one.
+    #[test]
+    fn more_than_one_model_can_be_in_use() {
+        let store = Arc::new(Store::in_memory().unwrap());
+
+        select(&store, "qwen3.8-max", Some("qwen")).unwrap();
+        select(&store, "deepseek-v4.1-flash", Some("qwen")).unwrap();
+        select(&store, "qwen3.8-max", Some("qwen")).unwrap();
+
+        assert_eq!(in_use(&store).len(), 2, "a second Use of the same model is not a second row");
+        assert_eq!(list(&store, Some("qwen"), false).unwrap()["inUse"].as_array().unwrap().len(), 2);
+
+        let left = release(&store, "deepseek-v4.1-flash", Some("qwen")).unwrap();
+
+        assert_eq!(left["inUse"], json!([{ "modelId": "qwen3.8-max", "providerId": "qwen" }]));
+        assert_eq!(selected(&store)["modelId"], json!("qwen3.8-max"));
     }
 
     #[test]

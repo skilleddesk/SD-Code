@@ -15,6 +15,30 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [0.12.4] — Alibaba Cloud: its latest models, more than one in use, and errors that say which key
+
+From a report with two screenshots. A **claude_code** chat on the VPS failed with `OAuth session expired`,
+and a **qwen3-max** chat failed with Alibaba's `Invalid API-key provided (401)`. Both cards said "This
+failure has no rule yet".
+
+* **"Qwen (Alibaba)" is now "Alibaba Cloud".** The provider id stays `qwen`, so a saved key and Base URL
+  keep working.
+* **The latest models.** The bundled list now has Qwen3.8 Max and Flash, Qwen3.7 Max, Plus and Flash,
+  Qwen3.6 Plus, Qwen3 Coder Next, Kimi K3, Kimi K2.7 Code, GLM-5.3 and GLM-5.3 Prime. These rows were taken
+  from Alibaba's own `/models` on 2026-09-28. The live list was already refreshed when the daemon starts,
+  every 12 hours and when a key is saved. It had fallen back to the old bundle only because the saved key was
+  refused. With a working key it lists all 172 ids, including DeepSeek V4.1 Flash. DeepSeek V4 ids are left
+  to the live list, because DeepSeek's own API uses the same ids.
+* **More than one model in use.** `Use` in Connect now adds a model instead of replacing the one that was in
+  use, and `Remove` takes one out. A provider with models in use shows exactly those in the chat's menu, and
+  the rest behind `Older versions…`. `models.select` gains `remove`, and `models.list` and `models.select`
+  answer `inUse`.
+* **Speech, image, translation and OCR models are left out** of the Connect list, as they already were in the
+  chat menu. Alibaba lists about 170 ids, and most of them cannot run a coding turn.
+* **Two new error rules.** `api-key-rejected` handles a provider that refuses the saved key: paste a fresh one
+  on the card. `engine-signed-out` handles an expired CLI sign-in. A VPS keeps its own `claude` login in its
+  own `~/.claude`, apart from this PC's, so the fix is `/login` on that machine.
+
 ## [0.12.3] — Qwen (Alibaba): the key check goes where the key lives
 
 Found by installing 0.12.2 from GitHub over the running app. A **qwen3-max** chat in it had failed with
