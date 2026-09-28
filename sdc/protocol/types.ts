@@ -1629,6 +1629,8 @@ export interface SdcpMethodMap {
       maxSteps?: number;
       /** `/compact` (0.13): the chat's model summarises the conversation; later turns start from the summary. */
       compact?: boolean;
+      /** How hard the model thinks (0.14): Claude Code `--effort`, Codex `model_reasoning_effort`, OpenAI `reasoning_effort`. */
+      effort?: 'low' | 'medium' | 'high' | 'max';
       /** Images attached to the turn (0.13): base64, with their media type. */
       images?: { name: string; mediaType: string; data?: string; path?: string }[];
       /** A confirmed Intent Contract: the Prompt Compiler writes the engine's prompt from it (0.12). */

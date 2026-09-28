@@ -136,6 +136,7 @@ impl Daemon {
                         autonomy: crate::agent::gate::Autonomy::Ask,
                         resume: None,
                         images: Vec::new(),
+                        effort: None,
                     };
                     let finished = tokio::time::timeout(PARSE_TIMEOUT, engine.start(prompt, &recorder.sink())).await;
                     let events = recorder.events();

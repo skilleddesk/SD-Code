@@ -87,6 +87,9 @@ pub enum Resume {
     Flag(&'static str),
     /// Codex: `exec` becomes `exec resume <id>`, and the sandbox flags `resume` does not take become `-c`.
     CodexExec,
+    /// Gemini (0.14): SDC names the conversation itself - `--session-id <uuid>` on the first turn, then
+    /// `--resume <uuid>` (its own source: "--resume {number}, --resume {uuid}, or --resume latest").
+    Chosen { start: &'static str, resume: &'static str },
 }
 
 /// The whole argument list for a turn: the spec's args (or the resume form), the model and the autonomy.
@@ -125,6 +128,8 @@ pub fn turn_args(spec: &CliSpec, prompt: &Prompt, body: &str) -> Vec<String> {
         _ => args.extend(autonomy_args(spec, prompt.autonomy).iter().map(|arg| (*arg).to_string())),
     }
 
+    args.extend(effort_args(spec, prompt.effort.as_deref()));
+
     if let Some(flag) = spec.image_flag {
         for image in &prompt.images {
             args.push(flag.to_string());
@@ -162,10 +167,28 @@ pub fn turn_args(spec: &CliSpec, prompt: &Prompt, body: &str) -> Vec<String> {
             args.push(id.to_string());
             args.push("-".to_string());
         }
+        (Some(id), Resume::Chosen { resume, .. }) => {
+            args.push(resume.to_string());
+            args.push(id.to_string());
+        }
         _ => {}
     }
 
     args
+}
+
+/// The effort flags of a CLI (0.14): Claude Code's `--effort` (low … max) and Codex's
+/// `model_reasoning_effort` (low, medium, high). Gemini has none.
+pub fn effort_args(spec: &CliSpec, effort: Option<&str>) -> Vec<String> {
+    let Some(level) = effort else {
+        return Vec::new();
+    };
+
+    match spec.program {
+        "claude" => vec!["--effort".to_string(), level.to_string()],
+        "codex" => vec!["-c".to_string(), format!("model_reasoning_effort={}", if level == "max" { "high" } else { level })],
+        _ => Vec::new(),
+    }
 }
 
 /// What goes on stdin (or into `{prompt}`): the turns the CLI has not seen, as a transcript with who said
@@ -428,7 +451,20 @@ impl CliAdapter {
     async fn attempt(&self, prompt: &Prompt, sink: &EventSink) {
         /* The body is built first, because an argument-placed prompt has to go in with the flags. */
         let body = turn_body(&self.spec, prompt);
-        let args = turn_args(&self.spec, prompt, &body);
+        let mut args = turn_args(&self.spec, prompt, &body);
+
+        /* A CLI whose conversation SDC names (Gemini): a fresh turn starts one under a new id, and says so
+           once it has ended well - a turn that failed before the CLI wrote its session leaves no record. */
+        let chosen = match (self.spec.resume, &prompt.resume) {
+            (Resume::Chosen { start, .. }, None) => {
+                let id = uuid::Uuid::new_v4().to_string();
+
+                args.push(start.to_string());
+                args.push(id.clone());
+                Some(id)
+            }
+            _ => None,
+        };
 
         /* `host::program` resolves the name the way the shell does - which is what makes an
            npm-installed CLI (`claude.cmd`, `codex.cmd`, `gemini.cmd` on Windows) startable at all. The
@@ -519,6 +555,10 @@ impl CliAdapter {
             Some(stdout) => read_structured(stdout, sink).await,
             None => (Vec::new(), false, None),
         };
+
+        if let (Some(id), true) = (&chosen, ended) {
+            sink.send(EngineEvent::SessionRef(id.clone()));
+        }
 
         if question.is_some() {
             if let Some(pid) = child.id() {
@@ -858,7 +898,25 @@ mod tests {
             autonomy: Default::default(),
             resume: None,
             images: Vec::new(),
+            effort: None,
         }
+    }
+
+    /// 0.14: effort reaches each CLI its own way, and none where the CLI has no knob.
+    #[test]
+    fn effort_reaches_each_cli_its_own_way() {
+        let mut prompt = prompt_in(Some("/p"));
+
+        prompt.effort = Some("max".into());
+
+        assert!(turn_args(&CLAUDE_SPEC, &prompt, "").windows(2).any(|pair| pair == ["--effort", "max"]));
+        assert!(turn_args(&CODEX_SPEC, &prompt, "").windows(2).any(|pair| pair == ["-c", "model_reasoning_effort=high"]));
+        assert!(!turn_args(&GEMINI_SPEC, &prompt, "hi").iter().any(|arg| arg.contains("effort")));
+
+        prompt.effort = None;
+        assert!(!turn_args(&CLAUDE_SPEC, &prompt, "").contains(&"--effort".to_string()));
+        assert_eq!(crate::engines::effort_of(Some(" High ")), Some("high".to_string()));
+        assert_eq!(crate::engines::effort_of(Some("ultra")), None);
     }
 
     /// 0.13.2: an attached image's folder is opened to Claude Code, or its Read waits for a permission.
@@ -906,9 +964,10 @@ mod tests {
         assert!(codex.ends_with(&["bc1240c5".to_string(), "-".to_string()]), "{codex:?}");
         assert!(codex.contains(&"sandbox_mode=workspace-write".to_string()), "resume takes no --sandbox: {codex:?}");
 
-        /* Gemini cannot resume by id: it gets the whole chat, with who said what. */
-        let gemini = turn_body(&GEMINI_SPEC, &prompt);
-        assert!(gemini.contains("Person: old question") && gemini.contains("Assistant: old answer"), "{gemini}");
+        /* Gemini (0.14) resumes the uuid SDC gave it, and is sent only what it missed too. */
+        let gemini = turn_args(&GEMINI_SPEC, &prompt, "hello");
+        assert!(gemini.ends_with(&["--resume".to_string(), "bc1240c5".to_string()]), "{gemini:?}");
+        assert!(!turn_body(&GEMINI_SPEC, &prompt).contains("old question"));
 
         /* Without a resume, the fresh transcript. */
         prompt.resume = None;

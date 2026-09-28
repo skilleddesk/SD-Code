@@ -15,6 +15,7 @@ import {
 import { useOverlayStore } from '../../store/overlays';
 import { useProviderStore } from '../../store/providers';
 import { engineIcon, tierIcon } from './modelIcons';
+import { storedSettings, storeSetting } from '../../lib/settings';
 
 /**
  * `.model-dropdown` - the Tier / Model picker of spec section 9.3, as v4 changed it.
@@ -210,6 +211,8 @@ export function ModelDropdown() {
       </div>
       )}
 
+      {searching ? null : <EffortRow />}
+
       <div className="mdd-divider mx-[4px] my-[6px] h-px bg-border-subtle" />
 
       <div className={GROUP_TITLE}>
@@ -282,6 +285,44 @@ export function ModelDropdown() {
       <div className="mdd-foot mt-[4px] flex items-center gap-[8px] border-t border-border-subtle px-[10px] py-[8px] font-mono text-[10.5px] text-text-muted">
         <ShieldCheck size={11} aria-hidden="true" />
         <span>{strings.prompt.model.footerNote}</span>
+      </div>
+    </div>
+  );
+}
+
+const EFFORTS = ['auto', 'low', 'medium', 'high', 'max'] as const;
+
+/** Effort (0.14): how hard the model thinks - one row of five, remembered across turns. */
+function EffortRow() {
+  const [effort, setEffort] = useState(() => {
+    const stored = storedSettings()['agent-effort'];
+
+    return typeof stored === 'string' && (EFFORTS as readonly string[]).includes(stored) ? stored : 'auto';
+  });
+  const words = strings.agent.effort;
+
+  return (
+    <div className="mdd-effort mx-[4px] mt-[2px] flex items-center gap-[6px] px-[6px]" title={words.hint}>
+      <span className="shrink-0 text-[11px] text-text-muted">{words.label}</span>
+      <div className="flex min-w-0 flex-1 rounded-md border border-border-subtle bg-bg-base p-[2px]" role="radiogroup" aria-label={words.label}>
+        {EFFORTS.map((level) => (
+          <button
+            key={level}
+            type="button"
+            role="radio"
+            aria-checked={effort === level}
+            className={
+              'min-w-0 flex-1 truncate rounded-sm px-[4px] py-[3px] text-[11px] transition-colors duration-fast ease-ease ' +
+              (effort === level ? 'bg-accent-subtle font-medium text-accent' : 'text-text-secondary hover:bg-bg-hover hover:text-text-primary')
+            }
+            onClick={() => {
+              setEffort(level);
+              storeSetting('agent-effort', level);
+            }}
+          >
+            {words.levels[level]}
+          </button>
+        ))}
       </div>
     </div>
   );

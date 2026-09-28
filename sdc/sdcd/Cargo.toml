@@ -1,6 +1,6 @@
 [package]
 name = "sdcd"
-version = "0.13.2"
+version = "0.14.0"
 description = "SDC host daemon - session, engine, file, PTY, git and event-log service (spec section 3.1)"
 authors = ["Skilleddesk"]
 edition = "2021"
@@ -32,6 +32,7 @@ ureq = { version = "2", default-features = false, features = ["tls"] }
 toml = "0.8"
 regex = "1"
 base64 = "0.22"
+tungstenite = { version = "0.24", default-features = false, features = ["handshake"] }
 
 [dev-dependencies]
 tempfile = "3"

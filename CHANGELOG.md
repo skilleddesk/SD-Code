@@ -15,6 +15,33 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [0.14.0] — The agent uses a browser, Gemini remembers, and effort is a choice
+
+This release closes the gaps 0.13 listed as open.
+
+* **`browser` tool.** The agent drives a real headless Chrome or Edge over the DevTools protocol. It can
+  open a page and read its text, plus a numbered list of what can be clicked or filled. It can click, type
+  into fields, and press keys. A model that can see images can also take a screenshot. The browser stays
+  open between the agent's steps in a chat. The person's own dev server and local files are opened without
+  asking; a public site is asked about first, because clicks there are real. This was measured with
+  DeepSeek: it wrote a form, typed a name, clicked Greet, and read "Hello, Rongdhonu!".
+* **Screenshots on every platform.** `screenshot` goes through the same DevTools connection. On the macOS
+  CI runner, the old `--screenshot` flag wrote nothing. The browser test now runs on Windows, macOS and
+  Linux (`--no-sandbox` on Linux).
+* **Gemini resumes its own conversation.** SDC starts each chat's Gemini session under its own id
+  (`--session-id`) and continues it with `--resume <id>`. The id form is resolved in Gemini CLI's source,
+  even though its help only mentions "latest" and an index.
+* **Effort.** The model menu has a new row: Auto · Low · Medium · High · Max. It becomes Claude Code's
+  `--effort` (measured with a real call), Codex's `model_reasoning_effort`, and `reasoning_effort` for
+  OpenAI's reasoning models. Other models are sent nothing, because an unknown field can make a provider
+  refuse the whole request.
+* **`apply_patch` for GPT and Codex models.** This is Codex's own edit format: one patch that can add,
+  update, move and delete several files. Every hunk is checked against its file before anything is written,
+  so a patch written against an old version changes nothing and names the hunk that did not fit. Each file
+  still goes through the policy, the permission question, the checkpoint and a diff card.
+* **The owner's VPS address and username are removed from the whole git history,** not only from the
+  current files.
+
 ## [0.13.2] — Measured on the VPS: an attached image reaches Claude Code
 
 On the owner's VPS, with a 2FA sign-in, 0.13's host paths were run for real, and 6 of 6 checks now pass.

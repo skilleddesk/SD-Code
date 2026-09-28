@@ -593,6 +593,11 @@ export const bn: StringsPack = {
       stopped: 'থামানো হয়েছে',
       none: 'ব্যাকগ্রাউন্ডে কিছু চলছে না।',
     },
+    effort: {
+      label: 'চিন্তার গভীরতা',
+      hint: 'Model কতটা গভীরভাবে ভাববে। Auto মানে model-এর নিজের পছন্দ; বেশি মানে ধীর আর খরচ বেশি। Claude Code, Codex আর OpenAI-র reasoning model এটা মানে।',
+      levels: { auto: 'Auto', low: 'কম', medium: 'মাঝারি', high: 'বেশি', max: 'সর্বোচ্চ' },
+    },
     alerts: {
       done: (chat: string): string => `শেষ · ${chat}`,
       doneBody: 'টার্ন শেষ হয়েছে।',

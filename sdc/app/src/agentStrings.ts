@@ -66,6 +66,11 @@ export const agentStrings = {
     stopped: 'Stopped',
     none: 'Nothing is running in the background.',
   },
+  effort: {
+    label: 'Effort',
+    hint: 'How hard the model thinks. Auto is the model\'s own default; higher is slower and costs more. Claude Code, Codex and OpenAI reasoning models take it.',
+    levels: { auto: 'Auto', low: 'Low', medium: 'Medium', high: 'High', max: 'Max' },
+  },
   alerts: {
     done: (chat: string): string => `Done · ${chat}`,
     doneBody: 'The turn finished.',

@@ -732,6 +732,7 @@ mod tests {
                     autonomy: Default::default(),
                     resume: None,
                     images: Vec::new(),
+                    effort: None,
         }
     }
 

@@ -32,6 +32,7 @@ fn prompt(text: &str) -> Prompt {
         autonomy: Default::default(),
         resume: None,
         images: Vec::new(),
+        effort: None,
     }
 }
 

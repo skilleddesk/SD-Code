@@ -1508,7 +1508,7 @@ impl Daemon {
          * pasted in again at every message.
          */
         let place = remote.as_ref().map(|ssh| ssh.label()).unwrap_or_else(|| "local".to_string());
-        let resume = if matches!(engine_id.as_str(), "claude_code" | "codex") {
+        let resume = if matches!(engine_id.as_str(), "claude_code" | "codex" | "gemini") {
             crate::context::load_resume(self.store(), &session_id, &engine_id).and_then(|record| {
                 let turns = crate::context::live_turns(self.store(), &session_id, &turn_id);
                 let missed: Vec<crate::context::TurnRecord> =
@@ -1582,6 +1582,7 @@ impl Daemon {
             images,
             compact,
             place,
+            effort: crate::engines::effort_of(envelope.opt_str("effort").as_deref()),
         };
 
         tokio::spawn(async move {
@@ -3051,6 +3052,8 @@ struct RunPlan {
     compact: bool,
     /// `local` or the host - where a CLI conversation this turn starts lives.
     place: String,
+    /// How hard the model should think (0.14).
+    effort: Option<String>,
 }
 
 /// How long streamed text is gathered before it is pushed as one delta (0.11.7).
@@ -3117,6 +3120,7 @@ async fn run_turn(
         autonomy: plan.autonomy,
         resume: plan.resume.clone(),
         images: plan.images.clone(),
+        effort: plan.effort.clone(),
     };
     let mut answer = String::new();
     let mut checkpoint_written = false;

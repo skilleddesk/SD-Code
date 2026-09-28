@@ -1407,6 +1407,25 @@ describe('sendPrompt in agent mode', () => {
     expect(sdcpCall.mock.calls[0]?.[1]).toMatchObject({ agent: true, autonomy: 'auto' });
   });
 
+  it('sends the effort chosen in the model menu, and none on Auto (0.14)', async () => {
+    const { storeSetting } = await import('../lib/settings');
+    const memory = new Map<string, string>();
+
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => memory.get(key) ?? null,
+      setItem: (key: string, value: string) => void memory.set(key, value),
+    });
+
+    storeSetting('agent-effort', 'high');
+    await sendPrompt('make it faster', 's7');
+    expect(sdcpCall.mock.calls.at(-1)?.[1]).toMatchObject({ effort: 'high' });
+
+    storeSetting('agent-effort', 'auto');
+    await sendPrompt('make it faster', 's7');
+    expect(sdcpCall.mock.calls.at(-1)?.[1]).not.toHaveProperty('effort');
+    vi.unstubAllGlobals();
+  });
+
   it('maps the three modes to the three autonomy levels', () => {
     expect(autonomyFor('simple')).toBe('ask');
     expect(autonomyFor('pro')).toBe('pro');

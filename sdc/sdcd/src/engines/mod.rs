@@ -95,6 +95,14 @@ pub struct Prompt {
     pub resume: Option<ResumeRef>,
     /// Images the person attached to this turn (0.13), saved on this machine by the daemon.
     pub images: Vec<Attachment>,
+    /// How hard the model should think (0.14): `low`, `medium`, `high` or `max`; `None` is the model's own
+    /// default. Each engine gets it its own way - see `cli::effort_args` and `agent::dialect::body`.
+    pub effort: Option<String>,
+}
+
+/// The effort a turn asked for, when it is one SDC knows.
+pub fn effort_of(raw: Option<&str>) -> Option<String> {
+    raw.map(|raw| raw.trim().to_ascii_lowercase()).filter(|level| matches!(level.as_str(), "low" | "medium" | "high" | "max"))
 }
 
 /// A CLI conversation to continue, and what it has not seen yet.

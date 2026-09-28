@@ -62,6 +62,16 @@ impl Workspace {
         self.remote.is_some()
     }
 
+    /// Deletes a file (`apply_patch`'s `Delete File`, 0.14).
+    pub fn remove(&self, path: &str) -> Result<(), ErrorObject> {
+        let resolved = self.resolve(path)?;
+
+        match &self.remote {
+            Some(ssh) => crate::ssh::ops::remove(ssh, &resolved),
+            None => crate::fs::remove(Path::new(&resolved)),
+        }
+    }
+
     /// The host, for the tools that talk to it themselves (grep, glob, background processes).
     pub fn remote(&self) -> Option<&Ssh> {
         self.remote.as_ref()

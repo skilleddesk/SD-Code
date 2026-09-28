@@ -2204,6 +2204,8 @@ export interface TurnSeed {
   compact?: boolean;
   /** Images attached to the turn (0.13), base64. */
   images?: TurnImage[];
+  /** How hard the model thinks (0.14): absent is the model's own default. */
+  effort?: 'low' | 'medium' | 'high' | 'max';
 }
 
 /** An image on its way to a turn (0.13): pasted or picked, as base64 with its media type. */
@@ -2220,6 +2222,13 @@ export interface TurnImage {
 export interface SendExtras {
   images?: TurnImage[];
   compact?: boolean;
+}
+
+/** The effort chosen in the model menu (0.14), when it is not Auto. */
+function effortSetting(): { effort?: 'low' | 'medium' | 'high' | 'max' } {
+  const chosen = storedSettings()['agent-effort'];
+
+  return chosen === 'low' || chosen === 'medium' || chosen === 'high' || chosen === 'max' ? { effort: chosen } : {};
 }
 
 /** The app's mode as the agent's autonomy: Simple asks for everything, Pro for commands, Auto for danger. */
@@ -2332,6 +2341,7 @@ export async function sendPrompt(prompt: string, target?: string, extras: SendEx
     /* Settings → General (0.11.8): off sends the message exactly as typed. */
     understand: setting('understand-messages', true),
     ...(extras.compact === true ? { compact: true } : {}),
+    ...effortSetting(),
     ...(extras.images !== undefined && extras.images.length > 0 ? { images: extras.images } : {}),
   };
 

@@ -717,6 +717,7 @@ async fn review(state: &Arc<DaemonState>, workspace: &Arc<Workspace>, request: &
         autonomy: crate::agent::gate::Autonomy::Ask,
         resume: None,
         images: Vec::new(),
+        effort: None,
     };
     let recorder = Recorder::new();
 

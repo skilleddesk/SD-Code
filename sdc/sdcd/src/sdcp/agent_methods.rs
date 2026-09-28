@@ -195,7 +195,7 @@ impl Daemon {
         let provider = envelope.opt_str("provider");
         let window = crate::context::window_tokens(&engine, provider.as_deref(), &model);
         let fitted = crate::context::history(self.store(), &session_id, "", crate::context::history_budget(window));
-        let resumed = matches!(engine.as_str(), "claude_code" | "codex") && crate::context::load_resume(self.store(), &session_id, &engine).is_some();
+        let resumed = matches!(engine.as_str(), "claude_code" | "codex" | "gemini") && crate::context::load_resume(self.store(), &session_id, &engine).is_some();
 
         Ok(json!({
             "usedTokens": fitted.tokens,

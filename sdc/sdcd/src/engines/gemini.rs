@@ -42,9 +42,9 @@ pub const GEMINI_SPEC: CliSpec = CliSpec {
         &["--approval-mode", "auto_edit"],
         &["--yolo"],
     ],
-    /* Gemini's `--resume` takes "latest" or an index into a per-folder list, not an id a chat can keep:
-       two chats in one folder would resume each other. It gets the transcript, fitted to its context. */
-    resume: Resume::None,
+    /* SDC names each chat's Gemini conversation (0.14): its `--help` speaks only of "latest" and an index,
+       but its source resolves a uuid too, and `--session-id` starts one under the uuid given. */
+    resume: Resume::Chosen { start: "--session-id", resume: "--resume" },
     image_flag: None,
 };
 

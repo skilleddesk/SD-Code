@@ -25,6 +25,7 @@ pub mod browser;
 pub mod dialect;
 pub mod gate;
 pub mod mcp;
+pub mod patch;
 pub mod search;
 pub mod skills;
 pub mod tools;
@@ -133,6 +134,8 @@ struct Target {
     /// `$in / $out` per million tokens, when the catalogue knows the model.
     price: Option<(f64, f64)>,
     thinking: bool,
+    /// The turn's effort (0.14), for a model that takes `reasoning_effort`.
+    effort: Option<String>,
 }
 
 fn target(backend: Backend, prompt: &Prompt) -> Result<Target, String> {
@@ -151,6 +154,7 @@ fn target(backend: Backend, prompt: &Prompt) -> Result<Target, String> {
                 model,
                 price: None,
                 thinking: false,
+                effort: None,
             })
         }
         Backend::Api => {
@@ -184,6 +188,7 @@ fn target(backend: Backend, prompt: &Prompt) -> Result<Target, String> {
                 dialect,
                 thinking: dialect == Dialect::Anthropic && crate::engines::native_api::adaptive_thinking(&model),
                 price: price_of(&endpoint.provider, &model),
+                effort: prompt.effort.clone(),
                 model,
             })
         }
@@ -259,9 +264,9 @@ fn person_language(prompt: &Prompt) -> crate::understand::Reading {
 
 fn system_prompt(workspace: &Workspace, vision: bool, language: &crate::understand::Reading) -> String {
     let look = if vision {
-        "\n- For a web page or UI you built, start its dev server with start_process and look at it with screenshot: check that it looks right, on a phone width (390) too, and fix what does not."
+        "\n- For a web page or UI you built, start its dev server with start_process and try it in the browser tool as a user would: open it, read it, click the buttons, fill the forms, and take a screenshot to check it looks right - on a phone width (390) too. Fix what does not work."
     } else {
-        ""
+        "\n- For a web page or UI you built, start its dev server with start_process and try it in the browser tool as a user would: open it, read it, click the buttons and fill the forms. Fix what does not work."
     };
 
     format!(
@@ -307,6 +312,13 @@ fn sub_agent_prompt(workspace: &Workspace) -> String {
         root = workspace.root(),
         place = workspace.place(),
     )
+}
+
+/// OpenAI's reasoning models, which take `reasoning_effort`.
+fn reasoning_model(model: &str) -> bool {
+    let bare = model.rsplit('/').next().unwrap_or(model).to_ascii_lowercase();
+
+    bare.starts_with("gpt-5") || bare.starts_with("o1") || bare.starts_with("o3") || bare.starts_with("o4") || bare.contains("codex")
 }
 
 /// A sink that separates the text of one step from the text of the step before it.
@@ -373,7 +385,15 @@ pub fn run(
 
 /// One model call: the request, the stream, the assembled reply.
 fn ask_model(backend: Backend, target: &Target, system: &str, messages: &[Value], specs: &[dialect::ToolSpec], sink: &EventSink, stopped: &dyn Fn() -> bool) -> Result<Reply, String> {
-    let body = dialect::body(target.dialect, &target.model, system, messages, specs, target.thinking).to_string();
+    let mut body = dialect::body(target.dialect, &target.model, system, messages, specs, target.thinking);
+
+    /* Effort (0.14) reaches only the models that take it: OpenAI's reasoning models. Another model sent an
+       unknown field may refuse the whole request, and a turn is worth more than the knob. */
+    if let (Some(level), true) = (target.effort.as_deref(), reasoning_model(&target.model)) {
+        body["reasoning_effort"] = serde_json::json!(if level == "max" { "high" } else { level });
+    }
+
+    let body = body.to_string();
     let lines = crate::engines::native_api::open_stream(&target.url, &target.headers, &body).map_err(|reason| unreachable(backend, &reason))?;
 
     dialect::read_reply(target.dialect, lines, sink, stopped)
@@ -415,7 +435,7 @@ fn sub_agent(
 
     let stopped = || crate::engines::cancel::requested(&parent.turn_id);
     let system = sub_agent_prompt(workspace);
-    let specs = tools::specs_for(tools::Caps { vision, subagent: true });
+    let specs = tools::specs_for(tools::Caps { vision, subagent: true, patch: false });
     let window = crate::context::window_tokens("native_api", parent.provider.as_deref(), &parent.model);
     /* What the sub-agent does shows as lines on its card; its words and thinking stay its own. */
     let lines = {
@@ -432,6 +452,7 @@ fn sub_agent(
         workspace,
         session_id: &parent.session_id,
         read_only: true,
+        vision,
         sink: &lines,
         turn_id: &parent.turn_id,
         autonomy: Autonomy::Auto,
@@ -627,7 +648,7 @@ fn drive(
         sink.send(EngineEvent::Thinking(format!("MCP: {warning}\n")));
     }
 
-    let mut specs = tools::specs_for(tools::Caps { vision, subagent: false });
+    let mut specs = tools::specs_for(tools::Caps { vision, subagent: false, patch: patch::speaks_patch(&target.model) });
 
     if let Some(servers) = &mcp {
         specs.extend(servers.specs().iter().cloned());
@@ -663,6 +684,7 @@ fn drive(
         workspace,
         session_id: &prompt.session_id,
         read_only: false,
+        vision,
         sink,
         turn_id: &turn_id,
         autonomy: options.autonomy,
@@ -888,6 +910,7 @@ mod tests {
                     autonomy: Default::default(),
                     resume: None,
                     images: Vec::new(),
+                    effort: None,
         };
 
         run(Backend::Ollama, Options { autonomy: Autonomy::Ask, max_steps: 5, auto_check: false }, None, &Default::default(), &prompt, &recorder.sink());
@@ -996,6 +1019,7 @@ mod end_to_end {
             model: "local-test".to_string(),
             price: None,
             thinking: false,
+            effort: None,
         };
         let workspace = Workspace::new(root.to_str().unwrap(), None);
         let prompt = Prompt {
@@ -1010,6 +1034,7 @@ mod end_to_end {
                     autonomy: Default::default(),
                     resume: None,
                     images: Vec::new(),
+                    effort: None,
         };
         let recorder = crate::engines::Recorder::new();
 
@@ -1076,6 +1101,7 @@ mod end_to_end {
             model: "local-test".to_string(),
             price: None,
             thinking: false,
+            effort: None,
         };
         let workspace = Workspace::new(root.to_str().unwrap(), None);
         let prompt = Prompt {
@@ -1090,6 +1116,7 @@ mod end_to_end {
                     autonomy: Default::default(),
                     resume: None,
                     images: Vec::new(),
+                    effort: None,
         };
         let recorder = crate::engines::Recorder::new();
 

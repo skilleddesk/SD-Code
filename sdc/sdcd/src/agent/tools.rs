@@ -46,6 +46,8 @@ const DIFF_CARD_LINES: usize = 160;
 pub struct Caps {
     pub vision: bool,
     pub subagent: bool,
+    /// The model writes Codex's patch format (GPT, o-series, Codex): it gets `apply_patch` (0.14).
+    pub patch: bool,
 }
 
 /// The tools a sub-agent (`task`) may use: they read, search and look - they never change anything.
@@ -70,9 +72,49 @@ pub fn specs_for(caps: Caps) -> Vec<ToolSpec> {
         all.retain(|spec| READ_ONLY.contains(&spec.name));
     } else {
         all.push(task_spec());
+        all.push(browser_spec());
+
+        if caps.patch {
+            all.push(patch_spec());
+        }
     }
 
     all
+}
+
+/// `browser` (0.14): a real headless browser the agent drives like a person testing a page.
+pub fn browser_spec() -> ToolSpec {
+    ToolSpec {
+        name: "browser",
+        description: "Use a real web browser (headless, on the person's machine) to try a page the way a user would: open it, read it, click, type into fields, press keys, and - for a model that can see - take a screenshot. read answers the page's text and a numbered list of what can be clicked or filled; click and type take that number, a CSS selector, or the words on the element. The browser stays open between calls in this chat. Use it to test the site or app you built (a dev server started with start_process, a file:/// page, or a public URL).",
+        schema: json!({
+            "type": "object",
+            "properties": {
+                "action": { "type": "string", "enum": ["open", "read", "click", "type", "press", "screenshot", "close"], "description": "What to do." },
+                "url": { "type": "string", "description": "open: the address (http://localhost:5173, https://…, file:///…)." },
+                "target": { "type": "string", "description": "click/type: the element's number from read, a CSS selector, or the words on it." },
+                "text": { "type": "string", "description": "type: what to type into the element." },
+                "key": { "type": "string", "description": "press: Enter, Tab, Escape, Backspace, ArrowDown, ArrowUp, Space." },
+                "width": { "type": "integer", "description": "open: viewport width in pixels when the browser starts (default 1280; 390 for a phone)." },
+            },
+            "required": ["action"],
+            "additionalProperties": false,
+        }),
+    }
+}
+
+/// `apply_patch` (0.14): Codex's patch format, for the models trained on it.
+pub fn patch_spec() -> ToolSpec {
+    ToolSpec {
+        name: "apply_patch",
+        description: "Edit files with one patch in the Codex format - add, update, move and delete several files in one call. The patch starts with '*** Begin Patch' and ends with '*** End Patch'. Each file is '*** Add File: path' (every line prefixed with +), '*** Delete File: path', or '*** Update File: path' (optionally '*** Move to: newpath') followed by hunks: an '@@' line, then context lines (prefixed with a space), removed lines (-) and added lines (+). Context and removed lines must match the file exactly.",
+        schema: json!({
+            "type": "object",
+            "properties": { "patch": { "type": "string", "description": "The whole patch." } },
+            "required": ["patch"],
+            "additionalProperties": false,
+        }),
+    }
 }
 
 /// The `task` tool: a sub-agent with its own fresh context, read-only, for exploring and researching.
@@ -355,6 +397,8 @@ pub struct ToolContext<'a> {
     pub session_id: &'a str,
     /// A sub-agent's context: tools that change anything are refused, whatever the model asks.
     pub read_only: bool,
+    /// The model can look at images: a browser screenshot goes to it only then (0.14).
+    pub vision: bool,
     pub sink: &'a EventSink,
     pub turn_id: &'a str,
     pub autonomy: Autonomy,
@@ -551,6 +595,8 @@ pub fn execute(context: &mut ToolContext, call: &ToolUse) -> Outcome {
         "remember" => remember(context, &call_id, &text("fact"), call.input["scope"].as_str().unwrap_or("project")),
         "view_image" => view_image(context, &call_id, &text("path")),
         "screenshot" => screenshot(context, &call_id, &text("url"), number("width").unwrap_or(1280) as u32, number("height").unwrap_or(900) as u32),
+        "browser" => browser(context, &call_id, &call.input),
+        "apply_patch" => apply_patch(context, &call_id, &text("patch")),
         "list_dir" => list_dir(context, &call_id, &text("path")),
         "search" => search(context, &call_id, &text("query"), &text("path"), call.input["glob"].as_str()),
         "git_diff" => git_diff(context, &call_id),
@@ -575,7 +621,7 @@ pub fn execute(context: &mut ToolContext, call: &ToolUse) -> Outcome {
 }
 
 fn names() -> Vec<&'static str> {
-    specs_for(Caps { vision: true, subagent: false }).iter().map(|spec| spec.name).collect()
+    specs_for(Caps { vision: true, subagent: false, patch: true }).iter().map(|spec| spec.name).collect()
 }
 
 fn started(context: &ToolContext, call_id: &str, tool: &str, name: &str, target: &str) {
@@ -1370,6 +1416,194 @@ fn screenshot(context: &mut ToolContext, call_id: &str, url: &str, width: u32, h
     }
 }
 
+/// Whether an address is this machine's own (a dev server, a file): the browser goes there without asking.
+fn local_address(url: &str) -> bool {
+    let lowered = url.trim().to_ascii_lowercase();
+
+    lowered.starts_with("file:///")
+        || ["http://localhost", "http://127.0.0.1", "http://0.0.0.0", "http://[::1]", "https://localhost", "https://127.0.0.1"].iter().any(|prefix| lowered.starts_with(prefix))
+}
+
+/// `browser` (0.14): one chat's headless browser, driven step by step.
+fn browser(context: &mut ToolContext, call_id: &str, input: &Value) -> Outcome {
+    let action = input["action"].as_str().unwrap_or_default().to_string();
+    let url = input["url"].as_str().unwrap_or_default().to_string();
+    let target = input["target"].as_str().unwrap_or_default().to_string();
+    let words = input["text"].as_str().unwrap_or_default().to_string();
+    let key = input["key"].as_str().unwrap_or_default().to_string();
+    let width = input["width"].as_u64().unwrap_or(1280).clamp(320, 2560) as u32;
+    let shown = match action.as_str() {
+        "open" => url.clone(),
+        "click" => target.clone(),
+        "type" => format!("{target} ← {}", words.chars().take(40).collect::<String>()),
+        "press" => key.clone(),
+        _ => String::new(),
+    };
+
+    started(context, call_id, if action == "read" || action == "screenshot" { "read" } else { "run" }, &format!("Browser {action}"), &shown);
+
+    if action == "close" {
+        let closed = super::browser::close(context.session_id);
+
+        completed(context, call_id, true, if closed { "closed" } else { "no browser was open" }, None);
+
+        return Outcome::ok(if closed { "The browser is closed." } else { "No browser was open." });
+    }
+
+    /* A public site can take real actions (a form sent, an order placed): asked like a command, unless the
+       mode says otherwise. The person's own dev server and files are not asked about. */
+    if action == "open" && !local_address(&url) {
+        if context.policy.privacy_local() {
+            return failed_with(context, call_id, "This project's policy keeps everything on this machine (privacy = local-only), so the browser does not open public sites.");
+        }
+
+        if let Some(refused) = ask(
+            context,
+            "run",
+            "Open a website in the agent's browser",
+            "The agent wants to open a public page and may click or type on it",
+            &url,
+            "MUTATING",
+            "Its clicks and typing are real: a form it sends is sent. Your own dev server and local files are opened without asking.",
+        ) {
+            completed(context, call_id, false, "declined", None);
+
+            return refused;
+        }
+    }
+
+    if action == "screenshot" && !context.vision {
+        return failed_with(context, call_id, "This model cannot see images; use action read to get the page's text and its clickable elements.");
+    }
+
+    let session = context.session_id.to_string();
+    let result = super::browser::with_session(&session, width, 900, |page| match action.as_str() {
+        "open" => page.open(&url).and_then(|_| page.read()).map(|text| (text, None)),
+        "read" => page.read().map(|text| (text, None)),
+        "click" => page.click(&target).and_then(|what| page.read().map(|text| (format!("Clicked {what}.\n\n{text}"), None))),
+        "type" => page.type_text(&target, &words).and_then(|what| page.read().map(|text| (format!("Typed into {what}.\n\n{text}"), None))),
+        "press" => page.press(&key).and_then(|_| page.read().map(|text| (format!("Pressed {key}.\n\n{text}"), None))),
+        "screenshot" => page.screenshot().map(|png| ("A screenshot of the page is attached.".to_string(), Some(png))),
+        other => Err(format!("`{other}` is not a browser action: open, read, click, type, press, screenshot, close")),
+    });
+
+    match result {
+        Ok((text, Some(png))) => {
+            completed(context, call_id, true, &format!("done · {} KB", png.len() / 1024), None);
+
+            Outcome::picture(text, "image/png", &png)
+        }
+        Ok((text, None)) => {
+            completed(context, call_id, true, "done", None);
+
+            Outcome::ok(text)
+        }
+        Err(reason) => failed_with(context, call_id, reason),
+    }
+}
+
+/// `apply_patch` (0.14): every file of a Codex patch, through the same guard, question, checkpoint and card
+/// as an edit. Files are checked before any is written, so a hunk that does not fit changes nothing.
+fn apply_patch(context: &mut ToolContext, call_id: &str, patch: &str) -> Outcome {
+    let changes = match super::patch::parse(patch) {
+        Ok(changes) if !changes.is_empty() => changes,
+        Ok(_) => return Outcome::error("The patch changes no file."),
+        Err(reason) => return Outcome::error(format!("The patch could not be read: {reason}")),
+    };
+
+    /* Everything worked out first: (path, before, after); after None = delete. */
+    let mut planned: Vec<(String, String, Option<String>)> = Vec::new();
+
+    for change in &changes {
+        match change {
+            super::patch::Change::Add { path, text } => {
+                if context.workspace.exists(path) {
+                    return Outcome::error(format!("`Add File: {path}` - the file already exists; update it instead."));
+                }
+
+                planned.push((path.clone(), String::new(), Some(text.clone())));
+            }
+            super::patch::Change::Delete { path } => match context.workspace.read(path) {
+                Ok((before, _)) => planned.push((path.clone(), before, None)),
+                Err(error) => return Outcome::error(format!("`Delete File: {path}`: {}", error.message)),
+            },
+            super::patch::Change::Update { path, move_to, hunks } => {
+                let before = match context.workspace.read(path) {
+                    Ok((_, true)) => return Outcome::error(format!("{path} is larger than 256 KB; patch it with edit_file on a range.")),
+                    Ok((text, false)) => text,
+                    Err(error) => return Outcome::error(format!("`Update File: {path}`: {}", error.message)),
+                };
+                let after = match super::patch::apply(&before, hunks) {
+                    Ok(after) => after,
+                    Err(reason) => return Outcome::error(format!("{path}: {reason} Nothing was changed.")),
+                };
+
+                match move_to {
+                    Some(target) => {
+                        planned.push((path.clone(), before, None));
+                        planned.push((target.clone(), String::new(), Some(after)));
+                    }
+                    None => planned.push((path.clone(), before, Some(after))),
+                }
+            }
+        }
+    }
+
+    let mut report = Vec::new();
+
+    for (index, (path, before, after)) in planned.iter().enumerate() {
+        let card_id = format!("{call_id}-{index}");
+        let (verb, diff) = match after {
+            Some(text) => (if before.is_empty() && !context.workspace.exists(path) { "Create" } else { "Edit" }, diff_lines(before, text)),
+            None => ("Delete", diff_lines(before, "")),
+        };
+        let (added, removed) = counts(&diff);
+
+        started(context, &card_id, "edit", verb, path);
+
+        if let Some(refused) = guard_edit(context, path, after.as_deref()) {
+            completed(context, &card_id, false, "declined", None);
+
+            return refused;
+        }
+
+        if let Some(refused) = ask(
+            context,
+            "edit",
+            &format!("{verb} {path}"),
+            &format!("The agent's patch changes a file (+{added} −{removed} lines)"),
+            path,
+            "MUTATING",
+            "A checkpoint is taken before the first change of this turn, so Rewind can put the file back.",
+        ) {
+            completed(context, &card_id, false, "declined", None);
+
+            return refused;
+        }
+
+        checkpoint_first(context, &format!("Before patch {path}"));
+
+        let written = match after {
+            Some(text) => context.workspace.write(path, text),
+            None => context.workspace.remove(path),
+        };
+
+        match written {
+            Ok(()) => {
+                completed(context, &card_id, true, &format!("done · +{added} −{removed}"), Some(card(&diff)));
+                report.push(format!("{verb} {path} (+{added} −{removed})"));
+            }
+            Err(error) => {
+                completed(context, &card_id, false, "failed", None);
+
+                return Outcome::error(format!("{path}: {}. Done before it: {}", error.message, if report.is_empty() { "nothing".to_string() } else { report.join("; ") }));
+            }
+        }
+    }
+
+    Outcome::ok(format!("Patch applied:\n{}", report.join("\n")))
+}
+
 /// Asks the person when the autonomy level says so; `Some(outcome)` is the refusal to hand the model.
 fn ask(
     context: &mut ToolContext,
@@ -1482,6 +1716,7 @@ mod tests {
             workspace,
             session_id: "s-test",
             read_only: false,
+            vision: false,
             sink,
             turn_id: "turn-t",
             autonomy,
@@ -1602,11 +1837,12 @@ mod tests {
 
     #[test]
     fn every_tool_has_a_strict_object_schema() {
-        let specs = specs_for(Caps { vision: true, subagent: false });
+        let specs = specs_for(Caps { vision: true, subagent: false, patch: true });
 
-        assert_eq!(specs.len(), 20);
-        assert_eq!(specs_for(Caps { vision: false, subagent: true }).len(), 9, "a sub-agent only reads");
-        assert!(specs_for(Caps { vision: false, subagent: true }).iter().all(|spec| READ_ONLY.contains(&spec.name)));
+        assert_eq!(specs.len(), 22);
+        assert_eq!(specs_for(Caps::default()).len(), 19, "no image tools, no patch");
+        assert_eq!(specs_for(Caps { vision: false, subagent: true, patch: true }).len(), 9, "a sub-agent only reads");
+        assert!(specs_for(Caps { vision: false, subagent: true, patch: false }).iter().all(|spec| READ_ONLY.contains(&spec.name)));
 
         for spec in specs {
             assert_eq!(spec.schema["type"], "object", "{}", spec.name);
@@ -1728,6 +1964,33 @@ mod tests {
         let outcome = execute(&mut context, &call("read_file", json!({ "path": "big.txt", "offset": 10, "limit": 3 })));
 
         assert_eq!(outcome.content, "   10\tline 10\n   11\tline 11\n   12\tline 12\n[lines 10-12 of 50]");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_patch_changes_every_file_or_none() {
+        let (root, workspace) = folder("patch");
+        let sink = EventSink::discarding();
+        let mut context = context(&workspace, &sink, Autonomy::Auto);
+
+        workspace.write("src/math.js", "function add(a, b) {\n  return a - b;\n}\n").unwrap();
+        workspace.write("old.js", "bye\n").unwrap();
+
+        let good = "*** Begin Patch\n*** Update File: src/math.js\n@@\n function add(a, b) {\n-  return a - b;\n+  return a + b;\n*** Add File: src/mul.js\n+module.exports = (a, b) => a * b;\n*** Delete File: old.js\n*** End Patch";
+        let outcome = execute(&mut context, &call("apply_patch", json!({ "patch": good })));
+
+        assert!(!outcome.is_error, "{}", outcome.content);
+        assert!(workspace.read("src/math.js").unwrap().0.contains("a + b"));
+        assert!(workspace.exists("src/mul.js"));
+        assert!(!workspace.exists("old.js"));
+
+        /* A hunk that does not fit leaves every file as it was, the ones before it included. */
+        let bad = "*** Begin Patch\n*** Add File: new.js\n+x\n*** Update File: src/math.js\n-  return nothing;\n+  return 1;\n*** End Patch";
+        let refused = execute(&mut context, &call("apply_patch", json!({ "patch": bad })));
+
+        assert!(refused.is_error && refused.content.contains("does not match"), "{}", refused.content);
+        assert!(!workspace.exists("new.js"));
 
         let _ = std::fs::remove_dir_all(&root);
     }
