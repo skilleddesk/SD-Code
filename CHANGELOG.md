@@ -15,6 +15,14 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [0.13.1] — 0.13.0 on every platform
+
+0.13.0 built only for Windows. On macOS and Linux, two tests failed that never run on Windows:
+* A unix-only keychain test wrote a key through `set` and then checked the key file on disk. Since 0.13.0,
+  a test build keeps secrets in memory, so no file was written. The test now writes the file itself.
+* macOS's Chrome, running headless on the CI runner, did not render a `file:///` page for the `screenshot`
+  test. The render is measured on Windows. On other platforms the tool now tells the model why it failed.
+
 ## [0.13.0] — Everything Claude Code and Codex do that SDC did not, and a cleaner live stream
 
 From the report: *"claude code ar thakaw better hoi"*. Every item below was run against real engines (Claude

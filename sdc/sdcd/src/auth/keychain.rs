@@ -376,14 +376,17 @@ mod tests {
 
         assert_eq!(mode, 0o700, "a directory the owner cannot search is a directory nothing can be written into");
 
-        set(name, "sk-dir-test").unwrap();
-        assert_eq!(get(name).as_deref(), Some("sk-dir-test"));
+        /* The file half of `set`, done here by hand: a test build's `set` keeps secrets in memory (0.13), so
+           the store on disk is exercised directly - with a test name, never a real key's. */
+        std::fs::write(&file, "sk-dir-test").unwrap();
+        restrict_to_owner(&file).unwrap();
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "sk-dir-test");
 
         let file_mode = std::fs::metadata(&file).unwrap().permissions().mode() & 0o777;
 
         assert_eq!(file_mode, 0o600, "the key file itself stays owner-only");
 
-        delete(name).unwrap();
+        std::fs::remove_file(&file).unwrap();
     }
 
     #[test]
