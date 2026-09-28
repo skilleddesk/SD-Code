@@ -44,7 +44,13 @@ export function TrustChip({ turnId, sessionId }: { turnId: string; sessionId: st
           {measured(cost.costSource) ? usd(cost.costUsd) : `${usd(cost.costUsd)} · ${strings.kernel.cost.sourceShort[cost.costSource]}`}
         </span>
       )}
-      {stop === undefined ? null : <span className="text-[10.5px] font-semibold text-state-error">{stop.sentence}</span>}
+      {/* The sentence itself is the turn's own ending, just above (0.14.1); printed here too, every stop
+          said the same thing twice. The chip only names the kind. */}
+      {stop === undefined ? null : (
+        <span className="text-[10.5px] font-semibold text-state-error" title={stop.sentence}>
+          {strings.kernel.stop[stop.kind]}
+        </span>
+      )}
     </span>
   );
 }

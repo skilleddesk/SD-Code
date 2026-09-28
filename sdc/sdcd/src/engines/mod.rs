@@ -455,8 +455,9 @@ pub fn parse_stream_line(line: &str) -> Vec<EngineEvent> {
 
         /* Claude's finished message, which the partial deltas already carried. Dropping its text is
            deliberate: emitting both prints every answer twice. Its TodoWrite call is the exception (0.13):
-           the whole list is only here, and it becomes SDC's plan card. */
-        "assistant" => claude_todos(&value),
+           the whole list is only here, and it becomes SDC's plan card. Its tool calls are the other one
+           (0.14.1): this is the first line that carries a tool's whole input. */
+        "assistant" => claude_tool_calls(&value).into_iter().chain(claude_todos(&value)).collect(),
 
         /* Claude's tool results travel back as a `user` message of `tool_result` blocks, once the tool
            has run. This line was ignored, so every CLI tool card kept spinning after the turn was done. */
@@ -615,7 +616,41 @@ fn text_of(value: &Value) -> Option<String> {
         .map(str::to_string)
 }
 
-/// The `tool_result` blocks of a Claude Code `user` message, as finished tool cards.
+/// How much of a CLI tool's result a card shows: the first lines, each cut short. The card is a window
+/// on what happened, not a copy of every file the engine read - that would fill the event log.
+const RESULT_LINES: usize = 40;
+const RESULT_LINE_CHARS: usize = 300;
+
+/// A tool's result as the card's output lines, with one line saying how many were left out.
+fn result_lines(call_id: &str, text: &str, failed: bool) -> Vec<EngineEvent> {
+    let level = if failed { "fail" } else { "dim" };
+    let lines: Vec<&str> = text.lines().filter(|line| !line.trim().is_empty()).collect();
+    let mut events: Vec<EngineEvent> = lines
+        .iter()
+        .take(RESULT_LINES)
+        .map(|line| {
+            let mut shown: String = line.chars().take(RESULT_LINE_CHARS).collect();
+
+            if shown.len() < line.len() {
+                shown.push('…');
+            }
+
+            EngineEvent::ToolOutput { call_id: call_id.to_string(), level: level.to_string(), text: shown }
+        })
+        .collect();
+
+    if lines.len() > RESULT_LINES {
+        events.push(EngineEvent::ToolOutput {
+            call_id: call_id.to_string(),
+            level: "dim".to_string(),
+            text: format!("… {} more lines", lines.len() - RESULT_LINES),
+        });
+    }
+
+    events
+}
+
+/// The `tool_result` blocks of a Claude Code `user` message: what each tool printed, then its card's end.
 fn claude_tool_results(value: &Value) -> Vec<EngineEvent> {
     let blocks = value
         .pointer("/message/content")
@@ -626,7 +661,7 @@ fn claude_tool_results(value: &Value) -> Vec<EngineEvent> {
     blocks
         .iter()
         .filter(|block| block.get("type").and_then(Value::as_str) == Some("tool_result"))
-        .map(|block| {
+        .flat_map(|block| {
             let failed = block.get("is_error").and_then(Value::as_bool).unwrap_or(false);
             /* The result is a string or a list of text blocks; its size is what the card can say. */
             let text = match block.get("content") {
@@ -639,13 +674,17 @@ fn claude_tool_results(value: &Value) -> Vec<EngineEvent> {
                 _ => String::new(),
             };
             let lines = text.lines().count();
+            let call_id = block.get("tool_use_id").and_then(Value::as_str).unwrap_or("call").to_string();
+            let mut events = result_lines(&call_id, &text, failed);
 
-            EngineEvent::ToolCompleted {
-                call_id: block.get("tool_use_id").and_then(Value::as_str).unwrap_or("call").to_string(),
+            events.push(EngineEvent::ToolCompleted {
+                call_id,
                 status: if failed { "failed" } else { "done" }.to_string(),
                 meta: if failed { "failed".to_string() } else { format!("done · {lines} ln") },
                 diff: None,
-            }
+            });
+
+            events
         })
         .collect()
 }
@@ -672,37 +711,43 @@ fn parse_claude_event(event: &Value) -> Vec<EngineEvent> {
                 _ => Vec::new(),
             }
         }
-        /* A tool call starts as a `content_block_start` whose block is the tool. */
-        "content_block_start" => {
-            let Some(block) = event.get("content_block") else {
-                return Vec::new();
-            };
-
-            if block.get("type").and_then(Value::as_str) != Some("tool_use") {
-                return Vec::new();
-            }
-
-            let name = block.get("name").and_then(Value::as_str).unwrap_or("tool").to_string();
-            let input = block.get("input").cloned().unwrap_or(Value::Null);
-
-            /* The checklist is drawn as the plan card (`claude_todos`), not as a card of its own (0.13). */
-            if name == "TodoWrite" {
-                return Vec::new();
-            }
-
-            vec![EngineEvent::ToolStarted {
-                call_id: block.get("id").and_then(Value::as_str).unwrap_or("call").to_string(),
-                tool: tool_kind(&name).to_string(),
-                name,
-                target: target_of(&input),
-            }]
-        }
+        /* A tool call's `content_block_start` is not read (0.14.1): its `input` is always `{}` there, and
+           the input streams in afterwards as `input_json_delta` pieces. Read from it, every Bash card had
+           no command, and five different commands in a row looked like one command run five times, so
+           the loop guard stopped a turn that was working. The card opens from the `assistant` line,
+           which carries the whole input (`claude_tool_calls`). */
         /* `message_start`, `message_delta`, `message_stop`, `content_block_stop`: nothing to say. */
         _ => Vec::new(),
     }
 }
 
-/// One Codex `item`.
+/// The tool calls of a finished Claude Code `assistant` message, each with its whole input.
+fn claude_tool_calls(value: &Value) -> Vec<EngineEvent> {
+    let Some(blocks) = value.pointer("/message/content").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+
+    blocks
+        .iter()
+        .filter(|block| block["type"] == "tool_use")
+        .filter_map(|block| {
+            let name = block.get("name").and_then(Value::as_str).unwrap_or("tool").to_string();
+
+            /* The checklist is drawn as the plan card (`claude_todos`), not as a card of its own (0.13). */
+            if name == "TodoWrite" {
+                return None;
+            }
+
+            Some(EngineEvent::ToolStarted {
+                call_id: block.get("id").and_then(Value::as_str).unwrap_or("call").to_string(),
+                tool: tool_kind(&name).to_string(),
+                target: target_of(block.get("input").unwrap_or(&Value::Null)),
+                name,
+            })
+        })
+        .collect()
+}
+
 /// Claude Code's own checklist (`TodoWrite`, `{todos: [{content, status}]}`) as SDC's plan (0.13).
 fn claude_todos(value: &Value) -> Vec<EngineEvent> {
     let Some(blocks) = value.pointer("/message/content").and_then(Value::as_array) else {
@@ -733,6 +778,7 @@ fn claude_todos(value: &Value) -> Vec<EngineEvent> {
         .collect()
 }
 
+/// One Codex `item`.
 fn parse_codex_item(item: &Value) -> Vec<EngineEvent> {
     let text = item.get("text").and_then(Value::as_str);
 
@@ -915,7 +961,7 @@ fn tool_kind(name: &str) -> &'static str {
 
 /// What a tool is acting on, from the JSON its input carries.
 fn target_of(input: &Value) -> String {
-    for key in ["file_path", "path", "command", "pattern", "url", "query"] {
+    for key in ["file_path", "path", "command", "pattern", "url", "query", "description"] {
         if let Some(text) = input.get(key).and_then(Value::as_str) {
             return text.to_string();
         }
@@ -1175,21 +1221,46 @@ mod tests {
         );
     }
 
+    /// Claude Code's own shapes with `--include-partial-messages`: the block starts with `input: {}`, the
+    /// command streams in as `input_json_delta`, and only the `assistant` line has it whole. The card
+    /// comes from that line, with its command, and the result's lines are the card's output (0.14.1).
     #[test]
-    fn a_claude_tool_block_becomes_a_tool_with_its_target() {
-        let events = parse_stream_line(
-            r#"{"type":"stream_event","event":{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_1","name":"Read","input":{"file_path":"H:\\SDC\\README.md"}}}}"#,
-        );
+    fn a_claude_tool_call_opens_with_its_command_and_shows_its_output() {
+        let lines = [
+            r#"{"type":"stream_event","event":{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_1","name":"Bash","input":{}}}}"#,
+            r#"{"type":"stream_event","event":{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"command\": \"ls docs\""}}}"#,
+            r#"{"type":"stream_event","event":{"type":"content_block_stop","index":1}}"#,
+            r#"{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_1","name":"Bash","input":{"command":"ls docs","description":"List docs"}}]}}"#,
+            r#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"MASTER-DOC-EN.md\nCONTENT-ENGINE.md","is_error":false}]}}"#,
+        ];
+        let events: Vec<EngineEvent> = lines.iter().flat_map(|line| parse_stream_line(line)).collect();
 
         assert_eq!(
             events,
-            vec![EngineEvent::ToolStarted {
-                call_id: "toolu_1".into(),
-                tool: "read".into(),
-                name: "Read".into(),
-                target: "H:\\SDC\\README.md".into(),
-            }]
+            vec![
+                EngineEvent::ToolStarted { call_id: "toolu_1".into(), tool: "run".into(), name: "Bash".into(), target: "ls docs".into() },
+                EngineEvent::ToolOutput { call_id: "toolu_1".into(), level: "dim".into(), text: "MASTER-DOC-EN.md".into() },
+                EngineEvent::ToolOutput { call_id: "toolu_1".into(), level: "dim".into(), text: "CONTENT-ENGINE.md".into() },
+                EngineEvent::ToolCompleted { call_id: "toolu_1".into(), status: "done".into(), meta: "done · 2 ln".into(), diff: None },
+            ]
         );
+    }
+
+    #[test]
+    fn a_long_claude_result_is_cut_to_the_first_lines() {
+        let body: Vec<String> = (0..100).map(|index| format!("line {index}")).collect();
+        let line = serde_json::json!({
+            "type": "user",
+            "message": { "content": [{ "type": "tool_result", "tool_use_id": "t", "content": body.join("\n"), "is_error": true }] }
+        })
+        .to_string();
+        let events = parse_stream_line(&line);
+        let output: Vec<&EngineEvent> = events.iter().filter(|event| matches!(event, EngineEvent::ToolOutput { .. })).collect();
+
+        assert_eq!(output.len(), RESULT_LINES + 1);
+        assert!(matches!(output[0], EngineEvent::ToolOutput { level, .. } if level == "fail"));
+        assert!(matches!(output[RESULT_LINES], EngineEvent::ToolOutput { text, .. } if text == "… 60 more lines"));
+        assert!(matches!(events.last(), Some(EngineEvent::ToolCompleted { status, .. }) if status == "failed"));
     }
 
     #[test]
@@ -1256,7 +1327,10 @@ mod tests {
         assert_eq!(
             events,
             vec![
+                EngineEvent::ToolOutput { call_id: "toolu_1".into(), level: "dim".into(), text: "line one".into() },
+                EngineEvent::ToolOutput { call_id: "toolu_1".into(), level: "dim".into(), text: "line two".into() },
                 EngineEvent::ToolCompleted { call_id: "toolu_1".into(), status: "done".into(), meta: "done · 2 ln".into(), diff: None },
+                EngineEvent::ToolOutput { call_id: "toolu_2".into(), level: "fail".into(), text: "boom".into() },
                 EngineEvent::ToolCompleted { call_id: "toolu_2".into(), status: "failed".into(), meta: "failed".into(), diff: None },
             ]
         );

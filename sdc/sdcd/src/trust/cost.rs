@@ -309,7 +309,12 @@ impl Runaway {
 
         self.calls += 1;
 
-        if self.last.as_deref() == Some(key.as_str()) {
+        /* A call with no target cannot be shown to be the same call again (0.14.1): Claude's Bash cards
+           once arrived without their command, and five different commands were stopped as a loop. */
+        if target.trim().is_empty() {
+            self.last = None;
+            self.repeats = 0;
+        } else if self.last.as_deref() == Some(key.as_str()) {
             self.repeats += 1;
         } else {
             self.last = Some(key);
@@ -453,6 +458,16 @@ mod tests {
 
         for index in 0..20 {
             assert!(varied.observe("Edit", &format!("file{index}.ts")).is_none());
+        }
+    }
+
+    /// The 0.14 report: five Claude Bash cards with no command were stopped as one command run five times.
+    #[test]
+    fn calls_without_a_target_are_never_a_loop() {
+        let mut runaway = Runaway::default();
+
+        for _ in 0..20 {
+            assert!(runaway.observe("Bash", "").is_none());
         }
     }
 

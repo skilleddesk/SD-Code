@@ -15,6 +15,23 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [0.14.1] — Claude Code's tool cards show what ran, and the loop guard stops only real loops
+
+* **A Claude Code tool card has its command again.** With the partial stream, a tool call's first line
+  always carries an empty `input: {}`, and the command arrives afterwards in pieces. SDC read the card from
+  that first line, so every Bash card had only its name. The card now opens from Claude's finished
+  `assistant` line, which has the whole input. Protected paths and denied commands are checked against the
+  real target again for Claude Code turns.
+* **No false "Stopped a loop".** Five different Bash commands with no target looked like one command run
+  five times, so a working turn (the same prompt Claude Code finishes on its own) was stopped. Calls without
+  a target never count as a repeat now, and a call named twice opens one card and counts once. Measured:
+  six different Bash calls in one Claude Code turn, each card with its command and output, none stopped.
+* **A card shows what the tool printed.** A Claude Code result was only a `done · 10 ln` pill over an empty
+  box. The first 40 lines are now the card's output, with a "… N more lines" line, and a failed result is
+  shown in red. A card with nothing to show has no empty box under it.
+* **The stop reason is said once.** It was printed as the turn's ending and again in red on the footer.
+  The footer now says only `Stopped: loop guard` or `Stopped: budget`, with the whole sentence on hover.
+
 ## [0.14.0] — The agent uses a browser, Gemini remembers, and effort is a choice
 
 This release closes the gaps 0.13 listed as open.

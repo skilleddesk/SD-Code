@@ -107,6 +107,7 @@ export const bn: StringsPack = {
     ],
   },
   kernel: {
+    stop: { budget: 'থেমেছে: বাজেট', runaway: 'থেমেছে: লুপ গার্ড' },
     kill: {
       label: 'সব থামান',
       title: 'কিল সুইচ: চলমান সব টার্ন, যাচাই, ডেপ্লয় আর কমান্ড এখনই থামান (Ctrl Shift .)',

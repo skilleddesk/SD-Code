@@ -102,7 +102,9 @@ export function ToolCard({ tool }: ToolCardProps) {
   }
 
   const Icon = tool.kind === 'read' ? (tool.name === 'Agent' ? Bot : FileText) : tool.kind === 'edit' ? FilePen : Play;
-  const hasBody = tool.kind !== 'read' || (tool.output?.length ?? 0) > 0;
+  /* A body only when there is something in it (0.14.1): an empty box under every Claude Bash card read as
+     a broken stream. */
+  const hasBody = tool.kind === 'edit' ? tool.diff.length > 0 : (tool.output?.length ?? 0) > 0;
   const spinning = tool.status === 'running';
 
   return (

@@ -3250,6 +3250,9 @@ async fn run_turn(
                     }
                 }
             }
+            /* One card per call: an engine that names the same call twice must not open a second card or
+               count twice toward the loop guard. */
+            crate::engines::EngineEvent::ToolStarted { call_id, .. } if tools.iter().any(|(id, _)| *id == call_id) => {}
             crate::engines::EngineEvent::ToolStarted { call_id, tool, name, target } => {
                 /* The kernel looks first (0.12). A runaway loop stops whichever engine runs it; for the
                    engines that run their own agent (the CLIs) a protected path, a denied command or a
@@ -4555,6 +4558,74 @@ mod tests {
             "the buffered delta must be flushed ahead of the tool event, not left to trail in behind it"
         );
         assert_eq!(notifier.streamed_text(), "checking the tests");
+    }
+
+    /// The dedup arm above (0.14.1): an engine that names the same call_id again - Claude Code resends a
+    /// finished tool_use block on occasion - must not open a second card, and must not feed the repeat to
+    /// [`crate::trust::cost::Runaway`] a second time. Five resends of the same call_id would cross
+    /// [`crate::trust::cost::REPEAT_LIMIT`] if each were counted, and stop the turn as a loop that never happened.
+    #[tokio::test]
+    async fn a_repeated_call_id_opens_one_card_and_is_not_counted_twice() {
+        use crate::sdcp::notifications::RecordingNotifier;
+
+        struct Repeater;
+
+        #[async_trait::async_trait]
+        impl crate::engines::Engine for Repeater {
+            fn id(&self) -> &'static str {
+                "repeater"
+            }
+
+            async fn start(&self, _prompt: Prompt, sink: &EventSink) {
+                use crate::engines::EngineEvent;
+
+                for _ in 0..5 {
+                    sink.send(EngineEvent::ToolStarted {
+                        call_id: "c1".into(),
+                        tool: "run".into(),
+                        name: "Bash".into(),
+                        target: "ls".into(),
+                    });
+                }
+                sink.send(EngineEvent::Done { summary: "Done".to_string(), meta: String::new(), pass: None });
+            }
+
+            async fn cancel(&self, _turn_id: &str) -> bool {
+                false
+            }
+
+            fn status(&self, _turn_id: &str) -> EngineStatus {
+                EngineStatus::Idle
+            }
+        }
+
+        let notifier = Arc::new(RecordingNotifier::new());
+        let state = DaemonState::bootstrap(Some(std::path::PathBuf::from(":memory:")))
+            .expect("bootstrapping a daemon for the test");
+        let plan = RunPlan {
+            session_id: "s1".to_string(),
+            turn_id: "turn-1".to_string(),
+            engine_id: "repeater".to_string(),
+            prompt_text: "hi".to_string(),
+            model: "sonnet".to_string(),
+            provider: None,
+            history: Vec::new(),
+            project_root: None,
+            remote: None,
+            self_checkpointing: false,
+            autonomy: Default::default(),
+            ..Default::default()
+        };
+        let engine: Arc<dyn crate::engines::Engine> = Arc::new(Repeater);
+        let out: Arc<dyn Notifier> = notifier.clone();
+
+        run_turn(state, engine, plan, out).await;
+
+        assert_eq!(
+            notifier.kinds(),
+            vec!["ToolCallStarted", "TurnCompleted", "CostUpdated", "TrustScored", "SessionUpdated"],
+            "five resends of the same call_id must open exactly one card and never trip the runaway stop"
+        );
     }
 
     /// The answer stored for the next turn carries the tool calls: without them a model read its own

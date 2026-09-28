@@ -14,8 +14,14 @@ export const kernelStrings = {
     failed: 'The kill switch could not reach the daemon',
   },
 
+  /** A stopped turn's chip on its footer; the whole sentence is the turn's ending and the chip's title. */
+  stop: {
+    budget: 'Stopped: budget',
+    runaway: 'Stopped: loop guard',
+  },
+
   cost: {
-    meter: (today: string): string => `${today} today`,
+    meter:(today: string): string => `${today} today`,
     meterTurn: (estimate: string): string => `turn ≈${estimate} est.`,
     meterTitle: 'AI spend today - open the Cost center',
     title: 'Cost center',
