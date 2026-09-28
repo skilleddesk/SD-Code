@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ChevronRight, FolderPlus, Loader2, MessageSquarePlus, Plus, Search, ServerCog, X } from 'lucide-react';
+import { ChevronRight, FolderPlus, Loader2, MessageSquarePlus, MoreHorizontal, Plus, Search, ServerCog, X } from 'lucide-react';
 
 import { strings } from '../../strings';
 import { closeFolder, openFolder, removeHost } from '../../store/intents';
@@ -319,10 +319,21 @@ function ProjectItem({
   const holdsActive = sessions.some((session) => session.id === activeTab);
   const [open, setOpen] = useState(holdsActive || sessions.length > 0);
   const working = sessions.some((session) => session.state === 'running');
+  /* Removing a project from the list is two deliberate clicks behind a menu (0.12.6): it used to be an
+     X right beside the +, and one slip closed example-shop.com. `armed` is the second click's state. */
+  const [menu, setMenu] = useState(false);
+  const [armed, setArmed] = useState(false);
   const close = (): void => {
-    if (window.confirm(strings.sidebar.closeFolderConfirm(project.name, sessions.length))) {
-      void closeFolder(project.id, project.name);
+    if (!armed) {
+      setArmed(true);
+      window.setTimeout(() => setArmed(false), 4000);
+
+      return;
     }
+
+    setMenu(false);
+    setArmed(false);
+    void closeFolder(project.id, project.name);
   };
 
   return (
@@ -364,14 +375,42 @@ function ProjectItem({
         </button>
         <button
           type="button"
-          className="project-close hidden h-[20px] w-[20px] shrink-0 place-items-center rounded-sm text-text-muted hover:bg-red-subtle hover:text-state-error group-hover/project:grid"
-          title={strings.sidebar.actions.closeFolder}
-          aria-label={`${strings.sidebar.actions.closeFolder} ${project.name}`}
-          onClick={close}
+          className={
+            'project-more h-[20px] w-[20px] shrink-0 place-items-center rounded-sm text-text-muted hover:bg-bg-active hover:text-text-primary ' +
+            (menu ? 'grid bg-bg-active' : 'hidden group-hover/project:grid')
+          }
+          title={strings.sidebar.actions.projectMenu}
+          aria-label={`${strings.sidebar.actions.projectMenu} ${project.name}`}
+          aria-expanded={menu}
+          onClick={() => {
+            setMenu(!menu);
+            setArmed(false);
+          }}
         >
-          <X size={12} aria-hidden="true" />
+          <MoreHorizontal size={12} aria-hidden="true" />
         </button>
       </div>
+
+      {menu ? (
+        <div className="project-menu mx-[6px] mb-[4px] rounded-md border border-border-subtle bg-bg-raised p-[6px]">
+          <div className="mb-[6px] truncate font-mono text-[10px] text-text-muted" title={project.root}>
+            {project.root}
+          </div>
+          <button
+            type="button"
+            className={
+              'flex w-full items-center justify-center gap-[6px] rounded-sm border px-[8px] py-[4px] text-[11px] font-medium transition-colors duration-fast ' +
+              (armed
+                ? 'border-state-error bg-state-error text-text-on-accent'
+                : 'border-border-subtle text-text-secondary hover:border-state-error/60 hover:text-state-error')
+            }
+            onClick={close}
+          >
+            <X size={11} aria-hidden="true" />
+            {armed ? strings.sidebar.closeFolderArmed(sessions.length) : strings.sidebar.closeFolderAction}
+          </button>
+        </div>
+      ) : null}
 
       {open ? (
         <div className="project-sessions ml-[15px] border-l border-border-subtle pb-[2px] pl-[3px]">

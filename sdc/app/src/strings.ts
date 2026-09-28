@@ -110,6 +110,7 @@ const english = {
       newChatInProject: (name: string): string => `New chat in ${name}`,
       toggleProject: (name: string): string => `${name} · fold or unfold`,
       closeFolder: 'Close this folder (its chats are kept)',
+      projectMenu: 'More for this project',
     },
     /** The chats that belong to no folder, under their host (0.12.5). */
     noProject: 'No folder',
@@ -125,6 +126,9 @@ const english = {
     hostChats: 'Chats',
     newChatShort: 'New chat',
     openFolderRow: 'Open folder…',
+    closeFolderAction: 'Remove from list',
+    closeFolderArmed: (chats: number): string =>
+      chats === 0 ? 'Click again to remove' : `Click again - ${chats} chat${chats === 1 ? ' is' : 's are'} kept`,
     closeFolderConfirm: (name: string, chats: number): string =>
       chats === 0
         ? `Close ${name}? It leaves this list; nothing on disk is touched.`

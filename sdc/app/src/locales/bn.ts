@@ -55,6 +55,9 @@ export const bn: StringsPack = {
     newChatShort: 'নতুন চ্যাট',
     openFolderRow: 'ফোল্ডার খুলুন…',
     startChat: 'চ্যাট শুরু করুন',
+    closeFolderAction: 'তালিকা থেকে সরান',
+    closeFolderArmed: (chats: number): string =>
+      chats === 0 ? 'সরাতে আবার চাপুন' : `আবার চাপুন - ${chats}টা চ্যাট থেকে যাবে`,
     closeFolderConfirm: (name: string, chats: number): string =>
       chats === 0
         ? `${name} বন্ধ করবেন? শুধু তালিকা থেকে সরবে; ডিস্কের কিছু বদলাবে না।`

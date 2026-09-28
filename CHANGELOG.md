@@ -15,6 +15,17 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [0.12.7] — A project cannot be removed by one slip, and one Claude sign-in measured on a real VPS
+
+* **Removing a project now takes two deliberate clicks.** In 0.12.6 an ✕ appeared right beside a project's
+  `+` on hover, and one click removed `example-shop.com` from the list. Its chat and conversation were kept, but
+  the chat lost its folder; both were put back by hand. Hovering a project now shows `+` and `⋯` only. `⋯`
+  opens a small panel showing the folder's full path and "Remove from list". The first click on that button
+  only arms it ("Click again - 1 chat is kept"), and it disarms itself after four seconds.
+* **One Claude sign-in for every host, verified.** On the owner's VPS, whose own `claude` was signed out
+  (`loggedIn: false`), a claude_code turn answered `forwarded-ok` using this PC's sign-in. Afterwards no
+  secrets file was left in `~/.sdc/run`, and the VPS's own `~/.claude/.credentials.json` was unchanged.
+
 ## [0.12.6] — A new sidebar, and a composer that holds its own controls
 
 From the report: *"side bar ar style and sytem ta valo lagse nah … new design"* and *"chat box ar vitore
