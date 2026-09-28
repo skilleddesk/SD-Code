@@ -281,6 +281,14 @@ pub mod event {
         )
     }
 
+    /// A tool call the model is still writing (0.14.2) - the live view before `ToolCallStarted`.
+    pub fn tool_call_drafting(turn_id: &str, call_id: &str, name: &str, target: &str, chars: u64, preview: &str) -> Value {
+        base(
+            "ToolCallDrafting",
+            json!({ "turnId": turn_id, "callId": call_id, "name": name, "target": target, "chars": chars, "preview": preview }),
+        )
+    }
+
     pub fn tool_call_completed(turn_id: &str, call_id: &str, status: &str, meta: &str, diff: Option<Value>) -> Value {
         base(
             "ToolCallCompleted",

@@ -43,10 +43,16 @@ pub const CLAUDE_SPEC: CliSpec = CliSpec {
     model_flag: Some("--model"),
     env: &[("NO_COLOR", "1"), ("CLAUDE_NO_UPDATE_CHECK", "1")],
     /* `--permission-mode acceptEdits` lets the checkpointed folder be edited; `--allowedTools Bash`
-       adds commands; `--dangerously-skip-permissions` is the CLI's own full-autonomy switch. */
+       adds commands; `--dangerously-skip-permissions` is the CLI's own full-autonomy switch.
+
+       `WebSearch` and `WebFetch` are allowed at every level (0.14.2). They read the web and change nothing
+       on the machine, and with `-p` nobody can answer Claude's prompt for them, so a research turn got a
+       red card: "Claude requested permissions to use WebSearch, but you haven't granted it yet." Measured
+       with Claude Code 2.1.278: with `--allowedTools WebSearch,WebFetch` the same turn searched and
+       answered, and `permission_denials` came back empty. */
     autonomy: [
-        &["--permission-mode", "acceptEdits"],
-        &["--permission-mode", "acceptEdits", "--allowedTools", "Bash"],
+        &["--permission-mode", "acceptEdits", "--allowedTools", "WebSearch,WebFetch"],
+        &["--permission-mode", "acceptEdits", "--allowedTools", "Bash,WebSearch,WebFetch"],
         &["--dangerously-skip-permissions"],
     ],
     resume: Resume::Flag("--resume"),

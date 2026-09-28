@@ -218,7 +218,7 @@ export const kernelStrings = {
     ui: 'Window language',
     uiHelp: 'Switching reloads the window. Alerts, Proof Packs and client pages use it too.',
     contract: 'Confirm what SDC understood',
-    contractHelp: 'The card that shows the reading before any engine starts.',
+    contractHelp: 'Off by default: Enter starts the work at once. On, a card shows the reading first and waits for your yes.',
     contractMode: { auto: 'When it matters', always: 'Always', off: 'Never' },
     style: 'Answers in a regional form',
     styleHelp: 'When you write in a dialect, answer in it - or in the standard form of the language.',

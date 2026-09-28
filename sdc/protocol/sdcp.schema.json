@@ -353,6 +353,7 @@
           "ToolCallStarted",
           "ToolCallOutput",
           "ToolCallCompleted",
+          "ToolCallDrafting",
           "ThinkingDelta",
           "ErrorRaised",
           "PermissionRequested",

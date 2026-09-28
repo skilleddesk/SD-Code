@@ -62,6 +62,7 @@ export function toTurns(
       tools: turn.tools.map(toToolCard),
       timeline: timelineOf(turn, checkpoints),
       ...(turn.status === 'running' || turn.status === 'stuck' ? { live: liveBarOf(turn) } : {}),
+      ...((turn.status === 'running' || turn.status === 'stuck') && turn.draft !== undefined ? { draft: { ...turn.draft } } : {}),
       plan: turn.plan.map((step) => ({ text: step.text, status: step.status })),
       running: turn.status === 'running' || turn.status === 'stuck',
       /* Running with nothing on screen yet: the pulse that stands in for the answer until the first
@@ -71,12 +72,14 @@ export function toTurns(
         turn.text === '' &&
         turn.thinking === '' &&
         turn.tools.length === 0 &&
-        turn.plan.length === 0,
+        turn.plan.length === 0 &&
+        turn.draft === undefined,
       stats:
         turn.status === 'running' || turn.status === 'stuck'
           ? {
               startedAt: turn.startedAt,
-              chars: turn.text.length + turn.thinking.length,
+              /* What a file being written adds counts too (0.14.2): the pace read ~1 tok/s while it wrote 6k characters. */
+              chars: turn.text.length + turn.thinking.length + (turn.draft?.chars ?? 0),
               thinkingMs: turn.thinkingMs,
               thinkingSince: turn.thinkingSince,
               tools: turn.tools.length,
@@ -181,7 +184,8 @@ function timelineOf(turn: TurnView, checkpoints: readonly CheckpointView[]): Tim
         kind: 'text',
         key,
         text: entry.text,
-        streaming: running && newest,
+        /* A tool call being written (0.14.2) comes after these words: they are finished, not still typing. */
+        streaming: running && newest && turn.draft === undefined,
         /* The words after the last tool call, once the turn has ended, are its answer. */
         final: !running && index === lastText && index > lastTool,
       });
@@ -219,6 +223,13 @@ function liveBarOf(turn: TurnView): LiveBarData {
 
   if (running !== undefined) {
     return { phase: 'tool', detail: `${running.name} ${running.target}`.trim(), step, since: running.startedAt };
+  }
+
+  /* A tool call still being written (0.14.2): the bar says which, instead of "deciding" for half a minute. */
+  if (turn.draft !== undefined) {
+    const name = turn.draft.target.split(/[\\/]/).pop() ?? '';
+
+    return { phase: 'drafting', detail: name, tool: turn.draft.name, step, since: turn.draft.since };
   }
 
   if (last === undefined) {

@@ -666,11 +666,16 @@ impl CliAdapter {
 /// `ended` is the caller's latch, because `run` keeps reading to the end of stdout: a child that is
 /// still writing must not block on a full pipe while the daemon has stopped listening.
 pub fn push_stream_line(line: &str, ended: &mut bool, sink: &EventSink) {
+    push_stream_line_with(line, ended, sink, &mut crate::engines::draft::DraftTracker::new());
+}
+
+/// `push_stream_line` with the turn's draft tracker, which gives a finished file tool its diff (0.14.2).
+fn push_stream_line_with(line: &str, ended: &mut bool, sink: &EventSink, drafts: &mut crate::engines::draft::DraftTracker) {
     if *ended {
         return;
     }
 
-    for event in parse_stream_line(line) {
+    for event in parse_stream_line(line).into_iter().map(|event| drafts.complete(event)) {
         *ended = event.is_terminal();
         sink.send(event);
 
@@ -723,6 +728,7 @@ async fn read_structured(
     let mut ended = false;
     let mut pending: Vec<u8> = Vec::new();
     let mut chunk = [0u8; 8192];
+    let mut drafts = crate::engines::draft::DraftTracker::new();
 
     loop {
         match tokio::time::timeout(INTERACTIVE_STALL, stdout.read(&mut chunk)).await {
@@ -734,7 +740,13 @@ async fn read_structured(
                     let raw: Vec<u8> = pending.drain(..=end).collect();
                     let line = String::from_utf8_lossy(&raw).trim_end().to_string();
 
-                    push_stream_line(&line, &mut ended, sink);
+                    if !ended {
+                        for draft in drafts.observe(&line) {
+                            sink.send(draft);
+                        }
+                    }
+
+                    push_stream_line_with(&line, &mut ended, sink, &mut drafts);
                     lines.push(line);
                 }
 
@@ -985,9 +997,9 @@ mod tests {
 
         assert_eq!(
             autonomy_args(&CLAUDE_SPEC, Autonomy::Ask),
-            &["--permission-mode", "acceptEdits"]
+            &["--permission-mode", "acceptEdits", "--allowedTools", "WebSearch,WebFetch"]
         );
-        assert!(autonomy_args(&CLAUDE_SPEC, Autonomy::Pro).contains(&"--allowedTools"));
+        assert!(autonomy_args(&CLAUDE_SPEC, Autonomy::Pro).contains(&"Bash,WebSearch,WebFetch"));
         assert_eq!(autonomy_args(&CLAUDE_SPEC, Autonomy::Auto), &["--dangerously-skip-permissions"]);
         assert_eq!(
             autonomy_args(&crate::engines::codex::CODEX_SPEC, Autonomy::Ask),

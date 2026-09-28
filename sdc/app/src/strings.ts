@@ -260,6 +260,17 @@ const english = {
       waiting: (model: string): string => `Waiting for ${model}`,
       step: (index: number, total: number): string => `Step ${index} of ${total}`,
       jump: 'Jump to now',
+      /** 0.14.2: a tool call the model is still writing - `Writing notes.md`, `Preparing Bash`. */
+      drafting: (verb: string, what: string): string => `${verb} ${what}`.trim(),
+    },
+    /** 0.14.2: the card of a tool call the model is still writing, before it runs. */
+    draft: {
+      write: 'Writing',
+      edit: 'Editing',
+      run: 'Preparing command',
+      other: 'Preparing',
+      size: (chars: number): string => (chars >= 1000 ? `${(chars / 1000).toFixed(1)}k chars` : `${chars} chars`),
+      lines: (count: number): string => `${count} ${count === 1 ? 'line' : 'lines'}`,
     },
     /** A message sent into a running turn, where the agent took it (0.12.5). */
     steered: 'You, while it worked',

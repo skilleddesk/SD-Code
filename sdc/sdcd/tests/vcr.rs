@@ -44,6 +44,7 @@ fn kind_of(event: &EngineEvent) -> &'static str {
         EngineEvent::Thinking(_) => "Thinking",
         EngineEvent::ToolStarted { .. } => "ToolStarted",
         EngineEvent::ToolOutput { .. } => "ToolOutput",
+        EngineEvent::ToolDraft { .. } => "ToolDraft",
         EngineEvent::ToolCompleted { .. } => "ToolCompleted",
         EngineEvent::Failed(_) => "Failed",
         EngineEvent::Done { .. } => "Done",

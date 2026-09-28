@@ -117,6 +117,16 @@ export function getTransport(): SdcpTransport {
   let daemonSeq = 0;
 
   const fold = (notification: Notification): void => {
+    /* Live-only (0.14.2): a tool call still being written is not in the daemon's record and carries the
+       record's current `seq`, so it is folded as it comes - never counted, never a gap, never replayed. */
+    if (notification.event.type === 'ToolCallDrafting') {
+      if (replayed) {
+        eventLog.accept(notification);
+      }
+
+      return;
+    }
+
     if (notification.seq <= daemonSeq) {
       return;
     }
@@ -161,7 +171,8 @@ export function getTransport(): SdcpTransport {
     replayed = true;
 
     for (const notification of held.splice(0).sort((left, right) => left.seq - right.seq)) {
-      if (notification.seq > daemonSeq) {
+      /* A live-only draft held during the catch-up is stale, and its borrowed `seq` must never advance ours. */
+      if (notification.seq > daemonSeq && notification.event.type !== 'ToolCallDrafting') {
         admit(notification);
       }
     }

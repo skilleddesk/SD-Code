@@ -609,6 +609,21 @@ export interface ToolCallOutputEvent {
   text: string;
 }
 
+/**
+ * A tool call the model is still writing (0.14.2), before its `ToolCallStarted`: the tool, its target once
+ * that much of the input has arrived, how many characters of its body so far, and the newest lines of it.
+ * Several arrive per call, a few a second; the newest one is the whole truth.
+ */
+export interface ToolCallDraftingEvent {
+  type: 'ToolCallDrafting';
+  turnId: string;
+  callId: string;
+  name: string;
+  target: string;
+  chars: number;
+  preview: string;
+}
+
 export interface ToolCallCompletedEvent {
   type: 'ToolCallCompleted';
   turnId: string;
@@ -1365,6 +1380,7 @@ export type SdcpEvent =
   | ToolCallStartedEvent
   | ToolCallOutputEvent
   | ToolCallCompletedEvent
+  | ToolCallDraftingEvent
   | ThinkingDeltaEvent
   | ErrorRaisedEvent
   | PermissionRequestedEvent
@@ -1419,6 +1435,7 @@ export const SDCP_EVENT_TYPES = [
   'ToolCallStarted',
   'ToolCallOutput',
   'ToolCallCompleted',
+  'ToolCallDrafting',
   'ThinkingDelta',
   'ErrorRaised',
   'PermissionRequested',

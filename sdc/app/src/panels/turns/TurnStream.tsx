@@ -94,7 +94,7 @@ function TurnBlock({ turn, sessionId }: { turn: Turn; sessionId: string }) {
 
       {/* Everything the turn did, in the order it did it (0.12.5). The live line moved to the sticky bar
           above the input (`LiveBar`), where it cannot scroll away. */}
-      <Timeline items={turn.timeline} sessionId={sessionId} live={turn.live} />
+      <Timeline items={turn.timeline} sessionId={sessionId} live={turn.live} draft={turn.draft} />
 
       {/* Between Send and the first event there used to be nothing at all here, and a slow first
           token read as a dead turn. Three pulsing dots and a sentence are the honest version of

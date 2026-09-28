@@ -181,10 +181,26 @@ export interface TurnView {
    * input - not a thinking box at the top that scrolled away while the tool cards grew below it.
    */
   timeline: TimelineEntry[];
+  /**
+   * The tool call the model is writing right now, before its card opens (0.14.2, `ToolCallDrafting`): a
+   * 150-line file used to be 30 silent seconds and then a finished card. Gone once the card opens.
+   */
+  draft?: DraftView;
   error?: ErrorView;
   summary: string;
   meta: string;
   pass: boolean | null;
+}
+
+/** A tool call still being written (0.14.2). */
+export interface DraftView {
+  callId: string;
+  name: string;
+  target: string;
+  chars: number;
+  preview: string;
+  /** When the first report of this call arrived. */
+  since: string;
 }
 
 /** One stretch of a turn, in arrival order. Tools and checkpoints are referenced by id. */

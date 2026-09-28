@@ -22,6 +22,7 @@ pub mod claude_code;
 pub mod cli;
 pub mod codex;
 pub mod credentials;
+pub mod draft;
 pub mod gemini;
 pub mod native_api;
 pub mod steer;
@@ -182,6 +183,9 @@ pub enum EngineEvent {
     Thinking(String),
     ToolStarted { call_id: String, tool: String, name: String, target: String },
     ToolOutput { call_id: String, level: String, text: String },
+    /// A tool call the model is still writing (0.14.2): which tool, its target once that much has arrived,
+    /// how many characters of its body, and the newest lines. Reported before the card opens.
+    ToolDraft { call_id: String, name: String, target: String, chars: u64, preview: String },
     /// `diff` is the Edit card's rows (`[{lineNumber, text, change}]`) when the adapter knows them.
     ToolCompleted { call_id: String, status: String, meta: String, diff: Option<Value> },
     /// The agent is waiting for the person to allow an action (the daemon pushes `PermissionRequested`).
@@ -673,6 +677,7 @@ fn claude_tool_results(value: &Value) -> Vec<EngineEvent> {
                     .join("\n"),
                 _ => String::new(),
             };
+            let text = permission_refusal(&text).unwrap_or(text);
             let lines = text.lines().count();
             let call_id = block.get("tool_use_id").and_then(Value::as_str).unwrap_or("call").to_string();
             let mut events = result_lines(&call_id, &text, failed);
@@ -687,6 +692,23 @@ fn claude_tool_results(value: &Value) -> Vec<EngineEvent> {
             events
         })
         .collect()
+}
+
+/// Claude Code's refusal of a tool that the turn's autonomy level does not allow, said the way SDC can act
+/// on it (0.14.2). With `-p` nobody can answer Claude's prompt, so its own sentence ("…but you haven't
+/// granted it yet") pointed at a button that does not exist.
+fn permission_refusal(text: &str) -> Option<String> {
+    let rest = text.split("requested permissions to use ").nth(1)?;
+    let tool: String = rest.chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect();
+
+    if tool.is_empty() || !text.contains("haven't granted") {
+        return None;
+    }
+
+    Some(format!(
+        "{tool} is not allowed at this autonomy level, so Claude Code could not use it. \
+         Switch the mode to Pro or Auto (top bar) and send again to allow it."
+    ))
 }
 
 /// One inner event of Claude Code's `stream_event` wrapper.
@@ -733,8 +755,10 @@ fn claude_tool_calls(value: &Value) -> Vec<EngineEvent> {
         .filter_map(|block| {
             let name = block.get("name").and_then(Value::as_str).unwrap_or("tool").to_string();
 
-            /* The checklist is drawn as the plan card (`claude_todos`), not as a card of its own (0.13). */
-            if name == "TodoWrite" {
+            /* The checklist is drawn as the plan card (`claude_todos`), not as a card of its own (0.13).
+               `ToolSearch` only loads another tool's definition (0.14.2): as a "run" card it took a
+               checkpoint and showed an empty `done · 0 ln` before every web search. */
+            if name == "TodoWrite" || name == "ToolSearch" {
                 return None;
             }
 
@@ -1334,5 +1358,23 @@ mod tests {
                 EngineEvent::ToolCompleted { call_id: "toolu_2".into(), status: "failed".into(), meta: "failed".into(), diff: None },
             ]
         );
+    }
+
+    /// The screenshot's card (0.14.2): Claude's "you haven't granted it yet" points at a prompt nobody can
+    /// answer under `-p`, so the card says which switch allows the tool instead.
+    #[test]
+    fn a_refused_tool_says_which_switch_allows_it() {
+        let events = parse_stream_line(
+            r#"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_9","content":"Claude requested permissions to use WebSearch, but you haven't granted it yet.","is_error":true}]}}"#,
+        );
+
+        let EngineEvent::ToolOutput { text, level, .. } = &events[0] else {
+            panic!("expected the refusal as output, got {events:?}");
+        };
+
+        assert_eq!(level, "fail");
+        assert!(text.starts_with("WebSearch is not allowed at this autonomy level"), "{text}");
+        assert!(text.contains("Pro or Auto"), "{text}");
+        assert!(!text.contains("haven't granted"));
     }
 }

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { ArrowDown, Brain, Loader2, PenLine, Sparkles, Terminal } from 'lucide-react';
 
 import { strings } from '../../strings';
+import { look } from './draftLook';
 import type { LiveBarData, TurnStatsData } from './types';
 
 /**
@@ -46,7 +47,7 @@ export function LiveBar({
     ...(stats.tools > 0 ? [strings.turns.stats.tools(stats.tools)] : []),
   ];
 
-  const { icon: Icon, label, tone } = phaseLook(live.phase, model);
+  const { icon: Icon, label, tone } = phaseLook(live.phase, model, live.tool);
 
   return (
     <div className="live-bar mx-auto w-full max-w-[780px] px-[28px] max-600:px-[16px]" data-live-bar={live.phase}>
@@ -95,7 +96,7 @@ export function LiveBar({
   );
 }
 
-function phaseLook(phase: LiveBarData['phase'], model: string): { icon: typeof Brain; label: string; tone: string } {
+function phaseLook(phase: LiveBarData['phase'], model: string, tool = ''): { icon: typeof Brain; label: string; tone: string } {
   switch (phase) {
     case 'thinking':
       return { icon: Brain, label: strings.turns.live.thinking, tone: 'text-purple' };
@@ -103,6 +104,8 @@ function phaseLook(phase: LiveBarData['phase'], model: string): { icon: typeof B
       return { icon: PenLine, label: strings.turns.live.writing, tone: 'text-accent' };
     case 'tool':
       return { icon: Loader2, label: strings.turns.live.tool, tone: 'text-state-warning' };
+    case 'drafting':
+      return { icon: PenLine, label: look(tool).verb, tone: 'text-accent' };
     case 'deciding':
       return { icon: Sparkles, label: strings.turns.live.deciding, tone: 'text-accent' };
     case 'waiting':

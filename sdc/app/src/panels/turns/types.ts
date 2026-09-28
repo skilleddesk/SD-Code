@@ -178,6 +178,8 @@ export interface Turn {
   timeline: TimelineItem[];
   /** Set while the turn runs: the sticky bar's line. */
   live?: LiveBarData;
+  /** The tool call the model is still writing, before its card opens (0.14.2). */
+  draft?: DraftData;
   /** The checkpoints this turn wrote, oldest first - the rail's dots and the way back. */
   checkpoints: TurnCheckpointData[];
   /** The agent's checklist (v4); empty when the engine did not make one. */
@@ -218,14 +220,26 @@ export type TimelineItem =
   | { kind: 'steer'; key: string; text: string };
 
 /** What the sticky live bar shows while a turn runs (0.12.5). */
+/** A tool call still being written (0.14.2): the store's `DraftView`, as the card draws it. */
+export interface DraftData {
+  callId: string;
+  name: string;
+  target: string;
+  chars: number;
+  preview: string;
+  since: string;
+}
+
 export interface LiveBarData {
-  phase: 'thinking' | 'writing' | 'tool' | 'deciding' | 'waiting';
+  phase: 'thinking' | 'writing' | 'drafting' | 'tool' | 'deciding' | 'waiting';
   /** The tool running, or the latest line of thought - whatever says what is happening right now. */
   detail: string;
   /** The plan's step in progress, and where it sits: `2 of 5`. */
   step: { text: string; index: number; total: number } | null;
   /** When the current phase began, for its own timer. */
   since: string;
+  /** The tool a `drafting` phase is writing (0.14.2): its verb is the bar's label. */
+  tool?: string;
 }
 
 export interface TurnStatsData {

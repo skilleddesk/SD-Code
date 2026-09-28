@@ -54,7 +54,7 @@ function Row({ label, help, children }: { label: string; help?: string; children
 export function LanguageTab() {
   const k = strings.kernel.language;
   const { activeTab } = useSessionsStore();
-  const [contract, setContract] = useState<string>(() => String(storedSettings()['intent-contract'] ?? 'auto'));
+  const [contract, setContract] = useState<string>(() => String(storedSettings()['intent-contract'] ?? 'off'));
   const [style, setStyle] = useState<string>(() => String(storedSettings()['reply-style'] ?? 'standard'));
   const [glossary, setGlossary] = useState<{ scope: string; terms: GlossaryTerm[] } | null>(null);
   const [term, setTerm] = useState('');

@@ -2371,11 +2371,16 @@ export async function sendPrompt(prompt: string, target?: string, extras: SendEx
 
 /**
  * Whether a request goes through the Intent Contract card first (Settings → Language → "Confirm what SDC
- * understood"): `always`, `off`, or - by default - when it matters: a request of eight words or more, or
- * one written in any script besides plain ASCII. A slash command never does.
+ * understood"): `always`, `auto` (when it matters: eight words or more, or any script besides plain ASCII),
+ * or - **by default since 0.14.2 - never**.
+ *
+ * It used to default to `auto`, and the report came with a screenshot: every real request stopped on
+ * "Reading your request…" with a disabled Confirm button while a model read it, and only then waited for a
+ * click. Enter in Claude Code starts the work; here it started a form. The engine still answers with its
+ * `Understood:` line first (`understand-messages`), so the reading is still shown - just not in the way.
  */
 export function needsContract(prompt: string): boolean {
-  const mode = storedSettings()['intent-contract'];
+  const mode = storedSettings()['intent-contract'] ?? 'off';
   const trimmed = prompt.trim();
 
   if (trimmed.startsWith('/') || mode === 'off') {

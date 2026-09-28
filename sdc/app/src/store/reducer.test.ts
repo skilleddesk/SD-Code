@@ -993,3 +993,29 @@ describe('0.13: the agent asks, and the context meter', () => {
     expect(state.contexts['s1']).toEqual({ usedTokens: 96000, windowTokens: 128000, percent: 75, compacted: true, resumed: false });
   });
 });
+
+describe('0.14.2: a tool call the model is still writing', () => {
+  it('shows the newest draft, keeps its first stamp and path, and drops it when the card opens', () => {
+    let state = fold(EMPTY_STATE, { type: 'TurnStarted', turnId: 't1', sessionId: 's1', engine: 'claude_code', model: 'sonnet', tier: 'Balanced', prompt: 'write notes' });
+
+    state = fold(state, { type: 'ToolCallDrafting', turnId: 't1', callId: 'w1', name: 'Write', target: '/srv/notes.md', chars: 20, preview: '# Notes' });
+    const since = state.turns[0]?.draft?.since;
+
+    state = fold(state, { type: 'ToolCallDrafting', turnId: 't1', callId: 'w1', name: 'Write', target: '', chars: 900, preview: '# Notes\nline two' });
+
+    expect(state.turns[0]?.draft).toEqual({ callId: 'w1', name: 'Write', target: '/srv/notes.md', chars: 900, preview: '# Notes\nline two', since });
+
+    /* The card opening ends it - under its own id, or the SDC Agent's (which differs from the provider's). */
+    state = fold(state, { type: 'ToolCallStarted', turnId: 't1', callId: 't1-1', tool: 'edit', name: 'Write', target: '/srv/notes.md' });
+    expect(state.turns[0]?.draft).toBeUndefined();
+  });
+
+  it('never outlives its turn', () => {
+    let state = fold(EMPTY_STATE, { type: 'TurnStarted', turnId: 't1', sessionId: 's1', engine: 'claude_code', model: 'sonnet', tier: 'Balanced', prompt: 'x' });
+
+    state = fold(state, { type: 'ToolCallDrafting', turnId: 't1', callId: 'b1', name: 'Bash', target: 'npm te', chars: 6, preview: 'npm te' });
+    state = fold(state, { type: 'TurnCompleted', turnId: 't1', summary: 'Interrupted', meta: '' });
+
+    expect(state.turns[0]?.draft).toBeUndefined();
+  });
+});

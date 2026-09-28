@@ -133,6 +133,23 @@ function endThinking(turn: TurnView, ts: string): TurnView {
 }
 
 /**
+ * The turn without its draft (0.14.2). Any card opening ends it: the SDC Agent names its cards itself
+ * (`turn-7-3`), not with the provider's call id the draft carried, so matching ids would leave a finished
+ * draft on screen until the turn ended.
+ */
+function withoutDraft(turn: TurnView): TurnView {
+  if (turn.draft === undefined) {
+    return turn;
+  }
+
+  const next = { ...turn };
+
+  delete next.draft;
+
+  return next;
+}
+
+/**
  * Appends streamed text to the turn's timeline (0.12.5): to the newest stretch when it is the same kind,
  * or as a new stretch when something else happened in between - which is what keeps "thought, said,
  * ran, thought again" in the order it happened.
@@ -507,9 +524,26 @@ function reduce(state: AppState, entry: AppEvent): AppState {
         stuckForMs: 0,
       }));
 
-    case 'ToolCallStarted':
+    case 'ToolCallDrafting':
       return patchTurn(state, event.turnId, (turn) => ({
         ...endThinking(turn, entry.ts),
+        draft: {
+          callId: event.callId,
+          name: event.name,
+          /* A later report can know less of the target than an earlier one never does, but a path arrives
+             in pieces: the longer one is the one to keep. */
+          target: turn.draft?.callId === event.callId && event.target === '' ? turn.draft.target : event.target,
+          chars: event.chars,
+          preview: event.preview,
+          since: turn.draft?.callId === event.callId ? turn.draft.since : entry.ts,
+        },
+        status: 'running',
+        stuckForMs: 0,
+      }));
+
+    case 'ToolCallStarted':
+      return patchTurn(state, event.turnId, (turn) => ({
+        ...withoutDraft(endThinking(turn, entry.ts)),
         timeline: [...endThinking(turn, entry.ts).timeline, { kind: 'tool', callId: event.callId }],
         tools: [
           ...turn.tools,
@@ -607,7 +641,7 @@ function reduce(state: AppState, entry: AppEvent): AppState {
 
     case 'TurnCompleted': {
       const next = patchTurn(state, event.turnId, (turn) => ({
-        ...endThinking(turn, entry.ts),
+        ...withoutDraft(endThinking(turn, entry.ts)),
         status: turn.status === 'failed' ? 'failed' : 'done',
         summary: event.summary,
         meta: event.meta,
@@ -638,7 +672,7 @@ function reduce(state: AppState, entry: AppEvent): AppState {
 
     case 'ErrorRaised':
       return patchTurn(state, event.turnId ?? state.activeTurnId ?? '', (turn) => ({
-        ...endThinking(turn, entry.ts),
+        ...withoutDraft(endThinking(turn, entry.ts)),
         status: 'failed',
         error: {
           title: event.title,

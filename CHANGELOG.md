@@ -15,6 +15,40 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [0.14.2] — A file is shown while it is written, Enter starts the work, and web search is allowed
+
+The report came with two screenshots: *"live steamming omg lvl ar bad ... monai hosse nah je live steamming
+hosse"*, a request stuck on "Reading your request…", and a red `WebSearch failed` card. Each was measured
+before it was changed.
+
+* **A file is shown while the model writes it.** Measured on a dev daemon: a Claude Code turn that wrote a
+  150-line file showed its `Read` card at 6.0 s and then **nothing for 31.7 s**, until the `Write` card
+  arrived already finished. The model was streaming the file the whole time as tool input, and SDC ignored
+  it. A new event, `ToolCallDrafting`, reports a tool call while it is still being written, about three
+  times a second: the tool, the file or command as soon as that much has arrived, how many characters so far,
+  and the newest lines. The stream draws it as a card with the text growing at the bottom, and the live bar
+  says `Writing plan.md`. Measured in the window: from 12 s to 34 s the card showed the file line by line
+  (`plan.md 2.3k chars · 8s`, `29. Quiescence search is capped at six▍`), then the real card opened.
+  The SDC Agent does the same for DeepSeek, Qwen, GPT and Claude API models (both dialects); measured with
+  DeepSeek: a `write_file` reported every ~300 ms from 0.8 s to 6.8 s.
+* **Claude Code's `Write` and `Edit` cards show the change.** A `Write` ended as `done · 1 ln` with Claude's
+  "File created successfully" as its only line. The card now carries the lines written (`done · +80`), and
+  an `Edit` its removed and added lines (`done · +1 −1`), from the tool's own input.
+* **Enter starts the work.** The Intent Contract card ("Reading your request…" with a disabled Confirm)
+  stopped every request of eight words or more, or in Bengali, until a model had read it and you clicked.
+  It is now off unless you turn it on (Settings → Language). The engine still starts its answer with an
+  `Understood:` line, which now gets its own chip even when the agent goes on to use tools.
+* **Claude Code may search the web.** With `-p` nobody can answer Claude's permission prompt, so every web
+  search failed with "Claude requested permissions to use WebSearch, but you haven't granted it yet."
+  `WebSearch` and `WebFetch` are allowed at every autonomy level: they read the web and change nothing on the
+  machine. Measured: the same turn searched and answered, with `permission_denials` empty. Any other tool a
+  level does not allow now says which switch allows it (Pro or Auto) instead of pointing at a prompt that
+  does not exist.
+* **No empty `ToolSearch` card and no checkpoint before every web search.** Claude Code loads a tool's
+  definition with `ToolSearch` first; it was drawn as a "run" card (`done · 0 ln`) and took a checkpoint.
+* The narration's caret no longer blinks after the words have stopped, and the live bar's token count and
+  pace include what a file being written adds.
+
 ## [0.14.1] — Claude Code's tool cards show what ran, and the loop guard stops only real loops
 
 * **A Claude Code tool card has its command again.** With the partial stream, a tool call's first line

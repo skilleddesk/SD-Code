@@ -369,6 +369,8 @@ struct AnthropicState {
     input_tokens: u64,
     output_tokens: u64,
     ended: bool,
+    /// How often a tool call still arriving is reported (0.14.2).
+    pace: crate::engines::draft::Pace,
 }
 
 impl AnthropicState {
@@ -424,6 +426,17 @@ impl AnthropicState {
                     }
                     "input_json_delta" => {
                         self.partial_json[index].push_str(delta["partial_json"].as_str().unwrap_or_default());
+
+                        /* A file being written streams here for as long as it takes (0.14.2): say so. */
+                        if self.pace.due() {
+                            let block = &self.blocks[index];
+
+                            sink.send(crate::engines::draft::report(
+                                block["id"].as_str().unwrap_or("call"),
+                                block["name"].as_str().unwrap_or("tool"),
+                                &self.partial_json[index],
+                            ));
+                        }
                     }
                     _ => {}
                 }
@@ -503,6 +516,8 @@ struct OpenAiState {
     input_tokens: u64,
     output_tokens: u64,
     spoke: bool,
+    /// How often a tool call still arriving is reported (0.14.2).
+    pace: crate::engines::draft::Pace,
 }
 
 impl OpenAiState {
@@ -564,6 +579,13 @@ impl OpenAiState {
                 } else {
                     slot.2.push_str(arguments);
                 }
+            }
+
+            /* A file being written streams here for as long as it takes (0.14.2): say so. */
+            if !slot.1.is_empty() && self.pace.due() {
+                let id = if slot.0.is_empty() { format!("call_{index}") } else { slot.0.clone() };
+
+                sink.send(crate::engines::draft::report(&id, &slot.1, &slot.2));
             }
         }
 
@@ -683,7 +705,15 @@ mod tests {
         assert_eq!((reply.input_tokens, reply.output_tokens), (150, 42));
         assert_eq!(reply.message["content"][0], json!({ "type": "thinking", "thinking": "Read it first.", "signature": "sig-1" }));
         assert_eq!(reply.message["content"][1], json!({ "type": "text", "text": "Looking." }));
-        assert_eq!(recorder.events(), vec![EngineEvent::Thinking("Read it first.".into()), EngineEvent::Delta("Looking.".into())]);
+        /* The call is reported as it starts arriving (0.14.2); later pieces inside the pace are gathered. */
+        assert_eq!(
+            recorder.events(),
+            vec![
+                EngineEvent::Thinking("Read it first.".into()),
+                EngineEvent::Delta("Looking.".into()),
+                EngineEvent::ToolDraft { call_id: "toolu_1".into(), name: "read_file".into(), target: String::new(), chars: 0, preview: String::new() },
+            ]
+        );
     }
 
     #[test]

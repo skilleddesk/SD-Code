@@ -41,6 +41,15 @@ use crate::sdcp::events::EventLog;
 /// keep a log answers `None`.
 pub trait Notifier: Send + Sync {
     fn push(&self, event: Value, session_id: Option<String>, turn_id: Option<String>) -> Option<i64>;
+
+    /// An event for the windows watching now, **not for the record** (0.14.2): a tool call still being
+    /// written (`ToolCallDrafting`) is reported a few times a second, and the finished card replaces it.
+    /// Logged, one large file would add a hundred rows that every start-up replays and the daemon keeps in
+    /// memory. It carries the log's current `seq` (no new number, so no gap), and the app folds it without
+    /// advancing its own. A notifier without a live channel records it like any other event.
+    fn push_live(&self, event: Value, session_id: Option<String>, turn_id: Option<String>) {
+        let _ = self.push(event, session_id, turn_id);
+    }
 }
 
 /// The subscriber registry: every connection that wants notifications, by id.
@@ -120,6 +129,21 @@ impl Notifier for ChannelNotifier {
 
         Some(stored.seq)
     }
+
+    fn push_live(&self, event: Value, session_id: Option<String>, turn_id: Option<String>) {
+        let notification = Notification {
+            v: crate::SDCP_VERSION.to_string(),
+            seq: self.log.seq(),
+            ts: chrono::Utc::now().to_rfc3339(),
+            session_id,
+            turn_id,
+            event,
+        };
+
+        if let Ok(line) = serde_json::to_string(&notification) {
+            self.fanout.broadcast(&line);
+        }
+    }
 }
 
 /// The test notifier: records everything so a test can assert the sequence.
@@ -181,6 +205,30 @@ impl Notifier for RecordingNotifier {
 mod tests {
     use super::*;
     use tokio::sync::mpsc::unbounded_channel;
+
+    /// 0.14.2: a draft reaches the window and not the record - the log neither grows nor renumbers.
+    #[test]
+    fn a_live_only_event_is_broadcast_with_the_current_seq_and_not_logged() {
+        let log = Arc::new(EventLog::empty());
+        let fanout = Fanout::new();
+        let (window, mut window_rx) = unbounded_channel();
+
+        fanout.subscribe(window);
+
+        let notifier = ChannelNotifier::new(log.clone(), fanout);
+
+        notifier.push(serde_json::json!({ "type": "TurnStarted" }), None, Some("t1".into()));
+        notifier.push_live(serde_json::json!({ "type": "ToolCallDrafting" }), None, Some("t1".into()));
+
+        assert_eq!(log.len(), 1, "the draft is not in the log");
+        assert_eq!(log.seq(), 1, "and it took no number");
+
+        let _started = window_rx.try_recv().expect("the logged event");
+        let draft: Value = serde_json::from_str(&window_rx.try_recv().expect("the draft reached the window")).unwrap();
+
+        assert_eq!(draft["seq"], 1);
+        assert_eq!(draft["event"]["type"], "ToolCallDrafting");
+    }
 
     /// The regression test for the bug this module's design note describes: an event caused by one
     /// connection has to reach *every* subscriber, not only the one that asked.

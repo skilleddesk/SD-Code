@@ -3349,6 +3349,17 @@ async fn run_turn(
                     turn.clone(),
                 );
             }
+            /* A draft is the live view of a call still being written (0.14.2): not once its card is open,
+               and not on a slow link, where it is commentary. */
+            crate::engines::EngineEvent::ToolDraft { .. } if low_bandwidth => {}
+            crate::engines::EngineEvent::ToolDraft { call_id, .. } if tools.iter().any(|(id, _)| *id == call_id) => {}
+            crate::engines::EngineEvent::ToolDraft { call_id, name, target, chars, preview } => {
+                out.push_live(
+                    event::tool_call_drafting(&plan.turn_id, &call_id, &name, &target, chars, &preview),
+                    session.clone(),
+                    turn.clone(),
+                );
+            }
             crate::engines::EngineEvent::ToolOutput { call_id, level, text } => {
                 out.push(
                     event::tool_call_output(&plan.turn_id, &call_id, &level, &text),
