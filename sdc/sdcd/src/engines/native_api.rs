@@ -619,6 +619,26 @@ pub fn get_json(url: &str, headers: &[(String, String)]) -> Result<(u16, String)
     }
 }
 
+/// A `POST` that answers `(status, body)`, a 4xx included - for a key check that must reach a route
+/// which judges the key (0.14.4: the Coding Plan's `/models` answers 200 to any key at all).
+pub fn post_json(url: &str, headers: &[(String, String)], body: &str) -> Result<(u16, String), String> {
+    let mut request = agent().post(url).set("content-type", "application/json");
+
+    for (name, value) in headers {
+        request = request.set(name, value);
+    }
+
+    match request.send_string(body) {
+        Ok(response) => {
+            let status = response.status();
+
+            Ok((status, read_all(response.into_reader())))
+        }
+        Err(ureq::Error::Status(status, response)) => Ok((status, read_all(response.into_reader()))),
+        Err(ureq::Error::Transport(transport)) => Err(transport.to_string()),
+    }
+}
+
 /// The sentence a provider rejected a request with, from its own error body when it has one.
 pub fn rejection(status: u16, body: &str) -> String {
     let message = serde_json::from_str::<Value>(body).ok().and_then(|value| {
@@ -763,12 +783,13 @@ mod tests {
         assert_eq!(endpoint_for("llama3.2:3b", None).provider, "custom");
     }
 
-    /// The bug the user hit: `deepseek-v4-pro` came from DeepSeek's own live list, so no block in this
+    /// The bug the user hit: `deepseek-v4-pro` (here `deepseek-v9-pro`, which no bundle names since 0.14.4 put
+    /// V4 in the Alibaba block) came from DeepSeek's own live list, so no block in this
     /// build's catalogue mentions it. Without the provider it reaches the loopback endpoint and asks for
     /// a key under `sdc.provider.custom`, while the DeepSeek key sits under `sdc.provider.deepseek`.
     #[test]
     fn the_provider_the_app_sent_decides_even_for_a_model_the_catalogue_never_saw() {
-        let chosen = endpoint_for("deepseek-v4-pro", Some("deepseek"));
+        let chosen = endpoint_for("deepseek-v9-pro", Some("deepseek"));
 
         assert_eq!(chosen.provider, "deepseek");
         assert_eq!(chosen.key_ref, "sdc.provider.deepseek");
@@ -776,7 +797,7 @@ mod tests {
 
         /* And without it the same id is unresolvable, which is exactly why the provider has to travel
            with the turn. */
-        assert_eq!(endpoint_for("deepseek-v4-pro", None).provider, "custom");
+        assert_eq!(endpoint_for("deepseek-v9-pro", None).provider, "custom");
     }
 
     /// A catalogue id still resolves on its own, for a caller that sends only a model.

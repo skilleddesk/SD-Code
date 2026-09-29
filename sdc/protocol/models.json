@@ -395,9 +395,115 @@
           "ctx": 0,
           "cost": "",
           "name": "GLM-5.3 Prime"
+        },
+        {
+          "id": "deepseek-v4-pro",
+          "tier": "deep",
+          "ctx": 0,
+          "cost": "",
+          "name": "DeepSeek V4 Pro"
+        },
+        {
+          "id": "deepseek-v4.1-flash",
+          "tier": "fast",
+          "ctx": 0,
+          "cost": "",
+          "name": "DeepSeek V4.1 Flash"
+        },
+        {
+          "id": "deepseek-v4-flash",
+          "tier": "fast",
+          "ctx": 0,
+          "cost": "",
+          "name": "DeepSeek V4 Flash"
+        },
+        {
+          "id": "deepseek-v3.2",
+          "tier": "balanced",
+          "ctx": 0,
+          "cost": "",
+          "name": "DeepSeek V3.2"
         }
       ],
       "$comment": "Alibaba Cloud Model Studio (DashScope; id stays qwen so a stored key keeps working), OpenAI-compatible. The base URL can be set per workspace in Connect (ws-<id>.<region>.maas.aliyuncs.com/compatible-mode/v1). Besides Qwen it serves Kimi, DeepSeek, GLM and MiniMax; Wan and HappyHorse are image/video models the live list also shows, which the chat does not run. Prices left empty are unknown to this build and are not guessed. The list refreshes from the live /models at start, every 12 h and when a key is saved; these rows were taken from that list on 2026-09-28. DeepSeek V4 ids are left to the live list: DeepSeek uses the same ids, and a bundled row would pull a provider-less turn to Alibaba."
+    },
+    {
+      "id": "qwen-coding",
+      "label": "Alibaba Coding Plan",
+      "live": "https://coding-intl.dashscope.aliyuncs.com/v1/models",
+      "protocol": "openai",
+      "models": [
+        {
+          "id": "qwen3.7-plus",
+          "tier": "balanced",
+          "ctx": 0,
+          "cost": "",
+          "name": "Qwen3.7 Plus"
+        },
+        {
+          "id": "qwen3.6-plus",
+          "tier": "balanced",
+          "ctx": 0,
+          "cost": "",
+          "name": "Qwen3.6 Plus"
+        },
+        {
+          "id": "qwen3.5-plus",
+          "tier": "balanced",
+          "ctx": 0,
+          "cost": "",
+          "name": "Qwen3.5 Plus"
+        },
+        {
+          "id": "qwen3-coder-plus",
+          "tier": "balanced",
+          "ctx": 0,
+          "cost": "",
+          "name": "Qwen3 Coder Plus"
+        },
+        {
+          "id": "qwen3-coder-next",
+          "tier": "balanced",
+          "ctx": 0,
+          "cost": "",
+          "name": "Qwen3 Coder Next"
+        },
+        {
+          "id": "qwen3-max-2026-01-23",
+          "tier": "deep",
+          "ctx": 0,
+          "cost": "",
+          "name": "Qwen3 Max"
+        },
+        {
+          "id": "kimi-k2.5",
+          "tier": "deep",
+          "ctx": 0,
+          "cost": "",
+          "name": "Kimi K2.5"
+        },
+        {
+          "id": "glm-5",
+          "tier": "balanced",
+          "ctx": 0,
+          "cost": "",
+          "name": "GLM-5"
+        },
+        {
+          "id": "glm-4.7",
+          "tier": "fast",
+          "ctx": 0,
+          "cost": "",
+          "name": "GLM-4.7"
+        },
+        {
+          "id": "MiniMax-M2.5",
+          "tier": "balanced",
+          "ctx": 0,
+          "cost": "",
+          "name": "MiniMax M2.5"
+        }
+      ]
     },
     {
       "id": "zai",

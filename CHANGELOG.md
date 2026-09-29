@@ -15,6 +15,64 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [0.14.4] — Alibaba keys land where they work, a dropped VPS signs in again at once, and the preview follows the page
+
+Three reports in one message, each measured before it was changed.
+
+* **Alibaba Cloud: "key diye add korle kaj korse nah", and DeepSeek and other models were gone from the
+  list.** The key saved on the Alibaba Cloud card was a **Coding Plan** key. Model Studio refuses it (401)
+  on every region - Singapore, US and Beijing - and it answers only at `coding-intl.dashscope.aliyuncs.com/v1`,
+  with its own ten models. `provider.save` never checked a key, so the card said Connected, the live list
+  failed, and the menu fell back to the fifteen bundled rows, which had no DeepSeek in them. Now:
+  * **Alibaba Coding Plan is its own card** (`qwen-coding`), with its own endpoint, key and model list,
+    separate from Alibaba Cloud (Model Studio), which lists Qwen, DeepSeek, Kimi and GLM.
+  * **A key is checked before it is saved.** A key the provider refuses is not saved, and the reason is
+    shown in the provider's own words. A key that cannot be checked (no network) is saved as before.
+    The Coding Plan's `/models` answers 200 to **any** key (measured with `sk-bogus-0000`), so a Coding
+    Plan key is checked on its chat route with an empty request: 401 for a refused key, 400 for an
+    accepted one, and no tokens spent.
+  * **An Alibaba key finds its own home.** SDC asks each Alibaba endpoint once: Model Studio Singapore,
+    US and Beijing, and the Coding Plan in Singapore and Beijing. A Coding Plan key pasted on the Model
+    Studio card is saved on the Coding Plan card (the dialog moves there and says so), and a US or Beijing
+    key gets its region's URL. The endpoints are asked at the same time: 1.4 s, down from 13.6 s one
+    after another.
+  * **A key already saved on the wrong card moves by itself** at start-up, but only if its card refuses it
+    and the other card has no key of its own.
+  * The bundled Alibaba Cloud list now includes DeepSeek V4 Pro, V4 Flash, V4.1 Flash and V3.2, so they
+    show even before the first live refresh.
+* **A dropped VPS connection: the dialog showed "Not connected" with no password box, and signing in took
+  a long time.** The Sign in fields were drawn only after `host.doctor` answered, and the doctor scanned the
+  host key first - **14.5 s** on the user's VPS, because `ssh-keyscan` takes 13 s there. The sign-in itself
+  takes about 4 s.
+  * The card now shows the password and code fields **at once**, from the host's own "is not signed in"
+    status line. The footer's button is **Sign in**, not a greyed-out Connect.
+  * The doctor skips the scan when the probe already reached the password step. The probe checks the
+    pinned key itself (`StrictHostKeyChecking=yes`), so a changed key still fails and is still scanned.
+  * **Remember the password** (a checkbox, on by default) keeps it in the OS keychain once the host accepts
+    it. After that, a reconnect asks only for the verification code, which is focused and is still typed
+    every time. "Forget saved password" removes it, and removing the host removes it too. The password
+    never leaves the keychain through any method (`host.password` answers only whether one is saved).
+* **Live preview followed nothing.** It sat on `localhost:3000` while the agent built a new page on the live
+  site, and that `localhost:3000` was the VPS's own port, which this computer cannot open. Now:
+  * **Every finished edit is mapped to the page it serves**, using each framework's own rules: Next.js
+    `app/…/page.tsx` (route groups and `[slug]` handled) and `pages/`, SvelteKit `+page.svelte`, Nuxt and
+    Astro `pages/`, WordPress `page-{slug}.php`, and plain `.html`/`.php` files under their web root. The
+    report's own file, `/var/www/skilleddesk.com/public_html/src/app/(public)/email-marketing-agency-usa/page.tsx`,
+    is `https://skilleddesk.com/email-marketing-agency-usa`. A component or stylesheet keeps the page on
+    screen and reloads it.
+  * **The site is read from the edited file's path** as well as the project's (`/var/www/example.com/…`),
+    so a chat whose own folder is a workspace still previews the site it is editing.
+  * **The preview follows the newest page**, in every project, and says so: `Following /pricing · page.tsx`.
+    An address typed by hand stays until the agent moves to another page. Live off still stops following.
+  * **A live site that forbids framing is shown anyway.** skilleddesk.com sends `X-Frame-Options: DENY`
+    and `frame-ancestors 'none'`, so the frame showed a "blocked" icon at any address. The preview now
+    loads a site through a loopback-only proxy in the daemon (`preview.open`, one port per site) that
+    takes out only the headers that forbid framing. The address bar and Open in browser keep the real
+    address. A local dev server is loaded directly, as before.
+  * **A dev server on a VPS opens through the signed-in connection.** `preview.forward` asks the ssh master
+    to forward the port (`-O forward`, no new login), and the chip reads `host :3000` instead of an
+    address that points at this computer.
+
 ## [0.14.3] — Reading a long file in pieces is not a loop
 
 * **Found after installing 0.14.2, in a real chat on skilleddesk.com:** "Stopped a loop: `Read

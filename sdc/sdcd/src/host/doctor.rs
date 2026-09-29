@@ -127,8 +127,21 @@ pub fn remote_checks(ssh: &crate::ssh::Ssh, root: Option<&str>) -> Vec<Value> {
     let mut rows: Vec<Value> = Vec::new();
     /* Asked once, because two rows are decided by it: `ssh` (can a session be made at all) and `hostkey`
        (is the machine the one SDC pinned). */
-    let trust = crate::ssh::hostkey::inspect(&ssh.target);
     let (status, detail) = crate::ssh::ops::probe(ssh);
+    let pinned = crate::ssh::hostkey::known_hosts_path()
+        .ok()
+        .and_then(|pins| crate::ssh::hostkey::pinned_in(&pins, &ssh.target).ok())
+        .unwrap_or_default();
+    /* 0.14.4: the probe runs with `StrictHostKeyChecking=yes` against SDC's pins, so a probe that got in -
+       or got as far as asking for the password - was answered by the pinned key. The scan is then skipped:
+       on the user's VPS `ssh-keyscan` takes 13 s, and it held the Sign in card (the password and code
+       fields) off the screen for all of it ("login korte gele onk somoy lage"). `host.add` skips it for
+       the same reason since 0.11.7. A key that changed still fails the probe, and is scanned. */
+    let got_past_the_key = status == "connected" || detail.contains("is not signed in");
+    let trust = match pinned.first() {
+        Some(key) if got_past_the_key => Ok(crate::ssh::hostkey::Trust::Pinned(key.clone())),
+        _ => crate::ssh::hostkey::inspect(&ssh.target),
+    };
 
     /*
      * The `ssh` row's **fix**, when there is one a surface can carry out (0.7.13 - after the report that

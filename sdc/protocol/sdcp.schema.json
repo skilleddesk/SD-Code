@@ -191,6 +191,9 @@
           "host.trust",
           "host.probe",
           "host.key",
+          "host.password",
+          "preview.forward",
+          "preview.open",
           "host.remove",
           "host.shutdown",
           "ssh.key",
@@ -586,6 +589,35 @@
             "pinned": "boolean",
             "matches": "boolean|null",
             "pinnedKey": "string|null"
+          }
+        },
+        "host.password": {
+          "params": {
+            "hostId": "string",
+            "forget": "boolean?"
+          },
+          "result": {
+            "saved": "boolean"
+          }
+        },
+        "preview.open": {
+          "params": {
+            "url": "string"
+          },
+          "result": {
+            "url": "string"
+          }
+        },
+        "preview.forward": {
+          "params": {
+            "sessionId": "string?",
+            "hostId": "string?",
+            "port": "number"
+          },
+          "result": {
+            "url": "string",
+            "forwarded": "boolean",
+            "localPort": "number?"
           }
         },
         "ssh.key": {

@@ -747,7 +747,7 @@ export async function closeSession(sessionId: string): Promise<void> {
  * The password travels with this one call and is kept nowhere: not in the store, not in the event log,
  * and not in the sentence that comes back.
  */
-export async function installHostKey(hostId: string, password: string, code = ''): Promise<boolean> {
+export async function installHostKey(hostId: string, password: string, code = '', remember = false): Promise<boolean> {
   const host = useAppStore.getState().hosts.find((candidate) => candidate.id === hostId);
 
   if (host === undefined || host.address === '') {
@@ -760,9 +760,24 @@ export async function installHostKey(hostId: string, password: string, code = ''
     label: host.name,
     ...(password === '' ? {} : { password }),
     ...(code.trim() === '' ? {} : { code: code.trim() }),
+    ...(remember ? { remember } : {}),
   });
 
   return answer !== null && answer.hostId === hostId;
+}
+
+/**
+ * `host.password` (0.14.4): whether SDC remembers this host's password, so its Sign in card asks for
+ * the verification code alone - and, with `forget`, drops it. The password itself is never sent back.
+ */
+export async function hostPasswordSaved(hostId: string, forget = false): Promise<boolean> {
+  try {
+    const answer = await sdcpCall('host.password', { hostId, ...(forget ? { forget } : {}) });
+
+    return answer.saved;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -789,6 +804,8 @@ export async function addHost(input: {
   password?: string;
   /** The verification code a two-factor host asks for (0.8.1), sent with the password. */
   code?: string;
+  /** Keep the password in the OS keychain once the host accepts it (0.14.4). */
+  remember?: boolean;
 }): Promise<{ hostId: string; reused: boolean } | null> {
   if (input.type === 'local') {
     toast(strings.addHost.localAlready);
@@ -858,6 +875,7 @@ export async function trustHost(
   fingerprint: string,
   password?: string,
   code?: string,
+  remember = false,
 ): Promise<boolean> {
   try {
     await sdcpCall('host.trust', {
@@ -865,6 +883,7 @@ export async function trustHost(
       fingerprint,
       ...(password === undefined || password === '' ? {} : { password }),
       ...(code === undefined || code.trim() === '' ? {} : { code: code.trim() }),
+      ...(remember ? { remember } : {}),
     });
 
     toast(strings.addHost.trust.pinned(fingerprint));
@@ -1996,14 +2015,19 @@ export async function testProvider(id: string, key: string): Promise<ProviderTes
 }
 
 /** Flow 1's `Save`: the key goes to the keychain; the UI only ever sees the masked label. */
-export async function connectApiKey(id: string, key: string, label?: string, baseUrl?: string): Promise<boolean> {
+/**
+ * Saves a key. The answer is the card it landed on (0.14.4: the daemon checks the key first, and an
+ * Alibaba key goes to the card that accepts it - a Coding Plan key pasted on Model Studio lands on
+ * Coding Plan), or `null` when it was not saved.
+ */
+export async function connectApiKey(id: string, key: string, label?: string, baseUrl?: string): Promise<string | null> {
   if (key.trim() === '' && (baseUrl === undefined || baseUrl.trim() === '')) {
     toast(strings.hub.keyToast);
-    return false;
+    return null;
   }
 
   try {
-    await sdcpCall('provider.save', {
+    const saved = await sdcpCall('provider.save', {
       id,
       kind: 'api-key',
       ...(key.trim() === '' ? {} : { key }),
@@ -2011,11 +2035,18 @@ export async function connectApiKey(id: string, key: string, label?: string, bas
       /* A provider whose endpoint depends on the account (0.12: an Alibaba Model Studio workspace). */
       ...(baseUrl === undefined || baseUrl.trim() === '' ? {} : { url: baseUrl.trim() }),
     });
+    const home = typeof saved?.id === 'string' ? saved.id : id;
 
-    return true;
+    if (home !== id) {
+      const name = useAppStore.getState().providers.find((provider) => provider.id === home)?.name ?? home;
+
+      toast(strings.connect.movedToast(name));
+    }
+
+    return home;
   } catch (error) {
     reportFailure(error, 'Could not save that key');
-    return false;
+    return null;
   }
 }
 

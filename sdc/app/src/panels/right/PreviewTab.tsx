@@ -7,7 +7,8 @@ import { strings } from '../../strings';
 import { useFilesStore } from '../../store/files';
 import { useRightPanelStore } from '../../store/rightPanel';
 import { useAppStore } from '../../store/store';
-import { lastChange, previewCandidates } from './livePreview';
+import { joinPage, lastChange, localPort, pageChanges, previewCandidates } from './livePreview';
+import { sdcpCall } from '../../lib/sdcp';
 import { useSessionsStore } from '../../store/sessions';
 import { toast } from '../../store/toast';
 import { IconButton } from '../ui/IconButton';
@@ -37,6 +38,30 @@ const DEVICE_WIDTH: Record<Device, number | null> = {
 
 const DEVICES: readonly Device[] = ['mobile', 'tablet', 'desktop'];
 
+/** What each chat last followed (`page edit|base`), kept across tab switches so a remount does not undo
+    an address the person typed. */
+const followed = new Map<string, string>();
+
+/** A dev server on the chat's host, as an address this machine can open (`preview.forward`). */
+async function forwardPort(sessionId: string, address: string): Promise<string | null> {
+  const port = localPort(address);
+
+  if (port === null) {
+    return null;
+  }
+
+  try {
+    const answer = await sdcpCall('preview.forward', { sessionId, port });
+    const path = address.replace(/^https?:\/\/[^/]+/, '');
+
+    return joinPage(answer.url, path === '' ? '/' : path);
+  } catch (error) {
+    toast(error instanceof Error ? error.message : String(error));
+
+    return null;
+  }
+}
+
 export function PreviewTab() {
   const [device, setDevice] = useState<Device>('desktop');
   const [reloads, setReloads] = useState(0);
@@ -50,27 +75,59 @@ export function PreviewTab() {
   const turns = useAppStore((state) => state.turns);
   const projects = useAppStore((state) => state.projects);
   const hosts = useAppStore((state) => state.hosts);
-  const session = hosts.flatMap((host) => host.sessions).find((candidate) => candidate.id === sessionId);
+  const owner = hosts.find((host) => host.sessions.some((candidate) => candidate.id === sessionId));
+  const session = owner?.sessions.find((candidate) => candidate.id === sessionId);
   const project = projects.find((candidate) => candidate.id === session?.projectId);
+  const onVps = owner?.type === 'vps';
   const candidates = sessionId === null ? [] : previewCandidates(turns, sessionId, project);
   const change = sessionId === null ? null : lastChange(turns, sessionId);
   const [reason, setReason] = useState<string | null>(null);
   const seenChange = useRef<string | null>(change?.key ?? null);
-  const newest = candidates[0] ?? '';
-  const seenCandidate = useRef<string>(newest);
 
-  /* A dev server the chat just started becomes the page, when nothing is previewed yet. */
+  /*
+   * Follow the page being worked on (0.14.4). The newest edit that is a page names the path; the base
+   * is the chat's dev server on this machine, or - for a chat on a VPS - the site's domain, and failing
+   * that its dev server through the signed-in connection (`preview.forward`), because that chat's
+   * `localhost:3000` is the VPS's, not this machine's.
+   */
+  const changes = sessionId === null ? [] : pageChanges(turns, sessionId, project?.root);
+  const pageChange = changes.find((candidate) => candidate.page !== null) ?? null;
+  const devServer = candidates.find((candidate) => localPort(candidate) !== null) ?? null;
+  const siteUrl = candidates.find((candidate) => localPort(candidate) === null) ?? null;
+  const [forwarded, setForwarded] = useState<Record<string, string>>({});
+  const devBase = devServer === null ? null : onVps ? (forwarded[devServer] ?? null) : devServer;
+  const base = onVps ? (siteUrl ?? devBase) : (devBase ?? siteUrl);
+  const target = base === null ? null : joinPage(base, pageChange?.page ?? '/');
+  const followKey = `${pageChange?.key ?? ''}|${base ?? ''}`;
+
+  /* A VPS chat's dev server is opened through the host, once per port. */
   useEffect(() => {
-    if (!live || sessionId === null || newest === '' || newest === seenCandidate.current) {
+    if (!onVps || sessionId === null || devServer === null || siteUrl !== null || forwarded[devServer] !== undefined) {
       return;
     }
 
-    seenCandidate.current = newest;
+    void forwardPort(sessionId, devServer).then((address) => {
+      if (address !== null) {
+        setForwarded((known) => ({ ...known, [devServer]: address }));
+      }
+    });
+  }, [onVps, sessionId, devServer, siteUrl, forwarded]);
 
-    if (url === '' && !newest.startsWith('https://')) {
-      useRightPanelStore.getState().setPreviewUrl(sessionId, newest);
+  /* A new page, or a new place the site is served from, becomes what the frame shows - once each, so an
+     address typed by hand stays until the agent moves to another page. */
+  useEffect(() => {
+    if (!live || sessionId === null || target === null || followed.get(sessionId) === followKey) {
+      return;
     }
-  }, [live, sessionId, newest, url]);
+
+    followed.set(sessionId, followKey);
+
+    if (target !== url) {
+      useRightPanelStore.getState().setPreviewUrl(sessionId, target);
+      setTyped(null);
+      setReloads((count) => count + 1);
+    }
+  }, [live, sessionId, target, followKey, url]);
 
   /* Every change the agent finishes reloads the page - after a short pause, so a burst is one reload. */
   useEffect(() => {
@@ -91,6 +148,29 @@ export function PreviewTab() {
 
     return () => window.clearTimeout(timer);
   }, [change, live, url]);
+
+  /* A site on the internet is framed through the daemon's preview proxy (0.14.4): most live sites send
+     `X-Frame-Options: DENY` - the user's does - and a frame drew them as a "blocked" icon. A local dev
+     server is loaded as it is. The address bar and Open in browser keep the real address. */
+  const [frameSrc, setFrameSrc] = useState<string>('');
+
+  useEffect(() => {
+    if (url === '' || localPort(url) !== null) {
+      setFrameSrc(url);
+      return;
+    }
+
+    let current = true;
+
+    void sdcpCall('preview.open', { url }).then(
+      (answer) => current && setFrameSrc(answer.url),
+      () => current && setFrameSrc(url),
+    );
+
+    return () => {
+      current = false;
+    };
+  }, [url]);
 
   if (diff !== null) {
     return <PreviewDiff />;
@@ -209,14 +289,34 @@ export function PreviewTab() {
                 className="max-w-full truncate rounded-sm border border-border-subtle bg-bg-raised px-[7px] py-[2px] font-mono text-[10px] text-accent hover:border-border-default"
                 title={candidate}
                 onClick={() => {
-                  if (sessionId !== null) {
-                    useRightPanelStore.getState().setPreviewUrl(sessionId, candidate);
+                  if (sessionId === null) {
+                    return;
+                  }
+
+                  const show = (address: string): void => {
+                    useRightPanelStore.getState().setPreviewUrl(sessionId, joinPage(address, pageChange?.page ?? '/'));
                     setTyped(null);
                     setReloads((count) => count + 1);
+                  };
+
+                  /* On a VPS, `localhost` is the VPS's: it is opened through the host. */
+                  if (onVps && localPort(candidate) !== null) {
+                    void forwardPort(sessionId, candidate).then((address) => {
+                      if (address !== null) {
+                        setForwarded((known) => ({ ...known, [candidate]: address }));
+                        show(address);
+                      }
+                    });
+
+                    return;
                   }
+
+                  show(candidate);
                 }}
               >
-                {candidate.replace(/^https?:\/\//, '').replace(/\/$/, '')}
+                {onVps && localPort(candidate) !== null
+                  ? strings.rightPanel.preview.onHost(owner?.name ?? '', localPort(candidate) ?? 0)
+                  : candidate.replace(/^https?:\/\//, '').replace(/\/$/, '')}
               </button>
             ))}
         </div>
@@ -239,7 +339,15 @@ export function PreviewTab() {
             {strings.rightPanel.preview.devices[candidate]}
           </button>
         ))}
-        {live && reason !== null && url !== '' ? (
+        {live && pageChange !== null && pageChange.page !== null && url === target ? (
+          <span
+            className="preview-following ml-auto min-w-0 truncate self-center font-mono text-[10px] text-text-muted"
+            title={pageChange.file}
+            data-preview-page={pageChange.page}
+          >
+            {strings.rightPanel.preview.following(pageChange.page, pageChange.file.replace(/^.*[\\/]/, ''))}
+          </span>
+        ) : live && reason !== null && url !== '' ? (
           <span className="ml-auto min-w-0 truncate self-center font-mono text-[10px] text-text-muted" title={reason}>
             {strings.rightPanel.preview.reloadedAfter(reason)}
           </span>
@@ -265,8 +373,8 @@ export function PreviewTab() {
             style={width === null ? undefined : { maxWidth: width }}
           >
             <iframe
-              key={`${url}#${reloads}`}
-              src={url}
+              key={`${frameSrc}#${reloads}`}
+              src={frameSrc}
               title={strings.rightPanel.preview.frameTitle(url)}
               className="h-full min-h-[320px] w-full border-0"
               sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"

@@ -49,6 +49,10 @@ pub const CATALOG: &[(&str, &str, &str, &str, &str, &str)] = &[
     ("moonshot", "Moonshot Kimi", "api-key", "moonshot", "K", "Direct API key · pay per token"),
     ("mistral", "Mistral", "api-key", "mistral", "M", "Direct API key · pay per token"),
     ("qwen", "Alibaba Cloud", "api-key", "qwen", "A", "Model Studio · Qwen, DeepSeek, Kimi, GLM · list updates itself"),
+    /* 0.14.4: a Coding Plan key is not a Model Studio key. It answers only at `coding-intl`, lists its own
+       ten models, and Model Studio refuses it (401) - so one saved on the card above said Connected and
+       then showed nothing but the bundle ("deepseek soho onk model bad diyaso"). It has its own card. */
+    ("qwen-coding", "Alibaba Coding Plan", "api-key", "qwen", "A", "Coding Plan subscription · Qwen Coder, Kimi, GLM, MiniMax"),
     ("zai", "Z.ai GLM", "api-key", "zai", "Z", "Direct API key · pay per token"),
     ("openrouter", "OpenRouter", "api-key", "openrouter", "O", "One key · 200+ models"),
     ("ollama", "Ollama", "local", "ollama", "O", "Local models · auto-detected on this machine"),
@@ -108,6 +112,7 @@ const KEY_CHECK: &[(&str, &str)] = &[
     ("moonshot", "https://api.moonshot.ai/v1/models"),
     ("mistral", "https://api.mistral.ai/v1/models"),
     ("qwen", "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/models"),
+    ("qwen-coding", "https://coding-intl.dashscope.aliyuncs.com/v1/models"),
     ("zai", "https://api.z.ai/api/paas/v4/models"),
 ];
 
@@ -144,6 +149,12 @@ fn key_check_at(id: &str, key: &str, base: Option<&str>) -> Option<(String, Vec<
 /// "Incorrect API key" whether the key is wrong or was made in another region or workspace; measured in
 /// 0.12.3 against all three public hosts and a workspace host.
 fn with_hint(id: &str, status: u16, error: String) -> String {
+    if id == "qwen-coding" && status == 401 {
+        return format!(
+            "{error} · A Coding Plan key is made in Model Studio → Coding Plan. A pay-as-you-go Model Studio key belongs on the Alibaba Cloud card."
+        );
+    }
+
     if id == "qwen" && status == 401 {
         return format!(
             "{error} · Alibaba ties a key to one region and workspace: create it in Model Studio → API Keys of the workspace whose Base URL is set here, and paste it again."
@@ -151,6 +162,26 @@ fn with_hint(id: &str, status: u16, error: String) -> String {
     }
 
     error
+}
+
+/// Asks the provider whether a key is good: `(status, model list body)`.
+///
+/// The model list is the question for every provider but one. Measured 2026-09-29: the Alibaba Coding
+/// Plan's `/models` answers **200 to any key at all** (`sk-bogus-0000` included), so a check there proved
+/// nothing. Its chat route does judge the key, and an empty request is judged without a token spent: 401
+/// for a key it refuses, 400 (the empty request) for one it accepts - then the list is read for the count.
+fn judge(id: &str, url: &str, headers: &[(String, String)]) -> Result<(u16, String), String> {
+    if id == "qwen-coding" {
+        let chat = format!("{}/chat/completions", url.trim_end_matches("/models"));
+        let (status, body) =
+            crate::engines::native_api::post_json(&chat, headers, r#"{"model":"qwen3-coder-plus","messages":[]}"#)?;
+
+        if status != 400 {
+            return Ok((status, body));
+        }
+    }
+
+    crate::engines::native_api::get_json(url, headers)
 }
 
 /// A pasted API key without the whitespace a paste brings along. No provider's key contains any.
@@ -208,7 +239,7 @@ pub fn test(id: &str, key: Option<&str>) -> Value {
     };
 
     if let Some((url, headers)) = key_check(id, &secret) {
-        return match crate::engines::native_api::get_json(&url, &headers) {
+        return match judge(id, &url, &headers) {
             Ok((status, body)) if (200..300).contains(&status) => {
                 let models = model_count(&body);
 
@@ -387,6 +418,186 @@ fn honest_detail(id: &str, kind: &str, fallback: &str) -> String {
     }
 }
 
+/// Every public Alibaba endpoint a key can belong to, in the order they are asked: `(card, base URL)`.
+///
+/// Alibaba answers "Incorrect API key" for a key from another region **and** for a Coding Plan key on
+/// Model Studio, so the only way to know where a key lives is to ask each place once. Measured
+/// 2026-09-29: the user's Model Studio key answers on `dashscope-intl` only, their Coding Plan key on
+/// `coding-intl` only.
+const ALIBABA: &[(&str, &str)] = &[
+    ("qwen", "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"),
+    ("qwen-coding", "https://coding-intl.dashscope.aliyuncs.com/v1"),
+    ("qwen", "https://dashscope-us.aliyuncs.com/compatible-mode/v1"),
+    ("qwen", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
+    ("qwen-coding", "https://coding.dashscope.aliyuncs.com/v1"),
+];
+
+/// Whether a card is one of Alibaba's two, whose keys [`place_key`] sorts between them.
+pub fn is_alibaba(id: &str) -> bool {
+    id == "qwen" || id == "qwen-coding"
+}
+
+/// What to do with a card's base URL once its key was placed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Base {
+    /// Leave whatever is set.
+    Keep,
+    /// The card's built-in endpoint answered: clear an old override.
+    BuiltIn,
+    /// This URL answered.
+    At(String),
+}
+
+/// Where a key is accepted, asked **before** it is saved.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Placement {
+    /// The provider accepted it - on this card (which may not be the one it was pasted on).
+    Home { id: String, base: Base },
+    /// Every place that was asked answered 401 / 403, in the provider's own words.
+    Rejected(String),
+    /// Nobody could be asked (no check endpoint, or no network): saved as before, unjudged.
+    Unchecked,
+}
+
+/// 0.14.4: a key is judged before it is saved. `provider.save` used to write any string to the keychain
+/// and mark the card Connected, so a key the provider refuses looked connected and the model menu quietly
+/// fell back to the bundle. For Alibaba it also finds the key's home: a Coding Plan key pasted on the
+/// Model Studio card goes to the Coding Plan card, and a US or Beijing key gets its region's URL.
+pub fn place_key(id: &str, key: &str, url: Option<&str>) -> Placement {
+    let key = clean_key(key);
+
+    if key.is_empty() {
+        return Placement::Unchecked;
+    }
+
+    let ask = |card: &str, base: Option<&str>| -> Option<Result<(), String>> {
+        let (url, headers) = key_check_at(card, &key, base)?;
+
+        Some(match judge(card, &url, &headers) {
+            Ok((status, _)) if (200..300).contains(&status) => Ok(()),
+            Ok((status @ (401 | 403), body)) => Err(with_hint(card, status, crate::engines::native_api::rejection(status, &body))),
+            /* Anything else (a 5xx, a timeout) did not judge the key. */
+            _ => return None,
+        })
+    };
+
+    if let Some(url) = url.map(str::trim).filter(|url| !url.is_empty()) {
+        return match ask(id, Some(url)) {
+            Some(Ok(())) => Placement::Home { id: id.to_string(), base: Base::At(url.to_string()) },
+            Some(Err(reason)) => Placement::Rejected(reason),
+            None => Placement::Unchecked,
+        };
+    }
+
+    if !is_alibaba(id) {
+        return match ask(id, crate::providers::models::endpoint_overrides().get(id).map(String::as_str)) {
+            Some(Ok(())) => Placement::Home { id: id.to_string(), base: Base::Keep },
+            Some(Err(reason)) => Placement::Rejected(reason),
+            None => Placement::Unchecked,
+        };
+    }
+
+    /* The card's own URL first (a workspace host the person set), then the public ones, this card's first. */
+    let mut candidates: Vec<(String, String)> = Vec::new();
+
+    if let Some(base) = crate::providers::models::endpoint_overrides().get(id) {
+        candidates.push((id.to_string(), base.clone()));
+    }
+
+    for same in [true, false] {
+        for (card, base) in ALIBABA.iter().filter(|(card, _)| (*card == id) == same) {
+            if !candidates.iter().any(|(_, known)| known == base) {
+                candidates.push((card.to_string(), base.to_string()));
+            }
+        }
+    }
+
+    let mut first_rejection: Option<String> = None;
+    let mut unjudged = false;
+    /* All asked at once - one after another took 13.6 s measured, most of it Beijing - and the answers
+       read in the order above, so the card the key was pasted on still wins a tie. */
+    let answers: Vec<Option<Result<(), String>>> = std::thread::scope(|scope| {
+        let asking: Vec<_> = candidates
+            .iter()
+            .map(|(card, base)| {
+                let ask = &ask;
+
+                scope.spawn(move || ask(card, Some(base)))
+            })
+            .collect();
+
+        asking.into_iter().map(|handle| handle.join().unwrap_or(None)).collect()
+    });
+
+    for ((card, base), answer) in candidates.into_iter().zip(answers) {
+        match answer {
+            Some(Ok(())) => {
+                let built_in = ALIBABA.iter().find(|(owner, _)| *owner == card).map(|(_, url)| *url);
+                let base = if built_in == Some(base.as_str()) { Base::BuiltIn } else { Base::At(base) };
+
+                return Placement::Home { id: card, base };
+            }
+            Some(Err(reason)) => {
+                first_rejection.get_or_insert(reason);
+            }
+            None => unjudged = true,
+        }
+    }
+
+    match first_rejection {
+        Some(_) if unjudged => Placement::Unchecked,
+        Some(reason) => Placement::Rejected(format!(
+            "{reason} · Asked every Alibaba endpoint (Model Studio Singapore, US, Beijing and the Coding Plan): none accepts this key."
+        )),
+        None => Placement::Unchecked,
+    }
+}
+
+/// The start-up repair for a key that is on the wrong Alibaba card - the state 0.14.3 left behind when a
+/// Coding Plan key was pasted on the Model Studio card. Only a key its own card **refuses** is moved;
+/// one that answers, or cannot be asked, stays where it is. Answers the card it moved to.
+pub fn repair_alibaba(store: &Arc<Store>) -> Option<String> {
+    let key = keychain::get(&key_ref("qwen")).filter(|key| !key.trim().is_empty())?;
+    let overrides = crate::providers::models::endpoint_overrides();
+    let (url, headers) = key_check_at("qwen", &key, overrides.get("qwen").map(String::as_str))?;
+
+    match crate::engines::native_api::get_json(&url, &headers) {
+        Ok((401 | 403, _)) => {}
+        _ => return None,
+    }
+
+    let Placement::Home { id, base } = place_key("qwen", &key, None) else {
+        return None;
+    };
+
+    if id == "qwen" {
+        /* The same card in another region: point it there. */
+        let url = match base {
+            Base::At(url) => Some(url),
+            _ => None,
+        };
+
+        crate::providers::models::set_endpoint_override("qwen", url.as_deref()).ok()?;
+
+        return Some(id);
+    }
+
+    if keychain::get(&key_ref(&id)).filter(|other| !other.trim().is_empty()).is_some() {
+        /* The other card has a key of its own; nothing is overwritten. */
+        return None;
+    }
+
+    if let Base::At(url) = &base {
+        crate::providers::models::set_endpoint_override(&id, Some(url)).ok()?;
+    }
+
+    save(store, &id, "api-key", Some(&key), None, None, None).ok()?;
+    remove(store, "qwen").ok()?;
+    store.replace_models("qwen", &[], "").ok();
+
+    Some(id)
+}
+
 /// Flow 1's `Save` and flow 4's endpoint: the secret goes to the keychain, the *rest* to SQLite.
 pub fn save(
     store: &Arc<Store>,
@@ -496,7 +707,7 @@ mod tests {
 
     #[test]
     fn the_catalog_and_the_registry_match_the_apps_seed() {
-        assert_eq!(CATALOG.len(), 15);
+        assert_eq!(CATALOG.len(), 16);
         /* Every card whose models come from an endpoint has a block in the bundle, so its chat can be
            routed and its list can refresh - a card without one would show models it cannot run. */
         let blocks = models::blocked();

@@ -67,7 +67,8 @@ export function Connect() {
   const [key, setKey] = useState('');
   /* The account's own endpoint (0.12): an Alibaba Model Studio workspace answers at its workspace host. */
   const [baseUrl, setBaseUrl] = useState('');
-  const endpointEditable = providerId === 'qwen';
+  const endpointEditable = providerId === 'qwen' || providerId === 'qwen-coding';
+  const openConnect = useOverlayStore((state) => state.openConnect);
   const [login, setLogin] = useState<CliLoginView | null>(null);
   const [recipe, setRecipe] = useState<CliRecipeView | null>(null);
   const [code, setCode] = useState('');
@@ -256,13 +257,25 @@ export function Connect() {
 
   const saveKey = (): void => {
     setBusy(true);
-    void connectApiKey(providerId ?? '', key, undefined, endpointEditable ? baseUrl : undefined).then((saved) => {
+    void connectApiKey(providerId ?? '', key, undefined, endpointEditable ? baseUrl : undefined).then((home) => {
       setBusy(false);
 
-      if (saved) {
-        setKey('');
-        load(true);
+      if (home === null) {
+        return;
       }
+
+      setKey('');
+
+      /* The key landed on another card (a Coding Plan key pasted on Model Studio): show that card, whose
+         models are the ones this key can use. Its own open effect loads them. */
+      if (home !== providerId) {
+        setBaseUrl('');
+        setModels(null);
+        openConnect(home, 'api');
+        return;
+      }
+
+      load(true);
     });
   };
 

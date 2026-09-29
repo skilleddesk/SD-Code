@@ -372,6 +372,15 @@ pub fn refresh_connected(store: &Arc<Store>) -> Vec<String> {
 /// each ask is a synchronous HTTP call.
 pub fn refresh_and_tell(store: Arc<Store>, notifier: std::sync::Arc<dyn crate::sdcp::notifications::Notifier>) {
     tokio::task::spawn_blocking(move || {
+        /* A Coding Plan key saved on the Model Studio card before 0.14.4 moves to its own card first. */
+        if let Some(home) = crate::providers::repair_alibaba(&store) {
+            for id in ["qwen", home.as_str()] {
+                if let Some(card) = crate::providers::list(&store).into_iter().find(|card| card["id"] == json!(id)) {
+                    notifier.push(crate::sdcp::events::event::provider_status(card), None, None);
+                }
+            }
+        }
+
         let refreshed = refresh_connected(&store);
 
         if refreshed.is_empty() {

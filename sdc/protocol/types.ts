@@ -97,6 +97,9 @@ export type SdcpMethod =
    * changed replies `matches: false` with the fingerprint it presents now.
    */
   | 'host.key'
+  | 'host.password'
+  | 'preview.forward'
+  | 'preview.open'
   /**
    * The **public** half of the key SDC uses for hosts it adds (0.7.13) - read-only, and it never makes a
    * key. It is here so a surface can show the one line that finishes a host SDC cannot: a machine that
@@ -1512,6 +1515,11 @@ export interface SdcpMethodMap {
       password?: string;
       /** The verification code a two-factor host asks for (0.8.1), spent with the password, kept nowhere. */
       code?: string;
+      /**
+       * Keep the password in the OS keychain once the host accepts it (0.14.4), so a dropped connection
+       * asks only for the code. With a code and no password, a remembered password is used.
+       */
+      remember?: boolean;
     };
     /** `reused` is true when that `user@host` was already in the list - the row is returned as-is. */
     result: { hostId: string; reused: boolean };
@@ -1525,7 +1533,7 @@ export interface SdcpMethodMap {
    * one-time key install safe on a host whose identity was never checked.
    */
   'host.trust': {
-    params: { hostId: string; fingerprint: string; password?: string; code?: string };
+    params: { hostId: string; fingerprint: string; password?: string; code?: string; remember?: boolean };
     result: { trusted: boolean; hostId: string; fingerprint: string };
   };
   /**
@@ -1546,6 +1554,15 @@ export interface SdcpMethodMap {
    * the pinned one, and `false` when it is **not** - which is the case a `Re-pin` button confirms and the
    * case nothing in this daemon offers to "continue anyway" through.
    */
+  /** Whether a host has a remembered password (0.14.4); `forget` deletes it. The password is never returned. */
+  'host.password': { params: { hostId: string; forget?: boolean }; result: { saved: boolean } };
+  /** A dev server port on the chat's host as an address this machine can open (0.14.4). */
+  /** A site, as a loopback address its frame-forbidding headers are taken off, for the preview (0.14.4). */
+  'preview.open': { params: { url: string }; result: { url: string } };
+  'preview.forward': {
+    params: { sessionId?: string; hostId?: string; port: number };
+    result: { url: string; forwarded: boolean; localPort?: number };
+  };
   'host.key': {
     params: { hostId: string };
     result: {
@@ -1964,7 +1981,8 @@ export interface SdcpMethodMap {
       url?: string;
       protocol?: string;
     };
-    result: { id: string; status: ProviderLifecycle; account?: string };
+    /** `id` is the card the key was saved on; `movedFrom` is set when that is not the one asked for. */
+    result: { id: string; status: ProviderLifecycle; account?: string; movedFrom?: string };
   };
   'provider.remove': { params: { id: string }; result: { removed: boolean } };
   'provider.oauth.open': { params: { id: string }; result: { url: string; state: string } };

@@ -3,7 +3,16 @@ import { Key, Laptop, Loader, Plug, Server, ShieldCheck } from 'lucide-react';
 
 import { strings } from '../strings';
 import { sdcpCall } from '../lib/sdcp';
-import { addHost, hostKey, installHostKey, openTerminalForHost, runDoctor, trustHost } from '../store/intents';
+import {
+  addHost,
+  hostKey,
+  hostPasswordSaved,
+  installHostKey,
+  needsSignIn,
+  openTerminalForHost,
+  runDoctor,
+  trustHost,
+} from '../store/intents';
 import { useOverlayStore } from '../store/overlays';
 import { useAppStore } from '../store/store';
 import type { HostView } from '../store/types';
@@ -66,6 +75,10 @@ export function AddHost() {
    * host that requires a verification code can be finished by hand instead of being a dead end.
    */
   const [sdcKey, setSdcKey] = useState<string | null>(null);
+  /** Keep the password in the OS keychain once the host accepts it (0.14.4). */
+  const [remember, setRemember] = useState(true);
+  /** The daemon remembers this host's password, so the card asks for the code alone. */
+  const [savedPassword, setSavedPassword] = useState(false);
   /** What `host.key` answered for the host in front of the user (0.7.13), if it has been asked. */
   const [scanned, setScanned] = useState<{ hostKey: string; keyType: string; matches: boolean | null; pinnedKey: string | null } | null>(
     null,
@@ -86,15 +99,23 @@ export function AddHost() {
    * surfaces from disagreeing: there is one place that decides when a password is the next step, and this
    * card only renders what it is told.
    */
-  const needsKeyInstall =
-    openFor !== null &&
-    openFor !== 'local' &&
-    (doctor?.some((row) => row.fix === 'Install key' || row.fix === 'Sign in') ?? false);
   /**
    * The daemon can hold a signed-in connection open (0.8.1), so the card signs in - password, and the
    * verification code when the host asks - instead of copying a key the host may not accept at all.
+   *
+   * 0.14.4: the host's own sentence is enough to show the fields. The card used to wait for the doctor,
+   * whose host-key scan takes 13 s on the user's VPS, so a dropped connection opened a dialog with no
+   * password box in it ("disconnect hole … login korte gele onk somoy lage").
    */
-  const signIn = doctor?.some((row) => row.fix === 'Sign in') ?? false;
+  const signIn =
+    (openFor !== null && openFor !== 'local' && host?.status !== 'connected' && needsSignIn(host?.detail)) ||
+    (doctor?.some((row) => row.fix === 'Sign in') ?? false);
+  const needsKeyInstall =
+    openFor !== null &&
+    openFor !== 'local' &&
+    (signIn || (doctor?.some((row) => row.fix === 'Install key') ?? false));
+  /** What the card can sign in with: a typed password, or the saved one plus a code. */
+  const canSignIn = password !== '' || (savedPassword && code !== '');
 
   /* SDC's public key, for the manual line under the button: asked once, and only when there is a use for
      it. `ssh.key` is a read, so opening the card creates nothing. */
@@ -120,6 +141,7 @@ export function AddHost() {
     setScanned(null);
     setAwaiting(null);
     setInstalling(false);
+    setSavedPassword(false);
   };
 
   /*
@@ -136,6 +158,9 @@ export function AddHost() {
     const name = useAppStore.getState().hosts.find((candidate) => candidate.id === openFor)?.name ?? openFor;
 
     setPending({ hostId: openFor, label: name });
+    if (openFor !== 'local') {
+      void hostPasswordSaved(openFor).then(setSavedPassword);
+    }
     /* `local` is this machine: its environment is worth checking (`runDoctor`) and it has no host key to
        pin, so `host.key` is not asked - a call that could only answer with an error. */
     if (openFor !== 'local') {
@@ -210,7 +235,7 @@ export function AddHost() {
   }, [awaiting]);
 
   const signInNow = (): void => {
-    if (pending === null || password === '' || installing) {
+    if (pending === null || !canSignIn || installing) {
       return;
     }
 
@@ -218,7 +243,10 @@ export function AddHost() {
     setInstalling(true);
     setAwaiting('sent');
 
-    void installHostKey(pending.hostId, password, code).then((accepted) => {
+    void installHostKey(pending.hostId, password, code, remember).then((accepted) => {
+      if (password !== '' && remember) {
+        setSavedPassword(true);
+      }
       setPassword('');
       setCode('');
 
@@ -238,6 +266,7 @@ export function AddHost() {
       label: label.trim(),
       ...(password === '' ? {} : { password }),
       ...(code.trim() === '' ? {} : { code: code.trim() }),
+      ...(password !== '' && remember ? { remember } : {}),
     }).then((answer) => {
       setBusy(false);
 
@@ -276,7 +305,7 @@ export function AddHost() {
     setTrusting(true);
 
     /* The password from the field is re-sent here, and only here: it is spent after the pin lands. */
-    void trustHost(pending.hostId, fingerprint, password, code).then((trusted) => {
+    void trustHost(pending.hostId, fingerprint, password, code, password !== '' && remember).then((trusted) => {
       setTrusting(false);
       setCode('');
 
@@ -311,7 +340,7 @@ export function AddHost() {
         </div>
       </div>
 
-      <div className="px-[18px] py-[16px]">
+      <div className={openFor === null ? 'px-[18px] py-[16px]' : 'hidden'}>
         {/* A dialog about a host has nothing to fill in (0.7.13): the card and the host's own
             environment are the whole content, and a form for *adding* a host would be a lie about what
             this surface is doing. */}
@@ -392,6 +421,17 @@ export function AddHost() {
                 onChange={(event) => setCode(event.target.value)}
               />
               <span className="text-[11px] text-text-muted">{strings.addHost.codeHelp}</span>
+            </label>
+
+            <label className="flex items-center gap-[7px] text-[11px] text-text-secondary">
+              <input
+                type="checkbox"
+                className="h-[14px] w-[14px] shrink-0 appearance-auto accent-[var(--accent)]"
+                id="sshAddRemember"
+                checked={remember}
+                onChange={(event) => setRemember(event.target.checked)}
+              />
+              {strings.addHost.signIn.remember}
             </label>
 
             <label className="flex flex-col gap-[5px]">
@@ -539,9 +579,15 @@ export function AddHost() {
                       id="sshKeyInstallPassword"
                       autoComplete="off"
                       className="rounded-md border border-border-default bg-bg-input px-[10px] py-[7px] font-mono text-[12.5px] text-text-primary placeholder:text-text-muted focus:border-border-strong"
-                      placeholder={strings.addHost.keyInstall.passwordPlaceholder}
+                      placeholder={
+                        signIn && savedPassword
+                          ? strings.addHost.signIn.savedPlaceholder
+                          : signIn
+                            ? strings.addHost.signIn.passwordPlaceholder
+                            : strings.addHost.keyInstall.passwordPlaceholder
+                      }
                       value={password}
-                      autoFocus
+                      autoFocus={!(signIn && savedPassword)}
                       disabled={installing}
                       onChange={(event) => setPassword(event.target.value)}
                       onKeyDown={(event) => {
@@ -567,6 +613,7 @@ export function AddHost() {
                         className="rounded-md border border-border-default bg-bg-input px-[10px] py-[7px] font-mono text-[12.5px] text-text-primary placeholder:text-text-muted focus:border-border-strong"
                         placeholder={strings.addHost.codePlaceholder}
                         value={code}
+                        autoFocus={savedPassword}
                         disabled={installing}
                         onChange={(event) => setCode(event.target.value.replace(/\s+/g, ''))}
                         onKeyDown={(event) => {
@@ -579,12 +626,45 @@ export function AddHost() {
                     </label>
                   ) : null}
 
-                  <div className="flex items-center gap-[8px]">
+                  {/* 0.14.4: the password can be kept, so a dropped connection asks for the code alone. */}
+                  {signIn && savedPassword && password === '' ? (
+                    <p className="text-[11px] leading-[1.5] text-text-secondary" data-ssh-saved-password="true">
+                      {strings.addHost.signIn.savedNote}{' '}
+                      <button
+                        type="button"
+                        id="sshForgetPassword"
+                        className="text-text-muted underline decoration-dotted hover:text-text-primary"
+                        onClick={() => {
+                          void hostPasswordSaved(pending.hostId, true).then((saved) => {
+                            setSavedPassword(saved);
+                            toast(strings.addHost.signIn.forgotten);
+                          });
+                        }}
+                      >
+                        {strings.addHost.signIn.forget}
+                      </button>
+                    </p>
+                  ) : signIn ? (
+                    <label className="flex items-center gap-[7px] text-[11px] text-text-secondary">
+                      <input
+                        type="checkbox"
+                        className="h-[14px] w-[14px] shrink-0 appearance-auto accent-[var(--accent)]"
+                        id="sshRememberPassword"
+                        checked={remember}
+                        disabled={installing}
+                        onChange={(event) => setRemember(event.target.checked)}
+                      />
+                      {strings.addHost.signIn.remember}
+                    </label>
+                  ) : null}
+
+                  {/* A sign-in is the footer's button (0.14.4); this one is for the key install only. */}
+                  <div className={signIn ? 'hidden' : 'flex items-center gap-[8px]'}>
                     <button
                       type="button"
                       className={BTN + ' ' + BTN_PRIMARY}
                       id="sshKeyInstallBtn"
-                      disabled={installing || password === ''}
+                      disabled={installing || (signIn ? !canSignIn : password === '')}
                       onClick={() => {
                         if (signIn) {
                           signInNow();
@@ -645,16 +725,31 @@ export function AddHost() {
 
         <div className="flex-1" />
 
-        <button
-          type="button"
-          className={BTN + ' ' + BTN_PRIMARY}
-          id="addHostSubmit"
-          disabled={busy || pending !== null}
-          onClick={submit}
-        >
-          {busy ? <span className="spinner" aria-hidden="true" /> : <Plug size={12} aria-hidden="true" />}
-          {strings.addHost.connect}
-        </button>
+        {/* About a host that is waiting for its sign-in, the footer's button is that sign-in (0.14.4): it
+            used to be a greyed-out Connect under the card, the first thing a person tried to press. */}
+        {signIn && pending !== null && openFor !== null ? (
+          <button
+            type="button"
+            className={BTN + ' ' + BTN_PRIMARY}
+            id="addHostSubmit"
+            disabled={installing || !canSignIn}
+            onClick={signInNow}
+          >
+            {installing ? <span className="spinner" aria-hidden="true" /> : <Key size={12} aria-hidden="true" />}
+            {installing ? strings.addHost.signIn.signingIn : strings.addHost.signIn.button}
+          </button>
+        ) : (
+          <button
+            type="button"
+            className={BTN + ' ' + BTN_PRIMARY}
+            id="addHostSubmit"
+            disabled={busy || pending !== null}
+            onClick={submit}
+          >
+            {busy ? <span className="spinner" aria-hidden="true" /> : <Plug size={12} aria-hidden="true" />}
+            {strings.addHost.connect}
+          </button>
+        )}
       </div>
       {/* The host's own environment (0.7.13): `host.doctor` about *that* machine - its key, its CLIs,
           its home, and the chat's folder when a chat named one. The `Trust`/`Re-pin` fixes are the ones

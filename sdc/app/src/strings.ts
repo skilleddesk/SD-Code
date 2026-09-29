@@ -660,8 +660,11 @@ const english = {
       liveOff: 'Live preview off · reload by hand',
       found: 'Found',
       reloadedAfter: (what: string): string => `Reloaded after ${what}`,
+      /* 0.14.4: the page the preview follows, and the file that says so. */
+      following: (page: string, file: string): string => `Following ${page} · ${file}`,
+      onHost: (host: string, port: number): string => `${host} :${port}`,
       emptyLive:
-        'Live preview is on: when the agent (or you) starts a dev server, its address is picked up here and the page reloads after every change. You can also type an address above.',
+        'Live preview is on: it follows the page the agent (or you) is working on - the dev server on this computer, the site’s domain for a project on a VPS - and reloads after every change. You can also type an address above.',
     },
     console: {
       fixWithAgent: 'Fix with agent',
@@ -934,11 +937,12 @@ const english = {
     keyHint: (provider: string): string =>
       `Pasted here and sent straight to the OS keychain. ${provider} is called by the daemon with it; SDC never shows it again after saving.`,
     keyNote:
-      'A key that is rejected is reported in the provider’s own words — press Refresh under MODELS after saving to see what it listed.',
-    baseUrlLabel: 'Base URL (your Model Studio workspace)',
+      'The key is checked with the provider before it is saved. A key it rejects is not saved, and the reason is shown in the provider’s own words.',
+    movedToast: (card: string): string => `This is a ${card} key - it was saved on the ${card} card`,
+    baseUrlLabel: 'Base URL (optional)',
     baseUrlPlaceholder: 'https://ws-xxxx.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1',
     baseUrlHint:
-      'Leave empty for the international endpoint (dashscope-intl). A workspace key works only on its own workspace URL - paste it from the Model Studio console. Qwen, DeepSeek, Kimi and GLM all answer here, and the list updates itself when Alibaba adds a model. Press Use on as many models as you like.',
+      'Usually left empty: SDC finds the region the key belongs to (Singapore, US or Beijing), and a Coding Plan key goes to the Alibaba Coding Plan card by itself. Fill it only for a workspace URL. Model Studio lists Qwen, DeepSeek, Kimi and GLM; Coding Plan lists its own models. Press Use on as many models as you like.',
     saveKey: 'Save key',
     refresh: 'Refresh',
     modelsHint: (shown: number, total: number, snapshot: string): string =>
@@ -1196,6 +1200,13 @@ const english = {
       button: 'Sign in',
       signingIn: 'Signing in…',
       signedIn: (label: string): string => `Signed in to ${label}`,
+      /* 0.14.4: the password can be kept in the OS keychain, so a reconnect asks for the code alone. */
+      remember: 'Remember the password on this computer (OS keychain) - next time only the code is asked',
+      savedPlaceholder: 'Saved - leave empty to use it',
+      passwordPlaceholder: 'The host password',
+      savedNote: 'The password is saved on this computer. Type the code from your authenticator and press Enter.',
+      forget: 'Forget saved password',
+      forgotten: 'Saved password removed',
     },
     keyInstall: {
       title: (label: string): string => `SDC cannot sign in to ${label} yet`,

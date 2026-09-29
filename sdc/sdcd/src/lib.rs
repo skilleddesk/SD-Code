@@ -57,6 +57,7 @@ pub mod host;
 pub mod intent;
 pub mod ops;
 pub mod paths;
+pub mod preview;
 pub mod providers;
 pub mod reset;
 pub mod pty;

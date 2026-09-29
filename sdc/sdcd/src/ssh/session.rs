@@ -271,6 +271,62 @@ pub fn close(ssh: &Ssh) {
     let _ = bounded(command, CHECK_BUDGET);
 }
 
+/// A port on the host, reachable from this machine through the signed-in master (0.14.4): the live
+/// preview's answer to a dev server the agent started **on the VPS**. `localhost:3000` in that chat is
+/// the VPS's own port, and a frame on this machine that loads it loads whatever this machine has there -
+/// which is what the report's preview showed.
+///
+/// One `-O forward` to the master: no new login, no password, no code. The same host and port answer the
+/// same local port while the master lives.
+pub fn forward(ssh: &Ssh, remote_port: u16) -> Result<u16, ErrorObject> {
+    let key = format!("{}#{remote_port}", ssh.label());
+
+    if let Some(local) = forwards().lock().ok().and_then(|known| known.get(&key).copied()) {
+        if std::net::TcpStream::connect_timeout(&([127, 0, 0, 1], local).into(), Duration::from_millis(300)).is_ok() {
+            return Ok(local);
+        }
+    }
+
+    let program = program().ok_or_else(|| ErrorObject::internal("no `ssh` that can hold a connection open"))?;
+    let path = control_path(ssh)?;
+
+    if !path.exists() || !check_now(ssh) {
+        return Err(ErrorObject::bad_request(format!(
+            "{} is not signed in, so its port {remote_port} cannot be opened here. Sign in to the host first.",
+            ssh.label()
+        )));
+    }
+
+    /* A free port, asked of the OS and released for `ssh` to take a moment later. */
+    let local = std::net::TcpListener::bind("127.0.0.1:0")
+        .and_then(|listener| listener.local_addr())
+        .map_err(|error| ErrorObject::internal(error.to_string()))?
+        .port();
+    let mut command = std::process::Command::new(program);
+
+    command
+        .args(ssh.target.port_args())
+        .args(["-o", &format!("ControlPath={}", ssh_path(&path)), "-O", "forward"])
+        .args(["-L", &format!("127.0.0.1:{local}:127.0.0.1:{remote_port}")])
+        .arg(&ssh.target.user_host);
+
+    if bounded(command, CHECK_BUDGET) != Some(true) {
+        return Err(ErrorObject::internal(format!("{} refused to forward port {remote_port}", ssh.label())));
+    }
+
+    if let Ok(mut known) = forwards().lock() {
+        known.insert(key, local);
+    }
+
+    Ok(local)
+}
+
+fn forwards() -> &'static std::sync::Mutex<std::collections::HashMap<String, u16>> {
+    static FORWARDS: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, u16>>> = std::sync::OnceLock::new();
+
+    FORWARDS.get_or_init(Default::default)
+}
+
 /// Why a sign-in did not finish.
 #[derive(Debug)]
 pub enum SignInError {
@@ -743,6 +799,28 @@ mod tests {
             "a real no must remove the stale yes rather than leave it for the window to expire"
         );
         assert!(!is_open_recently(&ssh), "the cleared cache must not be trusted either");
+    }
+
+    /// The limiter's actual customer: [`mux_options`] must hand back the proxy options from a fresh
+    /// cached yes alone, with no real socket behind it - it never re-checks `ssh` itself, it only asks
+    /// [`is_open_recently`].
+    #[test]
+    fn a_fresh_cache_lets_mux_options_skip_the_real_check() {
+        if program().is_none() {
+            return;
+        }
+
+        let ssh = Ssh::parse("nobody@203.0.113.101 -p 5").unwrap();
+
+        checked().lock().unwrap().insert(ssh.label(), Instant::now());
+
+        let Ok(options) = mux_options(&ssh) else {
+            return;
+        };
+
+        assert!(!options.is_empty(), "a fresh cached yes must produce proxy options");
+        assert!(options.contains(&"proxy".to_string()));
+        assert!(options.iter().any(|o| o.starts_with("ControlPath=")));
     }
 
     #[test]

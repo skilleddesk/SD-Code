@@ -84,6 +84,10 @@ impl Daemon {
             "host.trust" => self.host_trust(envelope, out),
             "host.probe" => self.host_probe(envelope, out),
             "host.key" => self.host_key(envelope, &*out),
+            "host.password" => self.host_password(envelope),
+            "preview.forward" => self.preview_forward(envelope),
+            /* A site that forbids framing, shown in the preview through a loopback proxy (0.14.4). */
+            "preview.open" => Ok(json!({ "url": crate::preview::open(&envelope.require_str("url")?)? })),
             "ssh.key" => self.ssh_key(envelope),
             "host.remove" => self.host_remove(envelope, &*out),
             "host.shutdown" => Ok(self.host_shutdown()),
@@ -294,6 +298,23 @@ impl Daemon {
         /* The host's one-time code, for a host that asks for one (0.8.1). Spent with the password, kept
            nowhere. */
         let code = envelope.opt_str("code").unwrap_or_default().trim().to_string();
+        /* 0.14.4: the password can be kept in the OS keychain, when the person ticks "Remember" - then a
+           dropped connection asks only for the verification code, which is still typed every time. */
+        let remember = envelope.opt_bool("remember");
+        let secret_ref = host_secret_ref(&ssh);
+        let (password, remembered) = if password.is_empty() && !code.is_empty() {
+            match crate::auth::keychain::get(&secret_ref).filter(|saved| !saved.is_empty()) {
+                Some(saved) => (saved, true),
+                None => (password, false),
+            }
+        } else {
+            (password, false)
+        };
+        /* Typing it again with the box unticked means "do not keep it". */
+        if !password.is_empty() && !remembered && !remember {
+            let _ = crate::auth::keychain::delete(&secret_ref);
+        }
+        let keep = (!remembered && remember && !password.is_empty()).then(|| secret_ref.clone());
 
         let label = envelope
             .opt_str("label")
@@ -397,7 +418,7 @@ impl Daemon {
          */
         tokio::spawn(async move {
             if straight {
-                finish_connection(state, notifier, host_id, name, ssh, Secrets { password, code }, key_note).await;
+                finish_connection(state, notifier, host_id, name, ssh, Secrets { password, code, keep: keep.clone() }, key_note).await;
 
                 return;
             }
@@ -409,7 +430,7 @@ impl Daemon {
 
             match seen {
                 Ok(crate::ssh::hostkey::Trust::Pinned(_)) => {
-                    finish_connection(state, notifier, host_id, name, ssh, Secrets { password, code }, key_note).await;
+                    finish_connection(state, notifier, host_id, name, ssh, Secrets { password, code, keep: keep.clone() }, key_note).await;
                 }
                 Ok(crate::ssh::hostkey::Trust::Unknown(keys)) => {
                     let fingerprint = crate::ssh::hostkey::primary(&keys)
@@ -520,7 +541,9 @@ impl Daemon {
         let state = self.state.clone();
         let notifier = out.clone();
 
-        spawn_finish(state, notifier, host_id.clone(), name, ssh, Secrets { password, code }, None);
+        let keep = (envelope.opt_bool("remember") && !password.is_empty()).then(|| host_secret_ref(&ssh));
+
+        spawn_finish(state, notifier, host_id.clone(), name, ssh, Secrets { password, code, keep }, None);
 
         Ok(json!({ "trusted": true, "hostId": host_id, "fingerprint": fingerprint }))
     }
@@ -855,6 +878,42 @@ impl Daemon {
     /// and the UI had no button, so a host added by mistake was permanent. The row, its sessions and
     /// everything hanging off them go; the **event log does not**, because it is append-only and the
     /// removal is itself an event (`HostRemoved`) that a reconnecting window replays.
+    /// `host.password` (0.14.4): whether this host has a remembered password - so the Sign in card can
+    /// ask for the verification code alone - and, with `forget: true`, deletes it. The password itself
+    /// never leaves the keychain through this or any other method.
+    fn host_password(&self, envelope: &Envelope) -> Result<Value, ErrorObject> {
+        let host_id = envelope.require_str("hostId")?;
+
+        let Some(ssh) = self.ssh_for(&host_id)? else {
+            return Ok(json!({ "saved": false }));
+        };
+        let entry = host_secret_ref(&ssh);
+
+        if envelope.opt_bool("forget") {
+            crate::auth::keychain::delete(&entry)?;
+        }
+
+        Ok(json!({ "saved": crate::auth::keychain::get(&entry).is_some_and(|saved| !saved.is_empty()) }))
+    }
+
+    /// `preview.forward` (0.14.4): a dev server's port on the chat's host, as an address this machine can
+    /// open - the host's own `localhost:3000` for a chat on a VPS, through the signed-in connection. A
+    /// local chat's port is already here and comes back as it is.
+    fn preview_forward(&self, envelope: &Envelope) -> Result<Value, ErrorObject> {
+        let port = envelope
+            .opt_i64("port")
+            .and_then(|port| u16::try_from(port).ok())
+            .filter(|port| *port > 0)
+            .ok_or_else(|| ErrorObject::bad_request("`port` is required (1-65535)"))?;
+
+        let Some(ssh) = self.remote_for(envelope)? else {
+            return Ok(json!({ "url": format!("http://localhost:{port}/"), "forwarded": false }));
+        };
+        let local = crate::ssh::session::forward(&ssh, port)?;
+
+        Ok(json!({ "url": format!("http://127.0.0.1:{local}/"), "forwarded": true, "localPort": local }))
+    }
+
     fn host_remove(&self, envelope: &Envelope, out: &dyn Notifier) -> Result<Value, ErrorObject> {
         let host_id = envelope.require_str("hostId")?;
 
@@ -874,6 +933,7 @@ impl Daemon {
         /* A removed host keeps no signed-in connection behind it. */
         if let Some(ssh) = self.ssh_for(&host_id)? {
             crate::ssh::session::close(&ssh);
+            let _ = crate::auth::keychain::delete(&host_secret_ref(&ssh));
         }
 
         let sessions = self.store().delete_host(&host_id).map_err(ErrorObject::internal)?;
@@ -1739,17 +1799,48 @@ impl Daemon {
      * -------------------------------------------------------------------------------------- */
 
     fn provider_save(&self, envelope: &Envelope, out: Arc<dyn Notifier>) -> Result<Value, ErrorObject> {
-        let id = envelope.require_str("id")?;
+        let asked = envelope.require_str("id")?;
         let kind = envelope.opt_str("kind").unwrap_or_else(|| "api-key".into());
-        let saved = providers::save(
+        let key = envelope.opt_str("key");
+        let mut id = asked.clone();
+        let mut url = envelope.opt_str("url");
+
+        /* 0.14.4: the provider judges the key before it is saved, and an Alibaba key goes to the card and
+           region that accept it (`providers::place_key`). */
+        if kind == "api-key" {
+            if let Some(key) = key.as_deref().filter(|key| !key.trim().is_empty()) {
+                match providers::place_key(&asked, key, url.as_deref()) {
+                    providers::Placement::Rejected(reason) => return Err(ErrorObject::bad_request(reason)),
+                    providers::Placement::Home { id: home, base } => {
+                        match base {
+                            providers::Base::At(base) => url = Some(base),
+                            providers::Base::BuiltIn => {
+                                crate::providers::models::set_endpoint_override(&home, None).map_err(ErrorObject::internal)?;
+                                url = None;
+                            }
+                            providers::Base::Keep => {}
+                        }
+
+                        id = home;
+                    }
+                    providers::Placement::Unchecked => {}
+                }
+            }
+        }
+
+        let mut saved = providers::save(
             self.store(),
             &id,
             &kind,
-            envelope.opt_str("key").as_deref(),
+            key.as_deref(),
             envelope.opt_str("label").as_deref(),
-            envelope.opt_str("url").as_deref(),
+            url.as_deref(),
             envelope.opt_str("protocol").as_deref(),
         )?;
+
+        if id != asked {
+            saved["movedFrom"] = json!(asked);
+        }
 
         out.push(
             event::provider_status(json!({
@@ -3667,11 +3758,21 @@ impl Subject {
 /// the probe is `ssh` with `BatchMode=yes`, which by design cannot answer a prompt, so the install is
 /// what makes every later connection passwordless. `install_key` runs on the daemon's PTY (the one
 /// terminal it has) and types the password into `ssh`'s own prompt.
-/// What a person typed to sign in to a host: used once by [`finish_connection`], kept nowhere.
+/// What a person typed to sign in to a host: used once by [`finish_connection`], kept nowhere - unless
+/// they ticked Remember (0.14.4), and then only the password, only in the OS keychain, and only after
+/// the host accepted it.
 struct Secrets {
     password: String,
-    /// The verification code, for a host that asks for one (0.8.1).
+    /// The verification code, for a host that asks for one (0.8.1). Never kept.
     code: String,
+    /// The keychain entry the password goes to once the sign-in succeeds.
+    keep: Option<String>,
+}
+
+/// The keychain entry a host's remembered password lives in, keyed by `user@host:port` rather than by
+/// the host's id, which changes when the host is added again.
+fn host_secret_ref(ssh: &crate::ssh::Ssh) -> String {
+    format!("sdc.host.{}", ssh.label())
 }
 
 async fn finish_connection(
@@ -3683,7 +3784,7 @@ async fn finish_connection(
     secrets: Secrets,
     key_note: Option<String>,
 ) {
-    let Secrets { password, code } = secrets;
+    let Secrets { password, code, keep } = secrets;
     let target = ssh.target.user_host.clone();
 
     if let Some(note) = &key_note {
@@ -3726,6 +3827,10 @@ async fn finish_connection(
         let refused = match signed {
             Ok(sentence) => {
                 install_key = false;
+
+                if let Some(entry) = &keep {
+                    let _ = crate::auth::keychain::set(entry, &password);
+                }
 
                 notifier.push(
                     event::host_status(&host_id, &name, "vps", "connecting", None, Some(&sentence), None),
