@@ -5,7 +5,7 @@ import { strings } from '../../strings';
 import { CheckpointRail } from './CheckpointRail';
 import type { Phase, Segment, Step, StepKind } from './flow';
 import { Markdown } from './Markdown';
-import { Narration } from './Timeline';
+import { Narration } from './Narration';
 import { PHASE_COLOR } from './stepKit';
 import { ToolBody, ToolCard } from './ToolCard';
 

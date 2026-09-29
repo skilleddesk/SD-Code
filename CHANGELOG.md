@@ -15,6 +15,35 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [0.15.0] — Flow: the live stream as a timed rail, and chats that load on a cold start
+
+The report: *"live stream ... aro better and advance and featurefull"*, better than what the other AI tools
+show. Two styles were built and tried side by side in the real window on real chats: **Flow** (a timed
+rail) and **Console** (a mission log). The person asked for the better one, which is Flow, and Console's
+best parts moved into it.
+
+* **Every step on one rail, with its time.** Thinking, reading, commands, edits, the agent's words and
+  your messages sent mid-run sit on one vertical rail, in the order they happened. Each step shows its
+  measured duration and a done/failed mark. A click opens the full thought, the command output, the diff
+  or the list of files it read. A thought still going on shows its title and its newest lines under it.
+* **The time ribbon: where the turn's time went.** One bar for the whole turn, coloured by kind:
+  thinking, writing, reading, editing, commands, and the grey stretches *between* steps, where the model
+  is choosing its next move. That gap is shown by no other agent UI. Measured on a real 1 m 44 s turn, it
+  was 80 % of the time. Each colour has its total and share. A click on a stretch takes you to its step.
+* **Now.** While the turn runs, the bottom of the rail says what is happening this second (a command, the
+  pause before the next step, waiting for the model) with its own clock. The head shows the output pace
+  over the last forty seconds as a sparkline, the tool calls so far, and the files changed so far (+/−).
+* **Filters and Copy log.** A run of six steps or more gets filters with counts: All, Thinking, Reads,
+  Edits, Commands and Messages. The copy button puts the whole run on the clipboard as text, with each
+  step's time offset, which is useful for a bug report.
+* **Folded when done.** A finished turn folds to one line (`Worked for 1m 44s · 10 steps · 1 file +7 −0`)
+  and its ribbon, and the answer stands on its own below it. Old chats are drawn the same way. The time a
+  turn ended is now kept from the log (`TurnCompleted`/`ErrorRaised`).
+* **Chats no longer open empty after a cold start.** The window asked the daemon for the history before
+  `sdcd` was listening, swallowed the error, and never asked again, so every chat read "Nothing here yet"
+  until a reload. It now asks again every second until the daemon answers. Found while testing this
+  release in a fresh window.
+
 ## [0.14.4] — Alibaba keys land where they work, a dropped VPS signs in again at once, and the preview follows the page
 
 Three reports in one message, each measured before it was changed.

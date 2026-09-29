@@ -462,10 +462,6 @@
   mask-image: linear-gradient(to bottom, rgba(0,0,0,.35), #000 70%);
 }
 
-/* A running console card breathes at its border. */
-.console-live {
-  box-shadow: 0 0 0 1px var(--accent-subtle), 0 0 24px -12px var(--accent-glow);
-}
 
 /* Where a ribbon click lands. */
 .step-flash {

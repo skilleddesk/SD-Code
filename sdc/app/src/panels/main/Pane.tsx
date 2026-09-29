@@ -8,7 +8,6 @@ import { PromptArea } from '../prompt';
 import { collapsedSummary, toTurns } from '../turns/live';
 import { TurnStream } from '../turns';
 import { LiveBar } from '../turns/LiveBar';
-import { StyleSwitch } from '../turns/StyleSwitch';
 import { HostIcon } from '../ui/HostIcon';
 
 /**
@@ -145,7 +144,7 @@ export function Pane({ session, host, showHeader }: PaneProps) {
       className={
         showHeader
           ? 'pane relative flex min-w-0 flex-1 flex-col overflow-hidden border-r border-border-subtle last:border-r-0'
-          : 'relative flex min-w-0 flex-1 flex-col overflow-hidden'
+          : 'flex min-w-0 flex-1 flex-col overflow-hidden'
       }
       data-session={session.id}
     >
@@ -161,12 +160,6 @@ export function Pane({ session, host, showHeader }: PaneProps) {
           </span>
         </div>
       ) : null}
-
-      {streamTurns.length === 0 ? null : (
-        <div className="flex shrink-0 justify-end px-[16px] pb-[2px] pt-[6px]">
-          <StyleSwitch />
-        </div>
-      )}
 
       <div
         className="pane-scroll flex-1 overflow-y-auto px-[28px] pb-[16px] pt-[20px] max-600:px-[16px] max-600:pt-[14px]"

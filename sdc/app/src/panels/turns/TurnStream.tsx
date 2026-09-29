@@ -1,13 +1,10 @@
 import { ChevronRight } from 'lucide-react';
 
 import { strings } from '../../strings';
-import { useStreamStyle } from '../../store/streamStyle';
 import { toast } from '../../store/toast';
-import { ConsoleWork } from './ConsoleWork';
 import { FlowWork } from './FlowWork';
 import { ErrorCard } from './ErrorCard';
 import { PlanCard } from './PlanCard';
-import { Timeline } from './Timeline';
 import { TurnFooter } from './TurnFooter';
 import { ChangedFiles } from './ChangedFiles';
 import { UserMessage } from './UserMessage';
@@ -74,9 +71,6 @@ export function TurnStream({ turns, collapsed = null, sessionId }: TurnStreamPro
 
 /** One `.turn`: the user's message, the meta line, then whatever the engine produced. */
 function TurnBlock({ turn, sessionId }: { turn: Turn; sessionId: string }) {
-  /* 0.15: the same turn, drawn three ways - the person picks which in the pane's switch. */
-  const style = useStreamStyle((state) => state.style);
-
   return (
     <div className="turn mb-[26px]">
       <UserMessage message={turn.user} />
@@ -100,13 +94,7 @@ function TurnBlock({ turn, sessionId }: { turn: Turn; sessionId: string }) {
 
       {/* Everything the turn did, in the order it did it (0.12.5). The live line moved to the sticky bar
           above the input (`LiveBar`), where it cannot scroll away. */}
-      {style === 'flow' ? (
-        <FlowWork turn={turn} sessionId={sessionId} />
-      ) : style === 'console' ? (
-        <ConsoleWork turn={turn} sessionId={sessionId} />
-      ) : (
-        <Timeline items={turn.timeline} sessionId={sessionId} live={turn.live} draft={turn.draft} />
-      )}
+      <FlowWork turn={turn} sessionId={sessionId} />
 
       {/* Between Send and the first event there used to be nothing at all here, and a slow first
           token read as a dead turn. Three pulsing dots and a sentence are the honest version of

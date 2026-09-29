@@ -274,39 +274,20 @@ const english = {
     },
     /** A message sent into a running turn, where the agent took it (0.12.5). */
     steered: 'You, while it worked',
-    /** 0.15: the three ways the stream can be drawn, and the switch between them. */
-    style: {
-      label: 'Stream style',
-      classic: 'Classic',
-      flow: 'Flow',
-      console: 'Console',
-      hint: {
-        classic: 'The cards of 0.14',
-        flow: 'A timed rail: every step with its duration, the time ribbon, one summary line when done',
-        console: 'Mission control: live meters, a filterable log with offsets, keyboard ↑↓ Enter',
-      },
-    },
     /** 0.15: what the time ribbon calls each kind of time. */
     phase: { think: 'Thinking', write: 'Writing', read: 'Reading', edit: 'Editing', run: 'Commands', wait: 'Deciding' },
     flow: {
       worked: (time: string, count: number): string => `Worked for ${time} · ${count} ${count === 1 ? 'step' : 'steps'}`,
       working: (count: number): string => `${count} ${count === 1 ? 'step' : 'steps'} so far`,
-      files: (count: number, added: number, removed: number): string => `${count} ${count === 1 ? 'file' : 'files'} +${added} −${removed}`,
       show: 'Show the steps',
       hide: 'Hide the steps',
       ribbon: 'Where the time went - click a stretch to jump to it',
       now: 'Now',
-    },
-    console: {
-      title: 'Mission log',
+      copy: 'Copy the run as text',
+      copied: 'The run is on the clipboard',
+      pace: 'Output pace over the last 40 seconds',
+      filter: 'Show only',
       filters: { all: 'All', think: 'Thinking', read: 'Reads', edit: 'Edits', run: 'Commands', say: 'Messages' },
-      copy: 'Copy log',
-      copied: 'The log is on the clipboard',
-      follow: 'Following',
-      paused: 'Paused - ↓ to follow',
-      keys: '↑↓ move · Enter open · Esc close',
-      empty: 'Nothing in this filter yet',
-      plan: (done: number, total: number): string => `plan ${done}/${total}`,
     },
     /** 0.13: reads folded into one line, and the files a turn changed. */
     explored: 'Explored',

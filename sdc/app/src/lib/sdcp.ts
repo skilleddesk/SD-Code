@@ -164,7 +164,12 @@ export function getTransport(): SdcpTransport {
         }
       }
     } catch {
-      /* No daemon yet: the live stream and the next catch-up fill the log when it answers. */
+      /* No daemon yet - a cold start asks before `sdcd` listens. Nothing else asks again unless a live
+         event happens to arrive, so every chat read "Nothing here yet" until a reload (0.15). Ask again. */
+      catching = false;
+      globalThis.setTimeout(() => void catchUp(daemonSeq), 1000);
+
+      return;
     }
 
     catching = false;
