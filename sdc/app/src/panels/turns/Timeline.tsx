@@ -73,7 +73,7 @@ export function Timeline({
 }
 
 /** Words the agent says to the person while it works - prose, not a card, the way a colleague talks. */
-function Narration({ text, streaming }: { text: string; streaming: boolean }) {
+export function Narration({ text, streaming, bare = false }: { text: string; streaming: boolean; /** Drawn beside a rail node or a log line that already marks it (0.15). */ bare?: boolean }) {
   const shown = useSmoothText(text, streaming);
   /* 0.14.2: the `Understood:` line gets its own chip here too - it was drawn as plain prose whenever the
      agent went on to use a tool, which is most of the time. */
@@ -81,7 +81,7 @@ function Narration({ text, streaming }: { text: string; streaming: boolean }) {
 
   return (
     <div className="narration mb-[10px] flex gap-[9px] px-[2px]" data-narration={streaming ? 'streaming' : 'done'}>
-      <Sparkles size={13} aria-hidden="true" className="mt-[4px] shrink-0 text-accent" />
+      {bare ? null : <Sparkles size={13} aria-hidden="true" className="mt-[4px] shrink-0 text-accent" />}
       <div className="min-w-0 flex-1" aria-live={streaming ? 'polite' : undefined}>
         {understood === null ? null : (
           <div className="understood mb-[6px] flex items-start gap-[8px] rounded-md border border-accent/25 bg-accent-subtle px-[10px] py-[6px]" data-understood>
@@ -104,7 +104,7 @@ function Narration({ text, streaming }: { text: string; streaming: boolean }) {
 }
 
 /** The pause between two actions, with its own clock - the gap that used to read as a stalled turn. */
-function Deciding({ since }: { since: string }) {
+export function Deciding({ since }: { since: string }) {
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {

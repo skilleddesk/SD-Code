@@ -415,3 +415,69 @@
   direction: ltr;
   unicode-bidi: isolate;
 }
+
+/* 0.15 - the Flow and Console stream styles. */
+
+/* Live words: a soft light sweeping across them, the way a running line breathes. */
+.shimmer-text {
+  color: var(--text-secondary);
+  background: linear-gradient(90deg, var(--text-secondary) 0%, var(--text-secondary) 40%, var(--text-primary) 50%, var(--text-secondary) 60%, var(--text-secondary) 100%);
+  background-size: 250% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: sdcShimmer 2.2s linear infinite;
+}
+
+@keyframes sdcShimmer {
+  from { background-position: 100% 0; }
+  to { background-position: -150% 0; }
+}
+
+/* The growing edge of a running turn's time ribbon. */
+.ribbon-edge {
+  background: linear-gradient(90deg, transparent, var(--accent-glow));
+  animation: sdcEdge 1.2s ease-in-out infinite alternate;
+}
+
+@keyframes sdcEdge {
+  from { opacity: .25; }
+  to { opacity: 1; }
+}
+
+/* A rail node that is running. */
+.node-live {
+  box-shadow: 0 0 0 0 var(--accent-glow);
+  animation: sdcNode 1.6s ease-out infinite;
+}
+
+@keyframes sdcNode {
+  0% { box-shadow: 0 0 0 0 var(--accent-glow); }
+  100% { box-shadow: 0 0 0 7px transparent; }
+}
+
+/* The live thought's lines fade toward the top, so the newest one reads first. */
+.think-tail {
+  -webkit-mask-image: linear-gradient(to bottom, rgba(0,0,0,.35), #000 70%);
+  mask-image: linear-gradient(to bottom, rgba(0,0,0,.35), #000 70%);
+}
+
+/* A running console card breathes at its border. */
+.console-live {
+  box-shadow: 0 0 0 1px var(--accent-subtle), 0 0 24px -12px var(--accent-glow);
+}
+
+/* Where a ribbon click lands. */
+.step-flash {
+  animation: sdcFlash 1.2s ease-out;
+}
+
+@keyframes sdcFlash {
+  0%, 30% { background: var(--accent-subtle); }
+  100% { background: transparent; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shimmer-text, .ribbon-edge, .node-live, .step-flash { animation: none; }
+  .shimmer-text { -webkit-text-fill-color: currentColor; background: none; }
+}

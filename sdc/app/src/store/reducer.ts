@@ -643,6 +643,7 @@ function reduce(state: AppState, entry: AppEvent): AppState {
       const next = patchTurn(state, event.turnId, (turn) => ({
         ...withoutDraft(endThinking(turn, entry.ts)),
         status: turn.status === 'failed' ? 'failed' : 'done',
+        endedAt: turn.endedAt ?? entry.ts,
         summary: event.summary,
         meta: event.meta,
         pass: event.pass ?? turn.pass,
@@ -674,6 +675,7 @@ function reduce(state: AppState, entry: AppEvent): AppState {
       return patchTurn(state, event.turnId ?? state.activeTurnId ?? '', (turn) => ({
         ...withoutDraft(endThinking(turn, entry.ts)),
         status: 'failed',
+        endedAt: turn.endedAt ?? entry.ts,
         error: {
           title: event.title,
           explanation: event.explanation,

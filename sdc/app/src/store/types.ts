@@ -170,6 +170,8 @@ export interface TurnView {
   plan: PlanStepView[];
   /** The daemon's stamp of `TurnStarted` - what the Analytics tab groups by day. */
   startedAt: string;
+  /** The stamp of `TurnCompleted` or `ErrorRaised` - where the stream's time ribbon ends (0.15). */
+  endedAt?: string;
   status: 'running' | 'stuck' | 'done' | 'failed';
   /** Milliseconds without output, set by `StuckDetected` (spec section 12.9). */
   stuckForMs: number;

@@ -25,6 +25,8 @@ export function toTurns(
     .filter((turn) => turn.sessionId === sessionId)
     .map((turn) => ({
       id: turn.id,
+      startedAt: turn.startedAt,
+      ...(turn.endedAt === undefined ? {} : { endedAt: turn.endedAt }),
       user: {
         who: strings.turns.who,
         body: turn.prompt,
@@ -172,6 +174,8 @@ function timelineOf(turn: TurnView, checkpoints: readonly CheckpointView[]): Tim
       items.push({
         kind: 'thinking',
         key,
+        startedAt: entry.startedAt,
+        endedAt: entry.endedAt,
         thinking: {
           text: entry.text,
           ms: entry.endedAt === null ? 0 : Math.max(0, Date.parse(entry.endedAt) - Date.parse(entry.startedAt)) || 0,
@@ -184,6 +188,7 @@ function timelineOf(turn: TurnView, checkpoints: readonly CheckpointView[]): Tim
         kind: 'text',
         key,
         text: entry.text,
+        startedAt: entry.startedAt,
         /* A tool call being written (0.14.2) comes after these words: they are finished, not still typing. */
         streaming: running && newest && turn.draft === undefined,
         /* The words after the last tool call, once the turn has ended, are its answer. */
@@ -262,6 +267,7 @@ function toToolCard(tool: TurnView['tools'][number]): ToolCardData {
     target: tool.target,
     status: tool.status,
     meta: tool.meta,
+    ...(tool.endedAt === undefined ? {} : { endedAt: tool.endedAt }),
   };
 
   if (tool.tool === 'edit') {

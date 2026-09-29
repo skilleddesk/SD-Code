@@ -35,6 +35,8 @@ export interface RunLine {
 
 /** `Read` - file-text icon, a target path, and a `done · 42 ln` pill. A body only when it has lines. */
 export interface ReadToolData {
+  /** The log's `ToolCallCompleted` stamp, once it has one (0.15). */
+  endedAt?: string;
   kind: 'read';
   /** The log's `ToolCallStarted` stamp - the running pill ticks against it (0.9.0). */
   startedAt: string;
@@ -49,6 +51,8 @@ export interface ReadToolData {
 
 /** `Edit` - file-pen icon, a target path, `done · +18 −2`, and a diff body. */
 export interface EditToolData {
+  /** The log's `ToolCallCompleted` stamp, once it has one (0.15). */
+  endedAt?: string;
   kind: 'edit';
   startedAt: string;
   name: string;
@@ -60,6 +64,8 @@ export interface EditToolData {
 
 /** `Run` - play icon, a command, `running`, and a live 5-line output window. */
 export interface RunToolData {
+  /** The log's `ToolCallCompleted` stamp, once it has one (0.15). */
+  endedAt?: string;
   kind: 'run';
   startedAt: string;
   name: string;
@@ -167,6 +173,9 @@ export interface AnswerData {
 
 export interface Turn {
   id: string;
+  /** `TurnStarted` and, once it ended, `TurnCompleted`/`ErrorRaised` - the time ribbon's ends (0.15). */
+  startedAt: string;
+  endedAt?: string;
   user: UserMessageData;
   meta: TurnMetaData;
   /** Absent when the engine did not think out loud for this turn. */
@@ -213,8 +222,8 @@ export interface Turn {
  * agent talking the person through its work.
  */
 export type TimelineItem =
-  | { kind: 'thinking'; key: string; thinking: ThinkingData }
-  | { kind: 'text'; key: string; text: string; streaming: boolean; final: boolean }
+  | { kind: 'thinking'; key: string; thinking: ThinkingData; startedAt?: string; endedAt?: string | null }
+  | { kind: 'text'; key: string; text: string; streaming: boolean; final: boolean; startedAt?: string }
   | { kind: 'tool'; key: string; tool: ToolCardData }
   | { kind: 'checkpoint'; key: string; checkpoint: TurnCheckpointData }
   | { kind: 'steer'; key: string; text: string };

@@ -214,7 +214,7 @@ function QuestionAsked({ tool }: { tool: Extract<ToolCardData, { kind: 'read' }>
  * is why the padding differs rather than the shape: a diff's rows carry their own 13px inset so the
  * add/remove tint can run the full width of the card, and an output line is plain text.
  */
-function ToolBody({ tool }: { tool: ToolCardData }) {
+export function ToolBody({ tool }: { tool: ToolCardData }) {
   if (tool.kind === 'read') {
     return (
       <div className="tool-body max-h-[220px] overflow-y-auto border-t border-border-subtle px-[13px] py-[8px] font-mono text-[11.5px] leading-[1.65] text-text-muted">
