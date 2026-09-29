@@ -572,7 +572,15 @@ pub fn answer_questions(
     let mut answered = vec![false; answers.len()];
     /* When each answer went in, and what the screen said then - to see whether it was taken. */
     let mut sent: Vec<Option<(Instant, String)>> = vec![None; answers.len()];
-    let mut resent = vec![false; answers.len()];
+    let mut resent = vec![0usize; answers.len()];
+    /* The screen still ends on the question, with nothing typed after it: the answer has not arrived. */
+    let waiting_on = |text: &str, question: &str| {
+        text.trim_end().lines().last().is_some_and(|line| {
+            let line = line.trim_end();
+
+            line.ends_with(question) || line.trim_end_matches(':').trim_end().ends_with(question)
+        })
+    };
 
     while started.elapsed() < patience {
         let Ok(output) = pty.output(pty_id) else {
@@ -588,30 +596,29 @@ pub fn answer_questions(
             if !answered[index] && text.contains(question) {
                 answered[index] = pty.write(pty_id, &format!("{reply}\n")).is_ok();
                 sent[index] = Some((Instant::now(), text.clone()));
-            } else if let Some((at, before)) = &sent[index] {
+            } else if let Some((at, _)) = &sent[index] {
                 /*
                  * An answer typed while the program was still starting can be lost (a cold PowerShell under
-                 * a ConPTY on a busy CI runner: the question was on screen, the answer never arrived). If
-                 * nothing at all has moved for three seconds and the screen still ends on the question, it
-                 * is still waiting: say it once more. Any new output means it was taken.
+                 * a ConPTY on a busy CI runner: the question was on screen, the answer never arrived). 0.15.1
+                 * said it again once, and only when not a byte had moved - but a ConPTY redraws the screen
+                 * while nothing is read, so that second chance was often never taken (0.15.2's Windows
+                 * build). Now: while the last line still ends on the question with nothing after it, the
+                 * answer is said again every three seconds, at most five times.
                  */
-                if !resent[index]
-                    && at.elapsed() >= std::time::Duration::from_secs(3)
-                    && text.trim_end() == before.trim_end()
-                    && text.trim_end().lines().last().is_some_and(|line| line.contains(question))
+                if resent[index] < 5
+                    && at.elapsed() >= std::time::Duration::from_secs(3 * (resent[index] as u64 + 1))
+                    && waiting_on(&text, question)
+                    && pty.write(pty_id, &format!("{reply}\n")).is_ok()
                 {
-                    resent[index] = pty.write(pty_id, &format!("{reply}\n")).is_ok();
+                    resent[index] += 1;
                 }
             }
         }
 
-        /* Done once every answer is in and either taken or given its second chance. */
+        /* Done once every answer is in and the screen has moved past its question - or it has been said
+           as often as it will be. */
         let settled = answered.iter().enumerate().all(|(index, done)| {
-            *done
-                && (resent[index]
-                    || sent[index].as_ref().is_some_and(|(at, before)| {
-                        text.trim_end() != before.trim_end() || at.elapsed() >= std::time::Duration::from_secs(6)
-                    }))
+            *done && (resent[index] >= 5 || !waiting_on(&text, answers[index].0))
         });
 
         if settled {

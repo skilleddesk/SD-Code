@@ -15,6 +15,15 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [0.15.3] — The Windows installer for 0.15.2
+
+0.15.2 was published for macOS and Linux only. Its Windows build stopped on the same test as 0.15.0: a
+`[Y/n]` answer typed while a cold PowerShell was still starting on a busy build machine never arrived. 0.15.1
+said the answer again once, but only if nothing on the screen had moved, and the Windows console redraws
+the screen even when nothing is typed. Now SDC looks at the last line. While it still ends on the question
+with nothing typed after it, SDC gives the answer again every three seconds, up to five times. Everything
+in 0.15.2 is in this release.
+
 ## [0.15.2] — No step limit, and a signed-in VPS that stays signed in
 
 The report: a long agent turn on the VPS stopped with *"I stopped after 60 steps, the limit for one
