@@ -193,6 +193,15 @@ pub fn effort_args(spec: &CliSpec, effort: Option<&str>) -> Vec<String> {
 
 /// What goes on stdin (or into `{prompt}`): the turns the CLI has not seen, as a transcript with who said
 /// what, then the words of this turn - and, for a CLI with no image flag, where the attached images are.
+/// A failure of the way to the host rather than of the CLI's conversation (0.15.4).
+fn connection_failure(reason: &str) -> bool {
+    let lower = reason.to_lowercase();
+
+    ["permission denied", "connection closed", "connection refused", "connection reset", "connection timed out", "could not resolve hostname", "control socket", "broken pipe", "kex_exchange"]
+        .iter()
+        .any(|needle| lower.contains(needle))
+}
+
 pub fn turn_body(spec: &CliSpec, prompt: &Prompt) -> String {
     let mut body = String::new();
     let resumed = prompt.resume.is_some() && spec.resume != Resume::None;
@@ -412,6 +421,8 @@ impl CliAdapter {
                 } else if event.is_terminal() {
                     *failed = true;
                     buffer.clear();
+                    /* Kept: a failure that is not about the conversation is shown, not retried (0.15.4). */
+                    buffer.push(event);
                 } else if matches!(event, EngineEvent::Usage { .. }) {
                     buffer.push(event);
                 } else {
@@ -430,7 +441,14 @@ impl CliAdapter {
 
         let failed_early = held.lock().map(|state| !state.0 && state.1).unwrap_or(false);
 
-        if failed_early && !crate::engines::cancel::requested(&prompt.turn_id) {
+        /* Only a conversation the CLI no longer has is started again. A host that could not be reached
+           (2026-09-29: `Permission denied (keyboard-interactive)` after the signed-in connection closed)
+           fails the same way fresh, so its sentence is shown at once instead of a second, useless try. */
+        let unreachable = held.lock().is_ok_and(|state| {
+            state.2.iter().any(|event| matches!(event, EngineEvent::Failed(reason) if connection_failure(reason)))
+        });
+
+        if failed_early && !unreachable && !crate::engines::cancel::requested(&prompt.turn_id) {
             sink.send(EngineEvent::Thinking(
                 "The earlier conversation could not be resumed; starting it again with this chat's history.
 ".to_string(),

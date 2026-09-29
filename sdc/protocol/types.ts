@@ -100,6 +100,8 @@ export type SdcpMethod =
   | 'host.password'
   | 'preview.forward'
   | 'preview.open'
+  | 'preview.status'
+  | 'preview.dev'
   /**
    * The **public** half of the key SDC uses for hosts it adds (0.7.13) - read-only, and it never makes a
    * key. It is here so a surface can show the one line that finishes a host SDC cannot: a machine that
@@ -1561,6 +1563,13 @@ export interface SdcpMethodMap {
   /** A dev server port on the chat's host as an address this machine can open (0.14.4). */
   /** A site, as a loopback address its frame-forbidding headers are taken off, for the preview (0.14.4). */
   'preview.open': { params: { url: string }; result: { url: string } };
+  /** What the live site answers for a page (0.15.4): a 404 is a page that is not built and deployed yet. */
+  'preview.status': { params: { url: string }; result: { status: number | null } };
+  /** The project's own dev server as the preview (0.15.4): started on the chat's host, bound to loopback, reached through the connection. Call again until `ready`. */
+  'preview.dev': {
+    params: { sessionId: string; stop?: boolean };
+    result: { state: 'starting' | 'ready' | 'failed' | 'stopped'; dir: string; port?: number; url?: string; log?: string };
+  };
   'preview.forward': {
     params: { sessionId?: string; hostId?: string; port: number };
     result: { url: string; forwarded: boolean; localPort?: number };

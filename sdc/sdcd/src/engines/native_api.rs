@@ -590,7 +590,147 @@ fn post_https(
             Err(rejection(status, &read_all(response.into_reader())))
         }
 
-        Err(ureq::Error::Transport(transport)) => Err(format!("{url}: {transport}")),
+        /* ureq's own sentence already names the URL; 0.15.3 printed it twice. */
+        Err(ureq::Error::Transport(transport)) => {
+            let said = transport.to_string();
+
+            Err(if said.contains(url) { said } else { format!("{url}: {said}") })
+        }
+    }
+}
+
+/// How long to wait before each new try of a request the network or the provider dropped: nine tries in
+/// all, about two and a half minutes. 2026-09-29: a 19-minute Alibaba turn (183 steps) ended on one
+/// `os error 10060` from `dashscope-us`, and the whole turn failed with it. A network that is gone for
+/// two seconds should cost two seconds, not the turn.
+pub const RETRY_WAITS: [u64; 8] = [2, 4, 8, 15, 30, 30, 30, 30];
+
+/// Whether a failure belongs to the moment (a dropped or refused connection, a timeout, a rate limit, an
+/// overloaded or failing server) and so is worth asking again, rather than to the request (a bad key, a
+/// model that does not exist), which would fail the same way every time.
+pub fn transient(reason: &str) -> bool {
+    let status = reason
+        .trim_end()
+        .rsplit_once('(')
+        .and_then(|(_, tail)| tail.strip_suffix(')'))
+        .and_then(|code| code.parse::<u16>().ok())
+        .or_else(|| reason.strip_prefix("HTTP ").and_then(|rest| rest.get(..3)).and_then(|code| code.parse().ok()));
+
+    if let Some(status) = status.filter(|status| (400..600).contains(status)) {
+        return matches!(status, 408 | 409 | 425 | 429) || status >= 500;
+    }
+
+    let lower = reason.to_lowercase();
+
+    [
+        "network error",
+        "os error",
+        "timed out",
+        "timeout",
+        "connection",
+        "dns",
+        "reset",
+        "broken pipe",
+        "unexpected eof",
+        "dropped",
+        "ended before it said anything",
+        "ended without a single event",
+        "overloaded",
+        "temporarily unavailable",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
+}
+
+/// Runs `attempt` again, after each of [`RETRY_WAITS`], for as long as it fails in a [`transient`] way.
+/// `notice` hears of each retry before its wait (`retry number, seconds, reason`), so the person sees the
+/// turn waiting rather than frozen. `stop` cuts a wait short with `Err("stopped")`.
+pub fn with_retries<T>(
+    stop: &dyn Fn() -> bool,
+    mut notice: impl FnMut(usize, u64, &str),
+    mut attempt: impl FnMut() -> Result<T, String>,
+) -> Result<T, String> {
+    let mut retries = 0;
+
+    loop {
+        let reason = match attempt() {
+            Ok(value) => return Ok(value),
+            Err(reason) if reason == "stopped" || !transient(&reason) => return Err(reason),
+            Err(reason) => reason,
+        };
+        let Some(&wait) = RETRY_WAITS.get(retries) else {
+            return Err(format!(
+                "{reason} · asked {} times over about {} s without an answer; send \"continue\" to pick up from here",
+                retries + 1,
+                RETRY_WAITS.iter().sum::<u64>()
+            ));
+        };
+
+        retries += 1;
+        notice(retries, wait, &reason);
+
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(wait);
+
+        while std::time::Instant::now() < until {
+            if stop() {
+                return Err("stopped".to_string());
+            }
+
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }
+    }
+}
+
+/// The "Reconnect" card a retried request shows in the stream: one card per interrupted request, a line
+/// per retry, closed when the request goes through or the retries run out. Nothing is shown for a
+/// request that went through the first time.
+pub struct RetryCard {
+    sink: EventSink,
+    call_id: String,
+    host: String,
+    open: bool,
+}
+
+impl RetryCard {
+    pub fn new(sink: &EventSink, turn_id: &str, url: &str) -> Self {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let host = url.split("://").nth(1).unwrap_or(url).split('/').next().unwrap_or(url).to_string();
+
+        Self {
+            sink: sink.clone(),
+            call_id: format!("{turn_id}-reconnect-{}", NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)),
+            host,
+            open: false,
+        }
+    }
+
+    pub fn notice(&mut self, retry: usize, wait: u64, reason: &str) {
+        if !self.open {
+            self.open = true;
+            self.sink.send(EngineEvent::ToolStarted {
+                call_id: self.call_id.clone(),
+                tool: "run".to_string(),
+                name: "Reconnect".to_string(),
+                target: self.host.clone(),
+            });
+        }
+
+        self.sink.send(EngineEvent::ToolOutput {
+            call_id: self.call_id.clone(),
+            level: "dim".to_string(),
+            text: format!("{reason}\nretry {retry} of {} in {wait} s · the work so far is kept", RETRY_WAITS.len()),
+        });
+    }
+
+    pub fn close(self, ok: bool) {
+        if self.open {
+            self.sink.send(EngineEvent::ToolCompleted {
+                call_id: self.call_id,
+                status: if ok { "done" } else { "failed" }.to_string(),
+                meta: if ok { "reconnected" } else { "gave up" }.to_string(),
+                diff: None,
+            });
+        }
     }
 }
 
@@ -708,11 +848,17 @@ impl Engine for NativeApi {
         sink, because `spawn_blocking` can only be joined once the whole body has been read. That is
         the shape of a live turn: the future stays pending while the events land one by one. */
         let _ = tokio::task::spawn_blocking(move || {
-            let turn_id = turn_id;
+            let mut card = RetryCard::new(&sink, &turn_id, &url);
             let stop = move || crate::engines::cancel::requested(&turn_id);
+            /* Only the opening is asked again: once words have arrived, a new request would write them twice. */
+            let opened = with_retries(&stop, |tries, wait, reason| card.notice(tries, wait, reason), || open_stream(&url, &headers, &body));
 
-            if let Err(reason) = post_stream_until(&url, &headers, &body, &sink, &stop) {
-                sink.send(EngineEvent::Failed(reason));
+            card.close(opened.is_ok());
+
+            match opened {
+                Ok(lines) => drain_sse(lines, &sink, &stop),
+                Err(reason) if reason == "stopped" => {}
+                Err(reason) => sink.send(EngineEvent::Failed(reason)),
             }
         })
         .await;
@@ -1056,5 +1202,48 @@ mod tests {
             "{:?}",
             empty.events()
         );
+    }
+
+    #[test]
+    fn the_moments_failures_are_asked_again_and_the_requests_are_not() {
+        /* The sentence from 2026-09-29's Alibaba turn, word for word. */
+        assert!(transient("https://dashscope-us.aliyuncs.com/compatible-mode/v1/chat/completions: Network Error: Error encountered in the status line: A connection attempt failed because the connected party did not properly respond after a period of time (os error 10060)"));
+        assert!(transient("Rate limit reached for requests (429)"));
+        assert!(transient("Overloaded (529)"));
+        assert!(transient("HTTP 502: Bad Gateway"));
+        assert!(transient("the connection to the provider dropped: connection reset"));
+        assert!(transient("the provider's stream ended before it said anything"));
+        assert!(!transient("Incorrect API key provided (401)"));
+        assert!(!transient("The model `qwen-nope` does not exist (404)"));
+        assert!(!transient("Range of input length should be [1, 30720] (400)"));
+        assert!(!transient("stopped"));
+    }
+
+    #[test]
+    fn a_retried_request_goes_through_and_a_bad_one_fails_at_once() {
+        let mut calls = 0;
+        let mut notices = Vec::new();
+        let answer = with_retries(&|| false, |retry, _, _| notices.push(retry), || {
+            calls += 1;
+
+            if calls < 2 { Err("Network Error: os error 10060".to_string()) } else { Ok(calls) }
+        });
+
+        assert_eq!(answer, Ok(2));
+        assert_eq!(notices, vec![1]);
+
+        let mut asked = 0;
+        let refused: Result<(), String> = with_retries(&|| false, |_, _, _| {}, || {
+            asked += 1;
+
+            Err("Incorrect API key (401)".to_string())
+        });
+
+        assert_eq!(asked, 1);
+        assert!(refused.is_err());
+
+        let stopped: Result<(), String> = with_retries(&|| true, |_, _, _| {}, || Err("timed out".to_string()));
+
+        assert_eq!(stopped, Err("stopped".to_string()));
     }
 }

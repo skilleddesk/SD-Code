@@ -15,6 +15,46 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [0.15.4] — A dropped network is retried, a stuck VPS connection is noticed, and the preview shows the page being written
+
+The reports: an Alibaba turn of 19 minutes and 183 steps failed on one network error; a Claude Code
+turn on the VPS sat on *"Waiting for sonnet's first word"* for minutes; the preview never showed the page
+being worked on; and *"model change korle abr prothom thake suru korbe?"*
+
+* **A network or provider hiccup no longer ends the turn.** Every API model (Alibaba, DeepSeek, OpenAI,
+  Anthropic, Groq and the rest, in chat and in the SDC Agent) asks again when the connection drops, times
+  out, or the provider answers 429 / 5xx / "overloaded": after 2, 4, 8, 15 and then 30 seconds, nine tries
+  in all. A **Reconnect** card in the stream shows each try. Every step before the drop is kept. A bad key
+  or an unknown model still fails at once. The turn that failed was `os error 10060` from
+  `dashscope-us`: measured afterwards, the host answers from here in 0.4 s, so the drop was momentary.
+* **A stuck VPS connection is found and ended.** The waiting turn was not slow. The `ssh` master holding
+  the VPS sign-in was spinning at 91% of a CPU core and answered nothing. Every check of it ran out of
+  time, which SDC read as "busy" on every pass, so the turn waited indefinitely. Now a master that answers
+  nothing for 45 seconds is called stuck: SDC ends it, marks the VPS "sign in again" and says why. The
+  waiting turn then stops with that sentence at once (checked on the report's own chat: once the process
+  was gone, the turn ended in seconds). A master whose socket refuses is ended the same way, not left
+  spinning.
+* **A connection failure is not retried as a lost conversation.** "The earlier conversation could not be
+  resumed; starting it again" no longer runs a second, useless try when the host itself could not be
+  reached.
+* **Switching models goes on from where the work stopped.** A turn that stopped part-way (you pressed
+  Stop, the provider dropped, SDC's Trust Kernel stopped it, or it was cut off) now says so in the record
+  that the next turn reads, whichever model takes it: what happened, that it really is on disk, and to go
+  on from the last step rather than begin again. A turn that failed after writing some text was stored as
+  a success; it is now stored as an error.
+* **The preview can show the page as it is written.** The preview did follow the page (for example
+  `/email-marketing-agency-uk`), but the site is a built Next.js app, and a page whose source was just
+  written is a 404 there until it is built and restarted. Now:
+  * the preview says so above the frame (*"answers 404 on the live site: the live site shows the last
+    build that was deployed"*) instead of leaving a 404 or the home page unexplained;
+  * the new **Dev** button runs the project's own `npm run dev` (on the VPS for a VPS chat), bound to
+    `127.0.0.1` on a free port from 3100 and reached through the signed-in connection. The preview then
+    follows the page being edited with its real styles and components, and hot-reloads as files are
+    saved. The live site and its pm2 process are not touched (Next.js 16 keeps `next dev` in
+    `.next/dev`). Press Dev again to stop it.
+* **Faster start of a VPS turn.** The project conventions and the long-task memory are read from the
+  host at the same time instead of one after the other.
+
 ## [0.15.3] — The Windows installer for 0.15.2
 
 0.15.2 was published for macOS and Linux only. Its Windows build stopped on the same test as 0.15.0: a

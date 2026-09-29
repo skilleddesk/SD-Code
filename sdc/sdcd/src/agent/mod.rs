@@ -397,9 +397,22 @@ fn ask_model(backend: Backend, target: &Target, system: &str, messages: &[Value]
     }
 
     let body = body.to_string();
-    let lines = crate::engines::native_api::open_stream(&target.url, &target.headers, &body).map_err(|reason| unreachable(backend, &reason))?;
+    /* A step the network or the provider dropped - before its first word or halfway through - is asked
+       again rather than ending the turn (0.15.4): nothing of it reached the conversation yet, so asking
+       again is the same question, and every step before it is kept. */
+    let mut card = crate::engines::native_api::RetryCard::new(sink, "agent", &target.url);
+    let reply = crate::engines::native_api::with_retries(
+        stopped,
+        |retry, wait, reason| card.notice(retry, wait, reason),
+        || {
+            let lines = crate::engines::native_api::open_stream(&target.url, &target.headers, &body)?;
 
-    dialect::read_reply(target.dialect, lines, sink, stopped)
+            dialect::read_reply(target.dialect, lines, sink, stopped)
+        },
+    );
+
+    card.close(reply.is_ok());
+    reply.map_err(|reason| unreachable(backend, &reason))
 }
 
 /// Keeps a turn's conversation inside the model's window (0.13): older tool output is folded when the

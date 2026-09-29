@@ -1,4 +1,4 @@
-import { ExternalLink, Globe, Radio, RotateCw, X } from 'lucide-react';
+import { ExternalLink, Globe, Play, Radio, RotateCw, Square, X } from 'lucide-react';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 
 import { openOutside } from '../../lib/external';
@@ -41,6 +41,10 @@ const DEVICES: readonly Device[] = ['mobile', 'tablet', 'desktop'];
 /** What each chat last followed (`page edit|base`), kept across tab switches so a remount does not undo
     an address the person typed. */
 const followed = new Map<string, string>();
+
+/** The project's dev server as each chat's preview (0.15.4), kept across tab switches like `followed`. */
+type DevState = { state: 'starting' | 'ready' | 'failed'; dir: string; url?: string; log?: string };
+const devServers = new Map<string, DevState>();
 
 /** A dev server on the chat's host, as an address this machine can open (`preview.forward`). */
 async function forwardPort(sessionId: string, address: string): Promise<string | null> {
@@ -96,7 +100,22 @@ export function PreviewTab() {
   const siteUrl = candidates.find((candidate) => localPort(candidate) === null) ?? null;
   const [forwarded, setForwarded] = useState<Record<string, string>>({});
   const devBase = devServer === null ? null : onVps ? (forwarded[devServer] ?? null) : devServer;
-  const base = onVps ? (siteUrl ?? devBase) : (devBase ?? siteUrl);
+  const [dev, setDevState] = useState<DevState | null>(sessionId === null ? null : (devServers.get(sessionId) ?? null));
+  const setDev = (next: DevState | null): void => {
+    if (sessionId !== null) {
+      if (next === null) {
+        devServers.delete(sessionId);
+      } else {
+        devServers.set(sessionId, next);
+      }
+    }
+
+    setDevState(next);
+  };
+  /* The project's own dev server, once it runs, is what the preview shows (0.15.4): it has the page as it
+     is written. Otherwise a VPS chat shows its site, a local chat the dev server it found. */
+  const ownDev = dev?.state === 'ready' ? (dev.url ?? null) : null;
+  const base = ownDev ?? (onVps ? (siteUrl ?? devBase) : (devBase ?? siteUrl));
   const target = base === null ? null : joinPage(base, pageChange?.page ?? '/');
   const followKey = `${pageChange?.key ?? ''}|${base ?? ''}`;
 
@@ -171,6 +190,102 @@ export function PreviewTab() {
       current = false;
     };
   }, [url]);
+
+  /* Another chat's dev server is not this one's. */
+  useEffect(() => {
+    setDevState(sessionId === null ? null : (devServers.get(sessionId) ?? null));
+  }, [sessionId]);
+
+  /* While it starts, it is asked again every two seconds - one round trip each - for up to three minutes. */
+  useEffect(() => {
+    if (sessionId === null || dev?.state !== 'starting') {
+      return;
+    }
+
+    let current = true;
+    let tries = 0;
+    const settle = (next: DevState | null): void => {
+      if (next === null) {
+        devServers.delete(sessionId);
+      } else {
+        devServers.set(sessionId, next);
+      }
+
+      setDevState(next);
+    };
+    const ask = (): void => {
+      tries += 1;
+      void sdcpCall('preview.dev', { sessionId }).then(
+        (answer) => {
+          if (!current) {
+            return;
+          }
+
+          if (answer.state === 'starting' && tries < 90) {
+            window.setTimeout(ask, 2000);
+
+            return;
+          }
+
+          settle(
+            answer.state === 'ready'
+              ? { state: 'ready', dir: answer.dir, url: answer.url, log: answer.log }
+              : { state: 'failed', dir: answer.dir, log: answer.log },
+          );
+        },
+        (error: unknown) => {
+          if (current) {
+            settle(null);
+            toast(error instanceof Error ? error.message : String(error));
+          }
+        },
+      );
+    };
+
+    ask();
+
+    return () => {
+      current = false;
+    };
+  }, [sessionId, dev?.state]);
+
+  /* A page the live site does not have yet (0.15.4): a built site answers 404 for a page whose source was
+     only just written. Asked once per address the frame shows. */
+  const [liveStatus, setLiveStatus] = useState<{ url: string; status: number | null } | null>(null);
+
+  useEffect(() => {
+    if (url === '' || localPort(url) !== null || ownDev !== null) {
+      return;
+    }
+
+    let current = true;
+
+    void sdcpCall('preview.status', { url }).then(
+      (answer) => current && setLiveStatus({ url, status: answer.status }),
+      () => undefined,
+    );
+
+    return () => {
+      current = false;
+    };
+  }, [url, reloads, ownDev]);
+
+  const toggleDev = (): void => {
+    if (sessionId === null) {
+      return;
+    }
+
+    followed.delete(sessionId);
+
+    if (dev !== null) {
+      void sdcpCall('preview.dev', { sessionId, stop: true }).catch(() => undefined);
+      setDev(null);
+
+      return;
+    }
+
+    setDev({ state: 'starting', dir: project?.root ?? '' });
+  };
 
   if (diff !== null) {
     return <PreviewDiff />;
@@ -256,6 +371,23 @@ export function PreviewTab() {
 
         <button
           type="button"
+          aria-pressed={dev !== null}
+          title={dev === null ? strings.rightPanel.preview.devStart : strings.rightPanel.preview.devStop}
+          disabled={sessionId === null || project === undefined}
+          className={
+            'preview-dev ml-[2px] flex h-[26px] shrink-0 items-center gap-[5px] rounded-md border px-[8px] text-[10.5px] font-semibold transition-colors duration-fast ' +
+            (dev !== null
+              ? 'border-accent/40 bg-accent-subtle text-accent'
+              : 'border-border-subtle bg-bg-raised text-text-muted hover:text-text-secondary')
+          }
+          onClick={toggleDev}
+        >
+          {dev === null ? <Play size={11} aria-hidden="true" /> : <Square size={10} aria-hidden="true" />}
+          {strings.rightPanel.preview.dev}
+        </button>
+
+        <button
+          type="button"
           role="switch"
           aria-checked={live}
           title={live ? strings.rightPanel.preview.liveOn : strings.rightPanel.preview.liveOff}
@@ -319,6 +451,41 @@ export function PreviewTab() {
                   : candidate.replace(/^https?:\/\//, '').replace(/\/$/, '')}
               </button>
             ))}
+        </div>
+      ) : null}
+
+      {dev !== null ? (
+        <div
+          className={
+            'preview-dev-note mx-[10px] mt-[8px] rounded-md border px-[8px] py-[5px] text-[11px] leading-[1.45] ' +
+            (dev.state === 'failed' ? 'border-state-error/40 text-state-error' : 'border-border-subtle text-text-secondary')
+          }
+          role="status"
+        >
+          {dev.state === 'starting'
+            ? strings.rightPanel.preview.devStarting(dev.dir)
+            : dev.state === 'failed'
+              ? strings.rightPanel.preview.devFailed(dev.dir)
+              : strings.rightPanel.preview.devOn(dev.dir)}
+          {dev.state === 'failed' && dev.log !== undefined && dev.log.trim() !== '' ? (
+            <pre className="mt-[4px] max-h-[120px] overflow-auto whitespace-pre-wrap font-mono text-[10px] text-text-muted">{dev.log}</pre>
+          ) : null}
+        </div>
+      ) : liveStatus !== null && liveStatus.url === url && liveStatus.status !== null && liveStatus.status >= 400 ? (
+        <div
+          className="preview-not-live mx-[10px] mt-[8px] flex flex-wrap items-center gap-[6px] rounded-md border border-state-warning/40 px-[8px] py-[5px] text-[11px] leading-[1.45] text-text-secondary"
+          role="status"
+        >
+          <span className="min-w-0 flex-1">
+            {strings.rightPanel.preview.notLive(url.replace(/^https?:\/\/[^/]+/, '') || '/', liveStatus.status)}
+          </span>
+          <button
+            type="button"
+            className="shrink-0 rounded-sm border border-border-default bg-bg-raised px-[7px] py-[2px] text-[10.5px] font-semibold text-accent hover:border-border-focus"
+            onClick={toggleDev}
+          >
+            {strings.rightPanel.preview.notLiveAction}
+          </button>
         </div>
       ) : null}
 

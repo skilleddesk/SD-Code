@@ -354,6 +354,80 @@ pub fn close(ssh: &Ssh) {
     let _ = std::fs::remove_file(spare_path(&path));
 }
 
+/// How long a master may go without answering `-O check` before it is called stuck (0.15.4). A quiet
+/// master answers in ~30 ms; one that is only busy answers within a few seconds.
+pub const STUCK_AFTER: Duration = Duration::from_secs(45);
+
+fn unsure_since() -> &'static Mutex<std::collections::HashMap<String, Instant>> {
+    static SINCE: OnceLock<Mutex<std::collections::HashMap<String, Instant>>> = OnceLock::new();
+
+    SINCE.get_or_init(Default::default)
+}
+
+/// Records one [`Master`] answer and says whether the master is **stuck**: nothing but
+/// [`Master::Unsure`] for [`STUCK_AFTER`].
+///
+/// Measured 2026-09-29: the report's master (Git for Windows' ssh, OpenSSH 10.3) sat at 91% of a core
+/// for twenty minutes, alive and holding its TCP connection, yet serving nothing. Every `-O check` ran
+/// out of time, so it was `Unsure` - "busy, not lost" - on every pass, and the chat's turn waited for
+/// `claude`'s first word for ten minutes and more. Unsure for this long is not busy.
+pub fn note(ssh: &Ssh, master: Master) -> bool {
+    let Ok(mut since) = unsure_since().lock() else {
+        return false;
+    };
+
+    match master {
+        Master::Unsure => since.entry(ssh.label()).or_insert_with(Instant::now).elapsed() >= STUCK_AFTER,
+        _ => {
+            since.remove(&ssh.label());
+
+            false
+        }
+    }
+}
+
+/// Ends a stuck master: its process is killed (it answers no `-O exit`), and its socket names removed.
+/// Every call waiting on it - the turn's `claude` among them - then ends with the connection instead of
+/// hanging. The host needs a new sign-in afterwards, which is the price of a connection that was dead.
+pub fn kill_stuck(ssh: &Ssh) {
+    forget(ssh);
+
+    if let Ok(mut since) = unsure_since().lock() {
+        since.remove(&ssh.label());
+    }
+
+    let Ok(path) = control_path(ssh) else {
+        return;
+    };
+    /* The master was started with `-f`, so its pid was never known: it is the ssh whose command line
+       holds this control path and `ControlMaster=yes`. */
+    let name = path.file_name().map(|name| name.to_string_lossy().to_string()).unwrap_or_default();
+
+    if !name.is_empty() {
+        #[cfg(windows)]
+        {
+            let script = format!(
+                "Get-CimInstance Win32_Process -Filter \"Name='ssh.exe'\" | Where-Object {{ $_.CommandLine -like '*ControlMaster=yes*' -and $_.CommandLine -like '*{name}*' }} | ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force }}"
+            );
+            let mut command = std::process::Command::new("powershell");
+
+            command.args(["-NoProfile", "-NonInteractive", "-Command", &script]);
+            hide_window(&mut command);
+            let _ = bounded(command, Duration::from_secs(20));
+        }
+
+        #[cfg(not(windows))]
+        {
+            let mut command = std::process::Command::new("pkill");
+
+            command.args(["-f", &format!("ControlMaster=yes.*{name}")]);
+            let _ = bounded(command, Duration::from_secs(10));
+        }
+    }
+
+    discard(ssh);
+}
+
 /// A port on the host, reachable from this machine through the signed-in master (0.14.4): the live
 /// preview's answer to a dev server the agent started **on the VPS**. `localhost:3000` in that chat is
 /// the VPS's own port, and a frame on this machine that loads it loads whatever this machine has there -
@@ -923,6 +997,37 @@ mod tests {
         assert!(!options.is_empty(), "a fresh cached yes must produce proxy options");
         assert!(options.contains(&"proxy".to_string()));
         assert!(options.iter().any(|o| o.starts_with("ControlPath=")));
+    }
+
+    /// The stuck-master limiter (0.15.4): a master that has only ever answered [`Master::Unsure`] is
+    /// given the benefit of the doubt until [`STUCK_AFTER`] passes, and only then called stuck.
+    #[test]
+    fn an_unsure_master_is_stuck_only_once_its_window_passes() {
+        let ssh = Ssh::parse("nobody@203.0.113.121 -p 8").unwrap();
+
+        assert!(!note(&ssh, Master::Unsure), "the first Unsure answer must not be stuck yet");
+        assert!(!note(&ssh, Master::Unsure), "an Unsure answer inside the window must not be stuck yet");
+
+        unsure_since().lock().unwrap().insert(ssh.label(), Instant::now() - STUCK_AFTER - Duration::from_millis(50));
+
+        assert!(note(&ssh, Master::Unsure), "an Unsure answer past the window must be reported stuck");
+    }
+
+    /// A real answer - open or gone - is never stuck, and it clears the clock so a later run of Unsure
+    /// answers starts counting from scratch rather than from a run that ended.
+    #[test]
+    fn a_real_answer_is_never_stuck_and_clears_the_clock() {
+        let ssh = Ssh::parse("nobody@203.0.113.122 -p 9").unwrap();
+
+        unsure_since().lock().unwrap().insert(ssh.label(), Instant::now() - STUCK_AFTER - Duration::from_millis(50));
+
+        assert!(!note(&ssh, Master::Open), "a real answer must never be reported as stuck");
+        assert!(
+            !unsure_since().lock().unwrap().contains_key(&ssh.label()),
+            "a real answer must clear the stale clock rather than leave it for the next Unsure to find"
+        );
+
+        assert!(!note(&ssh, Master::Gone), "a gone answer must not be reported as stuck either");
     }
 
     /// 0.15.2: the report's socket file vanished while its master kept running. The spare name made at

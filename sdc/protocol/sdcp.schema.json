@@ -194,6 +194,8 @@
           "host.password",
           "preview.forward",
           "preview.open",
+          "preview.status",
+          "preview.dev",
           "host.remove",
           "host.shutdown",
           "ssh.key",
@@ -620,6 +622,27 @@
             "url": "string",
             "forwarded": "boolean",
             "localPort": "number?"
+          }
+        },
+        "preview.status": {
+          "params": {
+            "url": "string"
+          },
+          "result": {
+            "status": "number|null"
+          }
+        },
+        "preview.dev": {
+          "params": {
+            "sessionId": "string",
+            "stop": "boolean?"
+          },
+          "result": {
+            "state": "string",
+            "dir": "string",
+            "port": "number?",
+            "url": "string?",
+            "log": "string?"
           }
         },
         "ssh.key": {

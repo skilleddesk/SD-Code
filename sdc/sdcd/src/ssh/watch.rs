@@ -90,6 +90,27 @@ fn sweep(store: &Store, notifier: &dyn Notifier, full: bool) -> Vec<String> {
             super::session::adopt(&ssh);
         }
 
+        /* A master that has answered nothing for STUCK_AFTER is not busy but stuck (0.15.4): it is ended,
+           so what waits on it fails now with a sentence instead of never. */
+        let stuck = tracked && super::session::note(&ssh, master);
+
+        if stuck {
+            super::session::kill_stuck(&ssh);
+
+            let detail = format!(
+                "the signed-in connection to {} stopped answering for {} s (its ssh process was stuck), so SDC closed it. Sign in again to go on - a running turn there has stopped; send \"continue\" after signing in.",
+                ssh.label(),
+                super::session::STUCK_AFTER.as_secs()
+            );
+            let target = ssh.target.user_host.clone();
+            let _ = store.upsert_host(&id, &name, "ssh", Some(&target), "offline", platform.as_deref());
+
+            notifier.push(event::host_status(&id, &name, "vps", "offline", platform.as_deref(), Some(&detail), None), None, None);
+            changed.push(id);
+
+            continue;
+        }
+
         /* A master that is slow to answer is not lost, and a network probe through it would only be
            slow too. It is looked at again on the next pass. */
         if tracked && master == super::session::Master::Unsure {
@@ -124,6 +145,10 @@ fn sweep(store: &Store, notifier: &dyn Notifier, full: bool) -> Vec<String> {
         super::session::forget(&ssh);
 
         if master_lost {
+            /* Its socket refuses, but the process may still be alive and spinning, holding every call that
+               had already reached it - on 2026-09-29 the host turned offline while the turn's `claude`
+               kept waiting on that process. It is ended too. */
+            super::session::kill_stuck(&ssh);
             detail = format!(
                 "the signed-in connection to {} closed (the network dropped, the machine slept, or the host ended it). {detail}",
                 ssh.label()

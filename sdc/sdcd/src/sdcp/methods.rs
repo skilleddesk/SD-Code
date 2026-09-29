@@ -88,6 +88,9 @@ impl Daemon {
             "preview.forward" => self.preview_forward(envelope),
             /* A site that forbids framing, shown in the preview through a loopback proxy (0.14.4). */
             "preview.open" => Ok(json!({ "url": crate::preview::open(&envelope.require_str("url")?)? })),
+            /* 0.15.4: whether the live site has the page yet, and the project's own dev server as the preview. */
+            "preview.status" => Ok(json!({ "status": crate::preview::status(&envelope.require_str("url")?) })),
+            "preview.dev" => self.preview_dev(envelope),
             "ssh.key" => self.ssh_key(envelope),
             "host.remove" => self.host_remove(envelope, &*out),
             "host.shutdown" => Ok(self.host_shutdown()),
@@ -928,6 +931,53 @@ impl Daemon {
         Ok(json!({ "url": format!("http://127.0.0.1:{local}/"), "forwarded": true, "localPort": local }))
     }
 
+    /// `preview.dev` (0.15.4): starts the chat project's `npm run dev` - on its host for a VPS chat - or
+    /// reports on the one already running; `stop: true` ends it. Called again until `state` is `ready`.
+    fn preview_dev(&self, envelope: &Envelope) -> Result<Value, ErrorObject> {
+        let stop = envelope.opt_bool("stop");
+        let root = self.root_required(envelope)?;
+        let root = root.to_string_lossy().to_string();
+        let remote = self.remote_for(envelope)?;
+        let report = match &remote {
+            Some(ssh) => {
+                let script = crate::preview::dev_script(&crate::ssh::ops::remote_expr(&root)?, stop);
+                let ran = ssh.run(&script, std::time::Duration::from_secs(40))?;
+
+                crate::preview::parse_dev(&ran.stdout)
+            }
+            None => crate::preview::dev_local(std::path::Path::new(&root), stop),
+        };
+
+        let Some(dir) = report.dir.clone() else {
+            return Err(ErrorObject::bad_request(format!(
+                "No package.json with a \"dev\" script in {root} or the folders just inside it, so there is no dev server to start. The preview can still show the live site."
+            )));
+        };
+
+        if report.stopped {
+            return Ok(json!({ "state": "stopped", "dir": dir }));
+        }
+
+        let Some(port) = report.port else {
+            return Ok(json!({ "state": "failed", "dir": dir, "log": report.log }));
+        };
+
+        if !report.alive && !report.answering {
+            return Ok(json!({ "state": "failed", "dir": dir, "port": port, "log": report.log }));
+        }
+
+        if !report.answering {
+            return Ok(json!({ "state": "starting", "dir": dir, "port": port, "log": report.log }));
+        }
+
+        let url = match &remote {
+            Some(ssh) => format!("http://127.0.0.1:{}/", crate::ssh::session::forward(ssh, port)?),
+            None => format!("http://localhost:{port}/"),
+        };
+
+        Ok(json!({ "state": "ready", "dir": dir, "port": port, "url": url, "log": report.log }))
+    }
+
     fn host_remove(&self, envelope: &Envelope, out: &dyn Notifier) -> Result<Value, ErrorObject> {
         let host_id = envelope.require_str("hostId")?;
 
@@ -1626,13 +1676,20 @@ impl Daemon {
         };
         /* Long-task memory (0.12): an unfinished plan and the project's .sdc/memory.md travel in front of the
            words - for this turn only; the stored prompt stays the person's own. */
-        let prompt_text = match self.long_task_memory(&session_id, project_root.as_deref(), remote.as_ref(), include_memory_file) {
+        /* Continuity (0.12.5): the project's conventions, and - when this model is not the one that wrote
+           the earlier turns - the hand-over, so a second model follows the first one's shape and style.
+           On a host both are a round trip each, so they are asked at the same time (0.15.4). */
+        let (memory, brief) = std::thread::scope(|scope| {
+            let brief = scope.spawn(|| self.continuity_brief(&session_id, &turn_id, project_root.as_deref(), remote.as_ref(), &engine_id, &model));
+            let memory = self.long_task_memory(&session_id, project_root.as_deref(), remote.as_ref(), include_memory_file);
+
+            (memory, brief.join().ok().flatten())
+        });
+        let prompt_text = match memory {
             Some(memory) => format!("{memory}\n\n{prompt_text}"),
             None => prompt_text,
         };
-        /* Continuity (0.12.5): the project's conventions, and - when this model is not the one that wrote
-           the earlier turns - the hand-over, so a second model follows the first one's shape and style. */
-        let prompt_text = match self.continuity_brief(&session_id, &turn_id, project_root.as_deref(), remote.as_ref(), &engine_id, &model) {
+        let prompt_text = match brief {
             Some(brief) => format!("{brief}\n\n{prompt_text}"),
             None => prompt_text,
         };
@@ -3240,6 +3297,8 @@ async fn run_turn(
     /* The CLI's conversation id, when it said one (0.13): the next turn resumes it. */
     let mut conversation: Option<String> = None;
     let mut completed: Option<Value> = None;
+    /* Why the turn ended early, when it did - told to the next turn so it continues instead of starting over. */
+    let mut unfinished: Option<String> = None;
     let turn_cap = crate::trust::cost::turn_cap(&state.store, plan.policy.max_turn_usd);
     let stopper = engine.clone();
 
@@ -3543,6 +3602,7 @@ async fn run_turn(
                 out.push(event::plan_updated(&plan.turn_id, steps), session.clone(), turn.clone());
             }
             crate::engines::EngineEvent::Failed(reason) => {
+                unfinished = Some(reason.clone());
                 /* Every failure goes through the translator, so the card always has a sentence -
                    `ErrorRaised` carries the title and the explanation, never a raw stack. The
                    `event::error_raised` constructor supplies the catalogue's `type` field. */
@@ -3561,6 +3621,9 @@ async fn run_turn(
                 );
             }
             crate::engines::EngineEvent::Done { summary, meta, pass } => {
+                if summary.starts_with("Cut off") || summary.starts_with("Paused") {
+                    unfinished = Some(summary.clone());
+                }
                 /* Pushed after the answer is stored (0.13, below): the window sends a queued prompt the
                    moment a turn completes, and that turn must already see this one's answer. */
                 completed = Some(event::turn_completed(&plan.turn_id, &summary, &meta, pass));
@@ -3575,7 +3638,8 @@ async fn run_turn(
     let _ = running.await;
 
     let interrupted = crate::engines::cancel::requested(&plan.turn_id);
-    let failed = answer.is_empty();
+    /* 0.15.4: a turn that failed after it had written something used to be stored as a success. */
+    let failed = answer.is_empty() || (unfinished.is_some() && completed.is_none());
     let state_name = if halted { "error" } else if interrupted { "idle" } else if failed { "error" } else { "success" };
     let summary = if halted { "Stopped by SDC" } else if interrupted { "Interrupted" } else { "Done" };
 
@@ -3589,13 +3653,33 @@ async fn run_turn(
      * for work it had really done. The window draws the turn from its events, so this record is for the
      * conversation, not for the screen.
      */
-    let recorded = if tools.is_empty() {
+    let mut recorded = if tools.is_empty() {
         answer.clone()
     } else {
         let lines: Vec<String> = tools.iter().map(|(_, line)| format!("- {line}")).collect();
 
         format!("{answer}\n\n[Tool calls in this turn, as SDC recorded them:\n{}]", lines.join("\n"))
     };
+
+    /*
+     * 0.15.4: a turn that stopped part-way says so. The person stops a turn (or a provider drops it) and
+     * sends "continue" to the same or another model; without this line the next model read a turn that
+     * looked finished, and either said the work was done or began the whole task again from step one.
+     */
+    let why = if halted {
+        Some("SDC's Trust Kernel stopped it".to_string())
+    } else if interrupted {
+        Some("the person stopped it".to_string())
+    } else {
+        unfinished.as_ref().map(|reason| reason.chars().take(300).collect())
+    };
+
+    if let Some(why) = why {
+        recorded.push_str(&format!(
+            "\n\n[SDC: this turn did NOT finish - {why}. Everything listed above really happened and is on disk. \
+             When asked to continue, pick up from the last step above: do not redo finished steps, and do not start the task again.]"
+        ));
+    }
 
     let _ = state.store.finish_turn(&plan.turn_id, &recorded, summary, state_name);
 

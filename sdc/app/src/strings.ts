@@ -680,6 +680,16 @@ const english = {
       onHost: (host: string, port: number): string => `${host} :${port}`,
       emptyLive:
         'Live preview is on: it follows the page the agent (or you) is working on - the dev server on this computer, the site’s domain for a project on a VPS - and reloads after every change. You can also type an address above.',
+      /* 0.15.4: the project's own dev server as the preview, and a page the live site does not have yet. */
+      dev: 'Dev',
+      devStart: 'Dev preview · runs the project’s own dev server (npm run dev) on a private port and shows the page being worked on as it is written',
+      devStop: 'Stop the dev preview (the live site is not affected)',
+      devStarting: (dir: string): string => `Starting the dev server in ${dir}… the first page can take a minute to compile`,
+      devFailed: (dir: string): string => `The dev server in ${dir} did not start`,
+      devOn: (dir: string): string => `Dev preview · ${dir} · changes appear as they are saved`,
+      notLive: (page: string, status: number): string =>
+        `${page} answers ${status} on the live site: the live site shows the last build that was deployed, so a page that was just written is not there until it is built and restarted.`,
+      notLiveAction: 'Show it from the dev server',
     },
     console: {
       fixWithAgent: 'Fix with agent',
