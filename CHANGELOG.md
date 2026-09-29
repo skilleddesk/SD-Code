@@ -15,6 +15,16 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [0.15.1] — The Windows installer for 0.15.0
+
+0.15.0 was published for macOS and Linux only. Its Windows build stopped on one test: a sign-in question
+() answered while a cold PowerShell was still starting on a busy build machine, where the
+answer never arrived. The test passes every time on a normal PC (5 of 5), but a real Gemini sign-in can
+meet the same moment. So **an answer that was not taken is given once more**: if nothing on the screen has
+moved for three seconds after the answer, and it still ends on the question, SDC types the answer again.
+Any new output means the first answer was taken, and then nothing is repeated. Everything in 0.15.0 is in
+this release.
+
 ## [0.15.0] — Flow: the live stream as a timed rail, and chats that load on a cold start
 
 The report: *"live stream ... aro better and advance and featurefull"*, better than what the other AI tools

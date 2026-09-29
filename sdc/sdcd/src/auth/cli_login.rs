@@ -570,8 +570,11 @@ pub fn answer_questions(
 ) {
     let started = Instant::now();
     let mut answered = vec![false; answers.len()];
+    /* When each answer went in, and what the screen said then - to see whether it was taken. */
+    let mut sent: Vec<Option<(Instant, String)>> = vec![None; answers.len()];
+    let mut resent = vec![false; answers.len()];
 
-    while started.elapsed() < patience && answered.iter().any(|done| !done) {
+    while started.elapsed() < patience {
         let Ok(output) = pty.output(pty_id) else {
             return;
         };
@@ -584,7 +587,35 @@ pub fn answer_questions(
         for (index, (question, reply)) in answers.iter().enumerate() {
             if !answered[index] && text.contains(question) {
                 answered[index] = pty.write(pty_id, &format!("{reply}\n")).is_ok();
+                sent[index] = Some((Instant::now(), text.clone()));
+            } else if let Some((at, before)) = &sent[index] {
+                /*
+                 * An answer typed while the program was still starting can be lost (a cold PowerShell under
+                 * a ConPTY on a busy CI runner: the question was on screen, the answer never arrived). If
+                 * nothing at all has moved for three seconds and the screen still ends on the question, it
+                 * is still waiting: say it once more. Any new output means it was taken.
+                 */
+                if !resent[index]
+                    && at.elapsed() >= std::time::Duration::from_secs(3)
+                    && text.trim_end() == before.trim_end()
+                    && text.trim_end().lines().last().is_some_and(|line| line.contains(question))
+                {
+                    resent[index] = pty.write(pty_id, &format!("{reply}\n")).is_ok();
+                }
             }
+        }
+
+        /* Done once every answer is in and either taken or given its second chance. */
+        let settled = answered.iter().enumerate().all(|(index, done)| {
+            *done
+                && (resent[index]
+                    || sent[index].as_ref().is_some_and(|(at, before)| {
+                        text.trim_end() != before.trim_end() || at.elapsed() >= std::time::Duration::from_secs(6)
+                    }))
+        });
+
+        if settled {
+            return;
         }
 
         if output["state"].as_str().unwrap_or("gone") != "running" {
