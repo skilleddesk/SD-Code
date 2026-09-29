@@ -1504,6 +1504,8 @@ export interface SdcpMethodMap {
        * terminal. The daemon parses the address and the port out of it (`auth::remote::parse_target`).
        */
       target?: string;
+      /** A known host, when `target` is empty (0.15.2): the daemon takes the address from its own row. */
+      hostId?: string;
       label?: string;
       /**
        * The password for a host that asks for one, when the user chooses to give it.

@@ -750,14 +750,13 @@ export async function closeSession(sessionId: string): Promise<void> {
 export async function installHostKey(hostId: string, password: string, code = '', remember = false): Promise<boolean> {
   const host = useAppStore.getState().hosts.find((candidate) => candidate.id === hostId);
 
-  if (host === undefined || host.address === '') {
-    return false;
-  }
-
+  /* The id goes too (0.15.2): the window's copy of the address can be empty, and this used to return
+     here without a call or a word - a Sign in button that did nothing. The daemon's row has the address. */
   const answer = await addHost({
     type: 'ssh',
-    target: host.address,
-    label: host.name,
+    target: host?.address ?? '',
+    hostId,
+    label: host?.name ?? hostId,
     ...(password === '' ? {} : { password }),
     ...(code.trim() === '' ? {} : { code: code.trim() }),
     ...(remember ? { remember } : {}),
@@ -793,6 +792,8 @@ export async function hostPasswordSaved(hostId: string, forget = false): Promise
 export async function addHost(input: {
   type: 'local' | 'ssh';
   target?: string;
+  /** A known host, for a sign-in from its card: the daemon takes the address from its own row (0.15.2). */
+  hostId?: string;
   label?: string;
   /**
    * The password for a VPS, when the user chooses to give one.
@@ -812,19 +813,21 @@ export async function addHost(input: {
     return { hostId: 'local', reused: true };
   }
 
-  if (!input.target || input.target.trim() === '') {
+  if ((!input.target || input.target.trim() === '') && input.hostId === undefined) {
     toast(strings.addHost.needTarget);
     return null;
   }
 
-  const label = input.label?.trim() === '' || input.label === undefined ? input.target : input.label;
+  const label = input.label?.trim() === '' || input.label === undefined ? (input.target ?? '') : input.label;
 
   try {
     const answer = await sdcpCall('host.add', input);
 
     /* Same `user@host` twice is one host, and saying so is the difference between a list and four
        copies of one row (0.7.0). */
-    toast(answer.reused ? strings.addHost.alreadyThere(label) : strings.addHost.added(label));
+    if (input.hostId === undefined) {
+      toast(answer.reused ? strings.addHost.alreadyThere(label) : strings.addHost.added(label));
+    }
 
     return answer;
   } catch (error) {

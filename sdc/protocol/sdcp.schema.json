@@ -546,9 +546,11 @@
           "params": {
             "type": "local|ssh",
             "target": "string?",
+            "hostId": "string?",
             "label": "string?",
             "password": "string?",
-            "code": "string?"
+            "code": "string?",
+            "remember": "boolean?"
           },
           "result": {
             "hostId": "string",

@@ -1353,17 +1353,28 @@ describe('the terminal', () => {
     expect(sdcpCall).toHaveBeenCalledWith('host.add', {
       type: 'ssh',
       target: 'root@vps.example:8443',
+      hostId: 'h7',
       label: 'prod-1',
       password: 'hunter2',
     });
   });
 
-  it('says nothing to the daemon when the host is not in the list', async () => {
+  /* 0.15.2: a window whose copy of the host has no address used to return here without a call - a Sign in
+     button that did nothing. The id goes to the daemon, which has the address in its own row. */
+  it('signs in by host id when the window does not know the address', async () => {
     useAppStore.setState({ hosts: [] });
+    sdcpCall.mockResolvedValueOnce({ hostId: 'h9', reused: true });
 
-    await expect(installHostKey('h9', 'hunter2')).resolves.toBe(false);
+    await expect(installHostKey('h9', 'hunter2', '123456')).resolves.toBe(true);
 
-    expect(sdcpCall).not.toHaveBeenCalled();
+    expect(sdcpCall).toHaveBeenCalledWith('host.add', {
+      type: 'ssh',
+      target: '',
+      hostId: 'h9',
+      label: 'h9',
+      password: 'hunter2',
+      code: '123456',
+    });
   });
 });
 

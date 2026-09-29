@@ -279,7 +279,21 @@ impl Daemon {
             return Ok(json!({ "hostId": "local" }));
         }
 
-        let raw_target = envelope.opt_str("target").unwrap_or_default().trim().to_string();
+        let mut raw_target = envelope.opt_str("target").unwrap_or_default().trim().to_string();
+
+        /* A sign-in from a host's card may name the host alone (0.15.2): the window's copy of its address
+           can be empty, and the card then did nothing at all - no call, no sentence - which is how "right
+           password and code, login hoi nah" looked. The daemon's own row has the address. */
+        if raw_target.is_empty() {
+            if let Some(id) = envelope.opt_str("hostId") {
+                if let Ok(Some((Some(target), port))) = self.store().host_address(&id) {
+                    raw_target = match port {
+                        Some(port) => format!("{target}:{port}"),
+                        None => target,
+                    };
+                }
+            }
+        }
 
         if raw_target.is_empty() {
             return Err(ErrorObject::bad_request("`target` is required for an SSH host"));

@@ -17,8 +17,9 @@
 //! change (P5), the deny list, the file guard and the permission dialog are the daemon's, so the agent
 //! obeys them without re-implementing them.
 //!
-//! Bounds, because an unbounded loop is a bill: `max_steps` model calls per turn (default 25), a
-//! Stop that drops the connection mid-answer, and a token count on the turn's footer.
+//! Bounds, because a runaway loop is a bill: the runaway detector and the cost governor, a Stop that
+//! drops the connection mid-answer, and a token count on the turn's footer. A step count is only a
+//! bound when the caller asks for one (`maxSteps`); by default a turn runs until the work is done.
 
 pub mod background;
 pub mod browser;
@@ -43,13 +44,15 @@ use gate::Autonomy;
 use tools::ToolContext;
 use workspace::Workspace;
 
-/// The default number of model calls one turn may make, and the ceiling a caller may raise it to.
+/// The number of model calls one turn may make when the caller names none: no limit (0.15.2).
 ///
-/// 0.13 raised both: with older tool output folded as a turn grows (`keep_small`), a long turn no longer
-/// outgrows the model's window, and a project is finished in one turn rather than in "continue"s. The cost
-/// governor and the runaway detector still stop a turn that goes wrong.
-pub const DEFAULT_STEPS: usize = 60;
-pub const MAX_STEPS: usize = 200;
+/// The report: *"kono rate limit to dorkar nai project a"* - a landing page built from two long specs
+/// stopped at 60 steps, still reading, and asked for "continue". With older tool output folded as a turn
+/// grows (`keep_small`), a long turn does not outgrow the model's window, so a count of steps protects
+/// nothing a person wants. What stops a turn that goes wrong is still there: Stop, the cost governor
+/// (a budget set in Settings) and the runaway detector (the same call again and again). A caller that
+/// wants a bound - `sdcd run --max-steps` - still passes `maxSteps`.
+pub const DEFAULT_STEPS: usize = usize::MAX;
 
 /// Where the model for this turn lives.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -72,7 +75,7 @@ pub struct SdcAgent {
 
 impl SdcAgent {
     pub fn new(backend: Backend, autonomy: Autonomy, max_steps: usize) -> Self {
-        Self { backend, autonomy, max_steps: max_steps.clamp(1, MAX_STEPS), auto_check: true, checkpoint: None, policy: Default::default() }
+        Self { backend, autonomy, max_steps: max_steps.max(1), auto_check: true, checkpoint: None, policy: Default::default() }
     }
 
     /// Whether SDC runs the project's checks when the agent says it is done (Settings → Agent, 0.13).
@@ -1126,5 +1129,14 @@ mod end_to_end {
         assert!(matches!(recorder.events().last(), Some(EngineEvent::Done { summary, .. }) if summary == "Paused at the step limit"));
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 0.15.2: a turn with no `maxSteps` has no step limit ("kono rate limit to dorkar nai"), and one
+    /// that names a large bound gets it rather than a hidden ceiling.
+    #[test]
+    fn a_turn_has_no_step_limit_unless_the_caller_names_one() {
+        assert_eq!(SdcAgent::new(Backend::Api, Autonomy::Auto, DEFAULT_STEPS).max_steps, usize::MAX);
+        assert_eq!(SdcAgent::new(Backend::Api, Autonomy::Auto, 500).max_steps, 500);
+        assert_eq!(SdcAgent::new(Backend::Api, Autonomy::Auto, 0).max_steps, 1);
     }
 }

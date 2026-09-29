@@ -15,6 +15,36 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [0.15.2] — No step limit, and a signed-in VPS that stays signed in
+
+The report: a long agent turn on the VPS stopped with *"I stopped after 60 steps, the limit for one
+turn"*, and the VPS showed "signed out" right after. The correct password and code on the Sign in card
+did not bring it back. *"kono rate limit to dorkar nai ... kono disconnect issue kono vabai jano nah hoi."*
+
+* **A turn has no step limit.** The SDC Agent kept going for 60 model calls and then asked for
+  "continue". A turn now runs until the work is done. Stop, the cost budget (Settings) and the runaway
+  detector (the same call over and over) still end a turn that goes wrong. `sdcd run --max-steps` still
+  sets a limit when you want one.
+* **The VPS connection is not dropped by SDC itself.** The log showed the `ssh` master still running
+  and still connected to the VPS. Only its socket file was gone, one second after the turn ended, and
+  from then on SDC had no way to use the connection. Three changes:
+  * Right after sign-in SDC makes a second name for the socket (a hard link). If the file is ever
+    removed, SDC puts it back from that link and the connection works again. No new sign-in and no
+    new code are needed.
+  * A connection check that is only slow (a busy PC at the end of a long turn) no longer counts as
+    "closed". SDC counts it as lost only after it is really gone twice, a few seconds apart. Commands
+    keep using the connection while it is slow, instead of falling back to a key the server refuses.
+  * A socket file is only removed when its master is gone. Before, a slow check before a sign-in
+    could remove the socket of a live connection.
+* **Sign in on a host's card always does something.** When the window's copy of the host had no
+  address, the button sent nothing and said nothing. The card now sends the host's id, and the daemon
+  takes the address from its own record. The "already in the host list" message no longer appears on
+  every sign-in.
+
+A connection that really drops (the network goes down for more than two minutes, or the PC sleeps)
+still needs the verification code once more. The server asks for it on every new connection, and SDC
+cannot type it for you.
+
 ## [0.15.1] — The Windows installer for 0.15.0
 
 0.15.0 was published for macOS and Linux only. Its Windows build stopped on one test: a sign-in question

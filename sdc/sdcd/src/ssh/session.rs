@@ -111,7 +111,10 @@ pub fn control_path(ssh: &Ssh) -> Result<PathBuf, ErrorObject> {
 /// platform). It needs a live master - there is no fallback inside `ssh` - hence the check first
 /// (about 30 ms).
 pub fn mux_options(ssh: &Ssh) -> Result<Vec<String>, ErrorObject> {
-    if program().is_none() || !is_open_recently(ssh) {
+    /* A master that is busy (its `-O check` ran out of time) is still the only way in: falling back to
+       the key on such a host is a certain `Permission denied (keyboard-interactive)`, which is what cut
+       the report's agent off (0.15.2). Only a master that is really gone sends a call around it. */
+    if program().is_none() || (!answered_recently(ssh) && state(ssh) == Master::Gone) {
         return Ok(Vec::new());
     }
 
@@ -155,6 +158,15 @@ fn remember(ssh: &Ssh) {
     if let Ok(mut set) = signed().lock() {
         set.insert(ssh.label());
     }
+
+    /* A master adopted from an older daemon has no spare name yet (0.15.2). */
+    if let Ok(path) = control_path(ssh) {
+        let spare = spare_path(&path);
+
+        if path.exists() && !spare.exists() {
+            let _ = std::fs::hard_link(&path, &spare);
+        }
+    }
 }
 
 /// How long a live `-O check` is trusted by the calls that route through the master (0.11.9).
@@ -171,46 +183,110 @@ fn checked() -> &'static Mutex<std::collections::HashMap<String, Instant>> {
     CHECKED.get_or_init(Default::default)
 }
 
-/// [`is_open`], answered from a *yes* seen in the last [`TRUST_OPEN`] when there is one.
-pub fn is_open_recently(ssh: &Ssh) -> bool {
-    let fresh = checked()
+fn answered_recently(ssh: &Ssh) -> bool {
+    checked()
         .lock()
         .ok()
         .and_then(|seen| seen.get(&ssh.label()).copied())
-        .is_some_and(|at| at.elapsed() < TRUST_OPEN);
+        .is_some_and(|at| at.elapsed() < TRUST_OPEN)
+}
 
-    fresh || is_open(ssh)
+/// [`is_open`], answered from a *yes* seen in the last [`TRUST_OPEN`] when there is one.
+pub fn is_open_recently(ssh: &Ssh) -> bool {
+    answered_recently(ssh) || is_open(ssh)
+}
+
+/// What a local `-O check` says about a host's master (0.15.2).
+///
+/// Three answers, not two, and the third is the fix. The report: a VPS dropped to "signed out" the
+/// moment a long agent turn ended, while its `ssh` master was still running and still holding the TCP
+/// connection. A check that ran out of its budget on a busy machine was read as "the master is gone",
+/// and what followed treated a live connection as a dead one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Master {
+    /// The master answered.
+    Open,
+    /// Nothing is listening: no socket, or `ssh` said so.
+    Gone,
+    /// The check did not finish in time. The master may be busy; it is not reported lost for this.
+    Unsure,
 }
 
 /// Is a master open for this host right now? Always asks; a *yes* is remembered for [`is_open_recently`].
 pub fn is_open(ssh: &Ssh) -> bool {
-    let open = check_now(ssh);
+    state(ssh) == Master::Open
+}
+
+/// The master's [`Master`] state, asked afresh. A *yes* is remembered for [`is_open_recently`], a *no*
+/// clears it, and an unsure answer leaves it as it was.
+pub fn state(ssh: &Ssh) -> Master {
+    let answer = check_now(ssh);
 
     if let Ok(mut seen) = checked().lock() {
-        if open {
-            seen.insert(ssh.label(), Instant::now());
-        } else {
-            seen.remove(&ssh.label());
+        match answer {
+            Master::Open => {
+                seen.insert(ssh.label(), Instant::now());
+            }
+            Master::Gone => {
+                seen.remove(&ssh.label());
+            }
+            Master::Unsure => {}
         }
     }
 
-    open
+    answer
 }
 
-fn check_now(ssh: &Ssh) -> bool {
+/// The second name of a master's socket (0.15.2): a hard link made right after the sign-in.
+///
+/// The report's socket file vanished while its master kept running, and a master cannot be asked to
+/// listen again - so the sign-in, and the verification code with it, was lost for good. A hard link is
+/// the same socket under another name (it is how `ssh` itself puts the socket in place), so when the
+/// first name goes, [`restore`] puts it back from this one and the connection is simply there again.
+fn spare_path(path: &std::path::Path) -> PathBuf {
+    path.with_extension("keep")
+}
+
+/// Puts a vanished socket name back from its spare. True when the socket is on disk afterwards.
+fn restore(path: &std::path::Path) -> bool {
+    if path.exists() {
+        return true;
+    }
+
+    let spare = spare_path(path);
+
+    spare.exists() && std::fs::hard_link(&spare, path).is_ok()
+}
+
+/// Is there a socket for this host on disk, under either name?
+pub fn has_socket(ssh: &Ssh) -> bool {
+    control_path(ssh).is_ok_and(|path| path.exists() || spare_path(&path).exists())
+}
+
+/// Removes both names of a socket whose master is known to be gone.
+pub fn discard(ssh: &Ssh) {
+    if let Ok(path) = control_path(ssh) {
+        let _ = std::fs::remove_file(spare_path(&path));
+        let _ = std::fs::remove_file(&path);
+    }
+}
+
+fn check_now(ssh: &Ssh) -> Master {
     let Some(program) = program() else {
-        return false;
+        return Master::Gone;
     };
     let Ok(path) = control_path(ssh) else {
-        return false;
+        return Master::Gone;
     };
+
+    restore(&path);
 
     /* No socket on disk, no master - and no process started. This is the common case (every host that
        never signed in, every test), and it is why a machine where `ssh` itself misbehaves cannot be
        made to wait here: 0.9.0's first Windows CI run sat in `cargo test` for four hours. Cygwin's
        emulated Unix socket is a real file, so the check holds on Windows too. */
     if !path.exists() {
-        return false;
+        return Master::Gone;
     }
 
     let mut command = std::process::Command::new(program);
@@ -220,11 +296,17 @@ fn check_now(ssh: &Ssh) -> bool {
         .args(["-o", &format!("ControlPath={}", ssh_path(&path)), "-O", "check"])
         .arg(&ssh.target.user_host);
 
-    bounded(command, CHECK_BUDGET).unwrap_or(false)
+    match bounded(command, CHECK_BUDGET) {
+        Some(true) => Master::Open,
+        Some(false) => Master::Gone,
+        None => Master::Unsure,
+    }
 }
 
-/// How long `-O check` / `-O exit` may take. Measured at ~30 ms; anything near this is a stuck `ssh`.
-const CHECK_BUDGET: Duration = Duration::from_secs(3);
+/// How long `-O check` / `-O exit` may take. Measured at ~30 ms when the machine is quiet; at the end
+/// of a long agent turn, with the window refreshing everything at once, it can take longer than the 3 s
+/// this used to be - so running out of it now means [`Master::Unsure`], never "gone".
+const CHECK_BUDGET: Duration = Duration::from_secs(5);
 
 /// Runs a control command with no stdio and a hard deadline: `Some(success)`, or `None` when it had to
 /// be killed. A control command talks to a local socket only, so it never has a reason to wait.
@@ -269,6 +351,7 @@ pub fn close(ssh: &Ssh) {
         .arg(&ssh.target.user_host);
 
     let _ = bounded(command, CHECK_BUDGET);
+    let _ = std::fs::remove_file(spare_path(&path));
 }
 
 /// A port on the host, reachable from this machine through the signed-in master (0.14.4): the live
@@ -290,7 +373,7 @@ pub fn forward(ssh: &Ssh, remote_port: u16) -> Result<u16, ErrorObject> {
     let program = program().ok_or_else(|| ErrorObject::internal("no `ssh` that can hold a connection open"))?;
     let path = control_path(ssh)?;
 
-    if !path.exists() || !check_now(ssh) {
+    if check_now(ssh) == Master::Gone {
         return Err(ErrorObject::bad_request(format!(
             "{} is not signed in, so its port {remote_port} cannot be opened here. Sign in to the host first.",
             ssh.label()
@@ -357,7 +440,20 @@ pub fn sign_in(ssh: &Ssh, password: &str, code: &str) -> Result<String, SignInEr
         return Err(SignInError::Unsupported);
     };
 
-    if is_open(ssh) {
+    /* A master that is only slow to answer is asked again before anything is replaced: removing its
+       socket below would cut a live sign-in off for good (0.15.2). */
+    let mut master = state(ssh);
+
+    for _ in 0..3 {
+        if master != Master::Unsure {
+            break;
+        }
+
+        std::thread::sleep(Duration::from_secs(1));
+        master = state(ssh);
+    }
+
+    if master == Master::Open {
         remember(ssh);
 
         return Ok(format!("signed in to {} · the connection was already open", ssh.label()));
@@ -372,8 +468,9 @@ pub fn sign_in(ssh: &Ssh, password: &str, code: &str) -> Result<String, SignInEr
     }
 
     /* A socket file left behind by a master that died (a reboot, a killed process) makes the new one
-       refuse to bind. `-O check` above said nothing is listening on it, so it is safe to remove. */
-    let _ = std::fs::remove_file(&path);
+       refuse to bind. `-O check` above said nothing is listening on it, so it is safe to remove - both
+       names of it. */
+    discard(ssh);
 
     let listener = TcpListener::bind(("127.0.0.1", 0))
         .map_err(|error| SignInError::Failed(format!("SDC could not open its sign-in helper: {error}")))?;
@@ -486,6 +583,11 @@ pub fn sign_in(ssh: &Ssh, password: &str, code: &str) -> Result<String, SignInEr
 
     if code_status == Some(0) && is_open(ssh) {
         remember(ssh);
+
+        /* The spare name, so the socket can be put back if its file is ever removed (0.15.2). */
+        let spare = spare_path(&path);
+        let _ = std::fs::remove_file(&spare);
+        let _ = std::fs::hard_link(&path, &spare);
 
         let how = match (seen.password, seen.code) {
             (true, true) => "password and verification code",
@@ -821,6 +923,29 @@ mod tests {
         assert!(!options.is_empty(), "a fresh cached yes must produce proxy options");
         assert!(options.contains(&"proxy".to_string()));
         assert!(options.iter().any(|o| o.starts_with("ControlPath=")));
+    }
+
+    /// 0.15.2: the report's socket file vanished while its master kept running. The spare name made at
+    /// sign-in puts it back - the same file, so a live master answers on it again.
+    #[test]
+    fn a_vanished_socket_name_is_put_back_from_its_spare() {
+        let folder = std::env::temp_dir().join(format!("sdc-spare-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&folder).unwrap();
+        let path = folder.join("cm-0123456789abcdef");
+
+        std::fs::write(&path, "socket").unwrap();
+        std::fs::hard_link(&path, spare_path(&path)).unwrap();
+        std::fs::remove_file(&path).unwrap();
+
+        assert!(restore(&path), "the name must come back from the spare");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "socket");
+
+        std::fs::remove_file(&path).unwrap();
+        std::fs::remove_file(spare_path(&path)).unwrap();
+
+        assert!(!restore(&path), "with neither name there is nothing to put back");
+
+        let _ = std::fs::remove_dir_all(&folder);
     }
 
     #[test]

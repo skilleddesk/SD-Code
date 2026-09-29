@@ -75,14 +75,28 @@ fn sweep(store: &Store, notifier: &dyn Notifier, full: bool) -> Vec<String> {
     for (id, name, platform, ssh) in connected_hosts(store) {
         /* A master this daemon did not start - the one a previous daemon left running across an update -
            is looked after the same way once its socket is found. */
-        let socket = super::session::control_path(&ssh).ok().filter(|path| path.exists());
-        let tracked = super::session::was_signed_in(&ssh) || socket.is_some();
-        let open = tracked && super::session::is_open(&ssh);
-        let master_lost = tracked && !open;
+        let socket = super::session::has_socket(&ssh);
+        let tracked = super::session::was_signed_in(&ssh) || socket;
+        let mut master = if tracked { super::session::state(&ssh) } else { super::session::Master::Gone };
 
-        if open {
+        /* "Gone" is asked twice before it is believed (0.15.2), the same rule the network probe has
+           always had: one answer on a busy machine cut a live sign-in off at the end of a long turn. */
+        if tracked && master == super::session::Master::Gone {
+            std::thread::sleep(CONFIRM);
+            master = super::session::state(&ssh);
+        }
+
+        if master == super::session::Master::Open {
             super::session::adopt(&ssh);
         }
+
+        /* A master that is slow to answer is not lost, and a network probe through it would only be
+           slow too. It is looked at again on the next pass. */
+        if tracked && master == super::session::Master::Unsure {
+            continue;
+        }
+
+        let master_lost = tracked && master == super::session::Master::Gone;
 
         if !full && !master_lost {
             continue;
@@ -101,10 +115,7 @@ fn sweep(store: &Store, notifier: &dyn Notifier, full: bool) -> Vec<String> {
                few seconds would buy nothing. */
             if master_lost {
                 super::session::forget(&ssh);
-
-                if let Some(path) = &socket {
-                    let _ = std::fs::remove_file(path);
-                }
+                super::session::discard(&ssh);
             }
 
             continue;
