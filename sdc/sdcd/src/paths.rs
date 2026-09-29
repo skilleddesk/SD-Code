@@ -28,6 +28,53 @@ pub fn data_dir() -> Result<PathBuf> {
     Ok(dir)
 }
 
+/// Where the daily copies of the database are kept (0.15.5): **outside** the data folder, so a folder that
+/// is removed - by an uninstaller, by hand - does not take its copies with it. On Windows
+/// `%LOCALAPPDATA%\sdc-backups`, which is neither the install folder nor `%APPDATA%\sdc`.
+pub fn backup_dir() -> Result<PathBuf> {
+    let root = dirs::data_local_dir().context("no platform local data directory for this user")?;
+
+    Ok(root.join("sdc-backups"))
+}
+
+/// Keeps one copy of the database per day, the newest [`BACKUPS_KEPT`]. A day that already has its copy is
+/// left alone; the newest copy that is not today's is never the only one removed. Answers today's copy.
+///
+/// 2026-09-29: an installer erased `%APPDATA%\sdc` - every chat, host and setting - and there was no copy
+/// anywhere. This is that copy.
+pub fn backup_daily(store: &crate::store::Store, dir: &std::path::Path, today: &str) -> Result<PathBuf> {
+    std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
+
+    let target = dir.join(format!("sdc-{today}.db"));
+
+    if !target.exists() {
+        let partial = dir.join(format!("sdc-{today}.db.partial"));
+
+        store.backup_to(&partial)?;
+        std::fs::rename(&partial, &target)?;
+    }
+
+    let mut copies: Vec<PathBuf> = std::fs::read_dir(dir)?
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.file_name().is_some_and(|name| {
+            let name = name.to_string_lossy();
+
+            name.starts_with("sdc-") && name.ends_with(".db")
+        }))
+        .collect();
+
+    copies.sort();
+
+    while copies.len() > BACKUPS_KEPT {
+        let _ = std::fs::remove_file(copies.remove(0));
+    }
+
+    Ok(target)
+}
+
+pub const BACKUPS_KEPT: usize = 3;
+
 /// `…/sdc/sdc.db` - the SQLite file whose schema is spec section 6. The acceptance list names this
 /// path explicitly, so it is computed in exactly one place.
 pub fn database_path() -> Result<PathBuf> {
@@ -108,5 +155,32 @@ mod tests {
     fn a_sockets_name_carries_its_port() {
         assert_eq!(socket_file_name(7811), "sdcd-7811.sock");
         assert_ne!(socket_file_name(7811), socket_file_name(7899));
+    }
+}
+#[cfg(test)]
+mod backup_tests {
+    use super::*;
+
+    #[test]
+    fn one_copy_a_day_and_only_the_newest_three_are_kept() {
+        let dir = std::env::temp_dir().join(format!("sdc-backup-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let store = crate::store::Store::open(&dir.join("live.db")).unwrap();
+
+        for day in ["2026-09-25", "2026-09-26", "2026-09-27", "2026-09-28", "2026-09-29"] {
+            backup_daily(&store, &dir.join("copies"), day).unwrap();
+        }
+
+        let mut names: Vec<String> = std::fs::read_dir(dir.join("copies")).unwrap().flatten().map(|entry| entry.file_name().to_string_lossy().to_string()).collect();
+
+        names.sort();
+        assert_eq!(names, ["sdc-2026-09-27.db", "sdc-2026-09-28.db", "sdc-2026-09-29.db"]);
+
+        /* A copy is a database that opens, with the tables in it. */
+        let copy = crate::store::Store::open(&dir.join("copies").join("sdc-2026-09-29.db")).unwrap();
+
+        assert!(copy.hosts().is_ok());
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

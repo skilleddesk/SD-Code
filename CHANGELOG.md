@@ -15,6 +15,27 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [0.15.5] — An uninstaller never erases your data, and a daily copy of it
+
+Installing 0.15.4 over 0.15.3 with `setup.exe /S` (a silent install without `/UPDATE`, run by hand)
+made the installer run 0.15.3's uninstaller as a full uninstall. SDC's own uninstall step then erased
+`%APPDATA%\sdc` (every chat, host and setting) and the API keys, although nobody ticked "Delete the
+application data". The in-app updater passes `/UPDATE`, which that step always skipped. Nothing else in
+0.15.4 is affected.
+
+* **The uninstaller no longer erases anything.** During an update, a silent install or a passive install
+  it does nothing. On a real uninstall with the box ticked, it only moves the folder aside to
+  `%APPDATA%\sdc-removed-<number>`. Renaming it back restores everything. It never removes API keys:
+  Settings → Erase all data is the way to do that on purpose.
+* **A daily copy of the database.** Every time the daemon starts, it keeps one consistent copy per day
+  (SQLite `VACUUM INTO`) in `%LOCALAPPDATA%\sdc-backups` (`~/.local/share/sdc-backups` on Linux), the
+  newest three days. That folder is outside the data folder and outside the install folder, so neither an
+  uninstaller nor a deleted data folder takes it. Erase all data removes these copies too.
+
+Note: the uninstaller that runs during an update is the *old* version's. Update from 0.15.4 through SDC's
+own update (or run the installer normally, not with `/S`), so the 0.15.4 uninstaller is never asked to
+remove data.
+
 ## [0.15.4] — A dropped network is retried, a stuck VPS connection is noticed, and the preview shows the page being written
 
 The reports: an Alibaba turn of 19 minutes and 183 steps failed on one network error; a Claude Code

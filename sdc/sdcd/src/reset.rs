@@ -29,6 +29,14 @@ pub fn forget_everything(data_dir: &Path) -> Vec<String> {
     let mut removed = forget_keys();
 
     removed.extend(empty_folder(data_dir));
+
+    /* The daily copies (0.15.5) are the same history: an erase asked for on purpose takes them too. */
+    if !cfg!(test) {
+        if let Ok(backups) = crate::paths::backup_dir() {
+            removed.extend(empty_folder(&backups));
+        }
+    }
+
     removed
 }
 

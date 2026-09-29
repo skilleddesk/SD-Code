@@ -98,7 +98,23 @@ async fn main() -> Result<()> {
         }
     }
 
+    let default_database = database.is_none();
     let state = DaemonState::bootstrap(database)?;
+
+    /* The day's copy of the real database (0.15.5), off the start-up path. A scratch `--database` is
+       nobody's history and is not copied. */
+    if default_database {
+        let store = state.store.clone();
+
+        std::thread::spawn(move || {
+            let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+
+            match sdcd::paths::backup_dir().and_then(|dir| sdcd::paths::backup_daily(&store, &dir, &today)) {
+                Ok(copy) => println!("  backup     {}", copy.display()),
+                Err(error) => eprintln!("sdcd: the daily database copy was not written: {error:#}"),
+            }
+        });
+    }
 
     println!("sdcd {VERSION} · SDCP {SDCP_VERSION}");
     println!("  database   {}", state.store.path());

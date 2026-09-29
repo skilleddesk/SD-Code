@@ -257,6 +257,17 @@ impl Store {
             .unwrap_or_else(|| ":memory:".to_string())
     }
 
+    /// A whole, consistent copy of the database at `target` (0.15.5), written by SQLite itself
+    /// (`VACUUM INTO`), so a copy taken while the daemon writes is still a database that opens.
+    pub fn backup_to(&self, target: &std::path::Path) -> Result<()> {
+        let connection = self.connection.lock().unwrap();
+
+        let _ = std::fs::remove_file(target);
+        connection.execute("VACUUM INTO ?1", [target.to_string_lossy().to_string()])?;
+
+        Ok(())
+    }
+
     fn migrate(&self) -> Result<()> {
         let connection = self.connection.lock().unwrap();
 

@@ -23,13 +23,20 @@
   Pop $0
   Sleep 1000
 
-  ; "Delete the application data" (0.13). Tauri's own box removes the folder named after the bundle id;
-  ; SDC's chats, hosts and settings are in %APPDATA%\sdc and its keys in the Windows credential store, so an
-  ; uninstall-and-reinstall used to bring every one of them back. The daemon forgets its own keys, then the
-  ; folder goes. An update (/UPDATE) never shows the box, so an update never erases anything.
+  ; "Delete the application data" (0.13, made safe in 0.15.5). 0.13 erased %APPDATA%\sdc and the keys in
+  ; the credential store whenever this box's state read 1. On 2026-09-29 a silent install of 0.15.4 over
+  ; 0.15.3 (`setup.exe /S`, no `/UPDATE`) ran the old uninstaller as a real uninstall, the state read 1
+  ; with nobody at the screen, and every chat, host, setting and API key was gone. How the state came to be
+  ; 1 is not proven, so nothing here depends on it being right:
+  ;   * an update (/UPDATE) or a silent / passive run touches nothing at all;
+  ;   * otherwise the folder is only MOVED aside, to %APPDATA%\sdc-removed-<ticks>, never erased - a
+  ;     reinstall does not see it, and a person who did not mean it gets everything back by renaming it;
+  ;   * the keys are never removed here. Settings → Erase all data is the way to remove them on purpose.
   ${If} $DeleteAppDataCheckboxState = 1
-    nsExec::Exec '"$INSTDIR\sdcd.exe" --forget-everything'
-    Pop $0
-    RMDir /r "$APPDATA\sdc"
+  ${AndIf} $UpdateMode <> 1
+  ${AndIf} $PassiveMode <> 1
+  ${AndIfNot} ${Silent}
+    System::Call 'kernel32::GetTickCount() i .r1'
+    Rename "$APPDATA\sdc" "$APPDATA\sdc-removed-$1"
   ${EndIf}
 !macroend
