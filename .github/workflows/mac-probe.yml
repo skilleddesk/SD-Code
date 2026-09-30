@@ -70,7 +70,7 @@ jobs:
           set timeout 20
           spawn ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PreferredAuthentications=keyboard-interactive,password sdce2e@127.0.0.1 echo manual-login-ok
           expect {
-            -re "(?i)password" { send "$env(E2E_PASS)"; exp_continue }
+            -re "(?i)password" { send -- "$env(E2E_PASS)"; exp_continue }
             "manual-login-ok" { exit 0 }
             timeout { exit 2 }
             eof { exit 3 }
