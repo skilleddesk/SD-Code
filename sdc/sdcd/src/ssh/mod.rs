@@ -250,6 +250,19 @@ impl Ssh {
         let args = self.base_args()?;
         let proxied = args.iter().any(|arg| arg == "proxy");
 
+        /* A host that refused the key minutes ago is not dialed again with it (0.15.11): each refusal is a
+           penalty against this PC on the VPS, and enough of them lock the real sign-in out. The answer is
+           the refusal it gave, so every caller reads "sign in again" exactly as before. */
+        if !proxied && session::key_refused(self) {
+            return Ok(SshOutput {
+                stdout: String::new(),
+                stderr: format!("{}: Permission denied (keyboard-interactive).", self.target.user_host),
+                code: Some(255),
+                timed_out: false,
+                truncated: false,
+            });
+        }
+
         command.args(args).arg(script);
 
         command
@@ -299,6 +312,10 @@ impl Ssh {
         let (stdout, out_truncated) = out_rx.recv_timeout(budget).unwrap_or_else(|_| (String::new(), true));
         let (stderr, err_truncated) = err_rx.recv_timeout(budget).unwrap_or_else(|_| (String::new(), true));
 
+        if !proxied && code == Some(255) && refused_at_login(&stderr) {
+            session::note_key_refused(self);
+        }
+
         Ok(SshOutput {
             stdout,
             stderr,
@@ -307,6 +324,12 @@ impl Ssh {
             truncated: out_truncated || err_truncated,
         })
     }
+}
+
+/// Did `ssh` fail at authentication - the host answered and turned the key down - rather than at the
+/// network or the host key? Only that failure is worth not repeating (0.15.11).
+fn refused_at_login(stderr: &str) -> bool {
+    stderr.contains("Permission denied (")
 }
 
 /// Waits for a child, killing it at the deadline. Returns `(exit code, timed out)`.
@@ -457,6 +480,34 @@ mod tests {
     }
 
     /// A failure sentence is `ssh`'s own line where there is one, and says what a timeout means.
+    #[test]
+    fn only_an_authentication_refusal_stops_the_key_being_tried_again() {
+        assert!(refused_at_login("deploy@203.0.113.10: Permission denied (keyboard-interactive).\n"));
+        assert!(refused_at_login("Permission denied (publickey,keyboard-interactive)."));
+        assert!(!refused_at_login("ssh: connect to host 203.0.113.10 port 8443: Connection timed out"));
+        assert!(!refused_at_login("Host key verification failed."));
+        assert!(!refused_at_login("sh: 1: cat: Permission denied"));
+    }
+
+    #[test]
+    fn a_host_that_refused_the_key_is_not_dialed_again_until_a_sign_in() {
+        let ssh = Ssh::parse("ssh -p 2299 refused-test@203.0.113.77").unwrap();
+
+        session::note_key_refused(&ssh);
+        assert!(session::key_refused(&ssh));
+
+        /* No master for this host, so the call goes around it - and must be answered without dialing. */
+        let started = Instant::now();
+        let output = ssh.run("true", Duration::from_secs(15)).unwrap();
+
+        assert_eq!(output.code, Some(255));
+        assert!(output.stderr.contains("(keyboard-interactive)"), "{}", output.stderr);
+        assert!(started.elapsed() < Duration::from_secs(2), "it dialed: {:?}", started.elapsed());
+
+        session::clear_key_refused(&ssh);
+        assert!(!session::key_refused(&ssh));
+    }
+
     #[test]
     fn a_failure_is_reported_in_the_programs_own_words() {
         let failed = SshOutput {

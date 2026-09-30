@@ -314,6 +314,12 @@ fn scan_with(program: &str, target: &SshTarget) -> Result<Vec<HostKey>, ErrorObj
 
     args.push("-T".to_string());
     args.push("10".to_string());
+    /* Only the host key types a server has (0.15.11). By default `ssh-keyscan` also asks for the FIDO
+       types, one connection each, and a VPS logs every one as `Unable to negotiate … sk-ssh-ed25519` -
+       connections that end before authentication, which OpenSSH 10's `PerSourcePenalties` counts
+       against this PC. The report's VPS log was full of them. */
+    args.push("-t".to_string());
+    args.push("ed25519,ecdsa,rsa".to_string());
     /* The **host**, not `user@host`: `ssh-keyscan` resolves whatever it is given, and a user name in
        front of a hostname makes DNS look for a machine called `git@github.com` (verified against
        OpenSSH 9.5: `getaddrinfo git@github.com: A non-recoverable error`). */

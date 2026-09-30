@@ -254,8 +254,11 @@ pub fn install_key(pty: &PtyManager, target: &SshTarget, password: &str) -> Resu
     let public_key = ensure_key().map_err(ErrorObject::internal)?;
     let command = install_command(&public_key);
 
-    let mut args = crate::ssh::Ssh::new(target.clone()).install_args()?;
+    let ssh = crate::ssh::Ssh::new(target.clone());
+    let mut args = ssh.install_args()?;
 
+    /* The key is about to be accepted, so the next call must dial instead of repeating the old refusal. */
+    crate::ssh::session::clear_key_refused(&ssh);
     args.push(command);
 
     let opened = pty

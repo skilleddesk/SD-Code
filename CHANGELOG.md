@@ -15,6 +15,33 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [0.15.11] — SDC stops knocking on a VPS it is signed out of, and a cleaner prompt box
+
+**The report:** the VPS kept "restarting". Its own logs said otherwise: the server was healthy (37 days
+up), and what dropped was the SSH connection. The log showed `Connection closed by authenticating user …
+[preauth]` from this PC several times a minute, `Unable to negotiate … sk-ssh-ed25519`, and an OpenSSH
+10.2 `PerSourcePenalties` penalty on the user's own address block.
+
+**Two of those came from SDC.**
+
+- With the signed-in connection gone, every file read, `git status` and probe dialed the VPS again with
+  SDC's key. A host that also wants a 2FA code refuses the key every time, and each refusal counts against
+  this PC. Enough of them and the VPS turns away the real sign-in with a fresh code. Now, after one refusal,
+  SDC does not dial that host with the key again for 5 minutes. It answers the same "sign in again" without
+  touching the network. A sign-in or a key install clears this at once.
+- `ssh-keyscan` asked for the FIDO key types (`sk-ecdsa`, `sk-ssh-ed25519`) too, one connection each. The
+  server has neither, so each one ended before authentication. The scan now asks only for Ed25519,
+  ECDSA and RSA.
+
+**What SDC cannot fix** is on the server and the network: about 220 ms and 5.7 % TCP retransmits on the
+path, sshd with `ClientAliveInterval 0` and `LoginGraceTime 30`, and `needrestart` restarting services
+around 06:00. Those are settings on the VPS.
+
+**The prompt box.** The text field drew its own focus outline, a second, smaller box inside the prompt
+box. The prompt box is now the only focus indicator. It is also rounder and has more room, a softer
+focus glow that follows the light and dark themes, a slightly larger Send button, and a fade between the
+conversation and the box.
+
 ## [0.15.10] — A VPS connects from Windows again, and every platform passed the same end-to-end run
 
 **The report:** *"after the update the VPS does not connect."* The host card said `refused the sign-in:

@@ -181,6 +181,8 @@ fn remember(ssh: &Ssh) {
         set.insert(ssh.label());
     }
 
+    clear_key_refused(ssh);
+
     /* A master adopted from an older daemon has no spare name yet (0.15.2). */
     if let Ok(path) = control_path(ssh) {
         let spare = spare_path(&path);
@@ -441,6 +443,46 @@ pub fn saw_served(ssh: &Ssh) {
 
     if let Ok(mut since) = unsure_since().lock() {
         since.remove(&ssh.label());
+    }
+}
+
+/// How long a host that refused SDC's key is left alone before the key is tried again (0.15.11).
+///
+/// The report: the VPS's own log showed `Connection closed by authenticating user … [preauth]` from this
+/// PC several times a minute. With the master gone, every file read, `git status` and probe dialed the
+/// host with the key and `BatchMode=yes`, and a host that also wants a code refuses all of them. Each
+/// refusal counts against this PC in OpenSSH 10's `PerSourcePenalties`, and once penalised, the real
+/// sign-in with a fresh code was the one turned away. One try every few minutes is enough to notice a
+/// key that starts working.
+const KEY_REFUSED_FOR: Duration = Duration::from_secs(300);
+
+fn key_refused_at() -> &'static Mutex<std::collections::HashMap<String, Instant>> {
+    static REFUSED: OnceLock<Mutex<std::collections::HashMap<String, Instant>>> = OnceLock::new();
+
+    REFUSED.get_or_init(Default::default)
+}
+
+/// A call that went around the master was refused at authentication: the key alone does not open
+/// this host.
+pub fn note_key_refused(ssh: &Ssh) {
+    if let Ok(mut refused) = key_refused_at().lock() {
+        refused.insert(ssh.label(), Instant::now());
+    }
+}
+
+/// Did the key alone get refused by this host in the last [`KEY_REFUSED_FOR`]? A sign-in clears it.
+pub fn key_refused(ssh: &Ssh) -> bool {
+    key_refused_at()
+        .lock()
+        .ok()
+        .and_then(|refused| refused.get(&ssh.label()).copied())
+        .is_some_and(|at| at.elapsed() < KEY_REFUSED_FOR)
+}
+
+/// Forgets a refusal: a sign-in or a key install changes what the host will accept.
+pub fn clear_key_refused(ssh: &Ssh) {
+    if let Ok(mut refused) = key_refused_at().lock() {
+        refused.remove(&ssh.label());
     }
 }
 
@@ -1188,6 +1230,41 @@ mod tests {
         served_at().lock().unwrap().insert(ssh.label(), Instant::now() - Duration::from_secs(30));
 
         assert!(!served_within(&ssh, Duration::from_secs(15)), "a stale serve must fall back to no");
+    }
+
+    /// The key-refused limiter (0.15.11): a host that just turned the key down is left alone until
+    /// [`KEY_REFUSED_FOR`] passes, so the real sign-in is not the call spending the VPS's per-source
+    /// penalty.
+    #[test]
+    fn a_key_refusal_is_trusted_until_its_window_passes() {
+        let ssh = Ssh::parse("nobody@203.0.113.144 -p 12").unwrap();
+
+        assert!(!key_refused(&ssh), "a host with no refusal on record must not be limited");
+
+        note_key_refused(&ssh);
+
+        assert!(key_refused(&ssh), "a fresh refusal must be trusted within its window");
+
+        key_refused_at()
+            .lock()
+            .unwrap()
+            .insert(ssh.label(), Instant::now() - KEY_REFUSED_FOR - Duration::from_millis(50));
+
+        assert!(!key_refused(&ssh), "a stale refusal must fall back to trying the key again");
+    }
+
+    /// A sign-in clears a standing refusal - the host just proved the key works after all, so the next
+    /// call must dial it rather than repeat the old answer.
+    #[test]
+    fn a_sign_in_clears_a_standing_refusal() {
+        let ssh = Ssh::parse("nobody@203.0.113.145 -p 13").unwrap();
+
+        note_key_refused(&ssh);
+        assert!(key_refused(&ssh));
+
+        remember(&ssh);
+
+        assert!(!key_refused(&ssh), "remember() must clear the refusal it just proved wrong");
     }
 
     /// 0.15.2: the report's socket file vanished while its master kept running. The spare name made at
