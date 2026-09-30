@@ -55,26 +55,16 @@ jobs:
         run: |
           if [ "${{ runner.os }}" = "Linux" ]; then cargo build --release; else cargo build --release --features keychain; fi
 
-      - name: An SSH server with a password user (macOS)
+      - name: An SSH server that accepts SDC's own key (macOS)
         if: runner.os == 'macOS'
         run: |
-          pass="E2e-$(openssl rand -hex 8)"; echo "::add-mask::$pass"; echo "E2E_PASS=$pass" >> "$GITHUB_ENV"
-          set +e
-          sudo dscl . -passwd /Users/runner "$pass"
+          echo "E2E_PASS=" >> "$GITHUB_ENV"
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          ssh-keygen -q -t ed25519 -N "" -C sdc -f ~/.ssh/sdc_ed25519
+          cat ~/.ssh/sdc_ed25519.pub >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys
           sudo systemsetup -f -setremotelogin on || sudo launchctl load -w /System/Library/LaunchDaemons/ssh.plist || true
           sleep 3; nc -z 127.0.0.1 22 && echo "sshd up"
-          mkdir -p out
-          cat > /tmp/login.exp <<'EXP'
-          set timeout 20
-          spawn ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PreferredAuthentications=keyboard-interactive,password runner@127.0.0.1 echo manual-login-ok
-          expect {
-            -re "(?i)password" { send -- "$env(E2E_PASS)\r"; exp_continue }
-            "manual-login-ok" { exit 0 }
-            timeout { exit 2 }
-            eof { exit 3 }
-          }
-          EXP
-          E2E_PASS="$pass" expect /tmp/login.exp > out/manual-login.txt 2>&1; echo "manual login exit $?" | tee -a out/manual-login.txt
+          ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ~/.ssh/sdc_ed25519 runner@127.0.0.1 echo manual-key-login-ok || echo "manual key login failed"
       - name: An SSH server with a password user (Linux)
         if: runner.os == 'Linux'
         run: |
