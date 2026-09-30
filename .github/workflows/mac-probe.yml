@@ -1,7 +1,7 @@
 name: mac-probe
 
-# Dev-only: installs the published Apple Silicon build on a real Mac runner, opens it the way the Dock does
-# (launchd's environment), and records what "Sign in" does. Results are pushed to the `probe-results` branch.
+# Dev-only. Round 2: a Mac as a user has it - zsh, the CLIs on a PATH only ~/.zshrc sets, and an app opened
+# with launchd's bare PATH (/usr/bin:/bin:/usr/sbin:/sbin). Results go to the `probe-results` branch.
 on:
   push:
     branches: [mac-probe]
@@ -17,10 +17,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Install the three CLIs (npm, outside launchd's PATH - like a real Mac)
+      - name: CLIs in ~/.npm-global, reachable only through ~/.zshrc
         run: |
-          npm i -g @anthropic-ai/claude-code @openai/codex @google/gemini-cli
-          which claude codex gemini node
+          nodebin=$(dirname "$(which node)")
+          npm config set prefix "$HOME/.npm-global"
+          npm i -g @anthropic-ai/claude-code @openai/codex >/dev/null
+          echo "export PATH=\"$nodebin:\$HOME/.npm-global/bin:\$PATH\"" >> ~/.zshrc
+          ls ~/.npm-global/bin
       - name: Install SDC like a user
         run: |
           tag=$(cat .github/probe/TAG)
@@ -28,24 +31,25 @@ jobs:
           hdiutil attach sdc.dmg -nobrowse -mountpoint /Volumes/SDC
           cp -R /Volumes/SDC/SDC.app /Applications/
           hdiutil detach /Volumes/SDC
-          codesign -dv /Applications/SDC.app 2>&1 | head -5
-          codesign -dv /Applications/SDC.app/Contents/MacOS/sdcd 2>&1 | head -5
-          ls -la /Applications/SDC.app/Contents/MacOS
-      - name: Open it from launchd and probe
+      - name: Open it with launchd's bare PATH, then probe
         run: |
           mkdir -p out
+          launchctl setenv PATH /usr/bin:/bin:/usr/sbin:/sbin
+          launchctl setenv SHELL /bin/zsh
           open -a /Applications/SDC.app
-          for i in $(seq 1 60); do lsof -nP -iTCP:7811 -sTCP:LISTEN && break; sleep 1; done
-          sleep 5
-          pgrep -lf sdc || true
-          pid=$(pgrep -x sdcd || true)
-          echo "sdcd pid: $pid" | tee out/env.txt
-          ps eww $pid | tr ' ' '\n' | grep -E '^(PATH|SHELL|HOME)=' | tee -a out/env.txt || true
+          for i in $(seq 1 60); do lsof -nP -iTCP:7811 -sTCP:LISTEN >/dev/null && break; sleep 1; done
+          sleep 8
+          app=$(pgrep -x sdc || true); pid=$(pgrep -x sdcd || true)
+          { echo "app $app"; ps eww $app | tr ' ' '\n' | grep -E '^(PATH|SHELL)='; echo "sdcd $pid"; ps eww $pid | tr ' ' '\n' | grep -E '^(PATH|SHELL)='; } | tee out/env.txt
           node .github/probe/probe.mjs 2>&1 | tee out/probe.txt
           screencapture -x out/screen.png || true
-          ls -la "$HOME/Library/Application Support/sdc" > out/data.txt 2>&1 || true
-          log show --last 5m --predicate 'process == "sdcd" OR process == "SDC" OR process == "sdc"' --style compact 2>/dev/null | tail -200 > out/syslog.txt || true
-          ls ~/Library/Logs/DiagnosticReports > out/crashes.txt 2>&1 || true
+      - name: Can the window be driven through accessibility?
+        run: |
+          osascript -e 'tell application "SDC" to activate' || true
+          sleep 2
+          osascript -e 'tell application "System Events" to tell process "SDC" to get entire contents of window 1' > out/ax.txt 2>&1 || true
+          head -c 4000 out/ax.txt
+          screencapture -x out/screen2.png || true
       - name: Push the results
         if: always()
         run: |
@@ -53,5 +57,5 @@ jobs:
           git checkout --orphan probe-results
           git rm -rq --cached . || true
           git add -f out
-          git commit -qm "mac probe $(date -u +%FT%TZ)"
+          git commit -qm "mac probe 2 $(date -u +%FT%TZ)"
           git push -qf origin probe-results

@@ -33,13 +33,13 @@ const list = await call('provider.list');
 show('provider.list (subscriptions)', (list.result?.providers ?? list.result ?? list).filter?.((p) => ['claude', 'openai', 'gemini'].includes(p.id)).map((p) => ({ id: p.id, status: p.status, detail: p.detail })) ?? list);
 show('host.doctor', await call('host.doctor', {}, 90000));
 
-for (const providerId of ['claude', 'openai', 'gemini']) {
+for (const providerId of ['claude', 'openai']) {
   const started = await call('cli.login', { providerId });
   show(`cli.login ${providerId}`, started);
   const loginId = started.result?.loginId;
   if (!loginId) continue;
   let last = null;
-  for (let i = 0; i < 20; i++) {
+  for (let i = 0; i < 12; i++) {
     await new Promise((r) => setTimeout(r, 1000));
     last = await call('cli.login.status', { loginId });
   }
