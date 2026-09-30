@@ -10,8 +10,10 @@ function run(argv) {
     let role = '';
     try { role = el.role(); } catch (e) {}
     if (role !== 'AXButton' && role !== 'AXCheckBox' && role !== 'AXLink') continue;
-    try { text = [el.name(), el.description(), el.title && el.title()].filter(Boolean).join(' ').trim(); } catch (e) {}
-    if (exact ? text === needle : text.includes(needle)) {
+    let parts = [];
+    try { parts = [el.name(), el.description(), el.title && el.title()].filter(Boolean).map((t) => String(t).trim()); } catch (e) {}
+    text = parts.join(' | ');
+    if (exact ? parts.includes(needle) : text.includes(needle)) {
       el.actions.byName('AXPress').perform();
       return 'pressed [' + role + '] ' + text;
     }
