@@ -2783,8 +2783,10 @@ impl Daemon {
 
                 /* On a host the host's shell runs it (0.11.9). This took the *local* platform's shell, so on
                    Windows a VPS was sent `cmd /C <line>` and answered `cmd: command not found` - every
-                   line typed into the Terminal's Commands for a VPS chat failed. */
-                if self.host_id_for(envelope)?.is_some() {
+                   line typed into the Terminal's Commands for a VPS chat failed. And a *local* chat's session
+                   carries `hostId: "local"`, which `host_id_for` returns as-is - so asking it sent every local
+                   line to `sh -c`, which Windows does not have (0.15.10). Only a real remote counts. */
+                if self.remote_for(envelope)?.is_some() {
                     ("sh".to_string(), vec!["-c".to_string(), line.to_string()])
                 } else {
                     crate::pty::shell_for_line(line)

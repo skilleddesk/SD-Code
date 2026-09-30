@@ -38,7 +38,7 @@ const TOOLS: &[(&str, &str, &str)] = &[
 pub fn checks(store: &Store) -> Vec<Value> {
     let mut rows: Vec<Value> = TOOLS
         .iter()
-        .map(|(id, label, program)| match version_of(program) {
+        .map(|(id, label, program)| match if *id == "ssh" { ssh_version() } else { version_of(program) } {
             Some(version) => json!({ "id": id, "label": label, "state": "ok", "detail": version }),
             None => json!({
                 "id": id,
@@ -74,6 +74,20 @@ pub fn checks(store: &Store) -> Vec<Value> {
     }));
 
     rows
+}
+
+/// The `ssh` SDC will actually use (`ssh::session::program`: Git for Windows' on Windows) and its version.
+///
+/// `ssh --version` is not an option - OpenSSH has `-V`, and prints to **stderr** - so this row said
+/// "SSH: not installed" on every machine, Windows, macOS and Linux alike, next to a VPS it was connected to
+/// (0.15.10, seen on a Mac runner and on Windows).
+pub fn ssh_version() -> Option<String> {
+    let program = crate::ssh::session::program()?;
+    let output = crate::host::program::command_for(&program).arg("-V").output().ok()?;
+    let text = format!("{}{}", String::from_utf8_lossy(&output.stderr), String::from_utf8_lossy(&output.stdout));
+    let first = text.lines().next().unwrap_or("").trim();
+
+    Some(if first.is_empty() { program.display().to_string() } else { first.to_string() })
 }
 
 /// Probes one program's version. A missing program is not an error here: it is a `fail` row.
