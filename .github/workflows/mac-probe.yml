@@ -59,16 +59,14 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           pass="E2e-$(openssl rand -hex 8)"; echo "::add-mask::$pass"; echo "E2E_PASS=$pass" >> "$GITHUB_ENV"
-          sudo sysadminctl -addUser sdce2e -password "$pass" -home /Users/sdce2e
-          sudo createhomedir -c -u sdce2e >/dev/null
+          set +e
+          sudo dscl . -passwd /Users/runner "$pass"
           sudo systemsetup -f -setremotelogin on || sudo launchctl load -w /System/Library/LaunchDaemons/ssh.plist || true
-          sudo dseditgroup -o create -q com.apple.access_ssh 2>/dev/null || true
-          sudo dseditgroup -o edit -a sdce2e -t user com.apple.access_ssh || true
           sleep 3; nc -z 127.0.0.1 22 && echo "sshd up"
           mkdir -p out
           cat > /tmp/login.exp <<'EXP'
           set timeout 20
-          spawn ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PreferredAuthentications=keyboard-interactive,password sdce2e@127.0.0.1 echo manual-login-ok
+          spawn ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PreferredAuthentications=keyboard-interactive,password runner@127.0.0.1 echo manual-login-ok
           expect {
             -re "(?i)password" { send -- "$env(E2E_PASS)\r"; exp_continue }
             "manual-login-ok" { exit 0 }
@@ -94,7 +92,7 @@ jobs:
           env -i HOME="$HOME" USER="$USER" LOGNAME="$USER" SHELL="$(if [ "${{ runner.os }}" = macOS ]; then echo /bin/zsh; else echo /bin/bash; fi)" TMPDIR="${TMPDIR:-/tmp}" PATH=/usr/bin:/bin:/usr/sbin:/sbin \
             sdc/sdcd/target/release/sdcd --port 7811 --database "$RUNNER_TEMP/e2e.db" > out/daemon.log 2>&1 &
           for i in $(seq 1 30); do nc -z 127.0.0.1 7811 && break; sleep 1; done
-          SDC_E2E_TURNS=1 SDC_E2E_SSH="sdce2e@127.0.0.1" SDC_E2E_PASS="$E2E_PASS" node .github/probe/e2e-os.mjs 7811 2>&1 | tee out/e2e.txt || true
+          SDC_E2E_TURNS=1 SDC_E2E_SSH="$([ "${{ runner.os }}" = macOS ] && echo runner || echo sdce2e)@127.0.0.1" SDC_E2E_PASS="$E2E_PASS" node .github/probe/e2e-os.mjs 7811 2>&1 | tee out/e2e.txt || true
       - name: End to end (windows)
         if: runner.os == 'Windows'
         shell: pwsh
