@@ -856,7 +856,8 @@ mod tests {
         let opened = pty.open(&program, &args, None, None, None).unwrap();
         let pty_id = opened["ptyId"].as_str().unwrap().to_string();
 
-        answer_questions(&pty, &pty_id, &[("[Y/n]", "Y")], std::time::Duration::from_secs(20));
+        /* 60 s: on a cold Windows runner PowerShell has taken more than 20 s to print the question (0.15.11). */
+        answer_questions(&pty, &pty_id, &[("[Y/n]", "Y")], std::time::Duration::from_secs(60));
 
         let mut text = String::new();
 

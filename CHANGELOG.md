@@ -15,7 +15,7 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
-## [0.15.11] — SDC stops knocking on a VPS it is signed out of, and a cleaner prompt box
+## [0.15.12] — SDC stops knocking on a VPS it is signed out of, and a cleaner prompt box
 
 **The report:** the VPS kept "restarting". Its own logs said otherwise: the server was healthy (37 days
 up), and what dropped was the SSH connection. The log showed `Connection closed by authenticating user …
@@ -36,6 +36,8 @@ up), and what dropped was the SSH connection. The log showed `Connection closed 
 **What SDC cannot fix** is on the server and the network: about 220 ms and 5.7 % TCP retransmits on the
 path, sshd with `ClientAliveInterval 0` and `LoginGraceTime 30`, and `needrestart` restarting services
 around 06:00. Those are settings on the VPS.
+
+**0.15.11 was never published**: its Windows build stopped on a PowerShell test that ran out of time on a slow CI runner. That test now waits 60 s instead of 20 s.
 
 **The prompt box.** The text field drew its own focus outline, a second, smaller box inside the prompt
 box. The prompt box is now the only focus indicator. It is also rounder and has more room, a softer
