@@ -15,6 +15,31 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [0.15.7] — The macOS build runs on Apple Silicon without "is damaged and can't be opened"
+
+The report: opening `SDC_0.15.6_aarch64.dmg`'s app said *"SDC is damaged and can't be opened. You should
+move it to the Trash."* — the same message even after clearing the download's quarantine flag.
+
+`tauri.conf.json` set no macOS signing identity, so the bundler shipped the `.app` **completely
+unsigned**. Apple Silicon refuses to run any executable with no code signature at all, ad hoc or
+otherwise — Intel Macs are more lenient and would have shown the ordinary "unidentified developer"
+prompt for the same unsigned build, which is why this was not caught before. Setting
+`bundle.macOS.signingIdentity` to `"-"` makes the bundler ad hoc sign the `.app` (and the `sdcd` sidecar
+inside it), which is enough for macOS to run it.
+
+This is still not a paid Apple Developer ID, so Gatekeeper's first-run prompt is unchanged: right-click →
+Open, or System Settings → Privacy & Security → Open Anyway. What changes is that the app now actually
+launches afterwards, on both Intel and Apple Silicon.
+
+**If SDC_0.15.6_aarch64.dmg still sits on a Mac:** re-download 0.15.7 instead - and if the same dmg is
+kept, `xattr -cr /Applications/SDC.app` alone will not fix a truly unsigned binary; it also needs
+`sudo codesign --force --deep --sign - /Applications/SDC.app` to become one at all.
+
+Not verified on real Apple hardware - this build was made and tested from a Windows machine that has no
+Mac to run the resulting `.dmg` on. The config change is confirmed by `tauri info` parsing it without a
+schema error, and by testing the underlying Gatekeeper rule (unsigned arm64 refuses to launch, unsigned
+x86_64 launches with a warning) independently, not by launching this build itself.
+
 ## [0.15.6] — A signed-in VPS is not signed out for a slow answer, long turns are not stopped as loops, and a filtered reply is asked again
 
 The report: in one evening the VPS was signed out three times, three long page-build turns were stopped
