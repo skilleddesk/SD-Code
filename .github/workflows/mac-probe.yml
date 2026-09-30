@@ -1,7 +1,7 @@
 name: mac-probe
 
-# Dev-only. Round 2: a Mac as a user has it - zsh, the CLIs on a PATH only ~/.zshrc sets, and an app opened
-# with launchd's bare PATH (/usr/bin:/bin:/usr/sbin:/sbin). Results go to the `probe-results` branch.
+# Dev-only. Round 3: (A) the daemon started with launchd's bare environment, CLIs only on ~/.zshrc's PATH;
+# (B) the real window driven through accessibility: onboarding -> Provider Hub -> Claude -> Sign in.
 on:
   push:
     branches: [mac-probe]
@@ -23,7 +23,6 @@ jobs:
           npm config set prefix "$HOME/.npm-global"
           npm i -g @anthropic-ai/claude-code @openai/codex >/dev/null
           echo "export PATH=\"$nodebin:\$HOME/.npm-global/bin:\$PATH\"" >> ~/.zshrc
-          ls ~/.npm-global/bin
       - name: Install SDC like a user
         run: |
           tag=$(cat .github/probe/TAG)
@@ -31,25 +30,39 @@ jobs:
           hdiutil attach sdc.dmg -nobrowse -mountpoint /Volumes/SDC
           cp -R /Volumes/SDC/SDC.app /Applications/
           hdiutil detach /Volumes/SDC
-      - name: Open it with launchd's bare PATH, then probe
+      - name: (A) the daemon with launchd's bare environment
         run: |
           mkdir -p out
-          launchctl setenv PATH /usr/bin:/bin:/usr/sbin:/sbin
-          launchctl setenv SHELL /bin/zsh
+          env -i HOME="$HOME" USER="$USER" LOGNAME="$USER" SHELL=/bin/zsh TMPDIR="$TMPDIR" PATH=/usr/bin:/bin:/usr/sbin:/sbin \
+            /Applications/SDC.app/Contents/MacOS/sdcd --port 7811 > out/bare-daemon.log 2>&1 &
+          for i in $(seq 1 30); do lsof -nP -iTCP:7811 -sTCP:LISTEN >/dev/null && break; sleep 1; done
+          node .github/probe/probe.mjs 2>&1 | tee out/bare.txt
+          pkill -x sdcd || true
+          sleep 2
+      - name: (B) the window, driven like a person
+        run: |
+          shot() { screencapture -x "out/$1.png" || true; }
+          press() { echo "--- press $1"; osascript -l JavaScript .github/probe/ax.js "$1" "$2" 2>&1; }
           open -a /Applications/SDC.app
           for i in $(seq 1 60); do lsof -nP -iTCP:7811 -sTCP:LISTEN >/dev/null && break; sleep 1; done
-          sleep 8
-          app=$(pgrep -x sdc || true); pid=$(pgrep -x sdcd || true)
-          { echo "app $app"; ps eww $app | tr ' ' '\n' | grep -E '^(PATH|SHELL)='; echo "sdcd $pid"; ps eww $pid | tr ' ' '\n' | grep -E '^(PATH|SHELL)='; } | tee out/env.txt
-          node .github/probe/probe.mjs 2>&1 | tee out/probe.txt
-          screencapture -x out/screen.png || true
-      - name: Can the window be driven through accessibility?
-        run: |
+          sleep 6
           osascript -e 'tell application "SDC" to activate' || true
-          sleep 2
-          osascript -e 'tell application "System Events" to tell process "SDC" to get entire contents of window 1' > out/ax.txt 2>&1 || true
-          head -c 4000 out/ax.txt
-          screencapture -x out/screen2.png || true
+          sleep 1
+          {
+            shot 1-start
+            press "Work on a project here"; sleep 1
+            press "Next" exact; sleep 2; shot 2-model
+            press "Open the Provider Hub"; sleep 3; shot 3-hub
+            press "Claude Code"; sleep 3; shot 4-connect
+            press "Sign in" exact; sleep 4; shot 5-after-4s
+            sleep 12; shot 6-after-16s
+            echo "--- window text"; osascript -l JavaScript .github/probe/texts.js 2>&1
+            echo "--- daemon"; node -e "
+              const net=require('net');const s=net.connect(7811,'127.0.0.1');let b='';
+              s.on('connect',()=>s.write(JSON.stringify({v:'0.1',id:'x',method:'host.status',params:{}})+'\n'));
+              s.on('data',d=>{b+=d;for(const l of b.split('\n')){try{const m=JSON.parse(l);if(m.id==='x'){console.log('pty processes:',m.result.pty);s.end();}}catch{}}});"
+            pgrep -lf "claude" || echo "no claude process"
+          } 2>&1 | tee out/ui.txt
       - name: Push the results
         if: always()
         run: |
@@ -57,5 +70,5 @@ jobs:
           git checkout --orphan probe-results
           git rm -rq --cached . || true
           git add -f out
-          git commit -qm "mac probe 2 $(date -u +%FT%TZ)"
+          git commit -qm "mac probe 3 $(date -u +%FT%TZ)"
           git push -qf origin probe-results
