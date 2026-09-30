@@ -181,9 +181,15 @@ broken on a Mac in ways no Windows check could see. Each rule below comes from o
 * **The webview is not a browser.** WKWebView (macOS) and WebKitGTK (Linux) silently ignore
   `window.open`, `target="_blank"` and `navigator.clipboard`, while WebView2 (Windows) honours them. Use
   `openOutside`, `copyText` and `readText` from `app/src/lib/external.ts`. ESLint rejects the other forms.
-* **Paths have spaces.** The macOS data folder is `~/Library/Application Support/sdc`, and a Windows
-  account name can contain a space too. Every path passed inside an `ssh -o Key=value` goes through
-  `ssh::session::file_option`, which quotes it. Never write `format!("Key={}", path)`.
+* **Paths have spaces, and quotes are not free.** The macOS data folder is `~/Library/Application
+  Support/sdc`. Every path passed inside an `ssh -o Key=value` goes through `ssh::session::file_option`,
+  which quotes it **only when it has a space**: on Windows, Rust passes a space-less argument's `"` as `\"`
+  and Git's Cygwin `ssh` refused every sign-in with `invalid quotes` (0.15.8-0.15.9). A fix for one OS
+  must be tested on the other two *with the shapes each OS really has*, run the way production runs it
+  (Rust's `Command`, not a shell or Node, whose argument quoting differs).
+* **Run `os-probe` before a release.** The `mac-probe` branch's workflow runs the same end-to-end pass on
+  Windows, macOS and Linux (`.github/probe/e2e-os.mjs`, results on `probe-results-<os>`). A release goes out
+  when all three pass.
 * **Stopping must stop the whole tree on every OS.** Windows uses `taskkill /T`. On Unix, a child started
   with `pty::own_group` (or `process_group(0)` on a tokio `Command`) is ended as a group by
   `pty::kill_tree`. A new spawn that can be stopped needs `own_group`.

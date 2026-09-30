@@ -15,6 +15,42 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [0.15.10] — A VPS connects from Windows again, and every platform passed the same end-to-end run
+
+**The report:** *"after the update the VPS does not connect."* The host card said `refused the sign-in:
+command-line line 0: invalid quotes`.
+
+**The cause was 0.15.8's Mac fix.** To survive macOS' `~/Library/Application Support`, it wrapped every
+`ControlPath=`/`UserKnownHostsFile=` value in quotes. On Windows, Rust passes an argument **without** a space
+as-is and escapes its `"` as `\"`, and Git for Windows' Cygwin `ssh` keeps the backslashes, so every VPS
+sign-in on Windows failed. 0.15.8's test had tried only a path *with* a space, which Rust quotes differently
+and which passed. The quotes are now added only when the path has a space. A second test runs the ordinary
+Windows path through the real `ssh` from Rust, as SDC does, so both shapes are proven.
+
+Found by a new end-to-end run, `os-probe`, that does the same thing on Windows, macOS (Apple Silicon) and
+Ubuntu from source. It starts the daemon with the bare environment a Dock or desktop launcher gives, then
+checks: the CLIs are found, the doctor, a project in a folder with a space, file write/read/list, the Terminal
+and its Commands, a CLI sign-in link, a **real Claude Code turn and a real Codex turn** (each must end with an
+answer or a clear sentence, never hang), and on Linux and macOS a real SSH host (add → trust the key → sign in
+→ remote files → remote terminal → doctor → remove). On Linux, the `.deb` is installed and must start its own
+daemon. It also found:
+
+- **The Terminal's Commands did not run in a local chat on Windows.** A local chat carries `hostId: "local"`,
+  which `shell.run` took for a remote host and sent to `sh -c`. Windows has no `sh`.
+- **The Environment doctor said "SSH: not installed" on every platform.** It ran `ssh --version`, which is not
+  an option (OpenSSH has `-V`, on stderr). It now asks the `ssh` SDC really uses (Git for Windows' on Windows).
+- **A Codex turn ended at its first retry.** Codex prints `Reconnecting... 2/5` as a top-level error while it
+  keeps trying, and SDC took that as the end. A turn that would have recovered on a flaky network was
+  stopped, with "Reconnecting... 2/5" as the reason. Retries are now warnings, and only `turn.failed` ends it.
+- **A signed-out Codex now says so.** "Codex is not signed in - Providers → OpenAI → Connect" replaces a 401
+  with a websocket URL and a Cloudflare ray id.
+
+**Results of the last run:** Windows 16/16 (the runner has no SSH server; the Windows ssh path is covered by the
+new test, which runs the real Git `ssh` the way SDC does), Linux 26/26 plus the installed `.deb` started its own
+daemon, and macOS 26/26. On macOS the SSH host signed in with SDC's own key, because GitHub's Mac runner does not
+accept password logins, and a plain `ssh` with the right password was refused there too. So the kept-open
+connection under `Application Support` is proven on a Mac, and typing a password or 2FA code on a Mac is not.
+
 ## [0.15.9] — Sign in works on a new Mac: the Provider Hub opens on top of the Welcome dialog
 
 The report, on Apple Silicon after updating to 0.15.8: *"Sign in does nothing."*
