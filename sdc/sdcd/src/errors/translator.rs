@@ -110,6 +110,19 @@ pub fn translate(tool: &str, output: &str) -> Translation {
         );
     }
 
+    /* 0.15.6: Alibaba Model Studio checks every reply before it is sent, and blocks one its classifier
+       dislikes: `<400> InternalError.Algo.DataInspectionFailed: Output data may contain inappropriate
+       content.` It is the provider's filter, not the network or SDC. The agent already asked again three
+       times with a shorter reply by the time this is shown. */
+    if crate::agent::content_filtered(&haystack) {
+        return rule(
+            "The provider's content filter blocked the reply",
+            format!("`{first_line}`. The model provider checks each reply before sending it, and it blocked this one - usually a long reply that quotes logs, error text or legal wording. Nothing is broken and the work so far is kept. SDC asked again three times with a shorter reply; send \"continue\" to go on, or pick a model from another provider (DeepSeek, Claude) for this chat."),
+            false,
+            "content-filter",
+        );
+    }
+
     /* 0.12.5: a turn on a provider with no key stored at all. */
     if haystack.contains("no api key for") {
         return rule(

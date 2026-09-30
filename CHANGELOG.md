@@ -15,6 +15,41 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [0.15.6] — A signed-in VPS is not signed out for a slow answer, long turns are not stopped as loops, and a filtered reply is asked again
+
+The report: in one evening the VPS was signed out three times, three long page-build turns were stopped
+as a "loop", and two turns ended on `native_api failed: <400> InternalError.Algo.DataInspectionFailed`.
+The daemon's event log shows the causes:
+
+* **SDC itself closed the VPS connection.** All three sign-outs came from 0.15.4's stuck-master check
+  ("stopped answering for 45 s"). Two of them happened while nothing ran on the host: a turn was waiting
+  on a permission card, and later the window was idle. The PC was awake (no sleep in the System log), and
+  the next master answered `-O check` in 45 ms. A few `-O check`s that ran out of time were enough to throw
+  away a password-and-code sign-in. Now:
+  * a master is suspected only after 9 unanswered checks in a row **and** 45 s;
+  * before anything is ended, the master is asked to run `true` on the host (20 s). A master that still
+    runs a command is kept;
+  * any command that goes through the master counts as proof it works, so no `-O check` is spawned
+    against a master that carried a command in the last 15 s.
+
+  A master that really spins (the 0.15.4 case) cannot run `true` either, so it is still ended.
+* **Five edits of one file were called a loop.** The loop guard counted `Edit page.tsx` five times in a
+  row as "nothing changing between", although each edit changed different lines (the diffs are in the log).
+  An edit that changed the file now resets the count. The guard also stopped any turn at 150 tool calls,
+  the same kind of limit 0.15.2 removed for steps. That cap is gone; a budget in Settings is the bound.
+* **The provider's content filter ended the turn.** Alibaba Model Studio checks each reply and blocked one
+  that quoted long logs (`DataInspectionFailed: Output data may contain inappropriate content`). That is
+  the provider's filter, not the network or SDC. The SDC Agent now asks the step again with a note to reply
+  shorter and summarise instead of quoting, up to 3 times in a row, and shows a "Content filter" card while
+  it does. If the provider still blocks the reply, the error card explains this in plain words (rule
+  `content-filter`), not as "no rule yet".
+* **Faster: reads in one reply run together.** When a reply only reads (`read_file`, `grep`, `glob`,
+  `list_dir`, `search`), the reads run at the same time. On the report's VPS, four reads took about 1 s
+  instead of about 4 s. A reply that mixes reads with edits still runs in order.
+
+Checked live on the VPS through the signed-in connection: 4 reads started within 2 ms and ended within
+1 s, and five edits of one file in a row ran without a loop stop (0.15.5 stops at the fifth).
+
 ## [0.15.5] — An uninstaller never erases your data, and a daily copy of it
 
 Installing 0.15.4 over 0.15.3 with `setup.exe /S` (a silent install without `/UPDATE`, run by hand)

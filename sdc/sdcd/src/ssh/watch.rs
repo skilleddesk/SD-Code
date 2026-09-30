@@ -35,6 +35,9 @@ pub const INTERVAL: Duration = Duration::from_secs(45);
 /// is what the report's screenshot shows.
 pub const QUICK: Duration = Duration::from_secs(5);
 
+/// How long a command that went through the master counts as proof it is working (0.15.6).
+const SERVED_TRUST: Duration = Duration::from_secs(15);
+
 /// How long to wait before believing a failed probe.
 const CONFIRM: Duration = Duration::from_secs(3);
 
@@ -77,7 +80,15 @@ fn sweep(store: &Store, notifier: &dyn Notifier, full: bool) -> Vec<String> {
            is looked after the same way once its socket is found. */
         let socket = super::session::has_socket(&ssh);
         let tracked = super::session::was_signed_in(&ssh) || socket;
-        let mut master = if tracked { super::session::state(&ssh) } else { super::session::Master::Gone };
+        /* A master that carried a command to the end a moment ago is working (0.15.6): no `-O check` is
+           spawned against it, and in a burst of agent commands that is most passes. */
+        let mut master = if tracked && super::session::served_within(&ssh, SERVED_TRUST) {
+            super::session::Master::Open
+        } else if tracked {
+            super::session::state(&ssh)
+        } else {
+            super::session::Master::Gone
+        };
 
         /* "Gone" is asked twice before it is believed (0.15.2), the same rule the network probe has
            always had: one answer on a busy machine cut a live sign-in off at the end of a long turn. */
@@ -92,13 +103,13 @@ fn sweep(store: &Store, notifier: &dyn Notifier, full: bool) -> Vec<String> {
 
         /* A master that has answered nothing for STUCK_AFTER is not busy but stuck (0.15.4): it is ended,
            so what waits on it fails now with a sentence instead of never. */
-        let stuck = tracked && super::session::note(&ssh, master);
+        let stuck = tracked && super::session::note(&ssh, master) && !super::session::serves(&ssh);
 
         if stuck {
             super::session::kill_stuck(&ssh);
 
             let detail = format!(
-                "the signed-in connection to {} stopped answering for {} s (its ssh process was stuck), so SDC closed it. Sign in again to go on - a running turn there has stopped; send \"continue\" after signing in.",
+                "the signed-in connection to {} stopped answering for {} s and could not run even `true` (its ssh process was stuck), so SDC closed it. Sign in again to go on - a running turn there has stopped; send \"continue\" after signing in.",
                 ssh.label(),
                 super::session::STUCK_AFTER.as_secs()
             );

@@ -358,14 +358,19 @@ pub fn close(ssh: &Ssh) {
 /// master answers in ~30 ms; one that is only busy answers within a few seconds.
 pub const STUCK_AFTER: Duration = Duration::from_secs(45);
 
-fn unsure_since() -> &'static Mutex<std::collections::HashMap<String, Instant>> {
-    static SINCE: OnceLock<Mutex<std::collections::HashMap<String, Instant>>> = OnceLock::new();
+/// How many `-O check`s in a row must go unanswered, as well as [`STUCK_AFTER`] passing (0.15.6). A
+/// clock alone called a master stuck after two slow checks with a long gap between them.
+pub const STUCK_CHECKS: u32 = 9;
+
+fn unsure_since() -> &'static Mutex<std::collections::HashMap<String, (Instant, u32)>> {
+    static SINCE: OnceLock<Mutex<std::collections::HashMap<String, (Instant, u32)>>> = OnceLock::new();
 
     SINCE.get_or_init(Default::default)
 }
 
-/// Records one [`Master`] answer and says whether the master is **stuck**: nothing but
-/// [`Master::Unsure`] for [`STUCK_AFTER`].
+/// Records one [`Master`] answer and says whether the master **may be stuck**: nothing but
+/// [`Master::Unsure`] for [`STUCK_CHECKS`] checks and [`STUCK_AFTER`]. The caller then asks it to run a
+/// command ([`serves`]) before ending anything.
 ///
 /// Measured 2026-09-29: the report's master (Git for Windows' ssh, OpenSSH 10.3) sat at 91% of a core
 /// for twenty minutes, alive and holding its TCP connection, yet serving nothing. Every `-O check` ran
@@ -377,7 +382,13 @@ pub fn note(ssh: &Ssh, master: Master) -> bool {
     };
 
     match master {
-        Master::Unsure => since.entry(ssh.label()).or_insert_with(Instant::now).elapsed() >= STUCK_AFTER,
+        Master::Unsure => {
+            let entry = since.entry(ssh.label()).or_insert_with(|| (Instant::now(), 0));
+
+            entry.1 += 1;
+
+            entry.1 >= STUCK_CHECKS && entry.0.elapsed() >= STUCK_AFTER
+        }
         _ => {
             since.remove(&ssh.label());
 
@@ -385,6 +396,55 @@ pub fn note(ssh: &Ssh, master: Master) -> bool {
         }
     }
 }
+
+/// When each master last carried a command to the end (0.15.6), by [`Ssh::label`].
+fn served_at() -> &'static Mutex<std::collections::HashMap<String, Instant>> {
+    static SERVED: OnceLock<Mutex<std::collections::HashMap<String, Instant>>> = OnceLock::new();
+
+    SERVED.get_or_init(Default::default)
+}
+
+/// A command went through this host's master and came back: the master is working, whatever a
+/// `-O check` said. It is also a *yes* for [`is_open_recently`] and clears the stuck clock.
+pub fn saw_served(ssh: &Ssh) {
+    let now = Instant::now();
+
+    if let Ok(mut served) = served_at().lock() {
+        served.insert(ssh.label(), now);
+    }
+
+    if let Ok(mut seen) = checked().lock() {
+        seen.insert(ssh.label(), now);
+    }
+
+    if let Ok(mut since) = unsure_since().lock() {
+        since.remove(&ssh.label());
+    }
+}
+
+/// Did a command go through this host's master within `window`?
+pub fn served_within(ssh: &Ssh, window: Duration) -> bool {
+    served_at()
+        .lock()
+        .ok()
+        .and_then(|served| served.get(&ssh.label()).copied())
+        .is_some_and(|at| at.elapsed() < window)
+}
+
+/// The last word before a master is ended (0.15.6): can it still run a command? `true` on the far side,
+/// through the master, with [`SERVE_BUDGET`].
+///
+/// The report: the host was signed out three times in one evening "because its ssh process was stuck" -
+/// twice while nothing ran at all (a turn waiting on a permission card, then an idle window). The machine
+/// was awake (no sleep in the System log), and the next sign-in's master answered `-O check` in 45 ms.
+/// A few `-O check`s that ran out of time proved nothing; a password-and-code sign-in was thrown away
+/// for them. A master that still runs `true` is kept.
+pub fn serves(ssh: &Ssh) -> bool {
+    ssh.run("true", SERVE_BUDGET).is_ok_and(|output| output.ok())
+}
+
+/// How long [`serves`] waits: a proxied command is ~500 ms against the report's VPS.
+const SERVE_BUDGET: Duration = Duration::from_secs(20);
 
 /// Ends a stuck master: its process is killed (it answers no `-O exit`), and its socket names removed.
 /// Every call waiting on it - the turn's `claude` among them - then ends with the connection instead of
@@ -1008,9 +1068,16 @@ mod tests {
         assert!(!note(&ssh, Master::Unsure), "the first Unsure answer must not be stuck yet");
         assert!(!note(&ssh, Master::Unsure), "an Unsure answer inside the window must not be stuck yet");
 
-        unsure_since().lock().unwrap().insert(ssh.label(), Instant::now() - STUCK_AFTER - Duration::from_millis(50));
+        /* 0.15.6: a clock that ran out after two slow checks is not enough - a machine that was busy (or asleep) between them is not a stuck master. */
+        unsure_since().lock().unwrap().insert(ssh.label(), (Instant::now() - STUCK_AFTER - Duration::from_millis(50), 2));
 
-        assert!(note(&ssh, Master::Unsure), "an Unsure answer past the window must be reported stuck");
+        assert!(!note(&ssh, Master::Unsure), "three slow checks past the window must not be stuck yet");
+
+        for _ in 4..STUCK_CHECKS {
+            assert!(!note(&ssh, Master::Unsure));
+        }
+
+        assert!(note(&ssh, Master::Unsure), "STUCK_CHECKS Unsure answers past the window must be reported stuck");
     }
 
     /// A real answer - open or gone - is never stuck, and it clears the clock so a later run of Unsure
@@ -1019,7 +1086,7 @@ mod tests {
     fn a_real_answer_is_never_stuck_and_clears_the_clock() {
         let ssh = Ssh::parse("nobody@203.0.113.122 -p 9").unwrap();
 
-        unsure_since().lock().unwrap().insert(ssh.label(), Instant::now() - STUCK_AFTER - Duration::from_millis(50));
+        unsure_since().lock().unwrap().insert(ssh.label(), (Instant::now() - STUCK_AFTER - Duration::from_millis(50), STUCK_CHECKS));
 
         assert!(!note(&ssh, Master::Open), "a real answer must never be reported as stuck");
         assert!(
@@ -1028,6 +1095,30 @@ mod tests {
         );
 
         assert!(!note(&ssh, Master::Gone), "a gone answer must not be reported as stuck either");
+    }
+
+    /// The served-window limiter (0.15.6): a command that went through the master a moment ago counts
+    /// as proof of life until its window passes - and it doubles as a *yes* for [`is_open_recently`] and
+    /// clears the stuck clock, since a master that just carried a command is not the one [`note`] should
+    /// be counting against.
+    #[test]
+    fn a_recent_serve_is_trusted_until_its_window_passes_and_clears_the_stuck_clock() {
+        let ssh = Ssh::parse("nobody@203.0.113.132 -p 11").unwrap();
+
+        unsure_since().lock().unwrap().insert(ssh.label(), (Instant::now(), STUCK_CHECKS));
+
+        saw_served(&ssh);
+
+        assert!(served_within(&ssh, Duration::from_secs(30)), "a fresh serve must be trusted within its window");
+        assert!(is_open_recently(&ssh), "a serve is also a yes for the open cache");
+        assert!(
+            !unsure_since().lock().unwrap().contains_key(&ssh.label()),
+            "a serve must clear the stuck clock, the same as any other real answer"
+        );
+
+        served_at().lock().unwrap().insert(ssh.label(), Instant::now() - Duration::from_secs(30));
+
+        assert!(!served_within(&ssh, Duration::from_secs(15)), "a stale serve must fall back to no");
     }
 
     /// 0.15.2: the report's socket file vanished while its master kept running. The spare name made at

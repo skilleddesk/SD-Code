@@ -54,6 +54,20 @@ use workspace::Workspace;
 /// wants a bound - `sdcd run --max-steps` - still passes `maxSteps`.
 pub const DEFAULT_STEPS: usize = usize::MAX;
 
+/// How often in a row a step is asked again after the provider's content filter blocked its reply.
+const FILTER_RETRIES: usize = 3;
+
+/// What the model is told after a blocked reply.
+const FILTER_NOTE: &str = "[SDC: the provider's content filter blocked your last reply before anyone saw it. Write it again, shorter: summarise logs, command output, error text and quoted documents in your own words instead of copying them, and go on with the task.]";
+
+/// Is this failure a provider's output filter rather than the network or the request? `reason` is
+/// lowercase. Alibaba: `DataInspectionFailed` / `data_inspection_failed`; OpenAI-style: `content_filter`.
+pub fn content_filtered(reason: &str) -> bool {
+    ["datainspectionfailed", "data_inspection_failed", "may contain inappropriate content", "content_filter", "content management policy"]
+        .iter()
+        .any(|needle| reason.contains(needle))
+}
+
 /// Where the model for this turn lives.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Backend {
@@ -534,6 +548,49 @@ fn sub_agent(
     }
 }
 
+/// The tools that only look, and so may run side by side (0.15.6).
+const PARALLEL_READS: [&str; 5] = ["read_file", "grep", "glob", "list_dir", "search"];
+
+/// One reply's reads, run at the same time. Each gets its own read-only context numbered after `first`,
+/// so its card id is the one it would have had in turn.
+fn run_reads(parent: &ToolContext, first: usize, calls: &[(usize, &dialect::ToolUse)]) -> Vec<(usize, tools::Outcome)> {
+    std::thread::scope(|scope| {
+        let running: Vec<_> = calls
+            .iter()
+            .enumerate()
+            .map(|(offset, (index, call))| {
+                let index = *index;
+
+                scope.spawn(move || {
+                    let mut context = ToolContext {
+                        workspace: parent.workspace,
+                        session_id: parent.session_id,
+                        read_only: true,
+                        vision: parent.vision,
+                        sink: parent.sink,
+                        turn_id: parent.turn_id,
+                        autonomy: parent.autonomy,
+                        always: parent.always.clone(),
+                        calls: first + offset,
+                        checkpoint: None,
+                        checkpointed: true,
+                        policy: parent.policy,
+                        changed: HashSet::new(),
+                        radius_allowed: parent.radius_allowed,
+                        plan: None,
+                        edits: 0,
+                        ran_at: None,
+                    };
+
+                    (index, tools::execute(&mut context, call))
+                })
+            })
+            .collect();
+
+        running.into_iter().filter_map(|handle| handle.join().ok()).collect()
+    })
+}
+
 /// The `task` calls of one reply, run at the same time (0.13): each draws its card, runs, and closes it.
 #[allow(clippy::too_many_arguments)]
 fn run_tasks(
@@ -717,6 +774,8 @@ fn drive(
     };
     let (mut input_tokens, mut output_tokens) = (0u64, 0u64);
     let mut said_something = false;
+    /* Replies in a row the provider's content filter blocked. */
+    let mut filtered = 0;
     let mut plan_nudged = false;
     let mut check_rounds = 0;
     /* The edit count when the checks last ran: they run again only after the agent changed something. */
@@ -745,8 +804,38 @@ fn drive(
         }
 
         let reply: Reply = match ask_model(backend, target, &system, &messages, &specs, &step_sink(sink, said_something), &stopped) {
-            Ok(reply) => reply,
+            Ok(reply) => {
+                filtered = 0;
+
+                reply
+            }
             Err(reason) if reason == "stopped" => return,
+            /* The provider's own filter blocked the reply (0.15.6). The report's two long turns ended on
+               it, each mid-sentence while quoting logs. The reply never reached the conversation, so the
+               step is asked again with a note to say it shorter - the work before it is kept. */
+            Err(reason) if content_filtered(&reason.to_lowercase()) && filtered < FILTER_RETRIES => {
+                filtered += 1;
+                sink.send(EngineEvent::ToolStarted {
+                    call_id: format!("{turn_id}-filter-{step}"),
+                    tool: "run".to_string(),
+                    name: "Content filter".to_string(),
+                    target: "the provider blocked a reply".to_string(),
+                });
+                sink.send(EngineEvent::ToolOutput {
+                    call_id: format!("{turn_id}-filter-{step}"),
+                    level: "dim".to_string(),
+                    text: format!("{reason}\nasking again for a shorter reply ({filtered} of {FILTER_RETRIES}) · the work so far is kept"),
+                });
+                sink.send(EngineEvent::ToolCompleted {
+                    call_id: format!("{turn_id}-filter-{step}"),
+                    status: "done".to_string(),
+                    meta: "asked again".to_string(),
+                    diff: None,
+                });
+                dialect::append_user_text(target.dialect, &mut messages, FILTER_NOTE);
+
+                continue;
+            }
             Err(reason) => {
                 sink.send(EngineEvent::Failed(reason));
 
@@ -827,12 +916,28 @@ fn drive(
         let mut results: Vec<Option<dialect::ToolResult>> = vec![None; reply.tool_uses.len()];
         let tasks: Vec<(usize, &dialect::ToolUse)> = reply.tool_uses.iter().enumerate().filter(|(_, call)| call.name == "task").collect();
 
+        /* A reply that only reads runs its reads at the same time (0.15.6). On a VPS each one is a round
+           trip (~500 ms against the report's host), and a model often asks for four or five at once. Only
+           when every call reads: a read after an edit in the same reply must see the edit. */
+        let reads: Vec<(usize, &dialect::ToolUse)> =
+            reply.tool_uses.iter().enumerate().filter(|(_, call)| call.name != "task").collect();
+
+        if reads.len() > 1 && mcp.as_ref().map_or(true, |servers| !reads.iter().any(|(_, call)| servers.handles(&call.name))) && reads.iter().all(|(_, call)| PARALLEL_READS.contains(&call.name.as_str())) {
+            let first = context.calls;
+
+            context.calls += reads.len();
+
+            for (index, outcome) in run_reads(&context, first, &reads) {
+                results[index] = Some((reply.tool_uses[index].id.clone(), outcome.content, outcome.is_error, outcome.image));
+            }
+        }
+
         for (index, call) in reply.tool_uses.iter().enumerate() {
             if stopped() {
                 return;
             }
 
-            if call.name == "task" {
+            if call.name == "task" || results[index].is_some() {
                 continue;
             }
 
@@ -1006,6 +1111,64 @@ mod end_to_end {
         (url, server)
     }
 
+    /// Like [`provider`], but each entry is the whole HTTP response (status line and all) rather than an
+    /// always-200 SSE body - for a reply the provider refuses outright, such as a content filter's 400.
+    fn raw_provider(responses: Vec<String>) -> (String, std::thread::JoinHandle<Vec<Value>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/v1/chat/completions", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            let mut bodies = Vec::new();
+
+            for response in responses {
+                let (socket, _) = listener.accept().unwrap();
+                let mut reader = BufReader::new(socket.try_clone().unwrap());
+                let mut length = 0usize;
+
+                loop {
+                    let mut line = String::new();
+
+                    reader.read_line(&mut line).unwrap();
+
+                    if let Some(value) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                        length = value.trim().parse().unwrap();
+                    }
+
+                    if line == "\r\n" {
+                        break;
+                    }
+                }
+
+                let mut body = vec![0u8; length];
+
+                reader.read_exact(&mut body).unwrap();
+                bodies.push(serde_json::from_slice(&body).unwrap());
+
+                let mut socket = socket;
+
+                write!(socket, "{response}").unwrap();
+            }
+
+            bodies
+        });
+
+        (url, server)
+    }
+
+    /// A 400 in Alibaba's shape: the provider's own filter refused the reply before anyone saw it.
+    fn blocked() -> String {
+        let body = serde_json::json!({
+            "error": { "message": "<400> InternalError.Algo.DataInspectionFailed: Output data may contain inappropriate content." }
+        })
+        .to_string();
+
+        format!("HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len())
+    }
+
+    /// A normal 200 SSE reply, for [`raw_provider`].
+    fn ok(sse: String) -> String {
+        format!("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n{sse}")
+    }
+
     fn chunk(delta: Value) -> String {
         format!("data: {}\n\n", serde_json::json!({ "choices": [{ "delta": delta }] }))
     }
@@ -1151,5 +1314,161 @@ mod end_to_end {
         assert_eq!(SdcAgent::new(Backend::Api, Autonomy::Auto, DEFAULT_STEPS).max_steps, usize::MAX);
         assert_eq!(SdcAgent::new(Backend::Api, Autonomy::Auto, 500).max_steps, 500);
         assert_eq!(SdcAgent::new(Backend::Api, Autonomy::Auto, 0).max_steps, 1);
+    }
+
+    /// The 0.15.6 report: a reply the provider's content filter blocked is asked again rather than
+    /// failing the turn, up to [`FILTER_RETRIES`] times - and each one that goes through resets the count,
+    /// so the turn still finishes.
+    #[test]
+    fn a_blocked_reply_is_asked_again_and_the_turn_still_finishes() {
+        let root = std::env::temp_dir().join(format!("sdc-agent-filter-ok-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        let (url, server) = raw_provider(vec![
+            blocked(),
+            blocked(),
+            ok(chunk(serde_json::json!({ "content": "Done." })) + "data: [DONE]\n\n"),
+        ]);
+        let target = Target { url, headers: Vec::new(), dialect: Dialect::OpenAi, model: "local-test".to_string(), price: None, thinking: false, effort: None };
+        let workspace = Workspace::new(root.to_str().unwrap(), None);
+        let prompt = Prompt {
+            session_id: "s1".into(),
+            turn_id: "turn-agent-filter-ok".into(),
+            text: "summarise this log".into(),
+            model: "local-test".into(),
+            provider: None,
+            history: Vec::new(),
+            project_root: Some(root.to_str().unwrap().to_string()),
+            remote: None,
+            autonomy: Default::default(),
+            resume: None,
+            images: Vec::new(),
+            effort: None,
+        };
+        let recorder = crate::engines::Recorder::new();
+
+        drive(Backend::Api, &target, &workspace, Options { autonomy: Autonomy::Ask, max_steps: 10, auto_check: false }, None, &Default::default(), &prompt, &recorder.sink());
+        server.join().unwrap();
+
+        let events = recorder.events();
+        let cards: Vec<String> = events
+            .iter()
+            .filter_map(|event| match event {
+                EngineEvent::ToolStarted { name, .. } => Some(name.clone()),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(cards, ["Content filter", "Content filter"], "one retry card per blocked reply");
+        assert!(events.contains(&EngineEvent::Delta("Done.".into())), "the turn must still reach the model's answer");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Past [`FILTER_RETRIES`] blocked replies in a row, the limiter stops asking again and fails the
+    /// turn instead of retrying forever.
+    #[test]
+    fn blocked_replies_past_the_filter_limit_fail_the_turn() {
+        let root = std::env::temp_dir().join(format!("sdc-agent-filter-limit-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        let (url, server) = raw_provider(vec![blocked(); FILTER_RETRIES + 1]);
+        let target = Target { url, headers: Vec::new(), dialect: Dialect::OpenAi, model: "local-test".to_string(), price: None, thinking: false, effort: None };
+        let workspace = Workspace::new(root.to_str().unwrap(), None);
+        let prompt = Prompt {
+            session_id: "s1".into(),
+            turn_id: "turn-agent-filter-limit".into(),
+            text: "summarise this log".into(),
+            model: "local-test".into(),
+            provider: None,
+            history: Vec::new(),
+            project_root: Some(root.to_str().unwrap().to_string()),
+            remote: None,
+            autonomy: Default::default(),
+            resume: None,
+            images: Vec::new(),
+            effort: None,
+        };
+        let recorder = crate::engines::Recorder::new();
+
+        drive(Backend::Api, &target, &workspace, Options { autonomy: Autonomy::Ask, max_steps: 10, auto_check: false }, None, &Default::default(), &prompt, &recorder.sink());
+        server.join().unwrap();
+
+        let events = recorder.events();
+        let cards: Vec<String> = events
+            .iter()
+            .filter_map(|event| match event {
+                EngineEvent::ToolStarted { name, .. } => Some(name.clone()),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(cards.len(), FILTER_RETRIES, "exactly FILTER_RETRIES retries before the limiter gives up");
+        assert!(
+            matches!(events.last(), Some(EngineEvent::Failed(reason)) if reason.to_lowercase().contains("datainspectionfailed")),
+            "{events:?}"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 0.15.6: a reply that only reads runs its reads side by side, and each read still gets its own
+    /// card and its own answer, in the order the model asked.
+    #[test]
+    fn a_reply_of_reads_runs_them_together_and_answers_each() {
+        let root = std::env::temp_dir().join(format!("sdc-agent-reads-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a.txt"), "alpha").unwrap();
+        std::fs::write(root.join("b.txt"), "bravo").unwrap();
+
+        let two_reads = chunk(serde_json::json!({ "tool_calls": [
+                { "index": 0, "id": "r1", "function": { "name": "read_file", "arguments": "{\"path\":\"a.txt\"}" } },
+                { "index": 1, "id": "r2", "function": { "name": "read_file", "arguments": "{\"path\":\"b.txt\"}" } }
+            ] }))
+            + "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n";
+        let (url, server) = provider(vec![two_reads, chunk(serde_json::json!({ "content": "Done." })) + "data: [DONE]\n\n"]);
+        let target = Target { url, headers: Vec::new(), dialect: Dialect::OpenAi, model: "local-test".to_string(), price: None, thinking: false, effort: None };
+        let workspace = Workspace::new(root.to_str().unwrap(), None);
+        let prompt = Prompt {
+            session_id: "s1".into(),
+            turn_id: "turn-agent-reads".into(),
+            text: "read both".into(),
+            model: "local-test".into(),
+            provider: None,
+            history: Vec::new(),
+            project_root: Some(root.to_str().unwrap().to_string()),
+            remote: None,
+            autonomy: Default::default(),
+            resume: None,
+            images: Vec::new(),
+            effort: None,
+        };
+        let recorder = crate::engines::Recorder::new();
+
+        drive(Backend::Api, &target, &workspace, Options { autonomy: Autonomy::Ask, max_steps: 10, auto_check: false }, None, &Default::default(), &prompt, &recorder.sink());
+
+        let bodies = server.join().unwrap();
+        let mut ids: Vec<String> = recorder
+            .events()
+            .iter()
+            .filter_map(|event| match event {
+                EngineEvent::ToolStarted { call_id, .. } => Some(call_id.clone()),
+                _ => None,
+            })
+            .collect();
+
+        ids.sort();
+        ids.dedup();
+        assert_eq!(ids.len(), 2, "each read keeps its own card: {ids:?}");
+
+        let sent = bodies[1]["messages"].to_string();
+        let (alpha, bravo) = (sent.find("alpha").expect("a.txt's text"), sent.find("bravo").expect("b.txt's text"));
+
+        assert!(alpha < bravo, "the answers go back in the order the model asked");
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

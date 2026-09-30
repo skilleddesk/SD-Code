@@ -247,7 +247,10 @@ impl Ssh {
             )
         })?;
 
-        command.args(self.base_args()?).arg(script);
+        let args = self.base_args()?;
+        let proxied = args.iter().any(|arg| arg == "proxy");
+
+        command.args(args).arg(script);
 
         command
             .stdin(if input.is_some() { Stdio::piped() } else { Stdio::null() })
@@ -285,6 +288,13 @@ impl Ssh {
         });
 
         let (code, timed_out) = wait(&mut child, started, timeout);
+
+        /* The command went through the master and the far side answered (255 is `ssh`'s own failure):
+           the master is working, and the watcher need not ask it (0.15.6). */
+        if proxied && !timed_out && code.is_some_and(|code| code != 255) {
+            session::saw_served(self);
+        }
+
         let budget = Duration::from_millis(750);
         let (stdout, out_truncated) = out_rx.recv_timeout(budget).unwrap_or_else(|_| (String::new(), true));
         let (stderr, err_truncated) = err_rx.recv_timeout(budget).unwrap_or_else(|_| (String::new(), true));

@@ -288,26 +288,32 @@ pub fn turn_cap(store: &Store, policy_turn_cap: Option<f64>) -> Option<f64> {
     policy_turn_cap.or_else(|| cap(&budgets(store), "turn"))
 }
 
-/// Watches a running turn for the shapes of a runaway: the same tool on the same target again and
-/// again, or a very long run of tool calls.
+/// Watches a running turn for the shape of a runaway: the same tool on the same target again and again
+/// with nothing changing between.
+///
+/// There is no cap on the number of calls (0.15.6): a 150-call cap stopped long page builds that were on
+/// track, the same way the step limit 0.15.2 removed did. A budget set in Settings is the bound.
 #[derive(Debug, Default)]
 pub struct Runaway {
     last: Option<String>,
     repeats: usize,
-    calls: usize,
 }
 
 /// The same action this many times in a row is a loop, not progress.
 pub const REPEAT_LIMIT: usize = 5;
-/// More tool calls than this in one turn needs a person's look.
-pub const CALL_LIMIT: usize = 150;
 
 impl Runaway {
+    /// A call finished and changed something (an edit with a diff), so the next call on the same target
+    /// is new work, not a repeat (0.15.6). The report's turns were stopped as a loop after five
+    /// `Edit page.tsx` calls in a row that each changed different lines.
+    pub fn progress(&mut self) {
+        self.last = None;
+        self.repeats = 0;
+    }
+
     /// One tool call. `Some(reason)` when the turn should stop.
     pub fn observe(&mut self, name: &str, target: &str) -> Option<String> {
         let key = format!("{name}\u{1f}{target}");
-
-        self.calls += 1;
 
         /* A call with no target cannot be shown to be the same call again (0.14.1): Claude's Bash cards
            once arrived without their command, and five different commands were stopped as a loop. */
@@ -325,10 +331,6 @@ impl Runaway {
             return Some(format!(
                 "Stopped a loop: `{name} {target}` ran {REPEAT_LIMIT} times in a row without anything changing between. Look at the last result, then send a clearer instruction."
             ));
-        }
-
-        if self.calls > CALL_LIMIT {
-            return Some(format!("Stopped: {CALL_LIMIT} tool calls in one turn. Check the work so far and continue with \"continue\" if it is on track."));
         }
 
         None
@@ -471,17 +473,25 @@ mod tests {
         }
     }
 
+    /// No call cap: a long turn of different calls is never stopped for its length.
     #[test]
-    fn a_turn_is_stopped_after_the_call_limit_even_without_a_loop() {
+    fn a_long_turn_is_not_stopped_for_its_length() {
         let mut runaway = Runaway::default();
 
-        for index in 0..CALL_LIMIT {
+        for index in 0..1000 {
             assert!(runaway.observe("Edit", &format!("file{index}.ts")).is_none());
         }
+    }
 
-        let reason = runaway.observe("Edit", "one-more.ts").unwrap();
+    /// The 0.15.6 report: edits to one file that each changed it are work, not a loop.
+    #[test]
+    fn edits_that_change_the_file_are_never_a_loop() {
+        let mut runaway = Runaway::default();
 
-        assert!(reason.contains(&CALL_LIMIT.to_string()), "{reason}");
+        for _ in 0..20 {
+            assert!(runaway.observe("Edit", "page.tsx").is_none());
+            runaway.progress();
+        }
     }
 
     #[test]

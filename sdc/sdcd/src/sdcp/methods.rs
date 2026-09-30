@@ -3532,6 +3532,10 @@ async fn run_turn(
                 );
             }
             crate::engines::EngineEvent::ToolCompleted { call_id, status, meta, diff } => {
+                if status == "done" && diff.as_ref().is_some_and(|diff| diff.as_array().map_or(true, |lines| !lines.is_empty())) {
+                    runaway.progress();
+                }
+
                 if let Some(line) = tools.iter_mut().find(|(id, _)| *id == call_id) {
                     line.1 = format!("{} - {}", line.1, if meta.is_empty() { status.clone() } else { meta.clone() });
                 }
