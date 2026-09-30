@@ -1,7 +1,7 @@
 import { Check, Copy } from 'lucide-react';
 import { Fragment, memo, useMemo, useState, type ReactNode } from 'react';
 
-import { openOutside } from '../../lib/external';
+import { copyText, openOutside } from '../../lib/external';
 import { paragraphs, parseMarkdown, type Block, type Inline } from '../../lib/markdown';
 import { strings } from '../../strings';
 
@@ -88,7 +88,6 @@ function inline(node: Inline): ReactNode {
       return (
         <a
           href={node.href}
-          target="_blank"
           rel="noreferrer noopener"
           className="text-accent underline decoration-accent/40 underline-offset-2 hover:decoration-accent"
           title={node.href}
@@ -110,13 +109,13 @@ function CodeBlock({ lang, text }: { lang: string; text: string }) {
   const [copied, setCopied] = useState(false);
 
   const copy = (): void => {
-    void navigator.clipboard
-      .writeText(text)
-      .then(() => {
-        setCopied(true);
+    void copyText(text).then((ok) => {
+      setCopied(ok);
+
+      if (ok) {
         window.setTimeout(() => setCopied(false), 1500);
-      })
-      .catch(() => setCopied(false));
+      }
+    });
   };
 
   return (

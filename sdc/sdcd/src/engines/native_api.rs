@@ -831,10 +831,7 @@ impl Engine for NativeApi {
         let key = crate::auth::keychain::get(&endpoint.key_ref).unwrap_or_default();
 
         if key.is_empty() {
-            sink.send(EngineEvent::Failed(format!(
-                "No API key for {}. Connect it in the Provider Hub; the key is stored in the OS keychain.",
-                endpoint.provider
-            )));
+            sink.send(EngineEvent::Failed(crate::auth::keychain::missing_key_reason(&endpoint.key_ref, &endpoint.provider)));
 
             return;
         }

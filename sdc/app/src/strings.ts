@@ -935,6 +935,8 @@ const english = {
     cancel: 'Cancel',
     copyLink: 'Copy link',
     copied: 'Link copied',
+    copyFailed: 'The clipboard refused - select the link above and copy it by hand',
+    openedInBrowser: 'The sign-in page opened in your browser',
     openLink: 'Open in browser',
     waiting: 'Waiting for the CLI…',
     waitingForCode: 'Approve the page, then paste the code below.',

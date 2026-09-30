@@ -15,8 +15,10 @@ import './styles/globals.css';
 
 import { App } from './App';
 import { startAlerts } from './lib/alerts';
+import { routeLinksOutside } from './lib/external';
 
 startAlerts();
+routeLinksOutside();
 
 const container = document.getElementById('root');
 

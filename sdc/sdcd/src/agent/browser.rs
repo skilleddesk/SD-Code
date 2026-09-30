@@ -116,6 +116,8 @@ impl Browser {
             command.creation_flags(0x0800_0000);
         }
 
+        crate::pty::own_group(&mut command);
+
         let child = command.spawn().map_err(|error| format!("could not start {}: {error}", program.display()))?;
 
         /* The browser writes the port it chose into its profile once it is listening. */

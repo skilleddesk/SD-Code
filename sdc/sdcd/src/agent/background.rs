@@ -100,6 +100,8 @@ pub fn start(session_id: &str, root: &str, remote: Option<&Ssh>, line: &str) -> 
                 command.creation_flags(0x0800_0000);
             }
 
+            crate::pty::own_group(&mut command);
+
             let mut child = command.spawn().map_err(|error| ErrorObject::internal(format!("could not start `{line}`: {error}")))?;
             let pid = child.id();
             let lines = Arc::new(Mutex::new(VecDeque::new()));

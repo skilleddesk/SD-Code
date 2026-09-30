@@ -22,6 +22,7 @@ import { matchCommands, type Command, type CommandIcon } from '../commands/regis
 import { useOverlayStore } from '../store/overlays';
 import { strings } from '../strings';
 import { Modal } from '../modals/Modal';
+import { platformHint } from '../lib/external';
 
 /**
  * `#paletteBd` - the command palette (spec section 9.2).
@@ -161,7 +162,7 @@ export function Palette() {
                 <span className="palette-label flex-1">{command.label}</span>
                 {command.hint === undefined ? null : (
                   <span className="palette-hint font-mono text-[10px] text-text-muted">
-                    {command.hint}
+                    {platformHint(command.hint)}
                   </span>
                 )}
               </button>

@@ -67,9 +67,35 @@ pub fn kill_tree(pid: u32) {
             .status();
     }
 
+    /* 0.15.8: "on Unix the direct child is the program itself" was not true either. A stopped agent command
+       is `sh -c "npm run dev"`, a CLI turn is `node` with its own children, and killing only the direct
+       child left the rest running - holding ports, still writing files - on macOS and Linux while
+       Windows ended the whole tree. Every child SDC may stop is started as the leader of its own process
+       group (`own_group`), so the group is what is ended here. A pid that leads no group is a no-op. */
     #[cfg(not(windows))]
     {
-        let _ = pid;
+        let _ = Command::new("kill")
+            .args(["-s", "KILL", "--", &format!("-{pid}")])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+}
+
+/// Starts a child as the leader of its own process group on Unix, so `kill_tree` can end everything it
+/// started. Windows needs nothing: `taskkill /T` follows the tree.
+pub fn own_group(command: &mut Command) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+
+        command.process_group(0);
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = command;
     }
 }
 
@@ -395,6 +421,8 @@ impl PtyManager {
         }
 
         let started = Instant::now();
+        own_group(&mut process);
+
         let mut child = process
             .spawn()
             .map_err(|error| ErrorObject::internal(format!("`{command}` could not be started: {error}")))?;
@@ -495,6 +523,8 @@ impl PtyManager {
         if let Some(cwd) = cwd {
             process.current_dir(cwd);
         }
+
+        own_group(&mut process);
 
         let mut child = process.spawn().map_err(|error| {
             ErrorObject::internal(format!("`{command}` could not be started: {error}"))

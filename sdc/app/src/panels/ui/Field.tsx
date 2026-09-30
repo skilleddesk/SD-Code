@@ -3,6 +3,7 @@ import { useState, type ReactNode, type Ref } from 'react';
 
 import { strings } from '../../strings';
 import { BTN_GHOST, BTN_SM } from './button';
+import { readText } from '../../lib/external';
 
 /**
  * A labelled input with its own actions (0.7.1).
@@ -55,16 +56,14 @@ export function Field({
   const [revealed, setRevealed] = useState(false);
 
   const paste = (): void => {
-    void navigator.clipboard
-      ?.readText()
-      .then((text) => {
-        if (text.trim() !== '') {
-          onChange(text.trim());
-        }
-      })
-      .catch(() => {
-        /* A denied clipboard is not an error the user needs: the field is right there to type into. */
-      });
+    /* Through the OS clipboard (0.15.8): the webview's own `readText` is refused on macOS and Linux, which
+       left the key field's Paste button doing nothing there. A clipboard that still cannot be read is not
+       an error the user needs: the field is right there to type or paste into. */
+    void readText().then((text) => {
+      if (text !== null && text.trim() !== '') {
+        onChange(text.trim());
+      }
+    });
   };
 
   return (

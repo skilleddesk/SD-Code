@@ -31,6 +31,7 @@ import { LanguageTab, TeamTab, UpdatesTab } from '../kernel/SettingsTabs';
 import { useKernelUi } from '../store/kernelUi';
 import { AgentSettings } from '../kernel/AgentSettings';
 import { playCue } from '../lib/alerts';
+import { platformHint } from '../lib/external';
 
 /**
  * `#settingsBd` - Settings, seven tabs (spec section 9.11).
@@ -381,7 +382,7 @@ function KeymapTab() {
                 </span>
               ) : null}
               <span className="kbd inline-flex items-center rounded-[3px] border border-border-default border-b-2 bg-bg-base px-[6px] py-[1px] font-mono text-[10.5px] text-text-secondary">
-                {command.hint ?? ''}
+                {platformHint(command.hint ?? '')}
               </span>
             </div>
           ))}

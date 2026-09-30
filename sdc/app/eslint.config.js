@@ -15,6 +15,14 @@ const HEX_COLOUR_MESSAGE =
   'No raw hex colour (spec section 8.1) - use a semantic token instead, e.g. bg-bg-raised, ' +
   'text-text-secondary, border-border-subtle, state-error. Tokens: app/src/styles/tokens.css.';
 
+/* 0.15.8: these work in Windows' WebView2 and do nothing in macOS' WKWebView and Linux' WebKitGTK, which is
+   how "Open link", "Copy link" and "Paste" were dead on a Mac while every Windows check passed. The native
+   ways are in src/lib/external.ts (openOutside, copyText, readText). */
+const OUTSIDE_MESSAGE =
+  'Works on Windows only - use openOutside / copyText / readText from src/lib/external.ts ' +
+  '(macOS and Linux webviews ignore window.open, target="_blank" and navigator.clipboard).';
+const BLANK_TARGET = { selector: "JSXAttribute[name.name='target'][value.value='_blank']", message: OUTSIDE_MESSAGE };
+
 export default tseslint.config(
   {
     ignores: ['dist', 'node_modules', 'src-tauri/target', 'src-tauri/gen'],
@@ -33,7 +41,18 @@ export default tseslint.config(
     rules: {
       ...reactHooks.configs.recommended.rules,
       'react-refresh/only-export-components': ['warn', { allowConstantExport: true }],
+      'no-restricted-properties': [
+        'error',
+        { object: 'window', property: 'open', message: OUTSIDE_MESSAGE },
+        { object: 'navigator', property: 'clipboard', message: OUTSIDE_MESSAGE },
+      ],
+      'no-restricted-syntax': ['error', BLANK_TARGET],
     },
+  },
+  {
+    /* The one place allowed to fall back to the web APIs, for a plain browser (dev, tests). */
+    files: ['src/lib/external.ts'],
+    rules: { 'no-restricted-properties': 'off' },
   },
 
   /**
@@ -55,6 +74,7 @@ export default tseslint.config(
         { selector: 'Literal[value=/#[0-9A-Fa-f]{3,8}/]', message: HEX_COLOUR_MESSAGE },
         { selector: 'TemplateElement[value.raw=/#[0-9A-Fa-f]{3,8}/]', message: HEX_COLOUR_MESSAGE },
         { selector: 'JSXText[value=/#[0-9A-Fa-f]{3,8}/]', message: HEX_COLOUR_MESSAGE },
+        BLANK_TARGET,
       ],
     },
   },

@@ -20,6 +20,7 @@ import type { TaskSpec } from '../../../protocol/types';
 import { cancelIntent, confirmIntent, parseIntent } from './kernelIntents';
 import { useKernelUi } from './kernelUi';
 import type { AppState, HostView, TurnView } from './types';
+import { openOutside } from '../lib/external';
 
 /**
  * The intents - the UI's verbs (master spec section 3.3: "the UI never mutates state directly; it
@@ -2058,7 +2059,7 @@ export async function authorizeSubscription(id: string): Promise<boolean> {
   try {
     const { url, state } = await sdcpCall('provider.oauth.open', { id });
 
-    window.open(url, '_blank', 'noopener,noreferrer');
+    void openOutside(url);
 
     const { ok } = await sdcpCall('provider.oauth.callback', { id, state });
 

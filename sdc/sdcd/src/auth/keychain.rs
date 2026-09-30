@@ -87,6 +87,8 @@ fn os_store_works() -> bool {
    a `keyring` reference that does not resolve. */
 #[cfg(feature = "keychain")]
 fn os_set(name: &str, secret: &str) -> Result<(), ErrorObject> {
+    forget_cached(name);
+
     let entry = keyring::Entry::new("dev.skilleddesk.sdc", name)
         .map_err(|error| ErrorObject::internal(error.to_string()))?;
 
@@ -102,9 +104,40 @@ fn os_set(_name: &str, _secret: &str) -> Result<(), ErrorObject> {
 
 #[cfg(feature = "keychain")]
 fn os_get(name: &str) -> Option<String> {
-    keyring::Entry::new("dev.skilleddesk.sdc", name)
-        .ok()
-        .and_then(|entry| entry.get_password().ok())
+    /* Once read, a key is kept for the life of the process. macOS asks the person before an app it does not
+       recognise reads a Keychain item - and an ad hoc signed build is "new" after every update - so reading
+       the store on every `provider.list` and every turn meant a Keychain question each time (0.15.8). */
+    if let Some(secret) = cache().lock().ok().and_then(|cache| cache.get(name).cloned()) {
+        return Some(secret);
+    }
+
+    let entry = keyring::Entry::new("dev.skilleddesk.sdc", name).ok()?;
+
+    match entry.get_password() {
+        Ok(secret) => {
+            if let Ok(mut cache) = cache().lock() {
+                cache.insert(name.to_string(), secret.clone());
+            }
+
+            forget_failure(name);
+
+            Some(secret)
+        }
+        Err(keyring::Error::NoEntry) => {
+            forget_failure(name);
+
+            None
+        }
+        /* The store answered with something other than "no such key": a refused Keychain question, a locked
+           store. Remembered, so a turn says *that* instead of "no API key" over a key that is there. */
+        Err(error) => {
+            if let Ok(mut failures) = failures().lock() {
+                failures.insert(name.to_string(), error.to_string());
+            }
+
+            None
+        }
+    }
 }
 
 #[cfg(not(feature = "keychain"))]
@@ -114,6 +147,8 @@ fn os_get(_name: &str) -> Option<String> {
 
 #[cfg(feature = "keychain")]
 fn os_delete(name: &str) {
+    forget_cached(name);
+
     if let Ok(entry) = keyring::Entry::new("dev.skilleddesk.sdc", name) {
         let _ = entry.delete_credential();
     }
@@ -121,6 +156,51 @@ fn os_delete(name: &str) {
 
 #[cfg(not(feature = "keychain"))]
 fn os_delete(_name: &str) {}
+
+/// Secrets or failure reasons by key name.
+type Named = std::collections::HashMap<String, String>;
+
+/// Keys already read from the OS store in this process (see `os_get`).
+#[cfg_attr(not(feature = "keychain"), allow(dead_code))]
+fn cache() -> &'static std::sync::Mutex<Named> {
+    static CACHE: std::sync::OnceLock<std::sync::Mutex<Named>> = std::sync::OnceLock::new();
+
+    CACHE.get_or_init(Default::default)
+}
+
+/// Why the last read of a key failed, when the store refused rather than having no key.
+fn failures() -> &'static std::sync::Mutex<Named> {
+    static FAILURES: std::sync::OnceLock<std::sync::Mutex<Named>> = std::sync::OnceLock::new();
+
+    FAILURES.get_or_init(Default::default)
+}
+
+#[cfg_attr(not(feature = "keychain"), allow(dead_code))]
+fn forget_failure(name: &str) {
+    if let Ok(mut failures) = failures().lock() {
+        failures.remove(name);
+    }
+}
+
+#[cfg_attr(not(feature = "keychain"), allow(dead_code))]
+fn forget_cached(name: &str) {
+    if let Ok(mut cache) = cache().lock() {
+        cache.remove(name);
+    }
+
+    forget_failure(name);
+}
+
+/// The sentence for a key that could not be used: "no key" when there is none, and the store's own refusal
+/// when the key exists but the OS would not hand it over (a declined macOS Keychain question).
+pub fn missing_key_reason(name: &str, provider: &str) -> String {
+    match failures().lock().ok().and_then(|failures| failures.get(name).cloned()) {
+        Some(error) => format!(
+            "The OS keychain would not hand over the {provider} key ({error}). On macOS, choose \"Always Allow\" when the Keychain asks about sdcd, or connect the key again in the Provider Hub."
+        ),
+        None => format!("No API key for {provider}. Connect it in the Provider Hub; the key is stored in the OS keychain."),
+    }
+}
 
 fn key_path(name: &str) -> Result<PathBuf, ErrorObject> {
     let dir = crate::paths::data_dir().map_err(ErrorObject::internal)?.join("keys");

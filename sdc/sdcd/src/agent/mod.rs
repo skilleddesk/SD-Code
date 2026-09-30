@@ -179,10 +179,7 @@ fn target(backend: Backend, prompt: &Prompt) -> Result<Target, String> {
             let key = crate::auth::keychain::get(&endpoint.key_ref).unwrap_or_default();
 
             if key.is_empty() {
-                return Err(format!(
-                    "No API key for {}. Connect it in the Provider Hub; the key is stored in the OS keychain.",
-                    endpoint.provider
-                ));
+                return Err(crate::auth::keychain::missing_key_reason(&endpoint.key_ref, &endpoint.provider));
             }
 
             let model = crate::engines::native_api::api_model(&prompt.model).to_string();

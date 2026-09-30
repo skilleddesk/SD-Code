@@ -85,6 +85,17 @@ pub fn ssh_path(path: &std::path::Path) -> String {
     path.display().to_string().replace('\\', "/")
 }
 
+/// `-o Key="path"` for an option whose value is a file, quoted for `ssh`'s own option parser.
+///
+/// Unquoted, a space ends the value: on macOS the data folder is `~/Library/Application Support/sdc`, so
+/// `ControlPath=` failed with `keyword controlpath extra arguments at end of line` and
+/// `UserKnownHostsFile=` became two files, neither holding the pin - no VPS could connect from a Mac, nor
+/// from a Windows account whose name has a space (0.15.8, measured on OpenSSH 10.3). Both options also
+/// expand `%` tokens, so a literal `%` is doubled.
+pub fn file_option(key: &str, path: &std::path::Path) -> String {
+    format!("{key}=\"{}\"", ssh_path(path).replace('%', "%%"))
+}
+
 /// Where this host's master socket lives: `<data>/ssh/cm-<hash>`. Short on purpose - a Unix socket path
 /// has a length limit near 100 bytes.
 pub fn control_path(ssh: &Ssh) -> Result<PathBuf, ErrorObject> {
@@ -120,7 +131,7 @@ pub fn mux_options(ssh: &Ssh) -> Result<Vec<String>, ErrorObject> {
 
     Ok(vec![
         "-o".to_string(),
-        format!("ControlPath={}", ssh_path(&control_path(ssh)?)),
+        file_option("ControlPath", &control_path(ssh)?),
         "-O".to_string(),
         "proxy".to_string(),
     ])
@@ -293,7 +304,7 @@ fn check_now(ssh: &Ssh) -> Master {
 
     command
         .args(ssh.target.port_args())
-        .args(["-o", &format!("ControlPath={}", ssh_path(&path)), "-O", "check"])
+        .args(["-o", &file_option("ControlPath", &path), "-O", "check"])
         .arg(&ssh.target.user_host);
 
     match bounded(command, CHECK_BUDGET) {
@@ -347,7 +358,7 @@ pub fn close(ssh: &Ssh) {
 
     command
         .args(ssh.target.port_args())
-        .args(["-o", &format!("ControlPath={}", ssh_path(&path)), "-O", "exit"])
+        .args(["-o", &file_option("ControlPath", &path), "-O", "exit"])
         .arg(&ssh.target.user_host);
 
     let _ = bounded(command, CHECK_BUDGET);
@@ -523,7 +534,7 @@ pub fn forward(ssh: &Ssh, remote_port: u16) -> Result<u16, ErrorObject> {
 
     command
         .args(ssh.target.port_args())
-        .args(["-o", &format!("ControlPath={}", ssh_path(&path)), "-O", "forward"])
+        .args(["-o", &file_option("ControlPath", &path), "-O", "forward"])
         .args(["-L", &format!("127.0.0.1:{local}:127.0.0.1:{remote_port}")])
         .arg(&ssh.target.user_host);
 
@@ -637,7 +648,7 @@ pub fn sign_in(ssh: &Ssh, password: &str, code: &str) -> Result<String, SignInEr
     for option in [
         "ConnectTimeout=10".to_string(),
         "StrictHostKeyChecking=yes".to_string(),
-        format!("UserKnownHostsFile={}", ssh_path(&pins)),
+        file_option("UserKnownHostsFile", &pins),
         "IdentitiesOnly=yes".to_string(),
         "LogLevel=ERROR".to_string(),
         "BatchMode=no".to_string(),
@@ -651,7 +662,7 @@ pub fn sign_in(ssh: &Ssh, password: &str, code: &str) -> Result<String, SignInEr
         "TCPKeepAlive=yes".to_string(),
         "ControlMaster=yes".to_string(),
         format!("ControlPersist={PERSIST}"),
-        format!("ControlPath={}", ssh_path(&path)),
+        file_option("ControlPath", &path),
     ] {
         command.arg("-o").arg(option);
     }
@@ -931,6 +942,29 @@ fn hide_window(_command: &mut std::process::Command) {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 0.15.8: a file option with a space in it (macOS's `Application Support`) reaches `ssh` whole. Checked
+    /// against the real `ssh -G` when there is one, which is what refused the unquoted form.
+    #[test]
+    fn a_path_with_a_space_is_one_ssh_value() {
+        let path = std::path::Path::new("/Users/a b/Library/Application Support/sdc/ssh/cm-100%");
+        let control = file_option("ControlPath", path);
+        let pins = file_option("UserKnownHostsFile", path);
+
+        assert_eq!(control, "ControlPath=\"/Users/a b/Library/Application Support/sdc/ssh/cm-100%%\"");
+
+        let Some(ssh) = program() else { return };
+        let output = std::process::Command::new(ssh)
+            .args(["-G", "-o", &control, "-o", &pins, "sdc-test.invalid"])
+            .output()
+            .expect("running ssh -G");
+        let text = String::from_utf8_lossy(&output.stdout).to_lowercase();
+
+        /* Unquoted, `ssh -G` exits 255 with "extra arguments at end of line" here. (Its printout of
+           `userknownhostsfile` joins a split list with spaces, so only the exit and ControlPath prove it.) */
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        assert!(text.contains("controlpath /users/a b/library/application support/sdc/ssh/cm-100%"), "{text}");
+    }
 
     #[test]
     fn the_prompts_of_a_two_factor_host_are_told_apart() {

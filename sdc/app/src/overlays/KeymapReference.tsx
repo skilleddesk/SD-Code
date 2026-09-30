@@ -4,6 +4,7 @@ import { commandsByGroup } from '../commands/registry';
 import { Modal } from '../modals/Modal';
 import { useOverlayStore } from '../store/overlays';
 import { strings } from '../strings';
+import { platformHint } from '../lib/external';
 
 /**
  * The F1 keyboard reference (spec section 9.1).
@@ -59,7 +60,7 @@ export function KeymapReference() {
                     </span>
                   ) : null}
                   <span className="kbd inline-flex items-center rounded-[3px] border border-border-default border-b-2 bg-bg-base px-[6px] py-[1px] font-mono text-[10.5px] text-text-secondary">
-                    {command.hint ?? ''}
+                    {platformHint(command.hint ?? '')}
                   </span>
                 </div>
               ))}

@@ -527,6 +527,11 @@ impl CliAdapter {
             .stderr(Stdio::piped())
             .kill_on_drop(true);
 
+        /* Its own process group on Unix, so Stop (`kill_tree`) ends the CLI and everything under it -
+           before 0.15.8 a stopped turn kept running on macOS and Linux (see `pty::kill_tree`). */
+        #[cfg(unix)]
+        command.process_group(0);
+
         let mut child: Child = match command.spawn() {
             Ok(child) => child,
             Err(error) => {

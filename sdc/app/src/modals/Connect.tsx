@@ -35,6 +35,7 @@ import { BTN, BTN_GHOST, BTN_LG, BTN_PRIMARY, BTN_SECONDARY, BTN_SM, BTN_SM_LG }
 import { Field } from '../panels/ui/Field';
 import { Section } from '../panels/ui/Section';
 import { Modal } from './Modal';
+import { copyText, openOutside, opensItsOwnPage } from '../lib/external';
 
 /**
  * `#connectBd` - the two flows that get a user working (spec section 9.10), re-drawn in 0.7.1.
@@ -81,6 +82,7 @@ export function Connect() {
   const codeRef = useRef<HTMLInputElement | null>(null);
   const outputRef = useRef<HTMLPreElement | null>(null);
   const focusedFor = useRef<string | null>(null);
+  const openedFor = useRef<string | null>(null);
 
   /* A finished sign-in says so out loud, once: the card flips because the daemon pushes a
      `ProviderStatus`, and this is the sentence beside it. */
@@ -183,6 +185,22 @@ export function Connect() {
     codeRef.current?.focus();
   }, [login, waitingForCode]);
 
+  /* The CLI's sign-in page opens by itself (0.15.8). On Windows the CLI opens it; on macOS and Linux, run
+     from the app rather than a terminal, it did not, and the only way on was a link that did nothing - so
+     there SDC opens the page itself, once per sign-in. */
+  useEffect(() => {
+    if (login === null || login.url === null || !waitingForCode || openedFor.current === login.loginId || !opensItsOwnPage()) {
+      return;
+    }
+
+    openedFor.current = login.loginId;
+    void openOutside(login.url).then((ok) => {
+      if (ok) {
+        toast(strings.connect.openedInBrowser);
+      }
+    });
+  }, [login, waitingForCode]);
+
   /* The CLI's own output scrolls inside its own fixed-height box, so one line more or less cannot resize
      the dialog and push the fields out from under the pointer. */
   useEffect(() => {
@@ -223,7 +241,7 @@ export function Connect() {
           .sort((left, right) => Number(isInUse(right.id)) - Number(isInUse(left.id)));
 
   const copy = (text: string): void => {
-    void navigator.clipboard?.writeText(text).then(() => toast(strings.connect.copied));
+    void copyText(text).then((ok) => toast(ok ? strings.connect.copied : strings.connect.copyFailed));
   };
 
   const signIn = (): void => {
@@ -520,14 +538,14 @@ export function Connect() {
                           >
                             <ClipboardCopy size={12} aria-hidden="true" /> {strings.connect.copyLink}
                           </button>
-                          <a
+                          <button
+                            type="button"
                             className={BTN_SM + ' ' + BTN_GHOST}
-                            href={login.url ?? '#'}
-                            target="_blank"
-                            rel="noreferrer noopener"
+                            onClick={() => void openOutside(login.url ?? '')}
+                            id="connectOpenLink"
                           >
                             <ExternalLink size={12} aria-hidden="true" /> {strings.connect.openLink}
-                          </a>
+                          </button>
                         </>
                       }
                     >

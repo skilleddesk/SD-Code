@@ -364,7 +364,7 @@ fn scan_by_handshake(target: &SshTarget) -> Result<Vec<HostKey>, ErrorObject> {
     }
 
     args.push("-o".to_string());
-    args.push(format!("UserKnownHostsFile={}", scratch.display()));
+    args.push(super::session::file_option("UserKnownHostsFile", &scratch));
     args.push(target.user_host.clone());
     args.push("true".to_string());
 

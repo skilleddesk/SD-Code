@@ -27,8 +27,7 @@ use sdcd::sdcp::envelope::{Envelope, Response};
 use sdcd::sdcp::notifications::{ChannelNotifier, Notifier};
 use sdcd::{DaemonState, SDCP_VERSION, VERSION};
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     /* Started by `ssh` as its `SSH_ASKPASS` during a sign-in (`ssh::session`): answer the one prompt and
        leave. Nothing of the daemon is started. */
     if let Ok(spec) = std::env::var(sdcd::ssh::session::ASKPASS_ENV) {
@@ -36,6 +35,19 @@ async fn main() -> Result<()> {
 
         std::process::exit(sdcd::ssh::session::answer_prompt(&spec, &prompt));
     }
+
+    /* Before the runtime exists, because it changes the process environment: a daemon started from the
+       macOS Dock has only `/usr/bin:/bin:/usr/sbin:/sbin`, and found none of the CLIs (0.15.8). */
+    sdcd::host::env_path::widen();
+
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .context("starting the async runtime")?
+        .block_on(run())
+}
+
+async fn run() -> Result<()> {
 
     sdcd::crash::install_hook();
 

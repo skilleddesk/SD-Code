@@ -15,6 +15,62 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [0.15.8] — macOS and Linux work like Windows: CLIs are found, links open, copy and paste work, a VPS connects, and every platform ships the same version
+
+The report: *"the way it performs on Windows, it doesn't perform on macOS or other OS. On macOS the browser
+does not open automatically, and even the link option in the CLI sign-in - click it or copy it - does not
+work. The API has issues too."* Every cause below was Windows-shaped code that no Windows check could fail.
+
+**The CLIs were never found on a Mac.** An app opened from Finder or the Dock gets `launchd`'s `PATH`
+(`/usr/bin:/bin:/usr/sbin:/sbin`). `claude`, `codex`, `gemini`, `node` and `npm` live in Homebrew, npm,
+`~/.local/bin` or nvm folders, so the daemon said "not installed" or "not connected" about CLIs that ran fine
+in Terminal. No sign-in could start, so no browser opened, and the agent's `npm`/`node` commands and the
+preview's `npm run dev` failed the same way. `sdcd` now asks the user's login shell for its `PATH` at start
+(bounded at 4 s) and adds the usual install folders that exist (Homebrew, `~/.local/bin`, npm-global, bun,
+volta, pnpm, the newest nvm Node; on Windows `%APPDATA%\npm` and the Node folders). Linux desktop launchers
+had the same hole for nvm and `~/.local/bin`.
+
+**Links and the clipboard did nothing outside Windows.** The sign-in dialog's "Open in browser" was a
+`target="_blank"` link, the subscription flow used `window.open`, and Copy/Paste used `navigator.clipboard`.
+Windows' WebView2 honours all three. macOS' WKWebView and Linux' WebKitGTK silently ignore them. They now go
+through Tauri's native opener and the new clipboard plugin (`copyText`/`readText`), and any other web link in
+the window is sent to the browser too. On macOS and Linux the CLI's sign-in page now opens by itself as soon as
+its link appears. A copy that still fails says so instead of doing nothing. ESLint now rejects `window.open`,
+`navigator.clipboard` and `target="_blank"`, so they cannot come back.
+
+**No VPS could connect from a Mac** (or from a Windows account whose name has a space). The ssh options
+`ControlPath=` and `UserKnownHostsFile=` carried the data folder unquoted, and on macOS that is
+`~/Library/Application Support/sdc`. OpenSSH refused the first (`keyword controlpath extra arguments at end
+of line`) and split the second into two files, so the host key never matched. Both are quoted now, with `%`
+escaped. A test runs the real `ssh -G` against a path with spaces.
+
+**Stop did not stop anything on macOS or Linux.** `kill_tree` was a no-op there, and a stopped Claude, Codex
+or Gemini turn went on running. So did an agent's `sh -c "npm run dev"` children and the preview's dev server.
+Every child SDC can stop now starts as its own process group, and the whole group is ended, as `taskkill /T`
+already did on Windows.
+
+**API keys on a Mac.** The Keychain asks before an app it does not recognise reads an item, and an ad hoc
+signed build is "new" after every update. SDC read the Keychain on every provider list and every turn, and a
+declined question read as "No API key". Keys are now read once per daemon start, and a refused read says so
+("choose Always Allow when the Keychain asks about sdcd, or connect the key again").
+
+**Claude's sign-in reaches a VPS from a Mac too.** Claude Code keeps it in the Keychain
+(`Claude Code-credentials`), not in `~/.claude/.credentials.json`, so a Mac forwarded nothing. It is now read
+with Apple's `security` tool (bounded at 10 s).
+
+**Also:** shortcut hints read `⌘`/`⇧` on a Mac.
+
+**One version on every platform.** A release used to go public platform by platform, and the Windows job then
+deleted every older release. A failed macOS build left a public version with no `.dmg`, and the previous
+`.dmg` was already gone. `release.yml` now builds into a **draft**. A final job makes it public only when all
+four builds succeeded and all six installers are attached, and only then removes the older releases. A failed
+platform leaves the previous release public for everyone.
+
+Checked: 430 daemon unit tests + 19 integration tests + 227 app tests on Windows. `cargo clippy -D warnings`
+for `aarch64-apple-darwin` and `x86_64-unknown-linux-gnu` (with the keychain feature), compiled from Windows
+with zig as the C compiler. The ssh quoting against the real OpenSSH 10.3. Not run on real Mac or Linux
+hardware: the macOS/Linux behaviour is compiled and unit-tested, not clicked.
+
 ## [0.15.7] — The macOS build runs on Apple Silicon without "is damaged and can't be opened"
 
 The report: opening `SDC_0.15.6_aarch64.dmg`'s app said *"SDC is damaged and can't be opened. You should

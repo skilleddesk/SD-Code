@@ -2,6 +2,7 @@
 //! machines it reaches (`doctor::remote_checks`).
 
 pub mod doctor;
+pub mod env_path;
 pub mod program;
 
 pub use doctor::{checks, remote_checks};

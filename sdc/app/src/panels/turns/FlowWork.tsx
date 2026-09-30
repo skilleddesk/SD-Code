@@ -11,6 +11,7 @@ import { Sparkline, StatusMark, StepBody, StepIcon, TimeRibbon } from './StepPar
 import { duration, hasBody, reveal, useNow, usePace } from './stepKit';
 import { Narration } from './Narration';
 import type { Turn } from './types';
+import { copyText } from '../../lib/external';
 
 const FILTERS: Filter[] = ['all', 'think', 'read', 'edit', 'run', 'say'];
 
@@ -66,10 +67,11 @@ export function FlowWork({ turn, sessionId }: { turn: Turn; sessionId: string })
   const shown = work.filter((step) => matches(step, filter));
   const tools = work.filter((step) => step.drawn.kind === 'tool' || step.drawn.kind === 'explore').length;
   const copy = (): void => {
-    void navigator.clipboard
-      ?.writeText(`${turn.user.body}\n\n${transcript(list, turn.startedAt)}`)
-      .then(() => toast(strings.turns.flow.copied))
-      .catch(() => undefined);
+    void copyText(`${turn.user.body}\n\n${transcript(list, turn.startedAt)}`).then((ok) => {
+      if (ok) {
+        toast(strings.turns.flow.copied);
+      }
+    });
   };
 
   return (

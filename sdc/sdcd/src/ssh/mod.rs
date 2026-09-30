@@ -209,7 +209,7 @@ impl Ssh {
         }
 
         args.push("-o".to_string());
-        args.push(format!("UserKnownHostsFile={}", session::ssh_path(&pins)));
+        args.push(session::file_option("UserKnownHostsFile", &pins));
         args.extend(mux);
 
         /* The key SDC owns, when it exists. `ensure_key` is what makes one, and it is called on the

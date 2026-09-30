@@ -31,7 +31,7 @@ pub fn forwarded(program: &str) -> Vec<(String, String)> {
 }
 
 /// `~/.claude/.credentials.json`, or the one under `CLAUDE_CONFIG_DIR` - where Claude Code keeps its
-/// sign-in on Windows and Linux. (macOS keeps it in the Keychain; there is no file, and nothing is sent.)
+/// sign-in on Windows and Linux. (macOS keeps it in the Keychain - see `read_claude_keychain`.)
 fn claude_credentials_path() -> Option<PathBuf> {
     let folder = match std::env::var_os("CLAUDE_CONFIG_DIR") {
         Some(dir) if !dir.is_empty() => PathBuf::from(dir),
@@ -43,9 +43,54 @@ fn claude_credentials_path() -> Option<PathBuf> {
 
 /// The access token and when it expires (ms since the epoch), if the file holds a sign-in.
 fn read_claude() -> Option<(String, u64)> {
-    let text = std::fs::read_to_string(claude_credentials_path()?).ok()?;
+    let from_file = claude_credentials_path()
+        .and_then(|path| std::fs::read_to_string(path).ok())
+        .and_then(|text| parse_claude(&text));
 
-    parse_claude(&text)
+    from_file.or_else(read_claude_keychain)
+}
+
+/// macOS: Claude Code keeps its sign-in in the login Keychain as `Claude Code-credentials`, holding the
+/// same JSON the file holds elsewhere. Until 0.15.8 a Mac therefore forwarded nothing to a VPS. Read with
+/// Apple's own `security` tool (the program Claude Code writes the item with), bounded so a Keychain
+/// question nobody answers cannot hold a turn.
+#[cfg(target_os = "macos")]
+fn read_claude_keychain() -> Option<(String, u64)> {
+    use std::io::Read;
+    use std::process::{Command, Stdio};
+
+    let mut child = Command::new("/usr/bin/security")
+        .args(["find-generic-password", "-s", "Claude Code-credentials", "-w"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    let started = std::time::Instant::now();
+
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) if status.success() => break,
+            Ok(None) if started.elapsed() < Duration::from_secs(10) => std::thread::sleep(Duration::from_millis(50)),
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+
+                return None;
+            }
+        }
+    }
+
+    let mut text = String::new();
+
+    child.stdout.take()?.read_to_string(&mut text).ok()?;
+
+    parse_claude(text.trim())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn read_claude_keychain() -> Option<(String, u64)> {
+    None
 }
 
 fn parse_claude(text: &str) -> Option<(String, u64)> {

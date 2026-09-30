@@ -169,6 +169,34 @@ flow proved in the browser is a UI flow that works against `sdcd`
   decision, not a convenience: raise it in an issue first and say what it
   replaces.
 
+### Cross-platform rules (Windows is not the test)
+
+SDC is developed on Windows and ships to Windows, macOS and Linux. Version 0.15.7 worked on Windows and was
+broken on a Mac in ways no Windows check could see. Each rule below comes from one of those failures:
+
+* **A GUI app does not get the terminal's `PATH`.** On macOS, an app started from Finder or the Dock has
+  only `/usr/bin:/bin:/usr/sbin:/sbin`, so `claude`, `codex`, `gemini`, `node` and `npm` are not found.
+  `sdcd` widens its `PATH` once, in `main`, before the runtime starts (`host/env_path.rs`). Find a
+  program with `host::program::resolve`/`command`/`launch`, never with a bare `Command::new("npm")`.
+* **The webview is not a browser.** WKWebView (macOS) and WebKitGTK (Linux) silently ignore
+  `window.open`, `target="_blank"` and `navigator.clipboard`, while WebView2 (Windows) honours them. Use
+  `openOutside`, `copyText` and `readText` from `app/src/lib/external.ts`. ESLint rejects the other forms.
+* **Paths have spaces.** The macOS data folder is `~/Library/Application Support/sdc`, and a Windows
+  account name can contain a space too. Every path passed inside an `ssh -o Key=value` goes through
+  `ssh::session::file_option`, which quotes it. Never write `format!("Key={}", path)`.
+* **Stopping must stop the whole tree on every OS.** Windows uses `taskkill /T`. On Unix, a child started
+  with `pty::own_group` (or `process_group(0)` on a tokio `Command`) is ended as a group by
+  `pty::kill_tree`. A new spawn that can be stopped needs `own_group`.
+* **Secrets differ per OS.** macOS keeps Claude Code's sign-in in the Keychain, not in
+  `~/.claude/.credentials.json`. SDC's own Keychain reads can be refused, and a refusal must be
+  reported as a refusal, never as "no key".
+* **Compile for the other two before a release.** From Windows, run
+  `cargo clippy --target aarch64-apple-darwin --all-targets --features keychain -- -D warnings`, and the
+  same with `--target x86_64-unknown-linux-gnu`. `ring` needs a C compiler for those targets: point
+  `CC_<target>`/`AR_<target>` at `zig cc -target …` (the flags `cc` adds must be filtered out).
+* **One version everywhere.** `release.yml` builds into a draft release and makes it public only when
+  every platform built and every installer is attached. Never publish a release from one platform's job.
+
 ### Never commit a secret
 
 This repository is public, and the CI job in `.github/workflows/secret-scan.yml`

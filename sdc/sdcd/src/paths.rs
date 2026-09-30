@@ -117,13 +117,13 @@ pub fn socket_path(port: u16) -> Result<PathBuf> {
     {
         let runtime = std::env::var_os("XDG_RUNTIME_DIR")
             .map(PathBuf::from)
-            .unwrap_or_else(|| std::env::temp_dir());
+            .unwrap_or_else(std::env::temp_dir);
 
         let dir = runtime.join("sdc");
 
         std::fs::create_dir_all(&dir)?;
 
-        return Ok(dir.join(socket_file_name(port)));
+        Ok(dir.join(socket_file_name(port)))
     }
 
     #[cfg(windows)]

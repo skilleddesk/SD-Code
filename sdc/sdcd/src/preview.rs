@@ -281,8 +281,11 @@ pub struct DevReport {
     pub log: String,
 }
 
-fn local_servers() -> &'static Mutex<HashMap<String, (std::process::Child, u16, std::path::PathBuf)>> {
-    static SERVERS: OnceLock<Mutex<HashMap<String, (std::process::Child, u16, std::path::PathBuf)>>> = OnceLock::new();
+/// A running `npm run dev` per folder: the process, its port and its folder.
+type LocalServers = HashMap<String, (std::process::Child, u16, std::path::PathBuf)>;
+
+fn local_servers() -> &'static Mutex<LocalServers> {
+    static SERVERS: OnceLock<Mutex<LocalServers>> = OnceLock::new();
 
     SERVERS.get_or_init(Default::default)
 }
@@ -363,6 +366,8 @@ pub fn dev_local(root: &std::path::Path, stop: bool) -> DevReport {
 
             command.creation_flags(0x0800_0000);
         }
+
+        crate::pty::own_group(&mut command);
 
         match command.spawn() {
             Ok(child) => {
