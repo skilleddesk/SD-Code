@@ -194,6 +194,14 @@ broken on a Mac in ways no Windows check could see. Each rule below comes from o
   `cargo clippy --target aarch64-apple-darwin --all-targets --features keychain -- -D warnings`, and the
   same with `--target x86_64-unknown-linux-gnu`. `ring` needs a C compiler for those targets: point
   `CC_<target>`/`AR_<target>` at `zig cc -target …` (the flags `cc` adds must be filtered out).
+* **Test a fresh install, not only your own long-used window.** The Welcome dialog appears only on a first
+  run, and it hid the Provider Hub (0.15.9). A dialog opened from another dialog must be drawn on top of it:
+  a parent that opens children steps aside while they are open (see `kernel/Onboarding.tsx`), and
+  `<Permission />` stays the last dialog in `App.tsx`.
+* **A real Mac is one push away.** The `mac-probe` branch has a workflow that runs on a GitHub Apple Silicon
+  runner, builds or installs SDC, opens it the way the Dock does, and presses through the window with the
+  accessibility API (`osascript -l JavaScript`), taking screenshots. Results land on the `probe-results`
+  branch. Use it before telling anyone a macOS fix works.
 * **One version everywhere.** `release.yml` builds into a draft release and makes it public only when
   every platform built and every installer is attached. Never publish a release from one platform's job.
 

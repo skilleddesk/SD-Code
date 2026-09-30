@@ -110,11 +110,6 @@ export function routeLinksOutside(): void {
   );
 }
 
-/** True where SDC, not the CLI, has to open a CLI's sign-in page: everywhere but Windows (see Connect). */
-export function opensItsOwnPage(): boolean {
-  return typeof navigator !== 'undefined' && !/windows/i.test(navigator.userAgent);
-}
-
 /** A shortcut hint in the platform's own words: `Ctrl K` is `⌘ K` on a Mac, where Ctrl is not the key. */
 export function platformHint(hint: string): string {
   const mac = typeof navigator !== 'undefined' && /mac/i.test(navigator.userAgent);

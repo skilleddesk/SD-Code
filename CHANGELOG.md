@@ -15,6 +15,39 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [0.15.9] — Sign in works on a new Mac: the Provider Hub opens on top of the Welcome dialog
+
+The report, on Apple Silicon after updating to 0.15.8: *"Sign in does nothing."*
+
+Reproduced on a real Apple Silicon Mac (a GitHub `macos-14` runner, with the window driven through the
+accessibility API and screenshotted after each step). On a fresh install the **Welcome to SDC** dialog opens
+first, and its "Open the Provider Hub" opened the hub **underneath** it. `<Onboarding />` was rendered last,
+so it covered every dialog it opened. The provider cards could be seen, blurred, and could not be reached.
+It looked like nothing happened. This never shows on a machine that finished the Welcome dialog long ago,
+which is why no Windows check caught it. The Welcome dialog now steps aside while the Provider Hub, Connect,
+Add a server, Settings or New project is open, and comes back on the same step. On the same Mac, pressing the
+Claude card now opens Connect, starts `claude auth login`, shows the link and the code box, and Safari opens
+Claude's Log in page.
+
+Also:
+
+- **Approvals are always on top.** The Permission dialog, where a turn waits for your yes, was rendered under
+  Connect, Agency, Cost Center, the policy editor, the memory dialog and the Welcome dialog. It is now the
+  last dialog drawn.
+- **Codex was shown as connected without a sign-in.** `codex login status` prints "Not logged in", which
+  contains "logged in". It is now read as signed out (seen on the clean Mac, with a test).
+- **The CLI status checks are bounded.** `claude auth status` and `codex login status` run inside the
+  provider list, and a CLI that waited on something held the list, and the window, with it. They now give up
+  after 15 s.
+- **One browser tab, not two.** 0.15.8 opened the sign-in page itself on macOS and Linux, but the CLIs
+  already do that (measured on the Mac: Claude and Codex both open Safari). The page opened twice, so SDC's
+  own opening is removed. "Open in browser" in the dialog still works.
+
+Checked on the real Apple Silicon Mac against 0.15.8's installer. With launchd's bare `PATH`
+(`/usr/bin:/bin:/usr/sbin:/sbin`), `SHELL=/bin/zsh` and the CLIs reachable only through `~/.zshrc`, the
+daemon found `claude` and `codex` and started both sign-ins. This fix, built from source on the same Mac,
+was then pressed through in the window, from the Welcome dialog to Claude's Log in page.
+
 ## [0.15.8] — macOS and Linux work like Windows: CLIs are found, links open, copy and paste work, a VPS connects, and every platform ships the same version
 
 The report: *"the way it performs on Windows, it doesn't perform on macOS or other OS. On macOS the browser
