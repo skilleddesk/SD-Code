@@ -1,7 +1,7 @@
-name: mac-probe
+name: os-probe
 
-# Dev-only. Round 3: (A) the daemon started with launchd's bare environment, CLIs only on ~/.zshrc's PATH;
-# (B) the real window driven through accessibility: onboarding -> Provider Hub -> Claude -> Sign in.
+# Dev-only: the same end-to-end pass on Windows, macOS (Apple Silicon) and Linux, built from this branch.
+# Each OS pushes its results to its own branch, probe-results-<os>.
 on:
   push:
     branches: [mac-probe]
@@ -10,69 +10,106 @@ permissions:
   contents: write
 
 jobs:
-  probe:
-    runs-on: macos-14
+  e2e:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            name: macos
+          - os: ubuntu-22.04
+            name: linux
+          - os: windows-latest
+            name: windows
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: CLIs in ~/.npm-global, reachable only through ~/.zshrc
-        run: |
-          nodebin=$(dirname "$(which node)")
-          npm config set prefix "$HOME/.npm-global"
-          npm i -g @anthropic-ai/claude-code @openai/codex >/dev/null
-          echo "export PATH=\"$nodebin:\$HOME/.npm-global/bin:\$PATH\"" >> ~/.zshrc
       - uses: pnpm/action-setup@v4
         with:
           version: 10
       - uses: dtolnay/rust-toolchain@stable
-      - name: Build SDC from this branch's source (the fix under test) and install it
-        working-directory: sdc
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            sdc/sdcd
+            sdc/app/src-tauri
+
+      - name: CLIs (unix - only on the login shell's PATH, like a real install)
+        if: runner.os != 'Windows'
+        shell: bash
         run: |
-          pnpm install --frozen-lockfile
-          cd app && pnpm tauri build --bundles app
-          cp -R src-tauri/target/release/bundle/macos/SDC.app /Applications/
-          /Applications/SDC.app/Contents/MacOS/sdcd --version || true
-      - name: (A) the daemon with launchd's bare environment
+          nodebin=$(dirname "$(which node)")
+          npm config set prefix "$HOME/.npm-global"
+          npm i -g @anthropic-ai/claude-code @openai/codex >/dev/null
+          for rc in ~/.zshrc ~/.bashrc ~/.profile; do echo "export PATH=\"$nodebin:\$HOME/.npm-global/bin:\$PATH\"" >> $rc; done
+      - name: CLIs (windows)
+        if: runner.os == 'Windows'
+        run: npm i -g @anthropic-ai/claude-code @openai/codex
+
+      - name: Build the daemon
+        shell: bash
+        working-directory: sdc/sdcd
+        run: |
+          if [ "${{ runner.os }}" = "Linux" ]; then cargo build --release; else cargo build --release --features keychain; fi
+
+      - name: An SSH server with a password user (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          pass="E2e-$(openssl rand -hex 8)"; echo "::add-mask::$pass"; echo "E2E_PASS=$pass" >> "$GITHUB_ENV"
+          sudo sysadminctl -addUser sdce2e -password "$pass" -home /Users/sdce2e
+          sudo createhomedir -c -u sdce2e >/dev/null
+          sudo systemsetup -f -setremotelogin on || sudo launchctl load -w /System/Library/LaunchDaemons/ssh.plist || true
+          sleep 3; nc -z 127.0.0.1 22 && echo "sshd up"
+      - name: An SSH server with a password user (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          pass="E2e-$(openssl rand -hex 8)"; echo "::add-mask::$pass"; echo "E2E_PASS=$pass" >> "$GITHUB_ENV"
+          sudo apt-get install -y openssh-server >/dev/null
+          sudo useradd -m -s /bin/bash sdce2e; echo "sdce2e:$pass" | sudo chpasswd
+          printf 'PasswordAuthentication yes\nKbdInteractiveAuthentication yes\n' | sudo tee /etc/ssh/sshd_config.d/99-e2e.conf
+          sudo systemctl restart ssh; sleep 2; nc -z 127.0.0.1 22 && echo "sshd up"
+
+      - name: End to end (unix - daemon started with a bare environment)
+        if: runner.os != 'Windows'
+        shell: bash
         run: |
           mkdir -p out
-          env -i HOME="$HOME" USER="$USER" LOGNAME="$USER" SHELL=/bin/zsh TMPDIR="$TMPDIR" PATH=/usr/bin:/bin:/usr/sbin:/sbin \
-            /Applications/SDC.app/Contents/MacOS/sdcd --port 7811 > out/bare-daemon.log 2>&1 &
-          for i in $(seq 1 30); do lsof -nP -iTCP:7811 -sTCP:LISTEN >/dev/null && break; sleep 1; done
-          node .github/probe/probe.mjs 2>&1 | tee out/bare.txt
-          pkill -x sdcd || true
-          sleep 2
-      - name: (B) the window, driven like a person
+          env -i HOME="$HOME" USER="$USER" LOGNAME="$USER" SHELL="$(if [ "${{ runner.os }}" = macOS ]; then echo /bin/zsh; else echo /bin/bash; fi)" TMPDIR="${TMPDIR:-/tmp}" PATH=/usr/bin:/bin:/usr/sbin:/sbin \
+            sdc/sdcd/target/release/sdcd --port 7811 --database "$RUNNER_TEMP/e2e.db" > out/daemon.log 2>&1 &
+          for i in $(seq 1 30); do nc -z 127.0.0.1 7811 && break; sleep 1; done
+          SDC_E2E_TURNS=1 SDC_E2E_SSH="sdce2e@127.0.0.1" SDC_E2E_PASS="$E2E_PASS" node .github/probe/e2e-os.mjs 7811 2>&1 | tee out/e2e.txt || true
+      - name: End to end (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
         run: |
-          shot() { screencapture -x "out/$1.png" || true; }
-          press() { echo "--- press $1"; osascript -l JavaScript .github/probe/ax.js "$1" "$2" 2>&1; }
-          open -a /Applications/SDC.app
-          for i in $(seq 1 60); do lsof -nP -iTCP:7811 -sTCP:LISTEN >/dev/null && break; sleep 1; done
-          sleep 6
-          osascript -e 'tell application "SDC" to activate' || true
-          sleep 1
-          {
-            shot 1-start
-            press "Work on a project here"; sleep 1
-            press "Next" exact; sleep 2; shot 2-model
-            press "Open the Provider Hub"; sleep 3; shot 3-hub
-            press 'claude` is installed'; sleep 3; shot 4-connect
-            press "Sign in" exact; sleep 4; shot 5-after-4s
-            sleep 12; shot 6-after-16s
-            echo "--- window text"; osascript -l JavaScript .github/probe/texts.js 2>&1
-            echo "--- daemon"; node -e "
-              const net=require('net');const s=net.connect(7811,'127.0.0.1');let b='';
-              s.on('connect',()=>s.write(JSON.stringify({v:'0.1',id:'x',method:'host.status',params:{}})+'\n'));
-              s.on('data',d=>{b+=d;for(const l of b.split('\n')){try{const m=JSON.parse(l);if(m.id==='x'){console.log('pty processes:',m.result.pty);s.end();}}catch{}}});"
-            pgrep -lf "claude" || echo "no claude process"
-          } 2>&1 | tee out/ui.txt
+          New-Item -ItemType Directory -Force out | Out-Null
+          Start-Process sdc/sdcd/target/release/sdcd.exe -ArgumentList "--port","7811","--database","$env:RUNNER_TEMP\e2e.db" -WindowStyle Hidden
+          Start-Sleep 4
+          $env:SDC_E2E_TURNS = "1"
+          node .github/probe/e2e-os.mjs 7811 2>&1 | Tee-Object out/e2e.txt
+          exit 0
+
+      - name: The app starts its own daemon (Linux .deb under a virtual display)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xvfb >/dev/null
+          pkill -x sdcd || true
+          cd sdc && pnpm install --frozen-lockfile >/dev/null && cd app && pnpm tauri build --bundles deb > ../../out/app-build.log 2>&1 || tail -40 ../../out/app-build.log
+          cd ../.. && sudo apt-get install -y ./sdc/app/src-tauri/target/release/bundle/deb/*.deb >/dev/null
+          (xvfb-run -a sdc > out/app.log 2>&1 &) ; for i in $(seq 1 40); do nc -z 127.0.0.1 7811 && break; sleep 1; done
+          { nc -z 127.0.0.1 7811 && echo "PASS  linux app started its daemon" || echo "FAIL  linux app did not start its daemon"; pgrep -a sdcd; } | tee -a out/e2e.txt
+          sleep 5; DISPLAY= xvfb-run -a true; import -window root out/screen.png 2>/dev/null || true
+
       - name: Push the results
         if: always()
+        shell: bash
         run: |
           git config user.name probe; git config user.email probe@users.noreply.github.com
-          git checkout --orphan probe-results
+          git checkout --orphan "probe-results-${{ matrix.name }}"
           git rm -rq --cached . || true
           git add -f out
-          git commit -qm "mac probe 3 $(date -u +%FT%TZ)"
-          git push -qf origin probe-results
+          git commit -qm "os probe ${{ matrix.name }} $(date -u +%FT%TZ)"
+          git push -qf origin "probe-results-${{ matrix.name }}"
