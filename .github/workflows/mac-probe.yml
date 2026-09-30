@@ -62,7 +62,21 @@ jobs:
           sudo sysadminctl -addUser sdce2e -password "$pass" -home /Users/sdce2e
           sudo createhomedir -c -u sdce2e >/dev/null
           sudo systemsetup -f -setremotelogin on || sudo launchctl load -w /System/Library/LaunchDaemons/ssh.plist || true
+          sudo dseditgroup -o create -q com.apple.access_ssh 2>/dev/null || true
+          sudo dseditgroup -o edit -a sdce2e -t user com.apple.access_ssh || true
           sleep 3; nc -z 127.0.0.1 22 && echo "sshd up"
+          mkdir -p out
+          cat > /tmp/login.exp <<'EXP'
+          set timeout 20
+          spawn ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PreferredAuthentications=keyboard-interactive,password sdce2e@127.0.0.1 echo manual-login-ok
+          expect {
+            -re "(?i)password" { send "$env(E2E_PASS)"; exp_continue }
+            "manual-login-ok" { exit 0 }
+            timeout { exit 2 }
+            eof { exit 3 }
+          }
+          EXP
+          E2E_PASS="$pass" expect /tmp/login.exp > out/manual-login.txt 2>&1; echo "manual login exit $?" | tee -a out/manual-login.txt
       - name: An SSH server with a password user (Linux)
         if: runner.os == 'Linux'
         run: |
@@ -95,10 +109,12 @@ jobs:
       - name: The app starts its own daemon (Linux .deb under a virtual display)
         if: runner.os == 'Linux'
         run: |
+          set +e
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xvfb >/dev/null
           pkill -x sdcd || true
-          cd sdc && pnpm install --frozen-lockfile >/dev/null && cd app && pnpm tauri build --bundles deb > ../../out/app-build.log 2>&1 || tail -40 ../../out/app-build.log
-          cd ../.. && sudo apt-get install -y ./sdc/app/src-tauri/target/release/bundle/deb/*.deb >/dev/null
+          (cd sdc && pnpm install --frozen-lockfile && cd app && pnpm tauri build --bundles deb) > out/app-build.log 2>&1
+          echo "build exit $?" >> out/app-build.log
+          sudo apt-get install -y ./sdc/app/src-tauri/target/release/bundle/deb/*.deb >> out/app-build.log 2>&1
           (xvfb-run -a sdc > out/app.log 2>&1 &) ; for i in $(seq 1 40); do nc -z 127.0.0.1 7811 && break; sleep 1; done
           { nc -z 127.0.0.1 7811 && echo "PASS  linux app started its daemon" || echo "FAIL  linux app did not start its daemon"; pgrep -a sdcd; } | tee -a out/e2e.txt
           sleep 5; DISPLAY= xvfb-run -a true; import -window root out/screen.png 2>/dev/null || true
