@@ -23,13 +23,17 @@ jobs:
           npm config set prefix "$HOME/.npm-global"
           npm i -g @anthropic-ai/claude-code @openai/codex >/dev/null
           echo "export PATH=\"$nodebin:\$HOME/.npm-global/bin:\$PATH\"" >> ~/.zshrc
-      - name: Install SDC like a user
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build SDC from this branch's source (the fix under test) and install it
+        working-directory: sdc
         run: |
-          tag=$(cat .github/probe/TAG)
-          curl -sSL -o sdc.dmg "https://github.com/${{ github.repository }}/releases/download/$tag/SDC_${tag#v}_aarch64.dmg"
-          hdiutil attach sdc.dmg -nobrowse -mountpoint /Volumes/SDC
-          cp -R /Volumes/SDC/SDC.app /Applications/
-          hdiutil detach /Volumes/SDC
+          pnpm install --frozen-lockfile
+          cd app && pnpm tauri build --bundles app
+          cp -R src-tauri/target/release/bundle/macos/SDC.app /Applications/
+          /Applications/SDC.app/Contents/MacOS/sdcd --version || true
       - name: (A) the daemon with launchd's bare environment
         run: |
           mkdir -p out
