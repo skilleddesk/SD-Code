@@ -1,0 +1,18 @@
+PASS  host.status answers  windows · x86_64 · sdcd 0.15.9 · keychain os
+PASS  provider.list answers  16 providers
+PASS  claude CLI is found  needs-auth · `claude` is installed · Connect starts its own sign-in
+PASS  openai CLI is found  needs-auth · `codex` is installed · Connect starts its own sign-in
+PASS  host.doctor answers  node:ok claude:ok codex:ok gemini:fail ollama:fail ripgrep:fail git:ok ssh:ok port3000:ok disk:ok
+PASS  doctor sees node and git  [{"detail":"v22.23.2","id":"node","label":"Node.js","state":"ok"},{"detail":"git version 2.55.0.windows.5","id":"git","label":"Git","state":"ok"},{"detail":"OpenSSH_10.5p1, OpenSSL 3.5.7 9 Jun 2026","
+PASS  local: project.add (a folder with a space)  {"hostId":"local","name":"sdc e2e j1zyrO","projectId":"pr1","root":"C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\sdc e2e j1zyrO"}
+PASS  local: session.open
+PASS  local: fs.write
+PASS  local: fs.read returns what was written  {"got":"hello from win32 1790783732357\n"}
+PASS  local: fs.list sees the file
+PASS  local: shell.run  {"args":["/C","echo e2e-run-ok"],"command":"cmd","cwd":null,"durationMs":27,"error":null,"exitCode":0,"ok":true,"stderr":"","stdout":"e2e-run-ok\r\n","timedOut":false,"truncated":false}
+PASS  local: terminal runs a command
+PASS  claude sign-in shows its link  ["Opening browser to sign in…","If the browser didn't open, visit: https://claude.com/cai/oauth/authorize?code=true&client_id=9d1c250a-e61b-44d9-88ed-5944d1962f5e&response_type=code&redirect_uri=https
+PASS  claude_code turn ends within 2 min  ErrorRaised: claude_code is signed out where this chat runs - `Not logged in · Please run /login`. The CLI's sign-in on the machine this chat runs on has expired. A sign-in on this PC does not reach a
+PASS  codex turn ends within 2 min  ErrorRaised: Codex is not signed in - `unexpected status 401 Unauthorized: Missing bearer or basic authentication in header, url: https://api.openai.com/v1/responses, cf-ray: a4346a19e9d10d24-YUL, req
+
+16/16 passed
