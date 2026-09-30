@@ -57,7 +57,7 @@ jobs:
             press "Work on a project here"; sleep 1
             press "Next" exact; sleep 2; shot 2-model
             press "Open the Provider Hub"; sleep 3; shot 3-hub
-            press "`claude` is installed"; sleep 3; shot 4-connect
+            press 'claude` is installed'; sleep 3; shot 4-connect
             press "Sign in" exact; sleep 4; shot 5-after-4s
             sleep 12; shot 6-after-16s
             echo "--- window text"; osascript -l JavaScript .github/probe/texts.js 2>&1
