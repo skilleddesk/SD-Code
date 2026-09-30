@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { opensItsOwnPage, platformHint } from './external';
+import { platformHint } from './external';
 
 /* The window's platform, as the webview reports it (0.15.8: the macOS/Linux fixes key off it). */
 function onPlatform(userAgent: string): void {
@@ -25,18 +25,5 @@ describe('platformHint', () => {
 
     onPlatform('Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/605.1.15');
     expect(platformHint('Ctrl K')).toBe('Ctrl K');
-  });
-});
-
-describe('opensItsOwnPage', () => {
-  it('is SDC that opens a sign-in page on macOS and Linux, the CLI on Windows', () => {
-    onPlatform('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)');
-    expect(opensItsOwnPage()).toBe(true);
-
-    onPlatform('Mozilla/5.0 (X11; Linux x86_64)');
-    expect(opensItsOwnPage()).toBe(true);
-
-    onPlatform('Mozilla/5.0 (Windows NT 10.0; Win64; x64)');
-    expect(opensItsOwnPage()).toBe(false);
   });
 });

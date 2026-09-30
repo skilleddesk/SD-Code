@@ -509,6 +509,15 @@ pub fn parse_stream_line(line: &str) -> Vec<EngineEvent> {
         "tool_use" if value.get("tool_name").is_some() => vec![gemini_tool_started(&value)],
         "tool_result" if value.get("tool_id").is_some() => gemini_tool_result(&value),
 
+        /* Codex reports its own retries as top-level errors - `Reconnecting... 2/5 (…)` - and goes on
+           trying; only `turn.failed` (or a last error without a count) means it gave up. Taking the first
+           retry as the end stopped Codex turns that were about to recover on a flaky network, and showed
+           "Reconnecting... 2/5" instead of the real reason (0.15.10, measured with codex-cli 0.159). */
+        "error" if error_message(&value).starts_with("Reconnecting...") => vec![EngineEvent::ToolOutput {
+            call_id: "retry".to_string(),
+            level: "warn".to_string(),
+            text: error_message(&value),
+        }],
         "error" => vec![EngineEvent::Failed(error_message(&value))],
 
         /* The prototype's own vocabulary. Kept because the fixtures of spec section 11.6 are written
@@ -1099,6 +1108,18 @@ mod todo_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 0.15.10: Codex's own retries are not the end of the turn; its `turn.failed` is.
+    #[test]
+    fn a_codex_retry_is_a_warning_and_its_turn_failed_is_the_end() {
+        let retry = parse_stream_line(r#"{"type":"error","message":"Reconnecting... 2/5 (unexpected status 401 Unauthorized)"}"#);
+
+        assert!(matches!(retry.as_slice(), [EngineEvent::ToolOutput { level, .. }] if level == "warn"), "{retry:?}");
+
+        let failed = parse_stream_line(r#"{"type":"turn.failed","error":{"message":"unexpected status 401 Unauthorized"}}"#);
+
+        assert!(matches!(failed.as_slice(), [EngineEvent::Failed(_)]), "{failed:?}");
+    }
 
     /// A whole Gemini `stream-json` turn, in the shapes its own source emits (0.60.0,
     /// `JsonStreamEventType`): the prompt echo is dropped, the assistant deltas become the answer,

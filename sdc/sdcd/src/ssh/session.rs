@@ -85,15 +85,26 @@ pub fn ssh_path(path: &std::path::Path) -> String {
     path.display().to_string().replace('\\', "/")
 }
 
-/// `-o Key="path"` for an option whose value is a file, quoted for `ssh`'s own option parser.
+/// `-o Key=path` for an option whose value is a file, quoted **only when the path has a space**.
 ///
 /// Unquoted, a space ends the value: on macOS the data folder is `~/Library/Application Support/sdc`, so
 /// `ControlPath=` failed with `keyword controlpath extra arguments at end of line` and
-/// `UserKnownHostsFile=` became two files, neither holding the pin - no VPS could connect from a Mac, nor
-/// from a Windows account whose name has a space (0.15.8, measured on OpenSSH 10.3). Both options also
+/// `UserKnownHostsFile=` became two files - no VPS could connect from a Mac (0.15.8).
+///
+/// But quotes must not be added when they are not needed. On Windows, Rust passes an argument **without** a
+/// space as-is, escaping each `"` as `\"`, and Git for Windows' Cygwin `ssh` keeps the backslashes:
+/// `command-line line 0: invalid quotes`. 0.15.8/0.15.9 quoted every path, and no VPS could connect from
+/// Windows (reported 2026-09-30). An argument *with* a space is wrapped whole by Rust and reaches `ssh`
+/// correctly on every platform (both cases are run against the real `ssh` in the tests). Both options
 /// expand `%` tokens, so a literal `%` is doubled.
 pub fn file_option(key: &str, path: &std::path::Path) -> String {
-    format!("{key}=\"{}\"", ssh_path(path).replace('%', "%%"))
+    let value = ssh_path(path).replace('%', "%%");
+
+    if value.contains(char::is_whitespace) {
+        format!("{key}=\"{value}\"")
+    } else {
+        format!("{key}={value}")
+    }
 }
 
 /// Where this host's master socket lives: `<data>/ssh/cm-<hash>`. Short on purpose - a Unix socket path
@@ -964,6 +975,30 @@ mod tests {
            `userknownhostsfile` joins a split list with spaces, so only the exit and ControlPath prove it.) */
         assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
         assert!(text.contains("controlpath /users/a b/library/application support/sdc/ssh/cm-100%"), "{text}");
+    }
+
+    /// 0.15.10: the ordinary path - no space, the one every Windows account has - reaches `ssh` untouched.
+    /// 0.15.8 quoted it anyway, Rust passed the quotes to Git's Cygwin `ssh` as `\"`, and every VPS sign-in
+    /// on Windows failed with `command-line line 0: invalid quotes`. The test above had only tried a path
+    /// with a space, which Rust quotes differently - so both shapes are run for real here.
+    #[test]
+    fn a_path_without_a_space_is_passed_bare() {
+        let path = std::path::Path::new(r"C:\Users\fondl\AppData\Roaming\sdc\ssh\cm-0123456789abcdef");
+        let control = file_option("ControlPath", path);
+        let pins = file_option("UserKnownHostsFile", path);
+
+        assert_eq!(control, "ControlPath=C:/Users/fondl/AppData/Roaming/sdc/ssh/cm-0123456789abcdef");
+        assert!(!pins.contains('"'), "{pins}");
+
+        let Some(ssh) = program() else { return };
+        let output = std::process::Command::new(ssh)
+            .args(["-G", "-o", &control, "-o", &pins, "sdc-test.invalid"])
+            .output()
+            .expect("running ssh -G");
+        let text = String::from_utf8_lossy(&output.stdout).to_lowercase();
+
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        assert!(text.contains("controlpath c:/users/fondl/appdata/roaming/sdc/ssh/cm-0123456789abcdef"), "{text}");
     }
 
     #[test]

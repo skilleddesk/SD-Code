@@ -123,6 +123,17 @@ pub fn translate(tool: &str, output: &str) -> Translation {
         );
     }
 
+    /* 0.15.10: Codex run without a ChatGPT sign-in - it retries ten times and ends with this. The raw line
+       named a websocket URL and a Cloudflare ray id; what the person has to do is sign in. */
+    if haystack.contains("missing bearer or basic authentication") {
+        return rule(
+            "Codex is not signed in",
+            format!("`{first_line}`. The Codex CLI on this machine has no ChatGPT sign-in. Open Providers → OpenAI (subscription) → Connect, approve the page in your browser, then send the message again. For a chat on a VPS, sign Codex in on that server (`codex login --device-auth`)."),
+            false,
+            "codex-signed-out",
+        );
+    }
+
     /* 0.12.5: a turn on a provider with no key stored at all. */
     if haystack.contains("no api key for") {
         return rule(
@@ -248,6 +259,18 @@ pub fn translate(tool: &str, output: &str) -> Translation {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 0.15.10: a signed-out Codex says so, instead of a websocket URL and a ray id.
+    #[test]
+    fn a_signed_out_codex_is_named() {
+        let translated = translate(
+            "codex",
+            "unexpected status 401 Unauthorized: Missing bearer or basic authentication in header, url: https://api.openai.com/v1/responses",
+        );
+
+        assert_eq!(translated.rule, "codex-signed-out");
+        assert!(translated.explanation.contains("Connect"), "{}", translated.explanation);
+    }
 
     /// The three sentences the report's own log got wrong (0.11.8).
     #[test]
