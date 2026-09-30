@@ -1,0 +1,168 @@
+Scope: all 2 workspace projects
+Lockfile is up to date, resolution step is skipped
+Progress: resolved 1, reused 0, downloaded 0, added 0
+Packages: +297
+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+Progress: resolved 297, reused 0, downloaded 109, added 71
+Progress: resolved 297, reused 0, downloaded 297, added 297, done
+.../esbuild@0.25.12/node_modules/esbuild postinstall$ node install.js
+.../esbuild@0.25.12/node_modules/esbuild postinstall: Done
+
+Done in 2.7s using pnpm v10.34.5
+
+> @sdc/app@0.15.9 tauri /home/runner/work/SD-Code/SD-Code/sdc/app
+> tauri build --bundles deb
+
+        Info Looking up installed tauri packages to check mismatched versions...
+     Running beforeBuildCommand `pnpm build && pnpm daemon:package`
+
+> @sdc/app@0.15.9 build /home/runner/work/SD-Code/SD-Code/sdc/app
+> tsc --noEmit -p tsconfig.json && vite build
+
+[36mvite v6.4.3 [32mbuilding for production...[36m[39m
+transforming...
+[32m✓[39m 1786 modules transformed.
+rendering chunks...
+[33m[plugin vite:reporter] 
+(!) /home/runner/work/SD-Code/SD-Code/sdc/app/src/store/reducer.ts is dynamically imported by /home/runner/work/SD-Code/SD-Code/sdc/app/src/store/intents.ts but also statically imported by /home/runner/work/SD-Code/SD-Code/sdc/app/src/lib/alerts.ts, /home/runner/work/SD-Code/SD-Code/sdc/app/src/modals/Settings.tsx, /home/runner/work/SD-Code/SD-Code/sdc/app/src/overlays/SearchOverlay.tsx, /home/runner/work/SD-Code/SD-Code/sdc/app/src/panels/prompt/slash.ts, /home/runner/work/SD-Code/SD-Code/sdc/app/src/store/intents.ts, /home/runner/work/SD-Code/SD-Code/sdc/app/src/store/providers.ts, /home/runner/work/SD-Code/SD-Code/sdc/app/src/store/rightPanel.ts, /home/runner/work/SD-Code/SD-Code/sdc/app/src/store/sessions.ts, /home/runner/work/SD-Code/SD-Code/sdc/app/src/store/store.ts, dynamic import will not move module into another chunk.
+[39m
+[33m[plugin vite:reporter] 
+(!) /home/runner/work/SD-Code/SD-Code/sdc/app/src/store/intents.ts is dynamically imported by /home/runner/work/SD-Code/SD-Code/sdc/app/src/lib/sdcp.ts but also statically imported by /home/runner/work/SD-Code/SD-Code/sdc/app/src/App.tsx, /home/runner/work/SD-Code/SD-Code/sdc/app/src/commands/registry.ts, /home/runner/work/SD-Code/SD-Code/sdc/app/src/kernel/IntentCard.tsx, /home/runner/work/SD-Code/SD-Code/sdc/app/src/kernel/Onboarding.tsx, /home/runner/work/SD-Code/SD-Code/sdc/app/src/kernel/ProofTab.tsx, /home/runner/work/SD-Code/SD-Code/sdc/app/src/modals/AddHost.tsx, /home/runner/work/SD-Code/SD-Code/sdc/app/src/modals/Connect.tsx, /home/runner/work/SD-Code/SD-Code/sdc/app/src/modals/NewProject.tsx, /home/runner/work/SD-Code/SD-Code/sdc/app/src/modals/Permission.tsx, /home/runner/work/SD-Code/SD-Code/sdc/app/src/modals/ProviderHub.tsx, /home/runner/work/SD-Code/SD-Code/sdc/app/src/modals/RemoteFolder.tsx, /home/runner/work/SD-Code/SD-Code/sdc/app/src/overlays/NewChatPopover.tsx, /home/runner/work/SD-Code/SD-Code/sdc/app/src/overlays/Toast.tsx, /home/runner/work/SD-Code/SD-Code/sdc/app/src/panels/main/DegradedBanner.tsx, /home/runner/work/SD-Code/SD-Code/sdc/app/src/panels/main/EmptyState.tsx, /home/runner/work/SD-Code/SD-Code/sdc/app/src/panels/prompt/FolderChip.tsx, /home/runner/work/SD-Code/SD-Code/sdc/app/src/panels/prompt/ModelDropdown.tsx, /home/runner/work/SD-Code/SD-Code/sdc/app/src/panels/prompt/PromptArea.tsx, /home/runner/work/SD-Code/SD-Code/sdc/app/src/panels/prompt/slash.ts, /home/runner/work/SD-Code/SD-Code/sdc/app/src/panels/right/ConsoleTab.tsx, /home/runner/work/SD-Code/SD-Code/sdc/app/src/panels/right/DuelTab.tsx, /home/runner/work/SD-Code/SD-Code/sdc/app/src/panels/right/PreviewDiff.tsx, /home/runner/work/SD-Code/SD-Code/sdc/app/src/panels/right/PreviewFile.tsx, /home/runner/work/SD-Code/SD-Code/sdc/app/src/panels/right/TerminalTab.tsx, /home/runner/work/SD-Code/SD-Code/sdc/app/src/panels/right/TimeMachineTab.tsx, /home/runner/work/SD-Code/SD-Code/sdc/app/src/panels/right/VerifyTab.tsx, /home/runner/work/SD-Code/SD-Code/sdc/app/src/panels/sidebar/FilesSection.tsx, /home/runner/work/SD-Code/SD-Code/sdc/app/src/panels/sidebar/Sidebar.tsx, /home/runner/work/SD-Code/SD-Code/sdc/app/src/panels/turns/CheckpointRail.tsx, /home/runner/work/SD-Code/SD-Code/sdc/app/src/panels/turns/ErrorCard.tsx, /home/runner/work/SD-Code/SD-Code/sdc/app/src/panels/turns/TurnFooter.tsx, /home/runner/work/SD-Code/SD-Code/sdc/app/src/store/sessions.ts, /home/runner/work/SD-Code/SD-Code/sdc/app/src/store/toast.ts, dynamic import will not move module into another chunk.
+[39m
+[33m[plugin vite:reporter] 
+(!) /home/runner/work/SD-Code/SD-Code/sdc/app/src/store/store.ts is dynamically imported by /home/runner/work/SD-Code/SD-Code/sdc/app/src/store/intents.ts but also statically imported by /home/runner/work/SD-Code/SD-Code/sdc/app/src/commands/registry.ts, /home/runner/work/SD-Code/SD-Code/sdc/app/src/kernel/Agency.tsx, /home/runner/work/SD-Code/SD-Code/sdc/app/src/kernel/CostMeter.tsx, /home/runner/work/SD-Code/SD-Code/sdc/app/src/kernel/IntentCard.tsx, /home/runner/work/SD-Code/SD-Code/sdc/app/src/kernel/KillSwitch.tsx, /home/runner/work/SD-Code/SD-Code/sdc/app/src/kernel/Onboarding.tsx, /home/runner/work/SD-Code/SD-Code/sdc/app/src/kernel/PolicyEditor.tsx, /home/runner/work/SD-Code/SD-Code/sdc/app/src/kernel/ProofTab.tsx, /home/runner/work/SD-Code/SD-Code/sdc/app/src/kernel/TrustChip.tsx, /home/runner/work/SD-Code/SD-Code/sdc/app/src/kernel/VoiceButton.tsx, /home/runner/work/SD-Code/SD-Code/sdc/app/src/lib/alerts.ts, /home/runner/work/SD-Code/SD-Code/sdc/app/src/modals/AddHost.tsx, /home/runner/work/SD-Code/SD-Code/sdc/app/src/modals/NewProject.tsx, /home/runner/work/SD-Code/SD-Code/sdc/app/src/modals/Permission.tsx, /home/runner/work/SD-Code/SD-Code/sdc/app/src/modals/ProviderHub.tsx, /home/runner/work/SD-Code/SD-Code/sdc/app/src/modals/RemoteFolder.tsx, /home/runner/work/SD-Code/SD-Code/sdc/app/src/modals/Settings.tsx, /home/runner/work/SD-Code/SD-Code/sdc/app/src/overlays/NewChatPopover.tsx, /home/runner/work/SD-Code/SD-Code/sdc/app/src/overlays/SearchOverlay.tsx, /home/runner/work/SD-Code/SD-Code/sdc/app/src/overlays/Toast.tsx, /home/runner/work/SD-Code/SD-Code/sdc/app/src/panels/main/EmptyState.tsx, /home/runner/work/SD-Code/SD-Code/sdc/app/src/panels/main/Pane.tsx, /home/runner/work/SD-Code/SD-Code/sdc/app/src/panels/prompt/ComposerChips.tsx, /home/runner/work/SD-Code/SD-Code/sdc/app/src/panels/prompt/PromptArea.tsx, /home/runner/work/SD-Code/SD-Code/sdc/app/src/panels/prompt/QuestionCard.tsx, /home/runner/work/SD-Code/SD-Code/sdc/app/src/panels/prompt/slash.ts, /home/runner/work/SD-Code/SD-Code/sdc/app/src/panels/right/AnalyticsTab.tsx, /home/runner/work/SD-Code/SD-Code/sdc/app/src/panels/right/ConsoleTab.tsx, /home/runner/work/SD-Code/SD-Code/sdc/app/src/panels/right/DuelTab.tsx, /home/runner/work/SD-Code/SD-Code/sdc/app/src/panels/right/PreviewTab.tsx, /home/runner/work/SD-Code/SD-Code/sdc/app/src/panels/right/RightPanel.tsx, /home/runner/work/SD-Code/SD-Code/sdc/app/src/panels/right/ShellView.tsx, /home/runner/work/SD-Code/SD-Code/sdc/app/src/panels/right/TimeMachineTab.tsx, /home/runner/work/SD-Code/SD-Code/sdc/app/src/panels/right/VerifyTab.tsx, /home/runner/work/SD-Code/SD-Code/sdc/app/src/panels/sidebar/FilesSection.tsx, /home/runner/work/SD-Code/SD-Code/sdc/app/src/panels/sidebar/Sidebar.tsx, /home/runner/work/SD-Code/SD-Code/sdc/app/src/store/agentIntents.ts, /home/runner/work/SD-Code/SD-Code/sdc/app/src/store/intents.ts, /home/runner/work/SD-Code/SD-Code/sdc/app/src/store/kernelIntents.ts, /home/runner/work/SD-Code/SD-Code/sdc/app/src/store/prefs.ts, /home/runner/work/SD-Code/SD-Code/sdc/app/src/store/providers.ts, /home/runner/work/SD-Code/SD-Code/sdc/app/src/store/sessions.ts, /home/runner/work/SD-Code/SD-Code/sdc/app/src/store/toast.ts, dynamic import will not move module into another chunk.
+[39m
+computing gzip size...
+[2mdist/[22m[32mindex.html                                                 [39m[1m[2m  0.62 kB[22m[1m[22m[2m │ gzip:   0.39 kB[22m
+[2mdist/[22m[2massets/[22m[32mjetbrains-mono-greek-400-normal-C190GLew.woff2      [39m[1m[2m  4.23 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[32mjetbrains-mono-greek-500-normal-JpySY46c.woff2      [39m[1m[2m  4.28 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[32minter-vietnamese-400-normal-DMkecbls.woff2          [39m[1m[2m  4.97 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[32minter-vietnamese-600-normal-Cc8MFFhd.woff2          [39m[1m[2m  5.10 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[32minter-vietnamese-700-normal-DlLaEgI2.woff2          [39m[1m[2m  5.10 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[32minter-vietnamese-500-normal-DOriooB6.woff2          [39m[1m[2m  5.11 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[32minter-greek-ext-400-normal-DGGRlc-M.woff2           [39m[1m[2m  5.26 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[32mjetbrains-mono-cyrillic-400-normal-BEIGL1Tu.woff2   [39m[1m[2m  5.33 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[32mjetbrains-mono-cyrillic-500-normal-DmUKJPL_.woff2   [39m[1m[2m  5.36 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[32mjetbrains-mono-vietnamese-400-normal-CqNFfHCs.woff  [39m[1m[2m  5.37 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[32minter-greek-ext-500-normal-C4iEst2y.woff2           [39m[1m[2m  5.43 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[32minter-greek-ext-600-normal-DRtmH8MT.woff2           [39m[1m[2m  5.43 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[32minter-greek-ext-700-normal-qfdV9bQt.woff2           [39m[1m[2m  5.44 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[32mjetbrains-mono-vietnamese-500-normal-DNRqzVM1.woff  [39m[1m[2m  5.48 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[32mjetbrains-mono-greek-400-normal-B9oWc5Lo.woff       [39m[1m[2m  5.66 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[32mjetbrains-mono-greek-500-normal-D7SFKleX.woff       [39m[1m[2m  5.72 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[32minter-vietnamese-400-normal-Bbgyi5SW.woff           [39m[1m[2m  6.50 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[32minter-vietnamese-500-normal-mJboJaSs.woff           [39m[1m[2m  6.60 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[32minter-vietnamese-700-normal-BZaoP0fm.woff           [39m[1m[2m  6.63 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[32minter-vietnamese-600-normal-BuLX-rYi.woff           [39m[1m[2m  6.64 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[32mjetbrains-mono-cyrillic-400-normal-ugxPyKxw.woff    [39m[1m[2m  6.98 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[32mjetbrains-mono-cyrillic-500-normal-DJqRU3vO.woff    [39m[1m[2m  7.02 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[32minter-greek-ext-400-normal-KugGGMne.woff            [39m[1m[2m  7.06 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[32minter-greek-ext-500-normal-2j5mBUwD.woff            [39m[1m[2m  7.19 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[32minter-greek-ext-600-normal-B8X0CLgF.woff            [39m[1m[2m  7.21 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[32minter-greek-ext-700-normal-BoQ6DsYi.woff            [39m[1m[2m  7.22 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[32mjetbrains-mono-latin-ext-400-normal-Bc8Ftmh3.woff2  [39m[1m[2m  7.34 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[32mjetbrains-mono-latin-ext-500-normal-Cut-4mMH.woff2  [39m[1m[2m  7.53 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[32minter-cyrillic-400-normal-obahsSVq.woff2            [39m[1m[2m  7.71 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[32minter-greek-400-normal-B4URO6DV.woff2               [39m[1m[2m  7.78 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[32minter-cyrillic-500-normal-BasfLYem.woff2            [39m[1m[2m  7.90 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[32minter-cyrillic-700-normal-CjBOestx.woff2            [39m[1m[2m  7.90 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[32minter-greek-500-normal-BIZE56-Y.woff2               [39m[1m[2m  7.92 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[32minter-greek-700-normal-C3JjAnD8.woff2               [39m[1m[2m  7.92 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[32minter-greek-600-normal-plRanbMR.woff2               [39m[1m[2m  7.94 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[32minter-cyrillic-600-normal-CWCymEST.woff2            [39m[1m[2m  7.97 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[32minter-cyrillic-400-normal-HOLc17fK.woff             [39m[1m[2m  9.78 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[32minter-cyrillic-700-normal-DrXBdSj3.woff             [39m[1m[2m  9.91 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[32minter-greek-400-normal-q2sYcFCs.woff                [39m[1m[2m  9.92 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[32minter-cyrillic-600-normal-4D_pXhcN.woff             [39m[1m[2m  9.94 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[32minter-cyrillic-500-normal-CxZf_p3X.woff             [39m[1m[2m  9.94 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[32minter-greek-500-normal-Xzm54t5V.woff                [39m[1m[2m  9.98 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[32minter-greek-700-normal-BUv2fZ6O.woff                [39m[1m[2m  9.98 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[32minter-greek-600-normal-BZpKdvQh.woff                [39m[1m[2m 10.03 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[32mjetbrains-mono-latin-ext-400-normal-fXTG6kC5.woff   [39m[1m[2m 10.13 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[32minter-cyrillic-ext-400-normal-BQZuk6qB.woff2        [39m[1m[2m 10.23 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[32mjetbrains-mono-latin-ext-500-normal-ckzbgY84.woff   [39m[1m[2m 10.34 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[32minter-cyrillic-ext-500-normal-B0yAr1jD.woff2        [39m[1m[2m 10.43 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[32minter-cyrillic-ext-600-normal-Dfes3d0z.woff2        [39m[1m[2m 10.48 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[32minter-cyrillic-ext-700-normal-BjwYoWNd.woff2        [39m[1m[2m 10.50 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[32minter-cyrillic-ext-400-normal-DQukG94-.woff         [39m[1m[2m 13.34 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[32minter-cyrillic-ext-700-normal-LO58E6JB.woff         [39m[1m[2m 13.41 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[32minter-cyrillic-ext-500-normal-BmqWE9Dz.woff         [39m[1m[2m 13.45 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[32minter-cyrillic-ext-600-normal-Bcila6Z-.woff         [39m[1m[2m 13.46 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[32mjetbrains-mono-latin-400-normal-V6pRDFza.woff2      [39m[1m[2m 21.17 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[32mjetbrains-mono-latin-500-normal-BWZEU5yA.woff2      [39m[1m[2m 21.83 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[32minter-latin-400-normal-C38fXH4l.woff2               [39m[1m[2m 23.66 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[32minter-latin-500-normal-Cerq10X2.woff2               [39m[1m[2m 24.27 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[32minter-latin-700-normal-Yt3aPRUw.woff2               [39m[1m[2m 24.36 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[32minter-latin-600-normal-LgqL8muc.woff2               [39m[1m[2m 24.45 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[32mjetbrains-mono-latin-400-normal-6-qcROiO.woff       [39m[1m[2m 27.50 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[32mjetbrains-mono-latin-500-normal-CJOVTJB7.woff       [39m[1m[2m 28.21 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[32minter-latin-400-normal-CyCys3Eg.woff                [39m[1m[2m 30.70 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[32minter-latin-600-normal-CiBQ2DWP.woff                [39m[1m[2m 31.26 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[32minter-latin-500-normal-BL9OpVg8.woff                [39m[1m[2m 31.28 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[32minter-latin-700-normal-BLAVimhd.woff                [39m[1m[2m 31.32 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[32minter-latin-ext-400-normal-C1nco2VV.woff2           [39m[1m[2m 35.00 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[32minter-latin-ext-500-normal-CV4jyFjo.woff2           [39m[1m[2m 36.02 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[32minter-latin-ext-700-normal-Ca8adRJv.woff2           [39m[1m[2m 36.24 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[32minter-latin-ext-600-normal-D2bJ5OIk.woff2           [39m[1m[2m 36.26 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[32minter-latin-ext-400-normal-77YHD8bZ.woff            [39m[1m[2m 47.56 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[32minter-latin-ext-500-normal-BxGbmqWO.woff            [39m[1m[2m 48.49 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[32minter-latin-ext-700-normal-TidjK2hL.woff            [39m[1m[2m 48.63 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[32minter-latin-ext-600-normal-CIVaiw4L.woff            [39m[1m[2m 48.67 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[35mShellView-9CEnUXvW.css                              [39m[1m[2m  5.75 kB[22m[1m[22m[2m │ gzip:   1.98 kB[22m
+[2mdist/[22m[2massets/[22m[35mindex-CsPjSZRz.css                                  [39m[1m[2m 84.80 kB[22m[1m[22m[2m │ gzip:  26.37 kB[22m
+[2mdist/[22m[2massets/[22m[36mindex-B3EYes50.js                                   [39m[1m[2m  0.16 kB[22m[1m[22m[2m │ gzip:   0.16 kB[22m
+[2mdist/[22m[2massets/[22m[36mindex-lbXVYsK-.js                                   [39m[1m[2m  1.18 kB[22m[1m[22m[2m │ gzip:   0.48 kB[22m
+[2mdist/[22m[2massets/[22m[36mindex-BPAU6bsp.js                                   [39m[1m[2m  2.20 kB[22m[1m[22m[2m │ gzip:   0.81 kB[22m
+[2mdist/[22m[2massets/[22m[36mindex-D0TRvFGu.js                                   [39m[1m[2m  2.31 kB[22m[1m[22m[2m │ gzip:   0.85 kB[22m
+[2mdist/[22m[2massets/[22m[36mShellView-B62q78Ap.js                               [39m[1m[2m339.51 kB[22m[1m[22m[2m │ gzip:  86.71 kB[22m
+[2mdist/[22m[2massets/[22m[36mCodeEditor-ClL7f-vT.js                              [39m[1m[33m745.44 kB[39m[22m[2m │ gzip: 263.04 kB[22m
+[2mdist/[22m[2massets/[22m[36mindex-C0q89DbC.js                                   [39m[1m[33m790.50 kB[39m[22m[2m │ gzip: 216.34 kB[22m
+[33m
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.[39m
+[32m✓ built in 5.05s[39m
+
+> @sdc/app@0.15.9 daemon:package /home/runner/work/SD-Code/SD-Code/sdc/app
+> node scripts/package-daemon.mjs
+
+sdcd: building release for x86_64-unknown-linux-gnu (key store: file)
+[1m[92m    Finished[0m `release` profile [optimized] target(s) in 0.07s
+sdcd: bundled → /home/runner/work/SD-Code/SD-Code/sdc/app/src-tauri/binaries/sdcd-x86_64-unknown-linux-gnu
+[1m[92m   Compiling[0m sdc v0.15.9 (/home/runner/work/SD-Code/SD-Code/sdc/app/src-tauri)
+[1m[33mwarning[0m: sdc@0.15.9: STATIC_VCRUNTIME is deprecated; use build.windows.staticVCRuntime in tauri.conf.json or tauri_build::WindowsAttributes::static_vc_runtime instead.
+[1m[92m    Finished[0m `release` profile [optimized] target(s) in 1m 40s
+       Built application at: /home/runner/work/SD-Code/SD-Code/sdc/app/src-tauri/target/release/sdc
+        Info Patching /home/runner/work/SD-Code/SD-Code/sdc/app/src-tauri/target/release/sdc with bundle type information: deb
+    Bundling SDC_0.15.9_amd64.deb (/home/runner/work/SD-Code/SD-Code/sdc/app/src-tauri/target/release/bundle/deb/SDC_0.15.9_amd64.deb)
+    Finished 1 bundle at:
+        /home/runner/work/SD-Code/SD-Code/sdc/app/src-tauri/target/release/bundle/deb/SDC_0.15.9_amd64.deb
+
+build exit 0
+Reading package lists...
+Building dependency tree...
+Reading state information...
+The following NEW packages will be installed:
+  sdc
+0 upgraded, 1 newly installed, 0 to remove and 8 not upgraded.
+Need to get 0 B/9025 kB of archives.
+After this operation, 18.1 MB of additional disk space will be used.
+Get:1 /home/runner/work/SD-Code/SD-Code/sdc/app/src-tauri/target/release/bundle/deb/SDC_0.15.9_amd64.deb sdc amd64 0.15.9 [9025 kB]
+Selecting previously unselected package sdc.
+(Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 263260 files and directories currently installed.)
+Preparing to unpack .../deb/SDC_0.15.9_amd64.deb ...
+Unpacking sdc (0.15.9) ...
+Setting up sdc (0.15.9) ...
+Processing triggers for hicolor-icon-theme (0.17-2) ...
+Processing triggers for mailcap (3.70+nmu1ubuntu1.22.04.1) ...
+
+Running kernel seems to be up-to-date.
+
+No services need to be restarted.
+
+No containers need to be restarted.
+
+No user sessions are running outdated binaries.
+
+No VM guests are running outdated hypervisor (qemu) binaries on this host.
