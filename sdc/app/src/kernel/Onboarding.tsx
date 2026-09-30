@@ -34,6 +34,13 @@ export function Onboarding() {
   /* The map, not `?? []`: a selector that builds a new empty array loops React (error #185). */
   const doctorByHost = useAppStore((state) => state.doctor);
   const doctor = doctorByHost.local ?? [];
+  /* A dialog this one opened (the Provider Hub, then Connect; Add a server; Settings) is drawn on top of it.
+     Rendered last in App, the welcome dialog used to cover them instead: on a fresh install - a new Mac -
+     "Open the Provider Hub" opened the hub underneath it, and Sign in looked like it did nothing (0.15.9,
+     seen on a real Apple Silicon Mac). It steps aside while one is open and comes back on the same step. */
+  const covered = useOverlayStore(
+    (state) => state.hubOpen || state.connectOpen || state.addHostOpen || state.settingsOpen || state.newProjectOpen,
+  );
   const [step, setStep] = useState(0);
   const [goal, setGoal] = useState<Goal>('local');
 
@@ -75,7 +82,7 @@ export function Onboarding() {
   const steps = k.steps;
 
   return (
-    <Modal open={open} label={k.title} onClose={finish} center className="flex max-h-[92vh] w-[min(640px,96vw)] flex-col overflow-hidden">
+    <Modal open={open && !covered} label={k.title} onClose={finish} center className="flex max-h-[92vh] w-[min(640px,96vw)] flex-col overflow-hidden">
       <div className="border-b border-border-subtle px-[24px] py-[16px]">
         <h2 className="flex items-center gap-[8px] text-[16px] font-semibold text-text-primary">
           <Rocket size={16} className="text-accent" aria-hidden="true" />
