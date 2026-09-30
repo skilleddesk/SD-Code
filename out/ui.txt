@@ -1,0 +1,32 @@
+--- press Work on a project here
+pressed [AXCheckBox] Work on a project here A folder on this computer. | Work on a project here A folder on this computer.
+--- press Next
+pressed [AXButton] Next | Next
+--- press Open the Provider Hub
+pressed [AXButton] Open the Provider Hub | Open the Provider Hub
+/Users/runner/work/_temp/84515bbf-3f53-4766-9cb4-f1f0e9810976.sh: line 13: claude: command not found
+--- press  is installed
+pressed [AXButton] Claude Subscription `claude` is installed · Connect starts its own sign-in Needs setup Connect | Claude Subscription `claude` is installed · Connect starts its own sign-in Needs setup Connect
+--- press Sign in
+NOT FOUND: Sign in
+--- window text
+Sign in with the CLI
+not connected
+This starts the CLI’s own sign-in. Approve the page in your browser, then paste the code it shows back here — the credential is written by the CLI, never by SDC.
+`claude` is installed
+Approve the page, then paste the code below.
+Code from the page
+Code from the page
+Copy the code that page shows — the code itself, not the link in the box above. Pasting the link is the one mistake that looks right and fails.
+THE PAGE THE CLI OPENED
+Claude Code
+THE CLI’S OWN OUTPUT
+last 12 lines
+Opening browser to sign in…
+If the browser didn't open, visit: https://claude.com/cai/oauth/authorize?code=true&client_id=9d1c250a-e61b-44d9-88ed-5944d1962f5e&response_type=code&redirect_uri=https%3A%2F%2Fplatform.claude.com%2Foauth%2Fcode%2Fcallback&scope=org%3Acreate_api_key+user%3Aprofile+user%3A
+Claude Code opens the approval page itself; the link is also printed here so it can be copied.
+The credential is written by the CLI, never by SDC.
+SDC
+--- daemon
+pty processes: 1
+31259 /Users/runner/.npm-global/bin/claude auth login

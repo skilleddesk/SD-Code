@@ -1,0 +1,37 @@
+sdcd 0.15.8 · SDCP 0.1
+  database   /Users/runner/Library/Application Support/sdc/sdc.db
+  events     0 replayed from the log
+  loopback   127.0.0.1:7811
+  socket     /var/folders/s6/5hzmn6lx4dz5nxs7k_0slzph0000gn/T/sdc/sdcd-7811.sock
+  backup     /Users/runner/Library/Application Support/sdc-backups/sdc-2026-09-30.db
+sdcd: client 127.0.0.1:49220 connected
+sdcd: client 127.0.0.1:49221 connected
+sdcd: client 127.0.0.1:49224 connected
+sdcd: client 127.0.0.1:49225 connected
+sdcd: client 127.0.0.1:49228 connected
+sdcd: client 127.0.0.1:49229 connected
+sdcd: client 127.0.0.1:49230 connected
+sdcd: client 127.0.0.1:49231 connected
+sdcd: client 127.0.0.1:49232 connected
+sdcd: client 127.0.0.1:49233 connected
+sdcd: client 127.0.0.1:49234 connected
+sdcd: client 127.0.0.1:49235 connected
+sdcd: client 127.0.0.1:49237 connected
+sdcd: client 127.0.0.1:49238 connected
+sdcd: client 127.0.0.1:49239 connected
+sdcd: client 127.0.0.1:49240 connected
+sdcd: client 127.0.0.1:49241 connected
+sdcd: client 127.0.0.1:49242 connected
+sdcd: client 127.0.0.1:49244 connected
+sdcd: client 127.0.0.1:49245 connected
+sdcd: client 127.0.0.1:49246 connected
+sdcd: client 127.0.0.1:49247 connected
+sdcd: client 127.0.0.1:49248 connected
+sdcd: client 127.0.0.1:49249 connected
+sdcd: client 127.0.0.1:49250 connected
+sdcd: client 127.0.0.1:49251 connected
+sdcd: client 127.0.0.1:49252 connected
+sdcd: client 127.0.0.1:49253 connected
+sdcd: client 127.0.0.1:49257 connected
+sdcd: client 127.0.0.1:49258 connected
+sdcd: client 127.0.0.1:49259 connected

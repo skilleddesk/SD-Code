@@ -1,0 +1,216 @@
+
+=== host.status
+{
+  "v": "0.1",
+  "id": "p-1",
+  "result": {
+    "console": 0,
+    "database": "/Users/runner/Library/Application Support/sdc/sdc.db",
+    "engines": [
+      "claude_code",
+      "codex",
+      "gemini",
+      "native_api",
+      "ollama"
+    ],
+    "events": 1,
+    "hostId": "local",
+    "keyProtection": "os",
+    "keychain": "os",
+    "name": "Local",
+    "platform": "macos · aarch64",
+    "pty": 0,
+    "sdcd": "0.15.8",
+    "sdcp": "0.1",
+    "sessions": 0,
+    "status": "connected",
+    "subscribers": 1,
+    "type": "local"
+  }
+}
+
+=== provider.list (subscriptions)
+[
+  {
+    "id": "claude",
+    "status": "needs-auth",
+    "detail": "`claude` is installed · Connect starts its own sign-in"
+  },
+  {
+    "id": "openai",
+    "status": "needs-auth",
+    "detail": "`codex` is installed · Connect starts its own sign-in"
+  },
+  {
+    "id": "gemini",
+    "status": "needs-auth",
+    "detail": "`gemini` is not installed or not on PATH · install it, then run the environment doctor"
+  }
+]
+
+=== host.doctor
+{
+  "v": "0.1",
+  "id": "p-3",
+  "result": {
+    "checks": [
+      {
+        "detail": "v22.23.2",
+        "id": "node",
+        "label": "Node.js",
+        "state": "ok"
+      },
+      {
+        "detail": "2.1.285 (Claude Code)",
+        "id": "claude",
+        "label": "Claude Code CLI",
+        "state": "ok"
+      },
+      {
+        "detail": "codex-cli 0.159.2",
+        "id": "codex",
+        "label": "Codex CLI",
+        "state": "ok"
+      },
+      {
+        "detail": "not installed",
+        "fix": "Install",
+        "id": "gemini",
+        "label": "Gemini CLI",
+        "state": "fail"
+      },
+      {
+        "detail": "not installed",
+        "fix": "Install",
+        "id": "ollama",
+        "label": "Ollama",
+        "state": "fail"
+      },
+      {
+        "detail": "not installed",
+        "fix": "Install",
+        "id": "ripgrep",
+        "label": "ripgrep",
+        "state": "fail"
+      },
+      {
+        "detail": "git version 2.39.3 (Apple Git-146)",
+        "id": "git",
+        "label": "Git",
+        "state": "ok"
+      },
+      {
+        "detail": "not installed",
+        "fix": "Install",
+        "id": "ssh",
+        "label": "SSH",
+        "state": "fail"
+      },
+      {
+        "detail": "free",
+        "id": "port3000",
+        "label": "Port 3000",
+        "state": "ok"
+      },
+      {
+        "detail": "/Users/runner/Library/Application Support/sdc/sdc.db · 4 KB · 1 events",
+        "id": "disk",
+        "label": "Disk space",
+        "state": "ok"
+      }
+    ]
+  }
+}
+
+=== cli.login claude
+{
+  "v": "0.1",
+  "id": "p-4",
+  "result": {
+    "loginId": "login-1",
+    "program": "claude",
+    "providerId": "claude",
+    "ptyId": "pty-1"
+  }
+}
+
+=== cli.login.status claude after 20 s
+{
+  "v": "0.1",
+  "id": "p-16",
+  "result": {
+    "authenticated": false,
+    "lineCount": 3,
+    "lines": [
+      "Opening browser to sign in…",
+      "If the browser didn't open, visit: https://claude.com/cai/oauth/authorize?code=true&client_id=9d1c250a-e61b-44d9-88ed-5944d1962f5e&response_type=code&redirect_uri=https%3A%2F%2Fplatform.claude.com%2Foauth%2Fcode%2Fcallback&scope=org%3Acreate_api_key+user%3Aprofile+user%3Ainference+user%3Asessions%3Aclaude_code+user%3Amcp_servers+user%3Afile_upload+user%3Aplugins&code_challenge=OLa6DpjPRFwPcuH-81wQj0DKHxE5eoFMi7R9DQzsPbA&code_challenge_method=S256&state=jrAABns_mjwH9W0mX0zRzw7GfODumBnzf4bbt_Xh5co",
+      "Paste code here if prompted > "
+    ],
+    "loginId": "login-1",
+    "ms": 14049,
+    "note": "Claude Code opens the approval page itself; the link is also printed here so it can be copied.",
+    "program": "claude",
+    "providerId": "claude",
+    "providerLabel": "Claude Code",
+    "state": "waiting_for_code",
+    "url": "https://claude.com/cai/oauth/authorize?code=true&client_id=9d1c250a-e61b-44d9-88ed-5944d1962f5e&response_type=code&redirect_uri=https%3A%2F%2Fplatform.claude.com%2Foauth%2Fcode%2Fcallback&scope=org%3Acreate_api_key+user%3Aprofile+user%3Ainference+user%3Asessions%3Aclaude_code+user%3Amcp_servers+user%3Afile_upload+user%3Aplugins&code_challenge=OLa6DpjPRFwPcuH-81wQj0DKHxE5eoFMi7R9DQzsPbA&code_challenge_method=S256&state=jrAABns_mjwH9W0mX0zRzw7GfODumBnzf4bbt_Xh5co"
+  }
+}
+
+=== cli.login.cancel claude
+{
+  "v": "0.1",
+  "id": "p-17",
+  "result": {
+    "cancelled": true,
+    "loginId": "login-1"
+  }
+}
+
+=== cli.login openai
+{
+  "v": "0.1",
+  "id": "p-18",
+  "result": {
+    "loginId": "login-2",
+    "program": "codex",
+    "providerId": "openai",
+    "ptyId": "pty-2"
+  }
+}
+
+=== cli.login.status openai after 20 s
+{
+  "v": "0.1",
+  "id": "p-30",
+  "result": {
+    "authenticated": false,
+    "lineCount": 6,
+    "lines": [
+      "Starting local login server on http://localhost:1455.",
+      "If your browser did not open, navigate to this URL to authenticate:",
+      "",
+      "https://auth.openai.com/oauth/authorize?response_type=code&client_id=app_EMoamEEZ73f0CkXaXp7hrann&redirect_uri=http%3A%2F%2F127.0.0.1%3A1455%2Fauth%2Fcallback&code_challenge=h6R_w2MeTA8sAz77HrUPDMTLSJo-IG6xTh1HdQBX-oU&code_challenge_method=S256&state=wbDGoiL2f8yQYh0CrUjNODqkYu6fEP7sKrPv8oxIX9Y&scope=openid+profile+email+offline_access+api.connectors.read+api.connectors.invoke&id_token_add_organizations=true&codex_cli_simplified_flow=true&originator=codex_cli_rs",
+      "",
+      "On a remote or headless machine? Use `codex login --device-auth` instead."
+    ],
+    "loginId": "login-2",
+    "ms": 12199,
+    "note": "Codex waits for its browser callback; if the browser cannot reach it, paste the code from the page instead.",
+    "program": "codex",
+    "providerId": "openai",
+    "providerLabel": "Codex",
+    "state": "waiting_for_code",
+    "url": "https://auth.openai.com/oauth/authorize?response_type=code&client_id=app_EMoamEEZ73f0CkXaXp7hrann&redirect_uri=http%3A%2F%2F127.0.0.1%3A1455%2Fauth%2Fcallback&code_challenge=h6R_w2MeTA8sAz77HrUPDMTLSJo-IG6xTh1HdQBX-oU&code_challenge_method=S256&state=wbDGoiL2f8yQYh0CrUjNODqkYu6fEP7sKrPv8oxIX9Y&scope=openid+profile+email+offline_access+api.connectors.read+api.connectors.invoke&id_token_add_organizations=true&codex_cli_simplified_flow=true&originator=codex_cli_rs"
+  }
+}
+
+=== cli.login.cancel openai
+{
+  "v": "0.1",
+  "id": "p-31",
+  "result": {
+    "cancelled": true,
+    "loginId": "login-2"
+  }
+}
