@@ -133,13 +133,14 @@ export function App() {
       <AddHost />
       <RemoteFolder />
       <NewProject />
-      <Permission />
       <Connect />
       <Agency />
       <CostCenter />
       <PolicyEditor />
       <MemoryDialog />
       <Onboarding />
+      {/* Last of the dialogs: a turn waiting for an approval must never sit under another dialog. */}
+      <Permission />
 
       <Toast />
     </>

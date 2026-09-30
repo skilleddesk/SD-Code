@@ -361,20 +361,70 @@ pub fn signed_in(provider_id: &str) -> bool {
             .map(|output| output.contains("\"loggedIn\": true") || output.contains("\"loggedIn\":true"))
             .unwrap_or(false),
         "openai" => prints("codex", &["login", "status"])
-            .map(|output| output.to_lowercase().contains("logged in"))
+            .map(|output| codex_logged_in(&output))
             .unwrap_or(false),
         "gemini" => gemini_credentials().map(|path| path.exists()).unwrap_or(false),
         _ => false,
     }
 }
 
+
+/// Whether `codex login status` says signed in. "Not logged in" contains "logged in", which made every
+/// Codex card say connected on a machine that had never signed in (0.15.8, seen on a clean Mac).
+pub fn codex_logged_in(output: &str) -> bool {
+    let text = output.to_lowercase();
+
+    text.contains("logged in") && !text.contains("not logged in")
+}
 /// What a program prints, stdout and stderr together, or `None` when it cannot be started.
 fn prints(program: &str, args: &[&str]) -> Option<String> {
-    let mut command = crate::host::program::command(program)?;
-    let output = command.args(args).output().ok()?;
-    let mut text = String::from_utf8_lossy(&output.stdout).to_string();
+    use std::io::Read;
+    use std::process::Stdio;
 
-    text.push_str(&String::from_utf8_lossy(&output.stderr));
+    /* Bounded (0.15.8): this runs inside `provider.list`, and a CLI that waits on something - a Keychain
+       question, a first-run prompt, a network call - used to hold the whole provider list, and the
+       window with it, for as long as it waited. */
+    let mut command = crate::host::program::command(program)?;
+    let mut child = command
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .ok()?;
+    let mut stdout = child.stdout.take()?;
+    let mut stderr = child.stderr.take()?;
+    let out = std::thread::spawn(move || {
+        let mut text = String::new();
+        let _ = stdout.read_to_string(&mut text);
+        text
+    });
+    let err = std::thread::spawn(move || {
+        let mut text = String::new();
+        let _ = stderr.read_to_string(&mut text);
+        text
+    });
+    let started = std::time::Instant::now();
+
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if started.elapsed() < std::time::Duration::from_secs(15) => {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            _ => {
+                crate::pty::kill_tree(child.id());
+                let _ = child.kill();
+                let _ = child.wait();
+
+                return None;
+            }
+        }
+    }
+
+    let mut text = out.join().unwrap_or_default();
+
+    text.push_str(&err.join().unwrap_or_default());
 
     Some(text)
 }
@@ -704,6 +754,14 @@ pub fn local_doctor() -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 0.15.8: "Not logged in" is not a sign-in. The clean Mac probe showed Codex as connected.
+    #[test]
+    fn not_logged_in_is_not_logged_in() {
+        assert!(!codex_logged_in("Not logged in\n"));
+        assert!(codex_logged_in("Logged in using ChatGPT\n"));
+        assert!(codex_logged_in("Logged in using an API key - sk-proj-***"));
+    }
 
     #[test]
     fn the_catalog_and_the_registry_match_the_apps_seed() {
