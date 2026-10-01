@@ -5,3 +5,6 @@
 17271094709ba36dabb0cc3f70038508bb2986f5:sdc/sdcd/src/trust/scan.rs:aws-access-token:336
 # 0.16.0: RFC 6238 test vector in a TOTP test (now built from parts).
 8d3ec34d3c1896271339885c99636ed31ca764ed:sdc/sdcd/src/ssh/totp.rs:generic-api-key:104
+# The same two lines after the history scrub rewrote that commit.
+99e60552ffc765cc4415d8fd7c0c1752b514f0de:sdc/sdcd/src/trust/scan.rs:aws-access-token:308
+99e60552ffc765cc4415d8fd7c0c1752b514f0de:sdc/sdcd/src/trust/scan.rs:aws-access-token:336

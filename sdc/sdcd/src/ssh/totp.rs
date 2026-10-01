@@ -106,8 +106,8 @@ pub(crate) mod tests {
 
     #[test]
     fn the_key_is_the_first_line_of_the_authenticator_file() {
-        let key = "GEZDGNBVGY3TQOJQ".repeat(2);
-        let file = format!("{key}\n\" RATE_LIMIT 3 30\n\" TOTP_AUTH\n12345678\n");
+        let setup = rfc_test_setup();
+        let file = format!("{setup}\n\" RATE_LIMIT 3 30\n\" TOTP_AUTH\n12345678\n");
 
         assert_eq!(secret_from_file(&file), Some(setup));
         assert_eq!(secret_from_file("\" TOTP_AUTH\n"), None);
