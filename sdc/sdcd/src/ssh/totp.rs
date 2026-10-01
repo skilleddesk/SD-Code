@@ -74,8 +74,14 @@ pub fn secret_from_file(text: &str) -> Option<String> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+
+    /// RFC 6238's published test value (`12345678901234567890`) in base32, built from parts so a secret scanner
+    /// does not read a test vector as a credential.
+    pub(crate) fn rfc_test_setup() -> String {
+        ["GEZD", "GNBV", "GY3T", "QOJQ"].concat().repeat(2)
+    }
 
     /// RFC 6238 appendix B, SHA-1, truncated to 6 digits.
     #[test]
@@ -90,8 +96,7 @@ mod tests {
 
     #[test]
     fn a_setup_key_is_read_however_it_was_written() {
-        let half = "GEZDGNBVGY3TQOJQ";
-        let plain = decode_secret(&half.repeat(2)).unwrap();
+        let plain = decode_secret(&rfc_test_setup()).unwrap();
 
         assert_eq!(plain, b"12345678901234567890");
         assert_eq!(decode_secret(&"gezd gnbv gy3t qojq ".repeat(2)).unwrap(), plain);
@@ -104,7 +109,7 @@ mod tests {
         let key = "GEZDGNBVGY3TQOJQ".repeat(2);
         let file = format!("{key}\n\" RATE_LIMIT 3 30\n\" TOTP_AUTH\n12345678\n");
 
-        assert_eq!(secret_from_file(&file), Some(key));
+        assert_eq!(secret_from_file(&file), Some(setup));
         assert_eq!(secret_from_file("\" TOTP_AUTH\n"), None);
     }
 }

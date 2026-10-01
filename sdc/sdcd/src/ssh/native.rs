@@ -868,7 +868,7 @@ mod tests {
     #[test]
     fn with_the_authenticator_key_the_code_is_made_here() {
         let ssh = Ssh::parse("deploy@203.0.113.10").unwrap();
-        let secret = super::super::totp::decode_secret(&"GEZDGNBVGY3TQOJQ".repeat(2)).unwrap();
+        let secret = super::super::totp::decode_secret(&super::super::totp::tests::rfc_test_setup()).unwrap();
         let mut used = Used::default();
         let code = answer_for(&ssh, "Verification code: ", &credentials("pw", Some(secret.clone())), "", &mut used).unwrap();
 

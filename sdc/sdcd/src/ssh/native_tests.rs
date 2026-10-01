@@ -21,7 +21,7 @@ use super::{totp, Ssh};
 
 /// RFC 6238's test key (`12345678901234567890`) in base32, built here rather than written out whole.
 fn secret_text() -> String {
-    "GEZDGNBVGY3TQOJQ".repeat(2)
+    super::totp::tests::rfc_test_setup()
 }
 
 #[derive(Clone)]
