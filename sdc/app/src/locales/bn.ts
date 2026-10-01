@@ -13,9 +13,14 @@ export const bn: StringsPack = {
     sidebar: { title: 'সাইডবার দেখান/লুকান' },
     right: { title: 'ডান প্যানেল দেখান/লুকান' },
     settings: { title: 'সেটিংস' },
-    modeSwitchTitle: 'কাজের ধরন',
+    modeSwitchTitle: 'কাজের আগে SDC কতবার জিজ্ঞেস করবে',
     modes: { simple: 'সহজ', pro: 'প্রো', auto: 'অটো' },
     modeChanged: (mode: string): string => `ধরন: ${mode}`,
+    modeHelp: {
+      simple: 'সহজ - প্রতিটা ফাইল বদল আর প্রতিটা কমান্ডের আগে জিজ্ঞেস করে',
+      pro: 'প্রো - ফাইল নিজেই বদলায়, কমান্ড চালানোর আগে জিজ্ঞেস করে',
+      auto: 'অটো - না জিজ্ঞেস করেই কাজ করে; শুধু ঝুঁকির কমান্ড (মুছে ফেলা, push, sudo, ডাটাবেস) জিজ্ঞেস করে',
+    },
   },
   prompt: {
     placeholder: 'যেকোনো ভাষায় লিখুন বা বলুন কী বানাতে বা ঠিক করতে চান…',
@@ -133,8 +138,10 @@ export const bn: StringsPack = {
     kill: {
       label: 'সব থামান',
       title: 'কিল সুইচ: চলমান সব টার্ন, যাচাই, ডেপ্লয় আর কমান্ড এখনই থামান (Ctrl Shift .)',
-      done: (stopped: number, checkpoints: number): string =>
-        stopped === 0 ? 'কিছুই চলছিল না। কিল সুইচ প্রস্তুত।' : `${stopped}টা চলমান কাজ থামানো হয়েছে। ${checkpoints}টা checkpoint থামার সময়কার অবস্থা ধরে রেখেছে।`,
+      done: (stopped: number, checkpoints: number, processes = 0): string =>
+        stopped + processes === 0
+          ? 'কিছুই চলছিল না। কিল সুইচ প্রস্তুত।'
+          : `${stopped + processes}টা চলমান কাজ থামানো হয়েছে।${checkpoints === 0 ? '' : ` ${checkpoints}টা checkpoint থামার সময়কার অবস্থা ধরে রেখেছে।`}`,
       failed: 'কিল সুইচ daemon-এর কাছে পৌঁছাতে পারেনি',
     },
     cost: {

@@ -102,12 +102,11 @@ impl Server {
     /// A server on a host, over `ssh` (0.13).
     fn start_remote(name: &str, spec: &Value, root: &str, ssh: &crate::ssh::Ssh) -> Result<Self, String> {
         let line = remote_line(spec, root).map_err(|error| format!("{name}: {error}"))?;
-        let launcher = crate::ssh::program()
-            .map(|path| crate::host::program::command_for(&path))
-            .ok_or_else(|| format!("{name}: `ssh` is not on this machine, so a server on {} cannot start", ssh.label()))?;
+        let (program, ssh_args) = ssh.launcher(None).map_err(|error| format!("{name}: {}", error.message))?;
+        let launcher = crate::host::program::command_for(std::path::Path::new(&program));
         let mut process = Command::new(launcher.get_program());
 
-        process.args(launcher.get_args()).args(ssh.base_args().map_err(|error| error.message)?).arg(line);
+        process.args(launcher.get_args()).args(ssh_args).arg(line);
 
         Self::launch(name, process)
     }

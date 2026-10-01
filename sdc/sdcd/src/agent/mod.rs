@@ -919,7 +919,7 @@ fn drive(
         let reads: Vec<(usize, &dialect::ToolUse)> =
             reply.tool_uses.iter().enumerate().filter(|(_, call)| call.name != "task").collect();
 
-        if reads.len() > 1 && mcp.as_ref().map_or(true, |servers| !reads.iter().any(|(_, call)| servers.handles(&call.name))) && reads.iter().all(|(_, call)| PARALLEL_READS.contains(&call.name.as_str())) {
+        if reads.len() > 1 && mcp.as_ref().is_none_or(|servers| !reads.iter().any(|(_, call)| servers.handles(&call.name))) && reads.iter().all(|(_, call)| PARALLEL_READS.contains(&call.name.as_str())) {
             let first = context.calls;
 
             context.calls += reads.len();

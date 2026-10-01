@@ -129,6 +129,42 @@ export function FilesSection() {
     void loadGitStatus();
   }, [root]);
 
+  /*
+   * The host came back (0.16.0). The report's screenshot: `listing failed … Permission denied
+   * (keyboard-interactive)` stayed red under FILES after the sign-in and after Reconnect, because nothing
+   * asked again - the error was only cleared by the next load, and no load came. A chat on a host now
+   * reloads its tree, the open folders and the git badge the moment the host says `connected`.
+   */
+  const hostStatus = useAppStore((state) =>
+    host === null || host.id === 'local' ? undefined : state.hosts.find((candidate) => candidate.id === host.id)?.status,
+  );
+  const lastStatus = useRef(hostStatus);
+
+  useEffect(() => {
+    const before = lastStatus.current;
+
+    lastStatus.current = hostStatus;
+
+    if (hostStatus !== 'connected' || before === 'connected' || root === null) {
+      return;
+    }
+
+    const files = useFilesStore.getState();
+
+    if (files.error === null && files.directories[root] !== undefined && before === undefined) {
+      return;
+    }
+
+    files.clearError();
+    void loadDirectory(null);
+
+    for (const path of files.expanded) {
+      void loadDirectory(path);
+    }
+
+    void loadGitStatus();
+  }, [hostStatus, root]);
+
   /* A turn ended: show what it changed (the tree, the badge, the open files). */
   useEffect(() => {
     if (ended > 0 && root !== null) {

@@ -62,7 +62,7 @@ export async function killAll(): Promise<{ stopped: ActiveWork[]; checkpoints: {
   const result = await call(() => sdcpCall('kill.all', {}), strings.kernel.kill.failed);
 
   if (result !== null) {
-    dispatch({ type: 'Toast', message: strings.kernel.kill.done(result.stopped.length, result.checkpoints.length) });
+    dispatch({ type: 'Toast', message: strings.kernel.kill.done(result.stopped.length, result.checkpoints.length, result.processes) });
   }
 
   return result;

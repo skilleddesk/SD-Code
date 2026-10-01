@@ -325,12 +325,12 @@ impl CliAdapter {
             &pid_file,
             secrets_file.as_deref(),
         )?;
-        let launcher = crate::ssh::program().map(|path| crate::host::program::command_for(&path)).ok_or_else(|| {
-            ErrorObject::not_found("`ssh` is not on this machine's PATH, so no turn can run on a host")
-        })?;
+        /* SDC's own connection when it holds one (0.16.0), `ssh` otherwise. */
+        let (program, ssh_args) = ssh.launcher(None)?;
+        let launcher = crate::host::program::command_for(std::path::Path::new(&program));
         let mut command = Command::new(launcher.get_program());
 
-        command.args(launcher.get_args()).args(ssh.base_args()?).arg(line);
+        command.args(launcher.get_args()).args(ssh_args).arg(line);
 
         if let Ok(mut remotes) = self.remotes.lock() {
             remotes.insert(prompt.turn_id.clone(), (ssh.clone(), pid_file));

@@ -1,10 +1,10 @@
 [package]
 name = "sdcd"
-version = "0.15.12"
+version = "0.16.0"
 description = "SDC host daemon - session, engine, file, PTY, git and event-log service (spec section 3.1)"
 authors = ["Skilleddesk"]
 edition = "2021"
-rust-version = "1.77.2"
+rust-version = "1.85"
 publish = false
 
 # Layout is fixed by the master spec's module list (section 10) and mirrored in src/lib.rs's module
@@ -33,6 +33,12 @@ toml = "0.8"
 regex = "1"
 base64 = "0.22"
 tungstenite = { version = "0.24", default-features = false, features = ["handshake"] }
+# 0.16.0: SDC holds the SSH connection itself (`ssh::native`) instead of an `ssh` ControlMaster process:
+# Git for Windows' master spun at 90% of a core and stopped serving about every 90 minutes.
+russh = { version = "0.62", default-features = false, features = ["ring", "rsa"] }
+# The authenticator code for "Stay signed in" (RFC 6238 TOTP, `ssh::totp`).
+hmac = "0.13"
+sha1 = "0.11"
 
 [dev-dependencies]
 tempfile = "3"

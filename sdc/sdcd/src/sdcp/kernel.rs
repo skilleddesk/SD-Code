@@ -250,9 +250,7 @@ impl Daemon {
             }
         }
 
-        let processes = self.state.pty.running();
-
-        self.state.pty.close_all();
+        let processes = self.state.pty.close_every();
 
         let mut checkpoints = Vec::new();
 

@@ -15,6 +15,53 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [0.16.0] — SDC holds the VPS connection itself, and can stay signed in for good
+
+**The report:** *"ami cai ai rokom sign out jano kono vabai nah hoi"*. The VPS signed out six times in one
+day, about every 90 minutes.
+
+**The cause was on this PC, not on the VPS.** The connection was an `ssh -f -N` ControlMaster from Git for
+Windows. The process was found at 89% of a core, alive, holding its TCP connection and serving nothing
+(`muxclient: master hello exchange failed`). 0.15.4 and 0.15.6 could only notice it and kill it, and every
+kill was a sign-out.
+
+**SDC's own SSH connection (`ssh::native`, `russh`).** The daemon now signs in and holds the connection
+itself. The ssh.exe master process is gone.
+
+- One connection per host. Every command, file read, a turn's CLI, an MCP server, the Terminal and the
+  preview's port forward run as channels on it.
+- A keepalive every 15 s. Only two minutes of silence end the connection.
+- At most 9 channels at once, below OpenSSH's `MaxSessions 10`. A burst waits for a free slot instead of
+  being refused. Live check: 16 commands at once on the real VPS, all answered in 1.4 s.
+- When the connection drops, SDC signs in again by itself if it can. A command sent during that wait
+  runs once the new sign-in finishes instead of failing.
+- A host SDC is signed out of is answered "sign in again" on this PC, without dialing. Each refused dial
+  was a `PerSourcePenalties` strike against this PC.
+- The first sign-in ends the stuck master an older SDC left behind.
+- Streaming callers start `sdcd --ssh-bridge`, a process that behaves like `ssh`, so nothing that starts,
+  reads or stops them had to change.
+- The old master stays as a fallback, only for a host whose key exchange the new client cannot do.
+
+**Stay signed in.** A new box on the Sign in card, on by default. SDC keeps the password and the
+authenticator's setup key in the OS keychain and makes the 6-digit code itself (RFC 6238, `ssh::totp`).
+With it on, a dropped connection or a restarted SDC signs in again with nothing typed. Leave the key field
+empty and SDC reads it from `~/.google_authenticator` on the host, over the connection that was just
+opened. Turning the box off forgets the key.
+
+**Other fixes found on the way:**
+
+- **Files panel.** `listing failed … Permission denied` stayed red under FILES after a sign-in or a
+  Reconnect. The tree, the open folders and the git badge now reload as soon as the host is `connected`.
+- **Sign in card.** The card opened without password and code fields when the host's message was
+  `master hello exchange failed`, the message in the report. It also missed every new "dropped" sentence.
+  Now every sentence that means "sign in" opens the fields.
+- **Stop all.** It killed only the direct child process: a dev server's `node` under `npm`, or the command
+  on the VPS, kept running. Each process is now stopped the way its own Stop button stops it: the whole
+  tree, and the remote process too. The toast also said "Nothing was running" right after stopping a
+  process. It now counts processes.
+- **Simple | Pro | Auto.** The switch never said what it does. It sets how often SDC asks before it acts.
+  Each mode now has a tooltip and a toast that say so, in English and Bengali.
+
 ## [0.15.12] — SDC stops knocking on a VPS it is signed out of, and a cleaner prompt box
 
 **The report:** the VPS kept "restarting". Its own logs said otherwise: the server was healthy (37 days

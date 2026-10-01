@@ -76,6 +76,11 @@ fn sweep(store: &Store, notifier: &dyn Notifier, full: bool) -> Vec<String> {
     let mut changed = Vec::new();
 
     for (id, name, platform, ssh) in connected_hosts(store) {
+        /* SDC's own connection looks after itself and reports its own changes (0.16.0). */
+        if super::native::manages(&ssh) {
+            continue;
+        }
+
         /* A master this daemon did not start - the one a previous daemon left running across an update -
            is looked after the same way once its socket is found. */
         let socket = super::session::has_socket(&ssh);
@@ -184,6 +189,9 @@ fn sweep(store: &Store, notifier: &dyn Notifier, full: bool) -> Vec<String> {
 /// Starts the watcher. The first pass waits one interval: at start the window's own requests come
 /// first, and a row the previous daemon left `connected` is measured shortly after.
 pub fn spawn(store: Arc<Store>, notifier: Arc<dyn Notifier>) {
+    super::native::attach(Box::new(Reporter { store: store.clone(), notifier: notifier.clone() }));
+    resume_at_start(store.clone(), notifier.clone());
+
     tokio::spawn(async move {
         let every = (INTERVAL.as_secs() / QUICK.as_secs()).max(1);
         let mut round: u64 = 0;
@@ -197,6 +205,73 @@ pub fn spawn(store: Arc<Store>, notifier: Arc<dyn Notifier>) {
             let full = round % every == 0;
 
             let _ = tokio::task::spawn_blocking(move || sweep(&store, &*notifier, full)).await;
+        }
+    });
+}
+
+/// The keychain entry of a host's authenticator key, next to its remembered password (`sdc.host.<label>`).
+pub fn totp_ref(ssh: &Ssh) -> String {
+    format!("sdc.host.totp.{}", ssh.label())
+}
+
+/// What SDC needs to sign in to a host by itself, when "Stay signed in" kept it: `(password, key)`.
+pub fn kept_credentials(ssh: &Ssh) -> Option<(String, Vec<u8>)> {
+    let password = crate::auth::keychain::get(&format!("sdc.host.{}", ssh.label())).filter(|saved| !saved.is_empty())?;
+    let secret = crate::auth::keychain::get(&totp_ref(ssh)).and_then(|text| super::totp::decode_secret(&text))?;
+
+    Some((password, secret))
+}
+
+/// Where SDC's own connection ([`super::native`]) reports: the host's row and a `HostStatus`.
+struct Reporter {
+    store: Arc<Store>,
+    notifier: Arc<dyn Notifier>,
+}
+
+impl super::native::Reporter for Reporter {
+    fn report(&self, ssh: &Ssh, status: &str, detail: &str) {
+        let target = ssh.target.user_host.clone();
+        let Ok(Some(id)) = self.store.host_id_for_target(&target) else {
+            return;
+        };
+        let row = self.store.host(&id).ok().flatten();
+        let name = row.as_ref().and_then(|row| row["name"].as_str().map(str::to_string)).unwrap_or_else(|| target.clone());
+        let platform = row.as_ref().and_then(|row| row["platform"].as_str().map(str::to_string));
+
+        let _ = self.store.upsert_host(&id, &name, "ssh", Some(&target), status, platform.as_deref());
+        self.notifier.push(event::host_status(&id, &name, "vps", status, platform.as_deref(), Some(detail), None), None, None);
+    }
+}
+
+/// A host with "Stay signed in" is signed in again when the daemon starts (an update, a restart, a
+/// reboot) - nobody has to type anything.
+fn resume_at_start(store: Arc<Store>, notifier: Arc<dyn Notifier>) {
+    tokio::task::spawn_blocking(move || {
+        let Ok(hosts) = store.hosts() else {
+            return;
+        };
+
+        for host in hosts.into_iter().filter(|host| host["hostType"].as_str() == Some("vps")) {
+            let Some(id) = host["hostId"].as_str().map(str::to_string) else {
+                continue;
+            };
+            let Ok(Some((Some(target), port))) = store.host_address(&id) else {
+                continue;
+            };
+            let ssh = Ssh::new(SshTarget { user_host: target.clone(), port });
+            let Some((password, secret)) = kept_credentials(&ssh) else {
+                continue;
+            };
+            let name = host["name"].as_str().unwrap_or(&target).to_string();
+            let platform = host["platform"].as_str().map(str::to_string);
+            let (status, detail) = match super::session::sign_in_with(&ssh, &password, "", Some(secret)) {
+                Ok(sentence) => ("connected", format!("{sentence} · signed in by itself when SDC started")),
+                Err(super::session::SignInError::Failed(sentence)) => ("offline", sentence),
+                Err(_) => ("offline", format!("{} needs a sign-in", ssh.label())),
+            };
+
+            let _ = store.upsert_host(&id, &name, "ssh", Some(&target), status, platform.as_deref());
+            notifier.push(event::host_status(&id, &name, "vps", status, platform.as_deref(), Some(&detail), None), None, None);
         }
     });
 }

@@ -1,3 +1,5 @@
+import { ShieldCheck } from 'lucide-react';
+
 import { strings } from '../../strings';
 import { useLayoutStore, type AppMode } from '../../store/layout';
 import { toast } from '../../store/toast';
@@ -22,7 +24,8 @@ export function ModeSwitch() {
 
   const select = (next: AppMode): void => {
     setMode(next);
-    toast(strings.topbar.modeChanged(strings.topbar.modes[next]));
+    /* The toast says what the mode does, not only its name (0.16.0). */
+    toast(strings.topbar.modeHelp[next]);
   };
 
   return (
@@ -31,7 +34,9 @@ export function ModeSwitch() {
       id="modeSwitch"
       role="group"
       aria-label={strings.topbar.modeSwitchTitle}
+      title={strings.topbar.modeSwitchTitle}
     >
+      <ShieldCheck size={12} className="mx-[3px] shrink-0 text-text-muted" aria-hidden="true" />
       {MODES.map((candidate) => (
         <button
           key={candidate}
@@ -39,6 +44,7 @@ export function ModeSwitch() {
           data-mode={candidate}
           onClick={() => select(candidate)}
           aria-pressed={mode === candidate}
+          title={strings.topbar.modeHelp[candidate]}
           className={
             'px-[10px] py-[3px] text-[11px] font-medium rounded-sm transition-all duration-fast ease-ease ' +
             (mode === candidate

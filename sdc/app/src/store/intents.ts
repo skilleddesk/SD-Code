@@ -748,7 +748,13 @@ export async function closeSession(sessionId: string): Promise<void> {
  * The password travels with this one call and is kept nowhere: not in the store, not in the event log,
  * and not in the sentence that comes back.
  */
-export async function installHostKey(hostId: string, password: string, code = '', remember = false): Promise<boolean> {
+/** "Stay signed in" on the Sign in card (0.16.0): `secret` empty lets the daemon read it from the host. */
+export interface StaySignedIn {
+  on: boolean;
+  secret: string;
+}
+
+export async function installHostKey(hostId: string, password: string, code = '', remember = false, stay?: StaySignedIn): Promise<boolean> {
   const host = useAppStore.getState().hosts.find((candidate) => candidate.id === hostId);
 
   /* The id goes too (0.15.2): the window's copy of the address can be empty, and this used to return
@@ -761,6 +767,7 @@ export async function installHostKey(hostId: string, password: string, code = ''
     ...(password === '' ? {} : { password }),
     ...(code.trim() === '' ? {} : { code: code.trim() }),
     ...(remember ? { remember } : {}),
+    ...(stay === undefined ? {} : { staySignedIn: stay.on, ...(stay.on && stay.secret.trim() !== '' ? { totpSecret: stay.secret.trim() } : {}) }),
   });
 
   return answer !== null && answer.hostId === hostId;
@@ -771,12 +778,17 @@ export async function installHostKey(hostId: string, password: string, code = ''
  * the verification code alone - and, with `forget`, drops it. The password itself is never sent back.
  */
 export async function hostPasswordSaved(hostId: string, forget = false): Promise<boolean> {
+  return (await hostSignInKept(hostId, forget)).saved;
+}
+
+/** `host.password` in full: the password, and whether "Stay signed in" kept the authenticator key too (0.16.0). */
+export async function hostSignInKept(hostId: string, forget = false): Promise<{ saved: boolean; staysSignedIn: boolean }> {
   try {
     const answer = await sdcpCall('host.password', { hostId, ...(forget ? { forget } : {}) });
 
-    return answer.saved;
+    return { saved: answer.saved, staysSignedIn: answer.staysSignedIn === true };
   } catch {
-    return false;
+    return { saved: false, staysSignedIn: false };
   }
 }
 
@@ -808,6 +820,9 @@ export async function addHost(input: {
   code?: string;
   /** Keep the password in the OS keychain once the host accepts it (0.14.4). */
   remember?: boolean;
+  /** "Stay signed in" (0.16.0). */
+  staySignedIn?: boolean;
+  totpSecret?: string;
 }): Promise<{ hostId: string; reused: boolean } | null> {
   if (input.type === 'local') {
     toast(strings.addHost.localAlready);
@@ -880,6 +895,7 @@ export async function trustHost(
   password?: string,
   code?: string,
   remember = false,
+  stay?: StaySignedIn,
 ): Promise<boolean> {
   try {
     await sdcpCall('host.trust', {
@@ -888,6 +904,7 @@ export async function trustHost(
       ...(password === undefined || password === '' ? {} : { password }),
       ...(code === undefined || code.trim() === '' ? {} : { code: code.trim() }),
       ...(remember ? { remember } : {}),
+      ...(stay === undefined ? {} : { staySignedIn: stay.on, ...(stay.on && stay.secret.trim() !== '' ? { totpSecret: stay.secret.trim() } : {}) }),
     });
 
     toast(strings.addHost.trust.pinned(fingerprint));
@@ -944,7 +961,25 @@ export async function reconnectHost(hostId: string, name: string): Promise<boole
 
 /** Does a host's sentence say the one way back is typing the password and code again? */
 export function needsSignIn(detail: string | undefined): boolean {
-  return detail !== undefined && (detail.includes('is not signed in') || detail.includes('signed-in connection'));
+  if (detail === undefined) {
+    return false;
+  }
+
+  const lowered = detail.toLowerCase();
+
+  /* 0.16.0: every sentence that means "a person has to sign in" - SDC's own connection's ("dropped",
+     "needs a verification code", "could not sign in … again"), the host's refusal, and an old ssh master that
+     hung (`master hello exchange failed`, the report's screenshot), which opened no fields at all. */
+  return [
+    'is not signed in',
+    'signed-in connection',
+    'sign in again',
+    'needs a verification code',
+    'could not sign in',
+    '(keyboard-interactive)',
+    'master hello exchange failed',
+    'connection to',
+  ].some((phrase) => lowered.includes(phrase));
 }
 
 /**

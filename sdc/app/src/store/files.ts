@@ -96,6 +96,8 @@ export interface FilesActions {
   setGit: (git: GitView | null) => void;
   /** The working tree's diff - or `null` when the diff was closed. */
   setDiff: (patch: string | null) => void;
+  /** The error line goes, for a host that came back (0.16.0). */
+  clearError: () => void;
   /** Forget everything, for a chat whose folder changed: the old paths are not in the new tree. */
   reset: () => void;
 }
@@ -142,6 +144,8 @@ export const useFilesStore = create<FilesState & FilesActions>()((set, get) => (
 
   fail: (message) =>
     set((state) => ({ ...state, loading: [], opening: null, error: message })),
+
+  clearError: () => set((state) => (state.error === null ? state : { ...state, error: null })),
 
   setExpanded: (path, open) =>
     set((state) => ({

@@ -1524,6 +1524,13 @@ export interface SdcpMethodMap {
        * asks only for the code. With a code and no password, a remembered password is used.
        */
       remember?: boolean;
+      /**
+       * "Stay signed in" (0.16.0): keep the password and the authenticator's key in the OS keychain, so a
+       * dropped connection - or a restarted SDC - signs in again by itself. `false` forgets the key.
+       */
+      staySignedIn?: boolean;
+      /** The authenticator's setup key (base32). Empty: the daemon reads `~/.google_authenticator` on the host. */
+      totpSecret?: string;
     };
     /** `reused` is true when that `user@host` was already in the list - the row is returned as-is. */
     result: { hostId: string; reused: boolean };
@@ -1537,7 +1544,7 @@ export interface SdcpMethodMap {
    * one-time key install safe on a host whose identity was never checked.
    */
   'host.trust': {
-    params: { hostId: string; fingerprint: string; password?: string; code?: string; remember?: boolean };
+    params: { hostId: string; fingerprint: string; password?: string; code?: string; remember?: boolean; staySignedIn?: boolean; totpSecret?: string };
     result: { trusted: boolean; hostId: string; fingerprint: string };
   };
   /**
@@ -1559,7 +1566,7 @@ export interface SdcpMethodMap {
    * case nothing in this daemon offers to "continue anyway" through.
    */
   /** Whether a host has a remembered password (0.14.4); `forget` deletes it. The password is never returned. */
-  'host.password': { params: { hostId: string; forget?: boolean }; result: { saved: boolean } };
+  'host.password': { params: { hostId: string; forget?: boolean }; result: { saved: boolean; staysSignedIn?: boolean } };
   /** A dev server port on the chat's host as an address this machine can open (0.14.4). */
   /** A site, as a loopback address its frame-forbidding headers are taken off, for the preview (0.14.4). */
   'preview.open': { params: { url: string }; result: { url: string } };

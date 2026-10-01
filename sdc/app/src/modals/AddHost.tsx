@@ -7,6 +7,7 @@ import {
   addHost,
   hostKey,
   hostPasswordSaved,
+  hostSignInKept,
   installHostKey,
   needsSignIn,
   openTerminalForHost,
@@ -79,6 +80,16 @@ export function AddHost() {
   const [remember, setRemember] = useState(true);
   /** The daemon remembers this host's password, so the card asks for the code alone. */
   const [savedPassword, setSavedPassword] = useState(false);
+  /**
+   * "Stay signed in" (0.16.0): the password and the authenticator's key are kept in the OS keychain, so a
+   * dropped connection - or a restarted SDC - signs in again by itself. On by default: the report asked
+   * for a VPS that never signs out.
+   */
+  const [stay, setStay] = useState(true);
+  /** The authenticator's setup key, when typed. Empty: SDC reads it from `~/.google_authenticator`. */
+  const [staySecret, setStaySecret] = useState('');
+  /** SDC already keeps both, so the card can sign in with nothing typed. */
+  const [keptStay, setKeptStay] = useState(false);
   /** What `host.key` answered for the host in front of the user (0.7.13), if it has been asked. */
   const [scanned, setScanned] = useState<{ hostKey: string; keyType: string; matches: boolean | null; pinnedKey: string | null } | null>(
     null,
@@ -115,7 +126,7 @@ export function AddHost() {
     openFor !== 'local' &&
     (signIn || (doctor?.some((row) => row.fix === 'Install key') ?? false));
   /** What the card can sign in with: a typed password, or the saved one plus a code. */
-  const canSignIn = password !== '' || (savedPassword && code !== '');
+  const canSignIn = password !== '' || (savedPassword && (code !== '' || keptStay));
 
   /* SDC's public key, for the manual line under the button: asked once, and only when there is a use for
      it. `ssh.key` is a read, so opening the card creates nothing. */
@@ -142,6 +153,8 @@ export function AddHost() {
     setAwaiting(null);
     setInstalling(false);
     setSavedPassword(false);
+    setKeptStay(false);
+    setStaySecret('');
   };
 
   /*
@@ -159,7 +172,10 @@ export function AddHost() {
 
     setPending({ hostId: openFor, label: name });
     if (openFor !== 'local') {
-      void hostPasswordSaved(openFor).then(setSavedPassword);
+      void hostSignInKept(openFor).then((kept) => {
+        setSavedPassword(kept.saved);
+        setKeptStay(kept.staysSignedIn);
+      });
     }
     /* `local` is this machine: its environment is worth checking (`runDoctor`) and it has no host key to
        pin, so `host.key` is not asked - a call that could only answer with an error. */
@@ -243,8 +259,8 @@ export function AddHost() {
     setInstalling(true);
     setAwaiting('sent');
 
-    void installHostKey(pending.hostId, password, code, remember).then((accepted) => {
-      if (password !== '' && remember) {
+    void installHostKey(pending.hostId, password, code, remember || stay, { on: stay, secret: staySecret }).then((accepted) => {
+      if (password !== '' && (remember || stay)) {
         setSavedPassword(true);
       }
       setPassword('');
@@ -266,7 +282,8 @@ export function AddHost() {
       label: label.trim(),
       ...(password === '' ? {} : { password }),
       ...(code.trim() === '' ? {} : { code: code.trim() }),
-      ...(password !== '' && remember ? { remember } : {}),
+      ...(password !== '' && (remember || stay) ? { remember: true } : {}),
+      ...(password !== '' ? { staySignedIn: stay, ...(stay && staySecret.trim() !== '' ? { totpSecret: staySecret.trim() } : {}) } : {}),
     }).then((answer) => {
       setBusy(false);
 
@@ -305,7 +322,7 @@ export function AddHost() {
     setTrusting(true);
 
     /* The password from the field is re-sent here, and only here: it is spent after the pin lands. */
-    void trustHost(pending.hostId, fingerprint, password, code, password !== '' && remember).then((trusted) => {
+    void trustHost(pending.hostId, fingerprint, password, code, password !== '' && (remember || stay), { on: stay, secret: staySecret }).then((trusted) => {
       setTrusting(false);
       setCode('');
 
@@ -656,6 +673,41 @@ export function AddHost() {
                       />
                       {strings.addHost.signIn.remember}
                     </label>
+                  ) : null}
+
+                  {/* 0.16.0: the one box that makes a VPS never sign out. */}
+                  {signIn ? (
+                    <div className="flex flex-col gap-[6px] rounded-md border border-border-subtle bg-bg-base px-[10px] py-[8px]" data-ssh-stay={stay ? 'on' : 'off'}>
+                      <label className="flex items-start gap-[7px] text-[11.5px] font-medium text-text-primary">
+                        <input
+                          type="checkbox"
+                          className="mt-[2px] h-[14px] w-[14px] shrink-0 appearance-auto accent-[var(--accent)]"
+                          id="sshStaySignedIn"
+                          checked={stay}
+                          disabled={installing}
+                          onChange={(event) => setStay(event.target.checked)}
+                        />
+                        <span>
+                          {strings.addHost.signIn.stay}
+                          <span className="mt-[2px] block text-[11px] font-normal leading-[1.5] text-text-secondary">
+                            {keptStay ? strings.addHost.signIn.stayKept : strings.addHost.signIn.stayHelp}
+                          </span>
+                        </span>
+                      </label>
+                      {stay && !keptStay ? (
+                        <input
+                          type="password"
+                          id="sshStaySecret"
+                          autoComplete="off"
+                          spellCheck={false}
+                          className="rounded-md border border-border-default bg-bg-input px-[10px] py-[6px] font-mono text-[12px] text-text-primary placeholder:text-text-muted focus:border-border-strong"
+                          placeholder={strings.addHost.signIn.stayKeyPlaceholder}
+                          value={staySecret}
+                          disabled={installing}
+                          onChange={(event) => setStaySecret(event.target.value)}
+                        />
+                      ) : null}
+                    </div>
                   ) : null}
 
                   {/* A sign-in is the footer's button (0.14.4); this one is for the key install only. */}

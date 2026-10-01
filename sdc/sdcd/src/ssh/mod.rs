@@ -40,9 +40,14 @@ use std::time::{Duration, Instant};
 use crate::auth::remote::{key_path, parse_target, SshTarget};
 use crate::sdcp::envelope::ErrorObject;
 
+pub mod bridge;
 pub mod hostkey;
+pub mod native;
+#[cfg(test)]
+mod native_tests;
 pub mod ops;
 pub mod session;
+pub mod totp;
 pub mod watch;
 
 /// The `ssh` every call runs: the one that can hold a sign-in open ([`session::program`]) when this
@@ -240,7 +245,30 @@ impl Ssh {
         self.execute(script, Some(input), timeout)
     }
 
+    /// The program and arguments that run a command on this host as a child process, the caller appending
+    /// the command line - SDC's own connection when it holds one ([`bridge::launcher`]), `ssh` otherwise.
+    /// `tty` asks the host for a terminal of that size (`ssh -tt`).
+    pub fn launcher(&self, tty: Option<(u64, u64)>) -> Result<(String, Vec<String>), ErrorObject> {
+        if let Some((program, args)) = bridge::launcher(self, tty) {
+            return Ok((program.display().to_string(), args));
+        }
+
+        let program = program().map(|path| path.display().to_string()).ok_or_else(|| {
+            ErrorObject::not_found("`ssh` is not on this machine's PATH, so SDC cannot reach another host")
+        })?;
+        let mut args = if tty.is_some() { vec!["-tt".to_string()] } else { Vec::new() };
+
+        args.extend(self.base_args()?);
+
+        Ok((program, args))
+    }
+
     fn execute(&self, script: &str, input: Option<&str>, timeout: Duration) -> Result<SshOutput, ErrorObject> {
+        /* SDC's own connection first (0.16.0): no process, no master, nothing to get stuck. */
+        if let Some(output) = native::exec(self, script, input, timeout) {
+            return Ok(output);
+        }
+
         let mut command = program().map(|path| crate::host::program::command_for(&path)).ok_or_else(|| {
             ErrorObject::not_found(
                 "`ssh` is not on this machine's PATH, so SDC cannot reach another host. Install the OpenSSH client (Windows: Settings → Optional features → OpenSSH Client).",

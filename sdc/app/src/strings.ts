@@ -58,7 +58,7 @@ const english = {
     sidebar: { title: 'Toggle sidebar' },
     right: { title: 'Toggle right panel' },
     settings: { title: 'Settings' },
-    modeSwitchTitle: 'Interface mode',
+    modeSwitchTitle: 'How often SDC asks before it acts',
     /** Simple / Pro / Auto - Pro is the default (spec section 7.1, row 5). */
     modes: {
       simple: 'Simple',
@@ -66,6 +66,12 @@ const english = {
       auto: 'Auto',
     },
     modeChanged: (mode: string): string => `Mode: ${mode}`,
+    /** What each mode does (0.16.0): the switch said nothing, so nobody could tell it changes the permission cards. */
+    modeHelp: {
+      simple: 'Simple - asks you before every file change and every command',
+      pro: 'Pro - changes files freely, asks before running a command',
+      auto: 'Auto - does the work without asking; only risky commands (delete, push, sudo, a database) still ask',
+    },
   },
 
   /** Host switcher popover and the New chat popover (spec sections 7.1 row 3 and 9.5). */
@@ -1233,6 +1239,12 @@ const english = {
       savedNote: 'The password is saved on this computer. Type the code from your authenticator and press Enter.',
       forget: 'Forget saved password',
       forgotten: 'Saved password removed',
+      /* 0.16.0: "Stay signed in" - the password and the authenticator key in the OS keychain. */
+      stay: 'Stay signed in',
+      stayHelp:
+        'If the connection drops, or SDC restarts, it signs in again by itself - no code to type. SDC keeps the password and your authenticator’s setup key in this computer’s keychain and makes the code itself. Leave the box below empty: SDC reads the key from ~/.google_authenticator on the host.',
+      stayKept: 'On. SDC signs in again by itself when the connection drops. Press Sign in with nothing typed to reconnect now.',
+      stayKeyPlaceholder: 'Setup key (optional)',
     },
     keyInstall: {
       title: (label: string): string => `SDC cannot sign in to ${label} yet`,

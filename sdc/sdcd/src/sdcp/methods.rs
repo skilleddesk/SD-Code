@@ -319,7 +319,9 @@ impl Daemon {
            dropped connection asks only for the verification code, which is still typed every time. */
         let remember = envelope.opt_bool("remember");
         let secret_ref = host_secret_ref(&ssh);
-        let (password, remembered) = if password.is_empty() && !code.is_empty() {
+        /* With "Stay signed in" kept, nothing has to be typed at all (0.16.0). */
+        let kept_key = crate::auth::keychain::get(&crate::ssh::watch::totp_ref(&ssh)).is_some_and(|text| !text.is_empty());
+        let (password, remembered) = if password.is_empty() && (!code.is_empty() || kept_key) {
             match crate::auth::keychain::get(&secret_ref).filter(|saved| !saved.is_empty()) {
                 Some(saved) => (saved, true),
                 None => (password, false),
@@ -327,6 +329,9 @@ impl Daemon {
         } else {
             (password, false)
         };
+        /* "Stay signed in" (0.16.0) keeps the password too: signing in again needs both. */
+        let stay = Stay::from_envelope(envelope);
+        let remember = remember || matches!(stay, Stay::On(_));
         /* Typing it again with the box unticked means "do not keep it". */
         if !password.is_empty() && !remembered && !remember {
             let _ = crate::auth::keychain::delete(&secret_ref);
@@ -396,9 +401,7 @@ impl Daemon {
             .ok()
             .and_then(|pins| crate::ssh::hostkey::pinned_in(&pins, &ssh.target).ok())
             .is_some_and(|keys| !keys.is_empty());
-        let straight = pinned
-            && (!password.is_empty() || !code.is_empty())
-            && crate::ssh::session::program().is_some();
+        let straight = pinned && (!password.is_empty() || !code.is_empty());
 
         if !straight {
             out.push(
@@ -435,7 +438,7 @@ impl Daemon {
          */
         tokio::spawn(async move {
             if straight {
-                finish_connection(state, notifier, host_id, name, ssh, Secrets { password, code, keep: keep.clone() }, key_note).await;
+                finish_connection(state, notifier, host_id, name, ssh, Secrets { password, code, keep: keep.clone(), stay: stay.clone() }, key_note).await;
 
                 return;
             }
@@ -447,7 +450,7 @@ impl Daemon {
 
             match seen {
                 Ok(crate::ssh::hostkey::Trust::Pinned(_)) => {
-                    finish_connection(state, notifier, host_id, name, ssh, Secrets { password, code, keep: keep.clone() }, key_note).await;
+                    finish_connection(state, notifier, host_id, name, ssh, Secrets { password, code, keep: keep.clone(), stay: stay.clone() }, key_note).await;
                 }
                 Ok(crate::ssh::hostkey::Trust::Unknown(keys)) => {
                     let fingerprint = crate::ssh::hostkey::primary(&keys)
@@ -558,9 +561,10 @@ impl Daemon {
         let state = self.state.clone();
         let notifier = out.clone();
 
-        let keep = (envelope.opt_bool("remember") && !password.is_empty()).then(|| host_secret_ref(&ssh));
+        let keep = ((envelope.opt_bool("remember") || matches!(Stay::from_envelope(envelope), Stay::On(_))) && !password.is_empty())
+            .then(|| host_secret_ref(&ssh));
 
-        spawn_finish(state, notifier, host_id.clone(), name, ssh, Secrets { password, code, keep }, None);
+        spawn_finish(state, notifier, host_id.clone(), name, ssh, Secrets { password, code, keep, stay: Stay::from_envelope(envelope) }, None);
 
         Ok(json!({ "trusted": true, "hostId": host_id, "fingerprint": fingerprint }))
     }
@@ -906,11 +910,19 @@ impl Daemon {
         };
         let entry = host_secret_ref(&ssh);
 
+        let key_entry = crate::ssh::watch::totp_ref(&ssh);
+
         if envelope.opt_bool("forget") {
             crate::auth::keychain::delete(&entry)?;
+            /* Without the password, the kept authenticator key cannot sign in on its own either. */
+            let _ = crate::auth::keychain::delete(&key_entry);
+            crate::ssh::native::set_totp(&ssh, None);
         }
 
-        Ok(json!({ "saved": crate::auth::keychain::get(&entry).is_some_and(|saved| !saved.is_empty()) }))
+        let saved = crate::auth::keychain::get(&entry).is_some_and(|saved| !saved.is_empty());
+        let stays = saved && crate::auth::keychain::get(&key_entry).is_some_and(|key| !key.is_empty());
+
+        Ok(json!({ "saved": saved, "staysSignedIn": stays }))
     }
 
     /// `preview.forward` (0.14.4): a dev server's port on the chat's host, as an address this machine can
@@ -2469,15 +2481,12 @@ impl Daemon {
             Some(raw) => crate::ssh::ops::process_raw_line(raw, cwd.as_deref(), &pid_file)?,
             None => crate::ssh::ops::process_line(&command, &args, cwd.as_deref(), &pid_file)?,
         };
-        let mut ssh_args = ssh.base_args()?;
+        /* The same connection every other call uses, so the signed-in connection carries this one too. */
+        let (program, mut ssh_args) = ssh.launcher(None)?;
 
         ssh_args.push(remote_line);
 
         let label = format!("{display} on {}", ssh.label());
-        /* The same `ssh` every other call uses, so the signed-in connection carries this one too. */
-        let program = crate::ssh::program()
-            .map(|path| path.display().to_string())
-            .unwrap_or_else(|| "ssh".to_string());
         let opened = self.state.pty.open(&program, &ssh_args, None, Some(&label), Some((ssh, pid_file)))?;
 
         Ok(json!({ "ptyId": opened["ptyId"], "command": display, "tty": false, "hostId": self.host_id_for(envelope)? }))
@@ -2515,14 +2524,10 @@ impl Daemon {
 
         script.push_str("exec \"${SHELL:-/bin/sh}\" -l");
 
-        let mut ssh_args = vec!["-tt".to_string()];
+        let (program, mut ssh_args) = ssh.launcher(Some((cols, rows)))?;
 
-        ssh_args.extend(ssh.base_args()?);
         ssh_args.push(script);
 
-        let program = crate::ssh::program()
-            .map(|path| path.display().to_string())
-            .unwrap_or_else(|| "ssh".to_string());
         let label = format!("shell on {}", ssh.label());
         let opened = self.state.pty.open(&program, &ssh_args, None, Some(&label), None)?;
 
@@ -3534,7 +3539,7 @@ async fn run_turn(
                 );
             }
             crate::engines::EngineEvent::ToolCompleted { call_id, status, meta, diff } => {
-                if status == "done" && diff.as_ref().is_some_and(|diff| diff.as_array().map_or(true, |lines| !lines.is_empty())) {
+                if status == "done" && diff.as_ref().is_some_and(|diff| diff.as_array().is_none_or(|lines| !lines.is_empty())) {
                     runaway.progress();
                 }
 
@@ -3871,6 +3876,30 @@ struct Secrets {
     code: String,
     /// The keychain entry the password goes to once the sign-in succeeds.
     keep: Option<String>,
+    /// "Stay signed in" (0.16.0).
+    stay: Stay,
+}
+
+/// "Stay signed in" on the Sign in card (0.16.0): keep the password and the authenticator's key in the
+/// OS keychain, so a dropped connection - or a restarted SDC - is signed in again without a person.
+#[derive(Clone, Debug, PartialEq)]
+enum Stay {
+    /// The card did not say; what is kept stays kept.
+    Unchanged,
+    /// Ticked off: forget the key.
+    Off,
+    /// Ticked on, with the setup key typed (empty: SDC reads it from `~/.google_authenticator`).
+    On(String),
+}
+
+impl Stay {
+    fn from_envelope(envelope: &Envelope) -> Self {
+        match envelope.params.get("staySignedIn") {
+            Some(Value::Bool(true)) => Stay::On(envelope.opt_str("totpSecret").unwrap_or_default().trim().to_string()),
+            Some(Value::Bool(false)) => Stay::Off,
+            _ => Stay::Unchanged,
+        }
+    }
 }
 
 /// The keychain entry a host's remembered password lives in, keyed by `user@host:port` rather than by
@@ -3888,7 +3917,7 @@ async fn finish_connection(
     secrets: Secrets,
     key_note: Option<String>,
 ) {
-    let Secrets { password, code, keep } = secrets;
+    let Secrets { password, code, keep, stay } = secrets;
     let target = ssh.target.user_host.clone();
 
     if let Some(note) = &key_note {
@@ -3924,7 +3953,23 @@ async fn finish_connection(
 
         let signing = ssh.clone();
         let (secret, one_time) = (password.clone(), code.clone());
-        let signed = tokio::task::spawn_blocking(move || crate::ssh::session::sign_in(&signing, &secret, &one_time))
+        /* The authenticator key: the one just typed, or the one "Stay signed in" kept (0.16.0). */
+        let totp_text = match &stay {
+            Stay::On(text) if !text.is_empty() => Some(text.clone()),
+            Stay::Off => None,
+            _ => crate::auth::keychain::get(&crate::ssh::watch::totp_ref(&ssh)),
+        };
+        let totp = totp_text.as_deref().and_then(crate::ssh::totp::decode_secret);
+
+        if matches!(&stay, Stay::On(text) if !text.is_empty()) && totp.is_none() {
+            let sentence = "That authenticator setup key is not one: it is the base32 text (letters A-Z and digits 2-7) shown when the authenticator was set up, or the first line of ~/.google_authenticator on the host. Leave the box empty and SDC reads it from the host.";
+
+            notifier.push(event::host_status(&host_id, &name, "vps", "offline", None, Some(sentence), None), None, None);
+
+            return;
+        }
+
+        let signed = tokio::task::spawn_blocking(move || crate::ssh::session::sign_in_with(&signing, &secret, &one_time, totp))
             .await
             .unwrap_or_else(|_| Err(crate::ssh::session::SignInError::Failed("the sign-in could not be run".into())));
 
@@ -3935,6 +3980,11 @@ async fn finish_connection(
                 if let Some(entry) = &keep {
                     let _ = crate::auth::keychain::set(entry, &password);
                 }
+
+                let sentence = match stay_signed_in(&ssh, &stay, totp_text.as_deref()).await {
+                    Some(note) => format!("{sentence} · {note}"),
+                    None => sentence,
+                };
 
                 notifier.push(
                     event::host_status(&host_id, &name, "vps", "connecting", None, Some(&sentence), None),
@@ -4040,6 +4090,53 @@ async fn finish_connection(
         None,
         None,
     );
+}
+
+/// After a sign-in, what "Stay signed in" asks for (0.16.0): the authenticator key goes to the keychain - the
+/// one typed, or the first line of the host's own `~/.google_authenticator`, read over the connection that
+/// was just opened. Off forgets it. The answer is a clause for the host's status line.
+async fn stay_signed_in(ssh: &crate::ssh::Ssh, stay: &Stay, typed: Option<&str>) -> Option<String> {
+    let entry = crate::ssh::watch::totp_ref(ssh);
+
+    match stay {
+        Stay::Unchanged => None,
+        Stay::Off => {
+            let _ = crate::auth::keychain::delete(&entry);
+            crate::ssh::native::set_totp(ssh, None);
+
+            None
+        }
+        Stay::On(_) => {
+            let text = match typed.filter(|text| !text.is_empty()) {
+                Some(text) => Some(text.to_string()),
+                None => {
+                    let reading = ssh.clone();
+
+                    tokio::task::spawn_blocking(move || {
+                        reading
+                            .run("head -n 1 ~/.google_authenticator 2>/dev/null", crate::ssh::QUICK)
+                            .ok()
+                            .and_then(|output| crate::ssh::totp::secret_from_file(&output.stdout))
+                    })
+                    .await
+                    .ok()
+                    .flatten()
+                }
+            };
+
+            let Some(secret) = text.as_deref().and_then(crate::ssh::totp::decode_secret) else {
+                return Some("Stay signed in is NOT on: SDC found no ~/.google_authenticator on the host. Paste the authenticator's setup key in the Sign in card".to_string());
+            };
+
+            if crate::auth::keychain::set(&entry, text.as_deref().unwrap_or_default()).is_err() {
+                return Some("Stay signed in is NOT on: this PC's keychain refused the key".to_string());
+            }
+
+            crate::ssh::native::set_totp(ssh, Some(secret));
+
+            Some("Stay signed in is on: a dropped connection, or a restarted SDC, signs in again by itself".to_string())
+        }
+    }
 }
 
 /// [`finish_connection`] on its own task, for the caller that is not already in one (`host.trust`).

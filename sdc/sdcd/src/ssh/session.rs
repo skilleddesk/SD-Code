@@ -133,6 +133,10 @@ pub fn control_path(ssh: &Ssh) -> Result<PathBuf, ErrorObject> {
 /// platform). It needs a live master - there is no fallback inside `ssh` - hence the check first
 /// (about 30 ms).
 pub fn mux_options(ssh: &Ssh) -> Result<Vec<String>, ErrorObject> {
+    if super::native::known(ssh) {
+        return Ok(Vec::new());
+    }
+
     /* A master that is busy (its `-O check` ran out of time) is still the only way in: falling back to
        the key on such a host is a certain `Permission denied (keyboard-interactive)`, which is what cut
        the report's agent off (0.15.2). Only a master that is really gone sends a call around it. */
@@ -244,6 +248,13 @@ pub fn is_open(ssh: &Ssh) -> bool {
 /// The master's [`Master`] state, asked afresh. A *yes* is remembered for [`is_open_recently`], a *no*
 /// clears it, and an unsure answer leaves it as it was.
 pub fn state(ssh: &Ssh) -> Master {
+    /* SDC's own connection answers for itself (0.16.0): up is open, being signed in again is unsure. */
+    match super::native::phase(ssh) {
+        Some(super::native::Phase::Up) => return Master::Open,
+        Some(super::native::Phase::Reconnecting) => return Master::Unsure,
+        _ => {}
+    }
+
     let answer = check_now(ssh);
 
     if let Ok(mut seen) = checked().lock() {
@@ -358,6 +369,7 @@ fn bounded(mut command: std::process::Command, budget: Duration) -> Option<bool>
 /// Closes this host's master, if there is one (a removed host, a sign-out).
 pub fn close(ssh: &Ssh) {
     forget(ssh);
+    super::native::close(ssh);
 
     let (Some(program), Ok(path)) = (program(), control_path(ssh)) else {
         return;
@@ -560,6 +572,10 @@ pub fn kill_stuck(ssh: &Ssh) {
 /// One `-O forward` to the master: no new login, no password, no code. The same host and port answer the
 /// same local port while the master lives.
 pub fn forward(ssh: &Ssh, remote_port: u16) -> Result<u16, ErrorObject> {
+    if let Some(local) = super::native::forward(ssh, remote_port) {
+        return local.map_err(ErrorObject::internal);
+    }
+
     let key = format!("{}#{remote_port}", ssh.label());
 
     if let Some(local) = forwards().lock().ok().and_then(|known| known.get(&key).copied()) {
@@ -634,6 +650,62 @@ struct Seen {
 /// host that asks for a code it was not given ends in [`SignInError::NeedsCode`] - which is how the
 /// window learns to show the code field.
 pub fn sign_in(ssh: &Ssh, password: &str, code: &str) -> Result<String, SignInError> {
+    sign_in_with(ssh, password, code, None)
+}
+
+/// [`sign_in`], with the authenticator key "Stay signed in" keeps (0.16.0).
+///
+/// SDC's own connection ([`super::native`]) first. The `ssh` master is the fallback for a host that
+/// connection cannot reach at all (a key exchange it does not speak); a refused password, a missing
+/// code or a changed host key is the answer, not a reason to try again another way.
+pub fn sign_in_with(ssh: &Ssh, password: &str, code: &str, totp: Option<Vec<u8>>) -> Result<String, SignInError> {
+    if super::native::is_live(ssh) {
+        if totp.is_some() {
+            super::native::set_totp(ssh, totp);
+        }
+
+        remember(ssh);
+
+        return Ok(format!("signed in to {} · the connection was already open", ssh.label()));
+    }
+
+    let creds = super::native::Credentials { password: password.to_string(), totp: totp.clone() };
+
+    match super::native::sign_in(ssh, creds, code) {
+        Ok(used) => {
+            /* The ssh master an older SDC left behind is retired: on Windows it was the process found
+               spinning at 90% of a core, and anything that still found its socket hung on it. */
+            if has_socket(ssh) {
+                kill_stuck(ssh);
+            }
+
+            remember(ssh);
+
+            let how = match (used.password, used.code, used.key) {
+                (true, true, _) => "password and verification code",
+                (true, false, _) => "password",
+                (false, true, _) => "verification code",
+                (false, false, _) => "key",
+            };
+            let after = if super::native::stays_signed_in(ssh) {
+                "if the connection drops, SDC signs in again by itself"
+            } else {
+                "the connection is kept open; a drop asks for a new code (turn on Stay signed in to avoid that)"
+            };
+
+            return Ok(format!("signed in to {} with the {how} · {after}", ssh.label()));
+        }
+        Err(SignInError::Failed(sentence)) if sentence.contains("could not be reached") => {
+            /* Only a connection that never got as far as a question falls back. */
+        }
+        Err(error) => return Err(error),
+    }
+
+    sign_in_master(ssh, password, code)
+}
+
+/// The `ssh -f -N` ControlMaster sign-in (0.8.1 - 0.15), kept as the fallback.
+fn sign_in_master(ssh: &Ssh, password: &str, code: &str) -> Result<String, SignInError> {
     let Some(program) = program() else {
         return Err(SignInError::Unsupported);
     };

@@ -41,7 +41,7 @@ pub fn http(url: &str, expect_status: u16, expect_text: Option<&str>) -> Value {
     };
 
     let status_ok = status == expect_status;
-    let text_ok = expect_text.map_or(true, |text| text.is_empty() || body.contains(text));
+    let text_ok = expect_text.is_none_or(|text| text.is_empty() || body.contains(text));
     let detail = match (status_ok, text_ok) {
         (true, true) => format!("HTTP {status} in {ms} ms"),
         (false, _) => format!("HTTP {status} (expected {expect_status})"),

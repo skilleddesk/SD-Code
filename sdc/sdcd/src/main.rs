@@ -36,6 +36,16 @@ fn main() -> Result<()> {
         std::process::exit(sdcd::ssh::session::answer_prompt(&spec, &prompt));
     }
 
+    /* Started as a turn's, an MCP server's or the Terminal's `ssh` (0.16.0): relay one command over the
+       daemon's own connection to the host and leave with its exit code. */
+    {
+        let all: Vec<String> = std::env::args().skip(1).collect();
+
+        if all.first().map(String::as_str) == Some(sdcd::ssh::bridge::FLAG) {
+            std::process::exit(sdcd::ssh::bridge::client_main(&all[1..]));
+        }
+    }
+
     /* Before the runtime exists, because it changes the process environment: a daemon started from the
        macOS Dock has only `/usr/bin:/bin:/usr/sbin:/sbin`, and found none of the CLIs (0.15.8). */
     sdcd::host::env_path::widen();

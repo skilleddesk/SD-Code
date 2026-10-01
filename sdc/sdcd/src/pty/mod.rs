@@ -731,6 +731,15 @@ impl PtyManager {
         self.children.lock().map(|children| children.len()).unwrap_or(0)
     }
 
+    /// Stops every process the way its own Stop button does (0.16.0): the whole process tree, and on a host the
+    /// remote process too. The kill switch used [`close_all`](Self::close_all), which ended only the direct child -
+    /// a dev server's `node` under `npm`, or the command on the VPS, kept running. Returns how many there were.
+    pub fn close_every(&self) -> usize {
+        let ids: Vec<String> = self.children.lock().map(|children| children.keys().cloned().collect()).unwrap_or_default();
+
+        ids.iter().filter(|id| self.close(id)).count()
+    }
+
     /// Kills everything. Called on shutdown so a dev server does not outlive the daemon.
     pub fn close_all(&self) {
         if let Ok(mut children) = self.children.lock() {

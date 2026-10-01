@@ -552,7 +552,9 @@
             "label": "string?",
             "password": "string?",
             "code": "string?",
-            "remember": "boolean?"
+            "remember": "boolean?",
+            "staySignedIn": "boolean?",
+            "totpSecret": "string?"
           },
           "result": {
             "hostId": "string",
@@ -564,7 +566,10 @@
             "hostId": "string",
             "fingerprint": "string",
             "password": "string?",
-            "code": "string?"
+            "code": "string?",
+            "remember": "boolean?",
+            "staySignedIn": "boolean?",
+            "totpSecret": "string?"
           },
           "result": {
             "trusted": "boolean",
@@ -601,7 +606,8 @@
             "forget": "boolean?"
           },
           "result": {
-            "saved": "boolean"
+            "saved": "boolean",
+            "staysSignedIn": "boolean?"
           }
         },
         "preview.open": {

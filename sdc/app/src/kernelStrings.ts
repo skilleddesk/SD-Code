@@ -7,10 +7,18 @@ export const kernelStrings = {
   kill: {
     label: 'Stop all',
     title: 'Kill switch: stop every running turn, check, deploy and command now (Ctrl Shift .)',
-    done: (stopped: number, checkpoints: number): string =>
-      stopped === 0
+    /** `processes` (0.16.0): a dev server or a command the agent left running is work too - the toast said
+        "Nothing was running" right after stopping one. */
+    done: (stopped: number, checkpoints: number, processes = 0): string =>
+      stopped + processes === 0
         ? 'Nothing was running. The kill switch is ready.'
-        : `Stopped ${stopped} running task${stopped === 1 ? '' : 's'}. ${checkpoints} checkpoint${checkpoints === 1 ? '' : 's'} keep the state they stopped in.`,
+        : [
+            stopped === 0 ? '' : `Stopped ${stopped} running task${stopped === 1 ? '' : 's'}.`,
+            processes === 0 ? '' : `Stopped ${processes} running process${processes === 1 ? '' : 'es'}.`,
+            checkpoints === 0 ? '' : `${checkpoints} checkpoint${checkpoints === 1 ? '' : 's'} keep the state they stopped in.`,
+          ]
+            .filter((part) => part !== '')
+            .join(' '),
     failed: 'The kill switch could not reach the daemon',
   },
 

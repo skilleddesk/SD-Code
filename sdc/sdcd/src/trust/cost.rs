@@ -60,7 +60,7 @@ pub fn price_of(provider: Option<&str>, model: &str) -> Option<(f64, f64)> {
     let blocks = crate::providers::models::blocked();
     let rows: Vec<&Value> = blocks
         .iter()
-        .filter(|block| provider.map_or(true, |id| block.id == id || id.is_empty()))
+        .filter(|block| provider.is_none_or(|id| block.id == id || id.is_empty()))
         .flat_map(|block| block.models.iter())
         .collect();
     /* `anthropic/claude-opus-5-5` (the registry's spelling) is the catalogue's `claude-opus-5-5`, but
