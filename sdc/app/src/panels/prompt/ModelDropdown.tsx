@@ -11,7 +11,9 @@ import {
   useModelStore,
   type CatalogGroup,
   type CatalogModel,
+  type Tier,
 } from '../../store/model';
+import { chooseForChat, setTierForChat, useChatModel } from '../../store/chatModel';
 import { useOverlayStore } from '../../store/overlays';
 import { useProviderStore } from '../../store/providers';
 import { engineIcon, tierIcon } from './modelIcons';
@@ -95,8 +97,12 @@ function viaOf(group: CatalogGroup): 'cli' | 'api' | 'local' {
   return group.providerId === 'ollama' ? 'local' : 'api';
 }
 
-export function ModelDropdown() {
-  const { tier, providerId, model, catalog, inUse, setTier, choose } = useModelStore();
+export function ModelDropdown({ sessionId }: { sessionId: string | null }) {
+  const { catalog, inUse } = useModelStore();
+  /* This box's chat, and only it (0.16.1): a pick here never changes another chat's model. */
+  const { tier, providerId, model } = useChatModel(sessionId);
+  const setTier = (next: Tier): void => setTierForChat(sessionId, next);
+  const choose = (choice: Parameters<typeof chooseForChat>[1]): void => chooseForChat(sessionId, choice);
   const providers = useProviderStore((state) => state.providers);
   const openHub = useOverlayStore((state) => state.openHub);
   /* Which groups have their older versions open. Local: it is a view choice, not a fact. */

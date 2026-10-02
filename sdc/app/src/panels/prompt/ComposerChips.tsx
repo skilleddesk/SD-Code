@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 
 import { strings } from '../../strings';
 import { listProcesses, refreshContext, stopProcess, type ProcessRow } from '../../store/agentIntents';
-import { useModelStore } from '../../store/model';
+import { useChatModel } from '../../store/chatModel';
 import { useAppStore } from '../../store/store';
 import { toast } from '../../store/toast';
 
@@ -18,7 +18,7 @@ const short = (tokens: number): string => (tokens >= 1000 ? `${Math.round(tokens
  * by `ContextUpdated`. Amber from 70%, where a click puts `/compact` in the box.
  */
 export function ContextChip({ sessionId, running, onCompact }: { sessionId: string | undefined; running: boolean; onCompact: () => void }) {
-  const { engine, model, providerId } = useModelStore();
+  const { engine, model, providerId } = useChatModel(sessionId);
   const meter = useAppStore((state) => (sessionId === undefined ? undefined : state.contexts[sessionId]));
 
   useEffect(() => {

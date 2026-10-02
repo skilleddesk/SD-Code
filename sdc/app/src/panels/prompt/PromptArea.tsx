@@ -573,7 +573,7 @@ export function PromptArea({ sessionId }: PromptAreaProps = {}) {
                 a question is simply answered - the way Claude Code works. The Chat | Agent switch meant
                 nothing for the three CLIs and only confused the choice for an API model. */}
             <div className="flex min-w-0 shrink items-center">
-              <ModelSelector />
+              <ModelSelector sessionId={cardSession} />
             </div>
             {/* Which folder this chat works in (0.7.6) - and the way to change it. The pane's own chat, so
                 split view's second box never shows the first box's folder (0.10.0). */}

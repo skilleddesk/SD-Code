@@ -1,7 +1,7 @@
 import { CircleX, TriangleAlert, WandSparkles, type LucideIcon } from 'lucide-react';
 
 import { strings } from '../../strings';
-import { tierName, useModelStore } from '../../store/model';
+
 import type { ConsoleEntry, ConsoleLevel } from '../../store/rightPanel';
 import { useAppStore } from '../../store/store';
 import { useSessionsStore } from '../../store/sessions';
@@ -99,7 +99,6 @@ function ConsoleRow({ entry }: { entry: ConsoleEntry }) {
 export function ConsoleTab() {
   const entries = useAppStore((state) => state.console);
   const { activeTab } = useSessionsStore();
-  const model = useModelStore();
 
   if (entries.length === 0) {
     return (
@@ -121,9 +120,6 @@ export function ConsoleTab() {
        this used to open a fixed "Delete a file · src/database.js" dialog after every fix. */
     void fixWithAgent({
       sessionId,
-      engine: model.engine,
-      model: model.model,
-      tier: tierName(model.tier),
       title: entry.message,
       explanation: strings.rightPanel.console.fixPrompt,
       file: entry.file,

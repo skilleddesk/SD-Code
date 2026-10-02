@@ -558,7 +558,54 @@ export function nextEngine(engine: EngineId, usable?: (engine: EngineId) => bool
   return ENGINES[(index + 1) % ENGINES.length]?.id ?? 'claude_code';
 }
 
+/** One chat's model: what its box shows and what its next turn runs. */
+export interface ModelChoice {
+  tier: Tier;
+  engine: EngineId;
+  model: string;
+  providerId: string | null;
+}
+
+/** Where each chat's own choice is kept between launches. A view preference, so the browser keeps it. */
+const CHATS_KEY = 'sdc.chatModels.v1';
+/** Enough for every chat a person keeps; the oldest choices leave first. */
+const MAX_REMEMBERED_CHATS = 300;
+
+function loadChats(): { chats: Record<string, ModelChoice>; last: ModelChoice | null } {
+  try {
+    const raw = globalThis.localStorage?.getItem(CHATS_KEY);
+    const parsed = raw ? (JSON.parse(raw) as { chats?: Record<string, ModelChoice>; last?: ModelChoice | null }) : {};
+
+    return { chats: parsed.chats ?? {}, last: parsed.last ?? null };
+  } catch {
+    return { chats: {}, last: null };
+  }
+}
+
+function saveChats(chats: Record<string, ModelChoice>, last: ModelChoice): void {
+  try {
+    const ids = Object.keys(chats);
+    const kept = ids.length > MAX_REMEMBERED_CHATS ? ids.slice(ids.length - MAX_REMEMBERED_CHATS) : ids;
+
+    globalThis.localStorage?.setItem(
+      CHATS_KEY,
+      JSON.stringify({ chats: Object.fromEntries(kept.map((id) => [id, chats[id]])), last }),
+    );
+  } catch {
+    /* A private window or blocked storage: the choices still hold for this launch. */
+  }
+}
+
 export interface ModelState {
+  /*
+   * The four fields below are the choice a chat **without one of its own** starts from - a brand-new
+   * chat, or a window with no chat open. Each chat's own choice is in `chats` (0.16.1).
+   *
+   * The report: "akta chat a je model select kora onno chat onno model select korle aita automatic sob
+   * chat thake model change hoi". These four used to be the only model the window had, so picking a
+   * model in the VPS chat's box changed the local chat beside it too. A pick now belongs to the chat it
+   * was made in.
+   */
   tier: Tier;
   engine: EngineId;
   model: string;
@@ -576,8 +623,13 @@ export interface ModelState {
    * shows those in the menu, and the rest of its list behind `Older versions…`.
    */
   inUse: { modelId: string; providerId: string | null }[];
-  /** The dropdown's own open flag, so an outside click can close it from anywhere. */
-  dropdownOpen: boolean;
+  /** Each chat's own model, by session id. A chat that has none yet uses the four fields above. */
+  chats: Record<string, ModelChoice>;
+  /**
+   * Which box's dropdown is open - the chat's session id, `''` for a box with no chat - or `null`.
+   * A key rather than a flag: split view has two boxes, and only the one that was clicked opens.
+   */
+  dropdownOpen: string | null;
   /**
    * Prompts waiting behind a chat's running turn (spec section 9.7), oldest first. Each belongs to the
    * chat it was typed in, and the next one is sent when that chat's turn ends (`PromptArea`).
@@ -603,19 +655,24 @@ export interface QueuedPrompt {
 }
 
 export interface ModelActions {
-  /** Pick a tier; the model follows (spec section 9.3). */
-  setTier: (tier: Tier) => void;
+  /** Pick a tier; the model follows (spec section 9.3). With a chat, only that chat changes. */
+  setTier: (tier: Tier, sessionId?: string | null) => void;
   /** Pick an engine; the model is re-picked for the current tier. */
-  setEngine: (engine: EngineId) => void;
-  setModel: (model: string) => void;
+  setEngine: (engine: EngineId, sessionId?: string | null) => void;
+  setModel: (model: string, sessionId?: string | null) => void;
   /** Fold a `models.list` answer in - called on boot and whenever the dropdown opens. */
   setCatalog: (models: readonly CatalogModel[]) => void;
   setInUse: (inUse: readonly { modelId: string; providerId: string | null }[]) => void;
   /** One row of the dropdown: engine, provider, model and tier together. */
-  choose: (choice: { engine: EngineId; providerId: string; model: string; tier: Tier }) => void;
-  openDropdown: () => void;
+  choose: (choice: { engine: EngineId; providerId: string; model: string; tier: Tier }, sessionId?: string | null) => void;
+  /**
+   * Gives a chat the choice it is already showing, when it has none of its own yet - so a pick made in
+   * another chat later can never move it. A chat that has one keeps it.
+   */
+  adopt: (sessionId: string, choice: ModelChoice) => void;
+  openDropdown: (key?: string | null) => void;
   closeDropdown: () => void;
-  toggleDropdown: () => void;
+  toggleDropdown: (key?: string | null) => void;
   /** Alt+M. Announces the new tier the way the prototype does. */
   cycleTier: () => void;
   /** Alt+E. */
@@ -630,15 +687,19 @@ export interface ModelActions {
   clearQueue: () => void;
 }
 
+const remembered = loadChats();
+
 const initialModelState: ModelState = {
-  /* The prototype's defaults: Balanced / claude_code / sonnet (design/ui-prototype.html, `S`). */
-  tier: 'balanced',
-  engine: 'claude_code',
-  model: 'sonnet',
-  providerId: 'claude',
+  /* The prototype's defaults: Balanced / claude_code / sonnet (design/ui-prototype.html, `S`), unless a
+     previous launch left a later pick. */
+  tier: remembered.last?.tier ?? 'balanced',
+  engine: remembered.last?.engine ?? 'claude_code',
+  model: remembered.last?.model ?? 'sonnet',
+  providerId: remembered.last === null ? 'claude' : remembered.last.providerId,
   catalog: [],
   inUse: [],
-  dropdownOpen: false,
+  chats: remembered.chats,
+  dropdownOpen: null,
   queued: [],
   /* Agent by default: the product's promise is "describe it and it gets built". */
   compose: 'agent',
@@ -648,30 +709,36 @@ const initialModelState: ModelState = {
 export const useModelStore = create<ModelState & ModelActions>()((set, get) => ({
   ...initialModelState,
 
-  setTier: (tier) => {
+  setTier: (tier, sessionId) => {
     const state = get();
-    const model = modelForTier(state.engine, tier, state.catalog);
+    const base = choiceOf(state, sessionId);
+    const model = modelForTier(base.engine, tier, state.catalog);
 
-    set({ tier, ...(model === '' ? {} : { model }), dropdownOpen: false });
+    set(remember(state, sessionId, { ...base, tier, ...(model === '' ? {} : { model }) }));
     toast(strings.prompt.model.tierChanged(tierLabel(tier)));
   },
 
-  setEngine: (engine) => {
+  setEngine: (engine, sessionId) => {
     const state = get();
-    const model = modelForTier(engine, state.tier, state.catalog);
+    const base = choiceOf(state, sessionId);
+    const model = modelForTier(engine, base.tier, state.catalog);
     const providerId = providerForEngine(engine);
 
-    set({
-      engine,
-      ...(model === '' ? {} : { model }),
-      ...(providerId === null ? {} : { providerId }),
-      dropdownOpen: false,
-    });
+    set(
+      remember(state, sessionId, {
+        ...base,
+        engine,
+        ...(model === '' ? {} : { model }),
+        ...(providerId === null ? {} : { providerId }),
+      }),
+    );
     toast(strings.prompt.model.engineChanged(engine));
   },
 
-  setModel: (model) => {
-    set({ model, dropdownOpen: false });
+  setModel: (model, sessionId) => {
+    const state = get();
+
+    set(remember(state, sessionId, { ...choiceOf(state, sessionId), model }));
     toast(strings.prompt.model.modelChanged(model));
   },
 
@@ -695,24 +762,38 @@ export const useModelStore = create<ModelState & ModelActions>()((set, get) => (
     set({ inUse: [...inUse] });
   },
 
-  choose: ({ engine, providerId, model, tier }) => {
-    set({ engine, providerId, model, tier, dropdownOpen: false });
+  choose: ({ engine, providerId, model, tier }, sessionId) => {
+    set(remember(get(), sessionId, { engine, providerId, model, tier }));
     toast(strings.prompt.model.modelChanged(model));
   },
 
-  openDropdown: () => {
-    if (!get().dropdownOpen) {
-      set({ dropdownOpen: true });
+  adopt: (sessionId, choice) => {
+    const state = get();
+
+    if (state.chats[sessionId] !== undefined) {
+      return;
+    }
+
+    const chats = { ...state.chats, [sessionId]: { ...choice } };
+
+    saveChats(chats, lastOf(state));
+    set({ chats });
+  },
+
+  openDropdown: (key) => {
+    if (get().dropdownOpen !== (key ?? '')) {
+      set({ dropdownOpen: key ?? '' });
     }
   },
 
   closeDropdown: () => {
-    if (get().dropdownOpen) {
-      set({ dropdownOpen: false });
+    if (get().dropdownOpen !== null) {
+      set({ dropdownOpen: null });
     }
   },
 
-  toggleDropdown: () => set((state) => ({ dropdownOpen: !state.dropdownOpen })),
+  toggleDropdown: (key) =>
+    set((state) => ({ dropdownOpen: state.dropdownOpen === (key ?? '') ? null : (key ?? '') })),
 
   cycleTier: () => get().setTier(nextTier(get().tier)),
 
@@ -759,6 +840,31 @@ export const useModelStore = create<ModelState & ModelActions>()((set, get) => (
     }
   },
 }));
+
+/** The choice a chat starts from when it has none of its own. */
+function lastOf(state: ModelState): ModelChoice {
+  return { tier: state.tier, engine: state.engine, model: state.model, providerId: state.providerId };
+}
+
+/** A chat's own choice, or the one a chat without one starts from. */
+export function choiceOf(state: ModelState, sessionId?: string | null): ModelChoice {
+  const own = sessionId ? state.chats[sessionId] : undefined;
+
+  return own ?? lastOf(state);
+}
+
+/**
+ * The state after a pick. Made in a chat, it is that chat's and nobody else's; it also becomes what the
+ * **next new** chat starts from - which is why a chat on screen adopts its choice first (`useChatModel`),
+ * so moving the starting point never moves a chat that already shows a model.
+ */
+function remember(state: ModelState, sessionId: string | null | undefined, choice: ModelChoice): Partial<ModelState> {
+  const chats = sessionId ? { ...state.chats, [sessionId]: choice } : state.chats;
+
+  saveChats(chats, choice);
+
+  return { ...choice, chats, dropdownOpen: null };
+}
 
 /** The tier's display label - `Balanced`, not `balanced` (spec section 7.6). */
 export function tierLabel(tier: Tier): string {

@@ -2,7 +2,8 @@ import { ensureSplitSecondary, usePrefsStore } from '../store/prefs';
 import { sessionActions } from '../store/sessions';
 import { useAppStore } from '../store/store';
 import { useLayoutStore } from '../store/layout';
-import { engineConnected, nextEngine, nextTier, useModelStore } from '../store/model';
+import { chatChoice, setEngineForChat, setTierForChat } from '../store/chatModel';
+import { engineConnected, nextEngine, nextTier } from '../store/model';
 import { useOverlayStore } from '../store/overlays';
 import { useRightPanelStore } from '../store/rightPanel';
 import {
@@ -134,9 +135,11 @@ function runVerifyForActiveChat(): void {
 /** Alt+E: the next engine that has a connected provider behind it (the menu's own rule). */
 function cycleConnectedEngine(): void {
   const providers = useAppStore.getState().providers;
-  const { engine, setEngine } = useModelStore.getState();
+  const chat = usePrefsStore.getState().activeTab;
+  const { engine } = chatChoice(chat);
 
-  setEngine(nextEngine(engine, (candidate) => engineConnected(candidate, providers)));
+  /* The open chat's engine, and only that chat's (0.16.1). */
+  setEngineForChat(chat, nextEngine(engine, (candidate) => engineConnected(candidate, providers)));
 }
 
 function decide(decision: 'allow_once' | 'always_allow' | 'deny' | 'show_me'): void {
@@ -250,7 +253,11 @@ export const COMMANDS: readonly Command[] = [
   { id: 'verify.run', label: 'Run verify', hint: 'Ctrl Enter', icon: 'check', group: 'session', keys: ['ctrl+enter', 'meta+enter'], inInput: true, run: () => runVerifyForActiveChat() },
 
   /* ---------------------------------------------------------------- Model (2) */
-  { id: 'tier.cycle', label: 'Cycle tier', hint: 'Alt M', icon: 'brain', group: 'model', keys: ['alt+m'], run: () => useModelStore.getState().setTier(nextTier(useModelStore.getState().tier)) },
+  { id: 'tier.cycle', label: 'Cycle tier', hint: 'Alt M', icon: 'brain', group: 'model', keys: ['alt+m'], run: () => {
+    const chat = usePrefsStore.getState().activeTab;
+
+    setTierForChat(chat, nextTier(chatChoice(chat).tier));
+  } },
   { id: 'engine.cycle', label: 'Cycle engine', hint: 'Alt E', icon: 'zap', group: 'model', keys: ['alt+e'], run: () => cycleConnectedEngine() },
 
   /* ---------------------------------------------------------------- Approval (6) */

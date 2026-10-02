@@ -2,7 +2,7 @@ import { TriangleAlert, WandSparkles } from 'lucide-react';
 
 import { strings } from '../../strings';
 import { fixWithAgent } from '../../store/intents';
-import { tierName, useModelStore } from '../../store/model';
+
 import { useSessionsStore } from '../../store/sessions';
 import { toast } from '../../store/toast';
 import { BTN, BTN_PRIMARY, BTN_SECONDARY } from '../ui/button';
@@ -26,7 +26,6 @@ export interface ErrorCardProps {
 
 export function ErrorCard({ error }: ErrorCardProps) {
   const { activeTab } = useSessionsStore();
-  const model = useModelStore();
 
   /**
    * Spec section 14.9: `Fix this` seeds an agent turn with the failure's own context. The agent asks
@@ -42,9 +41,6 @@ export function ErrorCard({ error }: ErrorCardProps) {
 
     void fixWithAgent({
       sessionId,
-      engine: model.engine,
-      model: model.model,
-      tier: tierName(model.tier),
       title: error.title,
       explanation: error.explanation,
       source: error.title,

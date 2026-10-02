@@ -2,6 +2,7 @@ import { version as APP_VERSION } from '../../../package.json';
 import { strings } from '../../strings';
 import { useLayoutStore } from '../../store/layout';
 import { anchorBelow, useOverlayStore } from '../../store/overlays';
+import { useChatModel } from '../../store/chatModel';
 import { useModelStore } from '../../store/model';
 import { connectedProviderCount, useProviderStore } from '../../store/providers';
 import {
@@ -42,7 +43,9 @@ import { copyText } from '../../lib/external';
  */
 export function StatusBar() {
   const { hosts, activeTab, activeHostId } = useSessionsStore();
-  const model = useModelStore();
+  /* The open chat's own model (0.16.1), not a window-wide one. */
+  const model = useChatModel(activeTab);
+  const toggleModels = (): void => useModelStore.getState().toggleDropdown(activeTab ?? '');
   const providers = useProviderStore((state) => state.providers);
   const mode = useLayoutStore((state) => state.mode);
   const openHostSwitcher = useOverlayStore((state) => state.openHostSwitcher);
@@ -113,7 +116,7 @@ export function StatusBar() {
         tone="engine text-accent"
         title={strings.prompt.model.groupTitles.engine}
         hideTiny
-        onClick={() => model.toggleDropdown()}
+        onClick={toggleModels}
       >
         {model.engine}
       </StatusItem>
@@ -127,7 +130,7 @@ export function StatusBar() {
         tone="model text-text-primary"
         title={strings.prompt.model.groupTitles.model}
         hideTiny
-        onClick={() => model.toggleDropdown()}
+        onClick={toggleModels}
       >
         {model.model}
       </StatusItem>

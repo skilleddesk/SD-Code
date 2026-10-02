@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   filterGroups,
   MAX_QUEUED_PROMPTS,
+  choiceOf,
   useModelStore,
   engineConnected,
   groupCatalog,
@@ -216,5 +217,57 @@ describe('the prompt queue', () => {
     useModelStore.setState({ queued: [] });
 
     expect(useModelStore.getState().queued).toEqual([]);
+  });
+});
+
+/*
+ * 0.16.1: "akta chat a je model select kora onno chat onno model select korle aita automatic sob chat
+ * thake model change hoi". A pick belongs to the chat it was made in.
+ */
+describe('each chat keeps its own model', () => {
+  it('a pick in one chat leaves the other chat on its own model', () => {
+    useModelStore.setState({ chats: {} });
+    const store = useModelStore.getState();
+
+    store.choose({ engine: 'native_api', providerId: 'deepseek', model: 'deepseek-chat', tier: 'balanced' }, 'n-local');
+    store.choose({ engine: 'claude_code', providerId: 'claude', model: 'opus', tier: 'deep' }, 'n-vps');
+
+    expect(choiceOf(useModelStore.getState(), 'n-local')).toMatchObject({ model: 'deepseek-chat', providerId: 'deepseek' });
+    expect(choiceOf(useModelStore.getState(), 'n-vps')).toMatchObject({ model: 'opus', engine: 'claude_code' });
+  });
+
+  it('a chat that adopted its model is not moved by a later pick elsewhere', () => {
+    useModelStore.setState({ chats: {} });
+    const store = useModelStore.getState();
+
+    store.adopt('n-old', { engine: 'codex', providerId: 'openai', model: 'default', tier: 'fast' });
+    store.choose({ engine: 'gemini', providerId: 'gemini', model: 'gemini-2.5-pro', tier: 'deep' }, 'n-new');
+    /* Adopting again never overwrites a chat's own pick. */
+    store.adopt('n-new', { engine: 'codex', providerId: 'openai', model: 'default', tier: 'fast' });
+
+    expect(choiceOf(useModelStore.getState(), 'n-old').model).toBe('default');
+    expect(choiceOf(useModelStore.getState(), 'n-new').model).toBe('gemini-2.5-pro');
+  });
+
+  it('a new chat starts from the latest pick, and the tier changes only its own chat', () => {
+    useModelStore.setState({ chats: {} });
+    const store = useModelStore.getState();
+
+    store.choose({ engine: 'claude_code', providerId: 'claude', model: 'sonnet', tier: 'balanced' }, 'n-a');
+    store.adopt('n-b', choiceOf(useModelStore.getState(), 'n-b'));
+    store.setTier('deep', 'n-a');
+
+    expect(choiceOf(useModelStore.getState(), 'n-b').tier).toBe('balanced');
+    expect(choiceOf(useModelStore.getState(), 'n-a').tier).toBe('deep');
+    expect(choiceOf(useModelStore.getState(), 'n-brand-new').tier).toBe('deep');
+  });
+
+  it('only the box that was clicked opens its dropdown', () => {
+    useModelStore.setState({ dropdownOpen: null });
+    useModelStore.getState().toggleDropdown('n-a');
+
+    expect(useModelStore.getState().dropdownOpen).toBe('n-a');
+    useModelStore.getState().toggleDropdown('n-a');
+    expect(useModelStore.getState().dropdownOpen).toBeNull();
   });
 });

@@ -1,6 +1,7 @@
 import { ChevronDown } from 'lucide-react';
 import { useEffect, useRef } from 'react';
 
+import { useChatModel } from '../../store/chatModel';
 import { tierLabel, useModelStore, type Tier } from '../../store/model';
 import { ModelDropdown } from './ModelDropdown';
 import { tierIcon } from './modelIcons';
@@ -29,8 +30,13 @@ const TIER_TONE: Record<Tier, string> = {
   deep: 'bg-purple-subtle text-purple',
 };
 
-export function ModelSelector() {
-  const { tier, engine, model, dropdownOpen, toggleDropdown, closeDropdown } = useModelStore();
+export function ModelSelector({ sessionId }: { sessionId: string | null }) {
+  /* The chat this box belongs to - each chat has its own model (0.16.1). */
+  const { tier, engine, model } = useChatModel(sessionId);
+  const key = sessionId ?? '';
+  const dropdownOpen = useModelStore((state) => state.dropdownOpen === key);
+  const closeDropdown = useModelStore((state) => state.closeDropdown);
+  const toggleDropdown = (): void => useModelStore.getState().toggleDropdown(key);
   const rootRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -115,7 +121,7 @@ export function ModelSelector() {
         {tierLabel(tier)} · {engine} · {model}
       </span>
 
-      {dropdownOpen ? <ModelDropdown /> : null}
+      {dropdownOpen ? <ModelDropdown sessionId={sessionId} /> : null}
     </div>
   );
 }

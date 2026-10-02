@@ -7,7 +7,8 @@ import { strings } from '../strings';
 import { useDaemonStore } from './daemon';
 import { useFilesStore } from './files';
 import { useLayoutStore } from './layout';
-import { groupCatalog, useModelStore, engineForProvider, tierName, tierFromName } from './model';
+import { chatChoice, chooseForChat } from './chatModel';
+import { groupCatalog, useModelStore, engineForProvider, providerForEngine, tierName, tierFromName } from './model';
 import { useOverlayStore } from './overlays';
 import { usePrefsStore } from './prefs';
 import { withProjects, withProviders, withWorkspace } from './reducer';
@@ -322,7 +323,7 @@ export async function chooseModel(modelId: string, providerId: string): Promise<
   try {
     const answer = (await sdcpCall('models.select', { modelId, providerId })) as { inUse?: InUseModel[] } | undefined;
 
-    const { catalog, choose, setInUse, inUse } = useModelStore.getState();
+    const { catalog, setInUse, inUse } = useModelStore.getState();
 
     setInUse(
       answer?.inUse ??
@@ -332,13 +333,16 @@ export async function chooseModel(modelId: string, providerId: string): Promise<
     );
     const row = catalog.find((model) => model.id === modelId && model.providerId === providerId);
 
-    choose({
+    /* For the open chat only (0.16.1): `Use` in Connect no longer changes every other chat's model. */
+    const activeChat = usePrefsStore.getState().activeTab;
+
+    chooseForChat(activeChat, {
       engine: engineForProvider(providerId),
       providerId,
       model: modelId,
       /* The row's own tier when the catalogue listed it, and the tier in hand otherwise - a provider's
          live list can contain a model this build has no tier for. */
-      tier: row?.tier ?? useModelStore.getState().tier,
+      tier: row?.tier ?? chatChoice(activeChat).tier,
     });
 
     return true;
@@ -2324,10 +2328,11 @@ export function autonomyFor(mode: 'simple' | 'pro' | 'auto'): 'ask' | 'pro' | 'a
  * translator's plain sentence for it, which lands in the turn stream like any other event.
  */
 export async function sendPrompt(prompt: string, target?: string, extras: SendExtras = {}): Promise<string | null> {
-  const { tier, engine, model, providerId } = useModelStore.getState();
-
   /* The pane's own chat when it says which (split view has two boxes), else the active one. */
   let sessionId = target ?? selectActiveSession()?.session.id ?? null;
+  /* The model this box shows - its own chat's (0.16.1). A prompt routed to another chat below still runs
+     the model the person saw when they pressed Send. */
+  const { tier, engine, model, providerId } = chatChoice(sessionId);
 
   /* "ami skilleddesk.com er file e kaj korte chai" - a prompt that names a saved **project** or
      **host** runs where it points (0.10.0, widened in 0.11.0). The project is matched first, because
@@ -2513,6 +2518,16 @@ export async function startTurn(seed: TurnSeed): Promise<string | null> {
   if (seed.prompt.trim() === '') {
     toast(strings.prompt.empty);
     return null;
+  }
+
+  /* The chat keeps the model this turn runs (0.16.1): a pick made later in another chat cannot move it. */
+  if (seed.engine === 'claude_code' || seed.engine === 'codex' || seed.engine === 'gemini' || seed.engine === 'native_api') {
+    useModelStore.getState().adopt(seed.sessionId, {
+      engine: seed.engine,
+      model: seed.model,
+      tier: tierFromName(seed.tier),
+      providerId: seed.provider ?? providerForEngine(seed.engine),
+    });
   }
 
   try {
@@ -2793,9 +2808,6 @@ export async function attachConsole(sessionId: string, url: string): Promise<voi
  */
 export async function fixWithAgent(input: {
   sessionId: string;
-  engine: string;
-  model: string;
-  tier: TierName;
   title: string;
   explanation: string;
   source?: string;
@@ -2808,14 +2820,16 @@ export async function fixWithAgent(input: {
       : `${input.file}${input.line === undefined ? '' : `:${input.line}`}`;
 
   const prompt = [input.title, location, input.explanation].filter((part) => part !== '').join('\n');
-  const { providerId } = useModelStore.getState();
+  /* The model of the chat being fixed (0.16.1) - and its provider with it, which the fix used to take
+     from whatever was picked last anywhere. */
+  const { engine, model, tier, providerId } = chatChoice(input.sessionId);
 
   await startTurn({
     sessionId: input.sessionId,
     prompt,
-    engine: input.engine,
-    model: input.model,
-    tier: input.tier,
+    engine,
+    model,
+    tier: tierName(tier),
     /* The same fact the Send path sends: whoever runs this turn, the daemon needs to know which
        provider the model came from to find its endpoint and its key. */
     ...(providerId === null ? {} : { provider: providerId }),
@@ -3126,7 +3140,7 @@ export async function scaffoldProject(input: {
     landIn(opened.sessionId);
 
     if (input.prompt.trim() !== '') {
-      const { engine, model, providerId, tier } = useModelStore.getState();
+      const { engine, model, providerId, tier } = chatChoice(opened.sessionId);
 
       await startTurn({
         sessionId: opened.sessionId,
