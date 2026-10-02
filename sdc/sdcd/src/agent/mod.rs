@@ -310,6 +310,7 @@ fn system_prompt(workspace: &Workspace, vision: bool, language: &crate::understa
     format!(
         "You are SDC Agent, a coding agent working inside a person's project through the tools you are given.\n\
          \n\
+         Today: {today}\n\
          Project folder: {root}\n\
          Machine: {place}\n\
          Shell for run_command: {shell}\n\
@@ -321,7 +322,7 @@ fn system_prompt(workspace: &Workspace, vision: bool, language: &crate::understa
          - Change files with edit_file (exact text replacement); use write_file for new files or full rewrites. Match the project's existing style.\n\
          - Verify your work: build it, run the tests or run the program with run_command, read the output, and fix what fails.\n\
          - A command that does not exit on its own (a dev server, a watcher) goes in start_process, never in run_command. Stop what you started when you no longer need it, unless the person will want it running.{look}\n\
-         - When you are unsure how a library, framework or API works, look it up with web_search and web_fetch instead of guessing.\n\
+         - When you are unsure how a library, framework or API works, or the person asks about anything current (news, prices, versions, weather), look it up with web_search and web_fetch instead of guessing, and give the source address.\n\
          - When a decision belongs to the person (a design choice, deleting data, two readings of the request), ask with ask_user and offer options. Do not ask about what you can find out yourself.\n\
          - When the person states a lasting preference or a project convention, keep it with remember.\n\
          - Stay inside the project folder. Secrets (.env, keys) are hidden from you on purpose; do not try to read them.\n\
@@ -333,6 +334,7 @@ fn system_prompt(workspace: &Workspace, vision: bool, language: &crate::understa
         root = workspace.root(),
         place = workspace.place(),
         shell = workspace.shell(),
+        today = chrono::Local::now().format("%Y-%m-%d"),
     )
 }
 
@@ -781,6 +783,10 @@ fn drive(
 
     if research_session.is_some() {
         specs.retain(|spec| research::TOOLS.contains(&spec.name));
+    } else if backend == Backend::Ollama && research_config.local_web_only_research {
+        /* A local model kept off the web (Settings → Research) is not offered the web tools at all. Offered
+           and refused, a small model asked for the weather tried thirteen times (live check, 0.16.1). */
+        specs.retain(|spec| !matches!(spec.name, "web_search" | "web_fetch"));
     }
 
     if let Some(servers) = &mcp {
@@ -855,6 +861,9 @@ fn drive(
     /* Replies in a row the provider's content filter blocked. */
     let mut filtered = 0;
     let mut plan_nudged = false;
+    /* A research answer from one page is asked, once, to read a second (live check, 0.16.1: a 9B model
+       answered from one page with the brief saying two). */
+    let mut sources_nudged = false;
     let mut check_rounds = 0;
     /* The edit count when the checks last ran: they run again only after the agent changed something. */
     let mut checked_at = usize::MAX;
@@ -959,6 +968,21 @@ fn drive(
              * reminded once; one that changed files and ran nothing since is told the project's checks and
              * asked to run them - unless the person said not to - at most twice, and only after new changes.
              */
+            if let Some(session) = research_session.as_ref().filter(|_| !sources_nudged && !out_of_time) {
+                let (_, pages) = session.counts();
+
+                if pages < 2 && pages < session.limits.max_pages && session.sources().len() > pages {
+                    sources_nudged = true;
+                    dialect::append_user_text(
+                        target.dialect,
+                        &mut messages,
+                        "[SDC: you have read only one page. Read at least one more source from the results (web_fetch, a different site) to check the answer, then write it citing [n].]",
+                    );
+
+                    continue;
+                }
+            }
+
             if !plan_nudged {
                 if let Some(open) = context.open_plan_steps() {
                     plan_nudged = true;
@@ -1800,6 +1824,8 @@ mod end_to_end {
             call("r1", "web_search", serde_json::json!({ "query": "what is new in X" })),
             call("r2", "web_search", serde_json::json!({ "query": "X again" })),
             call("r3", "write_file", serde_json::json!({ "path": "notes.md", "content": "x" })),
+            /* Answers from no page read: SDC asks once for a second source, and the model answers again. */
+            chunk(serde_json::json!({ "content": "Version 2 adds X [1]." })) + "data: [DONE]\n\n",
             chunk(serde_json::json!({ "content": "Version 2 adds X [1]." })) + "data: [DONE]\n\n",
         ]);
         let target = Target {
@@ -1833,6 +1859,7 @@ mod end_to_end {
         assert!(sent.contains("research limit is reached"), "the second search is over the limit");
         assert!(sent.contains("not part of a research turn"), "write_file is refused");
         assert!(!root.join("notes.md").exists());
+        assert!(bodies[4]["messages"].to_string().contains("read only one page"), "an answer from one page is asked for a second source");
 
         let sources = events.iter().find_map(|event| match event {
             EngineEvent::Sources(sources) => Some(sources.clone()),

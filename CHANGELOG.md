@@ -50,8 +50,21 @@ the open chat only.
   the OS keychain. A keyed service that fails falls back to DuckDuckGo with a note.
 - Pages are read for their article: the main text, title and published date, not the menus.
 - Optional: an API model can write the final answer from what a local model gathered.
-- A local model uses the web only through `/research` (this can be switched off). A `privacy =
-  "local-only"` folder opens the web for a research turn alone.
+- Every model searches the web when a question needs it, local models included, through the search
+  service chosen here. Saving a key while DuckDuckGo is in use switches to that service, so a Tavily key
+  is all it takes. Settings → Research can keep a local model off the web except through `/research`;
+  it is then not offered the web tools at all. A `privacy = "local-only"` folder opens the web for a
+  research turn alone.
+- Every agent turn is told today's date, so searches use the current year. A research answer drawn from
+  one page is asked, once, to read a second source.
+
+**Live-checked** against Ollama 0.35 with `qwen3.5:9b` on an RTX 4060 (8 GB) and Tavily:
+- `ollama ps` showed context 16384, so `num_ctx` arrived.
+- The local agent read a file and answered in 8 s.
+- `/research` with a Bengali question ran 2 Tavily searches, read 2 pages and answered in Bengali with
+  `[n]` citations and 9 sources, in about 2 minutes.
+- The local model looked up today's weather by itself.
+- DeepSeek's `web_search` went through Tavily.
 - `/research stop` stops it. `/model <name>` picks this chat's model.
 
 **Review fixes:**

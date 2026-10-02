@@ -108,7 +108,8 @@ pub const KEYED: &[&str] = &["tavily", "brave", "serper"];
 pub struct Config {
     pub provider: SearchProvider,
     pub limits: Limits,
-    /// A local model reads the web only inside `/research` (on unless turned off).
+    /// A local model reads the web only inside `/research` - off by default (live check, 0.16.1: the owner
+    /// wants every model to search when asked, the way an API model does).
     pub local_web_only_research: bool,
     /// An API model that writes the final answer from what a local model gathered: `(provider, model)`.
     pub synthesis: Option<(String, String)>,
@@ -116,7 +117,7 @@ pub struct Config {
 
 impl Default for Config {
     fn default() -> Self {
-        Self { provider: SearchProvider::DuckDuckGo, limits: Limits::default(), local_web_only_research: true, synthesis: None }
+        Self { provider: SearchProvider::DuckDuckGo, limits: Limits::default(), local_web_only_research: false, synthesis: None }
     }
 }
 
@@ -145,7 +146,7 @@ pub fn configure(store: &crate::store::sqlite::Store) {
             max_pages: number("research.maxPages", defaults.max_pages, 30),
             max_minutes: number("research.maxMinutes", defaults.max_minutes as usize, 60) as u64,
         },
-        local_web_only_research: !matches!(read("research.localWebOnly").as_str(), "false" | "off"),
+        local_web_only_research: matches!(read("research.localWebOnly").as_str(), "true" | "on"),
         synthesis: (!synthesis_model.trim().is_empty() && !synthesis_provider.trim().is_empty())
             .then(|| (synthesis_provider.trim().to_string(), synthesis_model.trim().to_string())),
     };
@@ -446,16 +447,18 @@ pub fn system_prompt(language: &crate::understand::Reading, limits: &Limits, pro
     format!(
         "You are SDC Research. The person asked a question that needs the web; answer it from sources, not from memory.\n\
          \n\
-         Search service: {provider}. Limits for this question: {searches} searches, {pages} pages, {minutes} minutes - SDC stops you when one is used up.\n\
+         Today is {today}. Search service: {provider}. Limits for this question: {searches} searches, {pages} pages, {minutes} minutes - SDC stops you when one is used up.\n\
          \n\
          How to work:\n\
-         - First call update_plan with 3 to 5 search queries that together cover the question (split a broad question into parts; add the year for anything that changes).\n\
+         - First call update_plan with 3 to 5 search queries that together cover the question (split a broad question into parts). For anything that changes, put the current year ({year}) in the query - never an older year from your training. Write the queries in English (the web's largest index), unless the topic belongs to another language's sources.\n\
          - Run the searches with web_search. Every result has a number [n]; the same page keeps its number all through.\n\
-         - Read the most useful pages with web_fetch - official documentation, the primary source, recent dates - not every result.{per_page}\n\
+         - Read the most useful pages with web_fetch - official documentation, the primary source, recent dates - at least two different sources before you answer, unless the first one fully answers the question.{per_page}\n\
          - Then answer. Every claim carries the [n] of the source it comes from. Prefer recent sources and say the date when it matters. When sources disagree, say so.\n\
          - If the sources do not answer the question, say exactly what could not be found. Never fill a gap with a guess, and never cite a number you were not given.\n\
          - Keep the answer focused: a short direct answer first, then the details. Do not list the sources yourself - SDC adds the numbered list under your answer.\n\
          - Language: the person writes in {label}. Write the answer in {reply}; keep names, numbers, code and quotes as they are.",
+        today = chrono::Local::now().format("%Y-%m-%d"),
+        year = chrono::Local::now().format("%Y"),
         searches = limits.max_searches,
         pages = limits.max_pages,
         minutes = limits.max_minutes,
@@ -508,6 +511,15 @@ mod tests {
         assert_eq!(session.take_page(), Ok(1));
         assert!(session.take_page().is_err());
         assert_eq!(session.counts(), (2, 1));
+    }
+
+    #[test]
+    fn a_session_stops_when_its_time_is_up() {
+        let session = Session::new(Limits { max_searches: 5, max_pages: 5, max_minutes: 0 });
+
+        assert!(session.expired());
+        assert!(session.take_search().unwrap_err().contains("write the answer now"));
+        assert!(session.take_page().unwrap_err().contains("write the answer now"));
     }
 
     #[test]

@@ -237,9 +237,23 @@ impl Daemon {
 
         if key.trim().is_empty() {
             crate::auth::keychain::delete(&name)?;
+
+            /* The service in use lost its key: back to the one that needs none, rather than a fallback note on every search. */
+            if crate::agent::research::config().provider.id() == provider {
+                self.store().set_setting("research.searchProvider", "duckduckgo").map_err(ErrorObject::internal)?;
+            }
         } else {
             crate::auth::keychain::set(&name, key.trim())?;
+
+            /* A key is the person's choice of service (0.16.1): saved while the free default is in use, it
+               becomes the service every web_search uses - an API model's as well as /research's - with no
+               second step to find. A service picked on purpose is not overridden. */
+            if crate::agent::research::config().provider == crate::agent::research::SearchProvider::DuckDuckGo {
+                self.store().set_setting("research.searchProvider", &provider).map_err(ErrorObject::internal)?;
+            }
         }
+
+        crate::agent::research::configure(self.store());
 
         Ok(self.research_status())
     }

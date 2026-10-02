@@ -1919,9 +1919,16 @@ mod tests {
 
         local.local = true;
 
+        /* The gate is a setting, off by default since the live check; turned on, the tool refuses. */
+        let store = crate::store::sqlite::Store::in_memory().unwrap();
+
+        store.set_setting("research.localWebOnly", "on").unwrap();
+        crate::agent::research::configure(&store);
+
         let search = ToolUse { id: "w1".into(), name: "web_search".into(), input: json!({ "query": "anything" }) };
         let refused = execute(&mut local, &search);
 
+        crate::agent::research::configure(&crate::store::sqlite::Store::in_memory().unwrap());
         assert!(refused.is_error && refused.content.contains("/research"), "{}", refused.content);
 
         local.result_cap = 3_000;
