@@ -212,6 +212,8 @@ pub enum EngineEvent {
     Question { question_id: String, question: String, options: Vec<String> },
     /// How full the model's context is (0.13): what the turn is sending, against what the model holds.
     Context { used_tokens: u64, window_tokens: u64, compacted: bool },
+    /// A `/research` turn's sources (0.16.1): `[{n, title, url, date, read}]`, cited in the answer as [n].
+    Sources(Value),
     Failed(String),
     Done {
         summary: String,

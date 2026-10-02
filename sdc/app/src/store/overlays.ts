@@ -26,6 +26,7 @@ export type SettingsTab =
   | 'appearance'
   | 'keymap'
   | 'safety'
+  | 'research'
   | 'notifications'
   | 'backup'
   | 'language'

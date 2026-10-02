@@ -19,6 +19,7 @@ export const fr: StringsPack = {
       { id: 'appearance', label: 'Apparence', icon: 'palette' },
       { id: 'keymap', label: 'Clavier', icon: 'keyboard' },
       { id: 'safety', label: 'Sécurité', icon: 'shield' },
+      { id: 'research', label: 'Recherche', icon: 'globe' },
       { id: 'notifications', label: 'Notifications', icon: 'bell' },
       { id: 'backup', label: 'Sauvegarde', icon: 'databaseBackup' },
       { id: 'language', label: 'Langue', icon: 'languages' },

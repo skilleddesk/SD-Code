@@ -257,6 +257,27 @@ describe('reducer', () => {
     expect(state.rewindStack).toHaveLength(0);
   });
 
+  it('a research turn keeps its numbered sources (0.16.1)', () => {
+    let state = fold(EMPTY_STATE, {
+      type: 'TurnStarted',
+      turnId: 'r1',
+      sessionId: 's1',
+      engine: 'ollama',
+      model: 'qwen3.5:9b',
+      tier: 'Balanced',
+      prompt: 'what is new in X?',
+    });
+
+    state = fold(state, {
+      type: 'ResearchSources',
+      turnId: 'r1',
+      sessionId: 's1',
+      sources: [{ n: 1, title: 'Release notes', url: 'https://example.org/notes', date: '2026-03-01', read: true }],
+    });
+
+    expect(state.turns[0]?.sources?.[0]).toMatchObject({ n: 1, url: 'https://example.org/notes', read: true });
+  });
+
   it('a forward rewind restores only its own chat checkpoints (0.16.1)', () => {
     const saved = (sessionId: string, id: string, turn: number) => ({
       type: 'CheckpointSaved' as const,

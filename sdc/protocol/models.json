@@ -28,6 +28,13 @@
           "ctx": 32768,
           "cost": "free",
           "name": "Qwen 2.5 Coder 7B"
+        },
+        {
+          "id": "qwen3.5:9b",
+          "tier": "balanced",
+          "ctx": 16384,
+          "cost": "free",
+          "name": "Qwen3.5 9B"
         }
       ]
     },

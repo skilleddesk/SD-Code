@@ -569,7 +569,13 @@ impl Daemon {
     /// cannot become a way around the methods that check what they write.
     fn settings_set(&self, envelope: &Envelope) -> Result<Value, ErrorObject> {
         let key = envelope.require_str("key")?;
-        let allowed = ["ui.language", "agency.email", "agency.styleGuide", "intent.replyStyle", "net.lowBandwidth", "update.channel", "crash.optIn"];
+        let allowed = [
+            "ui.language", "agency.email", "agency.styleGuide", "intent.replyStyle", "net.lowBandwidth", "update.channel", "crash.optIn",
+            /* 0.16.1: the local model's context, and Settings → Research. A search service's key is not a
+               setting - it goes to the keychain through `research.key.set`. */
+            "ollama.contextTokens", "research.searchProvider", "research.searxngUrl", "research.maxSearches", "research.maxPages",
+            "research.maxMinutes", "research.localWebOnly", "research.synthesisModel", "research.synthesisProvider",
+        ];
 
         if !allowed.contains(&key.as_str()) {
             return Err(ErrorObject::bad_request(format!("`{key}` is not a setting this method writes")));
@@ -578,6 +584,10 @@ impl Daemon {
         let value = envelope.params.get("value").map(|value| value.as_str().map(str::to_string).unwrap_or_else(|| value.to_string())).unwrap_or_default();
 
         self.store().set_setting(&key, &value).map_err(ErrorObject::internal)?;
+
+        if key.starts_with("research.") || key.starts_with("ollama.") {
+            crate::agent::research::configure(self.store());
+        }
 
         Ok(json!({ "key": key, "value": value }))
     }

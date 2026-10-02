@@ -2276,6 +2276,8 @@ export interface TurnSeed {
   intentId?: string;
   /** `/compact` (0.13): the answer becomes the chat's summary. */
   compact?: boolean;
+  /** `/research` (0.16.1). */
+  research?: boolean;
   /** Images attached to the turn (0.13), base64. */
   images?: TurnImage[];
   /** How hard the model thinks (0.14): absent is the model's own default. */
@@ -2296,6 +2298,8 @@ export interface TurnImage {
 export interface SendExtras {
   images?: TurnImage[];
   compact?: boolean;
+  /** `/research` (0.16.1): the question is answered from the web, with sources. */
+  research?: boolean;
 }
 
 /** The effort chosen in the model menu (0.14), when it is not Auto. */
@@ -2424,6 +2428,7 @@ export async function sendPrompt(prompt: string, target?: string, extras: SendEx
     /* Settings → General (0.11.8): off sends the message exactly as typed. */
     understand: setting('understand-messages', true),
     ...(extras.compact === true ? { compact: true } : {}),
+    ...(extras.research === true ? { research: true } : {}),
     ...effortSetting(),
     ...(extras.images !== undefined && extras.images.length > 0 ? { images: extras.images } : {}),
   };
@@ -2433,7 +2438,8 @@ export async function sendPrompt(prompt: string, target?: string, extras: SendEx
    * confirms on a card - and only then does an engine start, with a prompt compiled for it. A reading that
    * cannot be asked for (the daemon refused) falls through to the old path, so a send never just vanishes.
    */
-  if (needsContract(prompt)) {
+  /* A research question was already shown on its own card before it was sent. */
+  if (extras.research !== true && needsContract(prompt)) {
     const intentId = await parseIntent({ text: prompt, sessionId, engine, model, ...(providerId === null ? {} : { provider: providerId }) });
 
     if (intentId !== null) {

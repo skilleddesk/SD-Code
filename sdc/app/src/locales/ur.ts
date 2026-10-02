@@ -19,6 +19,7 @@ export const ur: StringsPack = {
       { id: 'appearance', label: 'ظاہری شکل', icon: 'palette' },
       { id: 'keymap', label: 'کی بورڈ', icon: 'keyboard' },
       { id: 'safety', label: 'حفاظت', icon: 'shield' },
+      { id: 'research', label: 'تحقیق', icon: 'globe' },
       { id: 'notifications', label: 'اطلاعات', icon: 'bell' },
       { id: 'backup', label: 'بیک اپ', icon: 'databaseBackup' },
       { id: 'language', label: 'زبان', icon: 'languages' },

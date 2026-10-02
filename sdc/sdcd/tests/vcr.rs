@@ -55,6 +55,7 @@ fn kind_of(event: &EngineEvent) -> &'static str {
         EngineEvent::SessionRef(_) => "SessionRef",
         EngineEvent::Question { .. } => "Question",
         EngineEvent::Context { .. } => "Context",
+        EngineEvent::Sources(_) => "Sources",
     }
 }
 

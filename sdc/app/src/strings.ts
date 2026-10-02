@@ -13,6 +13,7 @@
  */
 import { currentLocale, merge } from './i18n';
 import { agentStrings } from './agentStrings';
+import { researchStrings } from './researchStrings';
 import { kernelStrings } from './kernelStrings';
 import { PACKS } from './locales';
 
@@ -1379,6 +1380,7 @@ const english = {
       { id: 'appearance', label: 'Appearance', icon: 'palette' },
       { id: 'keymap', label: 'Keymap', icon: 'keyboard' },
       { id: 'safety', label: 'Safety', icon: 'shield' },
+      { id: 'research', label: 'Research', icon: 'globe' },
       { id: 'notifications', label: 'Notifications', icon: 'bell' },
       { id: 'backup', label: 'Backup', icon: 'databaseBackup' },
       { id: 'language', label: 'Language', icon: 'languages' },
@@ -1702,6 +1704,8 @@ const english = {
   kernel: kernelStrings,
   /** 0.13: commands, files, images, context, questions, memory, processes - see agentStrings.ts. */
   agent: agentStrings,
+  /** 0.16.1: `/research`, `/model`, Settings → Research and the local model - see researchStrings.ts. */
+  research: researchStrings,
 } as const;
 
 export type Strings = typeof english;

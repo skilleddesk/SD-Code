@@ -193,6 +193,8 @@ export interface Turn {
   checkpoints: TurnCheckpointData[];
   /** The agent's checklist (v4); empty when the engine did not make one. */
   plan: PlanStepData[];
+  /** A `/research` turn's numbered sources (0.16.1), the list under its answer. */
+  sources?: { n: number; title: string; url: string; date: string | null; read: boolean }[];
   /** Still running - the plan card's current step spins only while it is. */
   running: boolean;
   /**

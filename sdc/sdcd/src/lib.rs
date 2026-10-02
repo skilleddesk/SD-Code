@@ -141,6 +141,9 @@ impl DaemonState {
         let store = Arc::new(Store::open(&path).with_context(|| format!("opening {}", path.display()))?);
         let events = Arc::new(EventLog::hydrate(store.clone())?);
 
+        /* Settings → Research and the local model's context, in force from the first turn (0.16.1). */
+        crate::agent::research::configure(&store);
+
         let pty = Arc::new(PtyManager::new());
 
         Ok(Arc::new(Self {

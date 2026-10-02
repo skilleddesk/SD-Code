@@ -353,6 +353,11 @@ pub mod event {
     }
 
     /// The agent's checklist (v4): every step with its status, replacing the last one sent for the turn.
+    /// A `/research` turn's numbered sources (0.16.1) - the list under its answer.
+    pub fn research_sources(turn_id: &str, session_id: &str, sources: Value) -> Value {
+        base("ResearchSources", json!({ "turnId": turn_id, "sessionId": session_id, "sources": sources }))
+    }
+
     pub fn plan_updated(turn_id: &str, steps: Value) -> Value {
         base("PlanUpdated", json!({ "turnId": turn_id, "steps": steps }))
     }

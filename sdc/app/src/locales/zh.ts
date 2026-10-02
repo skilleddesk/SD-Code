@@ -19,6 +19,7 @@ export const zh: StringsPack = {
       { id: 'appearance', label: '外观', icon: 'palette' },
       { id: 'keymap', label: '键盘', icon: 'keyboard' },
       { id: 'safety', label: '安全', icon: 'shield' },
+      { id: 'research', label: '研究', icon: 'globe' },
       { id: 'notifications', label: '通知', icon: 'bell' },
       { id: 'backup', label: '备份', icon: 'databaseBackup' },
       { id: 'language', label: '语言', icon: 'languages' },

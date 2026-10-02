@@ -4,6 +4,7 @@ import { useState, type ReactNode } from 'react';
 import {
   Bell,
   DatabaseBackup,
+  Globe,
   Download,
   Info,
   Languages,
@@ -30,6 +31,7 @@ import { Modal } from './Modal';
 import { LanguageTab, TeamTab, UpdatesTab } from '../kernel/SettingsTabs';
 import { useKernelUi } from '../store/kernelUi';
 import { AgentSettings } from '../kernel/AgentSettings';
+import { ResearchSettings } from '../kernel/ResearchSettings';
 import { playCue } from '../lib/alerts';
 import { platformHint } from '../lib/external';
 
@@ -63,6 +65,7 @@ const TAB_ICON: Record<string, LucideIcon> = {
   users: Users,
   download: Download,
   info: Info,
+  globe: Globe,
 };
 
 type RowValue = boolean | string;
@@ -179,6 +182,7 @@ export function Settings() {
         {tab === 'updates' ? <UpdatesTab /> : null}
 
         {tab === 'safety' ? <AgentSettings /> : null}
+        {tab === 'research' ? <ResearchSettings /> : null}
 
         {tab === 'safety' ? (
           <button
@@ -193,7 +197,7 @@ export function Settings() {
           </button>
         ) : null}
 
-        {tab !== 'keymap' && tab !== 'about' && tab !== 'backup' && tab !== 'language' && tab !== 'team' && tab !== 'updates' ? (
+        {tab !== 'keymap' && tab !== 'about' && tab !== 'backup' && tab !== 'language' && tab !== 'team' && tab !== 'updates' && tab !== 'research' ? (
           <GroupTable
             table={tableFor(tab)}
             values={values}

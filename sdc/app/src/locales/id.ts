@@ -19,6 +19,7 @@ export const id: StringsPack = {
       { id: 'appearance', label: 'Tampilan', icon: 'palette' },
       { id: 'keymap', label: 'Keyboard', icon: 'keyboard' },
       { id: 'safety', label: 'Keamanan', icon: 'shield' },
+      { id: 'research', label: 'Riset', icon: 'globe' },
       { id: 'notifications', label: 'Notifikasi', icon: 'bell' },
       { id: 'backup', label: 'Cadangan', icon: 'databaseBackup' },
       { id: 'language', label: 'Bahasa', icon: 'languages' },

@@ -26,7 +26,9 @@ pub mod browser;
 pub mod dialect;
 pub mod gate;
 pub mod mcp;
+pub mod ollama_native;
 pub mod patch;
+pub mod research;
 pub mod search;
 pub mod skills;
 pub mod tools;
@@ -73,7 +75,8 @@ pub fn content_filtered(reason: &str) -> bool {
 pub enum Backend {
     /// A provider behind an API key (`native_api`'s endpoints).
     Api,
-    /// The local Ollama daemon, through its OpenAI-compatible `/v1` endpoint.
+    /// The local Ollama daemon, through its own `/api/chat` (0.16.1; `/v1` until then - it cannot
+    /// carry the context size, see `ollama_native`).
     Ollama,
 }
 
@@ -82,6 +85,8 @@ pub struct SdcAgent {
     autonomy: Autonomy,
     max_steps: usize,
     auto_check: bool,
+    /// A `/research` turn's limits (0.16.1) - `None` for every other turn.
+    research: Option<research::Limits>,
     checkpoint: Option<tools::Checkpointer>,
     /// The folder's policy (0.12): what the tools must ask about or refuse before they act.
     policy: crate::trust::policy::Policy,
@@ -89,7 +94,14 @@ pub struct SdcAgent {
 
 impl SdcAgent {
     pub fn new(backend: Backend, autonomy: Autonomy, max_steps: usize) -> Self {
-        Self { backend, autonomy, max_steps: max_steps.max(1), auto_check: true, checkpoint: None, policy: Default::default() }
+        Self { backend, autonomy, max_steps: max_steps.max(1), auto_check: true, research: None, checkpoint: None, policy: Default::default() }
+    }
+
+    /// Makes this a `/research` turn: the research brief and tools, these limits, and sources at the end.
+    pub fn with_research(mut self, limits: research::Limits) -> Self {
+        self.research = Some(limits);
+        self.max_steps = self.max_steps.min(limits.steps());
+        self
     }
 
     /// Whether SDC runs the project's checks when the agent says it is done (Settings → Agent, 0.13).
@@ -120,7 +132,7 @@ impl crate::engines::Engine for SdcAgent {
     async fn start(&self, prompt: Prompt, sink: &EventSink) {
         let sink = sink.clone();
         let backend = self.backend;
-        let options = Options { autonomy: self.autonomy, max_steps: self.max_steps, auto_check: self.auto_check };
+        let options = Options { autonomy: self.autonomy, max_steps: self.max_steps, auto_check: self.auto_check, research: self.research };
         let checkpoint = self.checkpoint.clone();
         let policy = self.policy.clone();
 
@@ -153,6 +165,16 @@ struct Target {
     thinking: bool,
     /// The turn's effort (0.14), for a model that takes `reasoning_effort`.
     effort: Option<String>,
+    /// A local model's context, sent as `num_ctx` to Ollama's own endpoint - `None` for an API.
+    local_context: Option<u64>,
+}
+
+impl Target {
+    /// The window the conversation is planned for: what Ollama was asked to load, or the model's own.
+    fn window(&self, provider: Option<&str>) -> u64 {
+        self.local_context
+            .unwrap_or_else(|| crate::context::window_tokens("native_api", provider, &self.model))
+    }
 }
 
 fn target(backend: Backend, prompt: &Prompt) -> Result<Target, String> {
@@ -165,9 +187,10 @@ fn target(backend: Backend, prompt: &Prompt) -> Result<Target, String> {
             };
 
             Ok(Target {
-                url: "http://127.0.0.1:11434/v1/chat/completions".to_string(),
+                url: ollama_native::URL.to_string(),
                 headers: vec![("content-type".to_string(), "application/json".to_string())],
                 dialect: Dialect::OpenAi,
+                local_context: Some(crate::engines::ollama::context_for(&model)),
                 model,
                 price: None,
                 thinking: false,
@@ -203,6 +226,7 @@ fn target(backend: Backend, prompt: &Prompt) -> Result<Target, String> {
                 thinking: dialect == Dialect::Anthropic && crate::engines::native_api::adaptive_thinking(&model),
                 price: price_of(&endpoint.provider, &model),
                 effort: prompt.effort.clone(),
+                local_context: None,
                 model,
             })
         }
@@ -364,6 +388,8 @@ pub struct Options {
     pub autonomy: Autonomy,
     pub max_steps: usize,
     pub auto_check: bool,
+    /// A `/research` turn's limits (0.16.1).
+    pub research: Option<research::Limits>,
 }
 
 /// The loop.
@@ -407,6 +433,11 @@ fn ask_model(backend: Backend, target: &Target, system: &str, messages: &[Value]
         body["reasoning_effort"] = serde_json::json!(if level == "max" { "high" } else { level });
     }
 
+    /* A local model gets Ollama's own request, with the context size in it (0.16.1). */
+    if let Some(num_ctx) = target.local_context {
+        body = ollama_native::body(body, num_ctx);
+    }
+
     let body = body.to_string();
     /* A step the network or the provider dropped - before its first word or halfway through - is asked
        again rather than ending the turn (0.15.4): nothing of it reached the conversation yet, so asking
@@ -417,13 +448,14 @@ fn ask_model(backend: Backend, target: &Target, system: &str, messages: &[Value]
         |retry, wait, reason| card.notice(retry, wait, reason),
         || {
             let lines = crate::engines::native_api::open_stream(&target.url, &target.headers, &body)?;
+            let lines = if target.local_context.is_some() { ollama_native::as_sse(lines) } else { lines };
 
             dialect::read_reply(target.dialect, lines, sink, stopped)
         },
     );
 
     card.close(reply.is_ok());
-    reply.map_err(|reason| unreachable(backend, &reason))
+    reply.map_err(|reason| unreachable(backend, &target.model, &reason))
 }
 
 /// Keeps a turn's conversation inside the model's window (0.13): older tool output is folded when the
@@ -457,13 +489,19 @@ fn sub_agent(
     card: &str,
     job: &str,
     sink: &EventSink,
+    research_session: Option<std::sync::Arc<research::Session>>,
 ) -> (tools::Outcome, u64, u64) {
     const SUB_STEPS: usize = 24;
 
     let stopped = || crate::engines::cancel::requested(&parent.turn_id);
-    let system = sub_agent_prompt(workspace);
-    let specs = tools::specs_for(tools::Caps { vision, subagent: true, patch: false });
-    let window = crate::context::window_tokens("native_api", parent.provider.as_deref(), &parent.model);
+    /* A research turn's sub-agent reads one page or runs one search, counted against the same limits. */
+    let system = if research_session.is_some() { research::sub_agent_prompt() } else { sub_agent_prompt(workspace) };
+    let mut specs = tools::specs_for(tools::Caps { vision, subagent: true, patch: false });
+
+    if research_session.is_some() {
+        specs.retain(|spec| research::TOOLS.contains(&spec.name));
+    }
+    let window = target.window(parent.provider.as_deref());
     /* What the sub-agent does shows as lines on its card; its words and thinking stay its own. */
     let lines = {
         let sink = sink.clone();
@@ -493,6 +531,9 @@ fn sub_agent(
         plan: None,
         edits: 0,
         ran_at: None,
+        research: research_session,
+        local: backend == Backend::Ollama,
+        result_cap: result_cap(backend, window),
     };
     let mut messages = vec![dialect::user_message(job)];
     let (mut input, mut output) = (0u64, 0u64);
@@ -577,6 +618,9 @@ fn run_reads(parent: &ToolContext, first: usize, calls: &[(usize, &dialect::Tool
                         plan: None,
                         edits: 0,
                         ran_at: None,
+                        research: parent.research.clone(),
+                        local: parent.local,
+                        result_cap: parent.result_cap,
                     };
 
                     (index, tools::execute(&mut context, call))
@@ -599,6 +643,7 @@ fn run_tasks(
     vision: bool,
     calls: &[(usize, &dialect::ToolUse)],
     sink: &EventSink,
+    research_session: Option<std::sync::Arc<research::Session>>,
 ) -> Vec<(usize, tools::Outcome, u64, u64)> {
     std::thread::scope(|scope| {
         let running: Vec<_> = calls
@@ -611,13 +656,14 @@ fn run_tasks(
                 sink.send(EngineEvent::ToolStarted { call_id: card.clone(), tool: "read".to_string(), name: "Agent".to_string(), target: description });
 
                 let index = *index;
+                let research_session = research_session.clone();
 
                 scope.spawn(move || {
                     if job.trim().is_empty() {
                         return (index, card, tools::Outcome::error("task needs a prompt: the whole job, as the sub-agent has seen nothing of this conversation."), 0, 0);
                     }
 
-                    let (outcome, input, output) = sub_agent(backend, target, workspace, policy, prompt, vision, &card, &job, sink);
+                    let (outcome, input, output) = sub_agent(backend, target, workspace, policy, prompt, vision, &card, &job, sink, research_session);
 
                     (index, card, outcome, input, output)
                 })
@@ -705,13 +751,26 @@ fn drive(
     let stopped = || crate::engines::cancel::requested(&turn_id);
     let vision = browser::vision(target.dialect == Dialect::Anthropic, &target.model);
     /* The project's skills (0.13): their names and when to use them; the agent reads one when it applies. */
-    let system = system_prompt(workspace, vision, &person_language(prompt)) + &skills::brief(&skills::find(workspace));
-    let window = crate::context::window_tokens(if backend == Backend::Ollama { "ollama" } else { "native_api" }, prompt.provider.as_deref(), &target.model);
+    let language = person_language(prompt);
+    let window = target.window(prompt.provider.as_deref());
+    /* A `/research` turn (0.16.1): its own brief, its own tools, its limits and its sources. */
+    let research_session = options.research.map(|limits| std::sync::Arc::new(research::Session::new(limits)));
+    let research_config = research::config();
+    let system = match &research_session {
+        Some(session) => research::system_prompt(&language, &session.limits, research_config.provider.label(), window < 32_000),
+        None => system_prompt(workspace, vision, &language) + &skills::brief(&skills::find(workspace)),
+    };
+    /* A model that writes the final answer from what this one gathered (Settings → Research), opt-in. */
+    let synthesis = research_session.as_ref().and(research_config.synthesis.clone());
     /* The project's own MCP servers (0.12; on a host too since 0.13): their tools join the agent's for this turn. */
-    let (mut mcp, warnings) = match workspace.remote() {
+    let (mut mcp, warnings) = if research_session.is_some() {
+        (None, Vec::new())
+    } else {
+        match workspace.remote() {
         /* On a host, the servers run there, over the same ssh (0.13). */
         Some(ssh) => mcp::McpTools::start_remote(workspace.root(), ssh),
         None => mcp::McpTools::start(std::path::Path::new(workspace.root())),
+        }
     };
 
     for warning in warnings {
@@ -719,6 +778,10 @@ fn drive(
     }
 
     let mut specs = tools::specs_for(tools::Caps { vision, subagent: false, patch: patch::speaks_patch(&target.model) });
+
+    if research_session.is_some() {
+        specs.retain(|spec| research::TOOLS.contains(&spec.name));
+    }
 
     if let Some(servers) = &mcp {
         specs.extend(servers.specs().iter().cloned());
@@ -768,8 +831,26 @@ fn drive(
         plan: None,
         edits: 0,
         ran_at: None,
+        research: research_session.clone(),
+        local: backend == Backend::Ollama,
+        result_cap: result_cap(backend, window),
     };
     let (mut input_tokens, mut output_tokens) = (0u64, 0u64);
+    /* The research time ran out: one last call, without tools, for the answer. */
+    let mut out_of_time = false;
+    /* With a final-answer model, this model's words are its notes - shown as thinking, not as the answer. */
+    let notes_sink = |separate: bool| -> EventSink {
+        let inner = step_sink(sink, separate);
+
+        if synthesis.is_none() {
+            return inner;
+        }
+
+        EventSink::new(move |event| match event {
+            EngineEvent::Delta(text) => inner.send(EngineEvent::Thinking(text)),
+            other => inner.send(other),
+        })
+    };
     let mut said_something = false;
     /* Replies in a row the provider's content filter blocked. */
     let mut filtered = 0;
@@ -800,7 +881,17 @@ fn drive(
             return;
         }
 
-        let reply: Reply = match ask_model(backend, target, &system, &messages, &specs, &step_sink(sink, said_something), &stopped) {
+        if let Some(session) = research_session.as_ref().filter(|session| session.expired() && !out_of_time) {
+            out_of_time = true;
+            dialect::append_user_text(
+                target.dialect,
+                &mut messages,
+                &format!("[SDC: the research time ({} minutes) is up. Write the answer now from what you found, citing [n], without calling tools.]", session.limits.max_minutes),
+            );
+        }
+
+        let step_specs: &[dialect::ToolSpec] = if out_of_time { &[] } else { &specs };
+        let reply: Reply = match ask_model(backend, target, &system, &messages, step_specs, &notes_sink(said_something), &stopped) {
             Ok(reply) => {
                 filtered = 0;
 
@@ -900,6 +991,27 @@ fn drive(
                 "Done"
             };
 
+            if let Some(session) = &research_session {
+                if let Some((provider, model)) = &synthesis {
+                    let (input, output) = synthesize(prompt, provider, model, &language, &messages, sink, &stopped);
+
+                    input_tokens += input;
+                    output_tokens += output;
+                    sink.send(EngineEvent::Usage { input_tokens, output_tokens, cost_usd: None });
+                }
+
+                let (searches, pages) = session.counts();
+
+                sink.send(EngineEvent::Sources(session.sources_json()));
+                sink.send(EngineEvent::Done {
+                    summary: summary.to_string(),
+                    meta: format!("{} · {searches} searches · {pages} pages", meta(step, input_tokens, output_tokens, target.price)),
+                    pass: None,
+                });
+
+                return;
+            }
+
             sink.send(EngineEvent::Done {
                 summary: summary.to_string(),
                 meta: meta(step, input_tokens, output_tokens, target.price),
@@ -947,7 +1059,7 @@ fn drive(
         }
 
         if !tasks.is_empty() {
-            for (index, outcome, input, output) in run_tasks(backend, target, workspace, policy, prompt, vision, &tasks, sink) {
+            for (index, outcome, input, output) in run_tasks(backend, target, workspace, policy, prompt, vision, &tasks, sink, research_session.clone()) {
                 input_tokens += input;
                 output_tokens += output;
                 results[index] = Some((reply.tool_uses[index].id.clone(), outcome.content, outcome.is_error, outcome.image));
@@ -970,6 +1082,11 @@ fn drive(
         sink.send(EngineEvent::Context { used_tokens: dialect::tokens(&messages), window_tokens: window, compacted: folded });
     }
 
+    /* A research turn that used its steps still ends with what it found. */
+    if let Some(session) = &research_session {
+        sink.send(EngineEvent::Sources(session.sources_json()));
+    }
+
     /* The step budget ran out with work still going on. That is said, with the way to continue, rather
        than dressed up as a finished turn. */
     sink.send(EngineEvent::Delta(format!(
@@ -983,12 +1100,93 @@ fn drive(
     });
 }
 
+/// The most one tool answer may hand back (0.16.1): `RESULT_CAP` for an API model, and for a local model
+/// about a quarter of its window (four characters a token) - one page used to be bigger than the whole
+/// window Ollama was loading.
+fn result_cap(backend: Backend, window: u64) -> usize {
+    match backend {
+        Backend::Api => tools::RESULT_CAP,
+        Backend::Ollama => (window as usize).clamp(2_000, tools::RESULT_CAP),
+    }
+}
+
+/// The final answer of a research turn, written by the model chosen for it in Settings → Research from
+/// the notes this turn's model gathered (0.16.1, opt-in). If it cannot answer, the notes are the answer.
+fn synthesize(
+    prompt: &Prompt,
+    provider: &str,
+    model: &str,
+    language: &crate::understand::Reading,
+    messages: &[Value],
+    sink: &EventSink,
+    stopped: &dyn Fn() -> bool,
+) -> (u64, u64) {
+    let mut asked = prompt.clone();
+
+    asked.model = model.to_string();
+    asked.provider = Some(provider.to_string());
+
+    let backend = if provider == "ollama" { Backend::Ollama } else { Backend::Api };
+    let notes = messages
+        .iter()
+        .rev()
+        .find(|message| message["role"] == "assistant")
+        .and_then(|message| message["content"].as_str())
+        .unwrap_or_default()
+        .to_string();
+    let attempt = target(backend, &asked).and_then(|synth| {
+        let mut conversation = messages.to_vec();
+
+        dialect::append_user_text(
+            synth.dialect,
+            &mut conversation,
+            "[SDC: the research is done. Write the final answer to the person's question from the notes and pages above, citing [n].]",
+        );
+        /* The notes were OpenAI-shaped; an Anthropic model gets them as plain text instead. */
+        let conversation = if synth.dialect == Dialect::Anthropic {
+            vec![dialect::user_message(&format!("{}\n\n[Research notes]\n{}", prompt.text, flatten(messages)))]
+        } else {
+            conversation
+        };
+
+        ask_model(backend, &synth, &research::synthesis_prompt(language), &conversation, &[], sink, stopped)
+    });
+
+    match attempt {
+        Ok(reply) => (reply.input_tokens, reply.output_tokens),
+        Err(reason) => {
+            sink.send(EngineEvent::Delta(format!("{notes}\n\n_(The final-answer model {model} could not answer: {reason}. These are the research notes.)_")));
+
+            (0, 0)
+        }
+    }
+}
+
+/// A conversation as plain text: what was asked, what was said, what the tools found.
+fn flatten(messages: &[Value]) -> String {
+    messages
+        .iter()
+        .filter_map(|message| {
+            let role = message["role"].as_str().unwrap_or("user");
+            let text = match &message["content"] {
+                Value::String(text) => text.clone(),
+                Value::Array(parts) => parts.iter().filter_map(|part| part["text"].as_str()).collect::<Vec<_>>().join("\n"),
+                _ => String::new(),
+            };
+
+            (!text.trim().is_empty()).then(|| format!("[{role}]\n{text}"))
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
 /// The sentence for a request that never reached a model.
-fn unreachable(backend: Backend, reason: &str) -> String {
+fn unreachable(backend: Backend, model: &str, reason: &str) -> String {
     match backend {
         Backend::Ollama if reason.contains("refused") || reason.contains("11434") => format!(
             "Ollama is not answering on this machine ({reason}). Start it with `ollama serve`, then send the prompt again."
         ),
+        Backend::Ollama => crate::engines::ollama::explain_error(reason, model),
         _ => reason.to_string(),
     }
 }
@@ -1031,7 +1229,7 @@ mod tests {
                     effort: None,
         };
 
-        run(Backend::Ollama, Options { autonomy: Autonomy::Ask, max_steps: 5, auto_check: false }, None, &Default::default(), &prompt, &recorder.sink());
+        run(Backend::Ollama, Options { autonomy: Autonomy::Ask, max_steps: 5, auto_check: false, research: None }, None, &Default::default(), &prompt, &recorder.sink());
 
         assert!(matches!(&recorder.events()[..], [EngineEvent::Failed(reason)] if reason.contains("Open a folder")));
     }
@@ -1196,6 +1394,7 @@ mod end_to_end {
             price: None,
             thinking: false,
             effort: None,
+            local_context: None,
         };
         let workspace = Workspace::new(root.to_str().unwrap(), None);
         let prompt = Prompt {
@@ -1222,7 +1421,7 @@ mod end_to_end {
             probe.lock().unwrap().push((title.to_string(), file.exists()));
         });
 
-        drive(Backend::Api, &target, &workspace, Options { autonomy: Autonomy::Auto, max_steps: 10, auto_check: false }, Some(checkpoint), &Default::default(), &prompt, &recorder.sink());
+        drive(Backend::Api, &target, &workspace, Options { autonomy: Autonomy::Auto, max_steps: 10, auto_check: false, research: None }, Some(checkpoint), &Default::default(), &prompt, &recorder.sink());
 
         assert_eq!(
             *seen.lock().unwrap(),
@@ -1278,6 +1477,7 @@ mod end_to_end {
             price: None,
             thinking: false,
             effort: None,
+            local_context: None,
         };
         let workspace = Workspace::new(root.to_str().unwrap(), None);
         let prompt = Prompt {
@@ -1296,7 +1496,7 @@ mod end_to_end {
         };
         let recorder = crate::engines::Recorder::new();
 
-        drive(Backend::Api, &target, &workspace, Options { autonomy: Autonomy::Ask, max_steps: 2, auto_check: false }, None, &Default::default(), &prompt, &recorder.sink());
+        drive(Backend::Api, &target, &workspace, Options { autonomy: Autonomy::Ask, max_steps: 2, auto_check: false, research: None }, None, &Default::default(), &prompt, &recorder.sink());
         server.join().unwrap();
 
         assert!(matches!(recorder.events().last(), Some(EngineEvent::Done { summary, .. }) if summary == "Paused at the step limit"));
@@ -1327,7 +1527,7 @@ mod end_to_end {
             blocked(),
             ok(chunk(serde_json::json!({ "content": "Done." })) + "data: [DONE]\n\n"),
         ]);
-        let target = Target { url, headers: Vec::new(), dialect: Dialect::OpenAi, model: "local-test".to_string(), price: None, thinking: false, effort: None };
+        let target = Target { url, headers: Vec::new(), dialect: Dialect::OpenAi, model: "local-test".to_string(), price: None, thinking: false, effort: None, local_context: None };
         let workspace = Workspace::new(root.to_str().unwrap(), None);
         let prompt = Prompt {
             session_id: "s1".into(),
@@ -1345,7 +1545,7 @@ mod end_to_end {
         };
         let recorder = crate::engines::Recorder::new();
 
-        drive(Backend::Api, &target, &workspace, Options { autonomy: Autonomy::Ask, max_steps: 10, auto_check: false }, None, &Default::default(), &prompt, &recorder.sink());
+        drive(Backend::Api, &target, &workspace, Options { autonomy: Autonomy::Ask, max_steps: 10, auto_check: false, research: None }, None, &Default::default(), &prompt, &recorder.sink());
         server.join().unwrap();
 
         let events = recorder.events();
@@ -1372,7 +1572,7 @@ mod end_to_end {
         std::fs::create_dir_all(&root).unwrap();
 
         let (url, server) = raw_provider(vec![blocked(); FILTER_RETRIES + 1]);
-        let target = Target { url, headers: Vec::new(), dialect: Dialect::OpenAi, model: "local-test".to_string(), price: None, thinking: false, effort: None };
+        let target = Target { url, headers: Vec::new(), dialect: Dialect::OpenAi, model: "local-test".to_string(), price: None, thinking: false, effort: None, local_context: None };
         let workspace = Workspace::new(root.to_str().unwrap(), None);
         let prompt = Prompt {
             session_id: "s1".into(),
@@ -1390,7 +1590,7 @@ mod end_to_end {
         };
         let recorder = crate::engines::Recorder::new();
 
-        drive(Backend::Api, &target, &workspace, Options { autonomy: Autonomy::Ask, max_steps: 10, auto_check: false }, None, &Default::default(), &prompt, &recorder.sink());
+        drive(Backend::Api, &target, &workspace, Options { autonomy: Autonomy::Ask, max_steps: 10, auto_check: false, research: None }, None, &Default::default(), &prompt, &recorder.sink());
         server.join().unwrap();
 
         let events = recorder.events();
@@ -1427,7 +1627,7 @@ mod end_to_end {
             ] }))
             + "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n";
         let (url, server) = provider(vec![two_reads, chunk(serde_json::json!({ "content": "Done." })) + "data: [DONE]\n\n"]);
-        let target = Target { url, headers: Vec::new(), dialect: Dialect::OpenAi, model: "local-test".to_string(), price: None, thinking: false, effort: None };
+        let target = Target { url, headers: Vec::new(), dialect: Dialect::OpenAi, model: "local-test".to_string(), price: None, thinking: false, effort: None, local_context: None };
         let workspace = Workspace::new(root.to_str().unwrap(), None);
         let prompt = Prompt {
             session_id: "s1".into(),
@@ -1445,7 +1645,7 @@ mod end_to_end {
         };
         let recorder = crate::engines::Recorder::new();
 
-        drive(Backend::Api, &target, &workspace, Options { autonomy: Autonomy::Ask, max_steps: 10, auto_check: false }, None, &Default::default(), &prompt, &recorder.sink());
+        drive(Backend::Api, &target, &workspace, Options { autonomy: Autonomy::Ask, max_steps: 10, auto_check: false, research: None }, None, &Default::default(), &prompt, &recorder.sink());
 
         let bodies = server.join().unwrap();
         let mut ids: Vec<String> = recorder
@@ -1465,6 +1665,185 @@ mod end_to_end {
         let (alpha, bravo) = (sent.find("alpha").expect("a.txt's text"), sent.find("bravo").expect("b.txt's text"));
 
         assert!(alpha < bravo, "the answers go back in the order the model asked");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    fn prompt_in(root: &std::path::Path, turn: &str, text: &str, model: &str) -> Prompt {
+        Prompt {
+            session_id: "s1".into(),
+            turn_id: turn.into(),
+            text: text.into(),
+            model: model.into(),
+            provider: None,
+            history: Vec::new(),
+            project_root: Some(root.to_str().unwrap().to_string()),
+            remote: None,
+            autonomy: Default::default(),
+            resume: None,
+            images: Vec::new(),
+            effort: None,
+        }
+    }
+
+    /// Ollama's own NDJSON, as one HTTP response.
+    fn ndjson(lines: &[Value]) -> String {
+        let body = lines.iter().map(|line| line.to_string()).collect::<Vec<_>>().join("\n") + "\n";
+
+        format!("HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\nConnection: close\r\n\r\n{body}")
+    }
+
+    /// 0.16.1, the plan's missing proof: a local model calls a tool through Ollama's own `/api/chat`,
+    /// the request names its context (`num_ctx`), the tool's answer goes back in the native shape, and
+    /// the turn finishes with the model's words.
+    #[test]
+    fn a_local_model_uses_tools_over_ollamas_own_endpoint_with_num_ctx() {
+        let root = std::env::temp_dir().join(format!("sdc-agent-ollama-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("hello.txt"), "hi from the folder\n").unwrap();
+
+        let (url, server) = raw_provider(vec![
+            ndjson(&[
+                serde_json::json!({ "message": { "role": "assistant", "content": "", "thinking": "Read it." }, "done": false }),
+                serde_json::json!({ "message": { "role": "assistant", "content": "", "tool_calls": [{ "function": { "name": "read_file", "arguments": { "path": "hello.txt" } } }] }, "done": false }),
+                serde_json::json!({ "message": { "role": "assistant", "content": "" }, "done": true, "done_reason": "stop", "prompt_eval_count": 900, "eval_count": 12 }),
+            ]),
+            ndjson(&[
+                serde_json::json!({ "message": { "role": "assistant", "content": "It says hi." }, "done": false }),
+                serde_json::json!({ "message": { "role": "assistant", "content": "" }, "done": true, "done_reason": "stop", "prompt_eval_count": 950, "eval_count": 5 }),
+            ]),
+        ]);
+        let target = Target {
+            url,
+            headers: vec![("content-type".to_string(), "application/json".to_string())],
+            dialect: Dialect::OpenAi,
+            model: "qwen3.5:9b".to_string(),
+            price: None,
+            thinking: false,
+            effort: None,
+            local_context: Some(8_192),
+        };
+        let workspace = Workspace::new(root.to_str().unwrap(), None);
+        let prompt = prompt_in(&root, "turn-agent-ollama", "what does hello.txt say?", "qwen3.5:9b");
+        let recorder = crate::engines::Recorder::new();
+
+        drive(Backend::Ollama, &target, &workspace, Options { autonomy: Autonomy::Auto, max_steps: 5, auto_check: false, research: None }, None, &Default::default(), &prompt, &recorder.sink());
+
+        let bodies = server.join().unwrap();
+        let events = recorder.events();
+
+        assert_eq!(bodies[0]["options"]["num_ctx"], 8_192, "the context is named on the request");
+        assert!(bodies[0].get("stream_options").is_none(), "nothing the native endpoint does not take");
+        assert!(bodies[0]["tools"].as_array().map(Vec::len).unwrap_or(0) > 0, "the tools go with it");
+
+        let second = bodies[1]["messages"].as_array().unwrap();
+        let asked = second.iter().find(|message| message["role"] == "assistant").expect("the model's call goes back");
+        let answered = second.iter().find(|message| message["role"] == "tool").expect("the tool's answer goes back");
+
+        assert_eq!(asked["tool_calls"][0]["function"]["arguments"]["path"], "hello.txt", "arguments as an object");
+        assert_eq!(answered["tool_name"], "read_file");
+        assert!(answered["content"].as_str().unwrap().contains("hi from the folder"));
+        assert!(events.iter().any(|event| matches!(event, EngineEvent::Thinking(text) if text == "Read it.")));
+        assert!(events.iter().any(|event| matches!(event, EngineEvent::Delta(text) if text.contains("It says hi."))));
+        assert!(matches!(events.last(), Some(EngineEvent::Done { summary, .. }) if summary == "Done"));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A SearXNG server on loopback that answers every search with the same two pages.
+    fn searxng() -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = format!("http://{}", listener.local_addr().unwrap());
+
+        std::thread::spawn(move || {
+            for socket in listener.incoming().flatten() {
+                let mut reader = BufReader::new(socket.try_clone().unwrap());
+
+                loop {
+                    let mut line = String::new();
+
+                    if reader.read_line(&mut line).unwrap_or(0) == 0 || line == "\r\n" {
+                        break;
+                    }
+                }
+
+                let body = serde_json::json!({ "results": [
+                    { "title": "Release notes", "url": "https://example.org/notes", "content": "Version 2 adds X.", "publishedDate": "2026-03-01" },
+                    { "title": "Blog", "url": "https://example.com/blog", "content": "A post about X." },
+                ] })
+                .to_string();
+                let mut socket = socket;
+
+                let _ = write!(socket, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+            }
+        });
+
+        address
+    }
+
+    /// 0.16.1: a `/research` turn has its own toolbox, stops at its limits, and ends with its numbered
+    /// sources - the same page keeping its number.
+    #[test]
+    fn a_research_turn_keeps_to_its_tools_and_limits_and_lists_its_sources() {
+        let store = crate::store::sqlite::Store::in_memory().unwrap();
+
+        store.set_setting("research.searchProvider", "searxng").unwrap();
+        store.set_setting("research.searxngUrl", &searxng()).unwrap();
+        research::configure(&store);
+
+        let root = std::env::temp_dir().join(format!("sdc-agent-research-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        let (url, server) = provider(vec![
+            call("r1", "web_search", serde_json::json!({ "query": "what is new in X" })),
+            call("r2", "web_search", serde_json::json!({ "query": "X again" })),
+            call("r3", "write_file", serde_json::json!({ "path": "notes.md", "content": "x" })),
+            chunk(serde_json::json!({ "content": "Version 2 adds X [1]." })) + "data: [DONE]\n\n",
+        ]);
+        let target = Target {
+            url,
+            headers: vec![("content-type".to_string(), "application/json".to_string())],
+            dialect: Dialect::OpenAi,
+            model: "api-test".to_string(),
+            price: None,
+            thinking: false,
+            effort: None,
+            local_context: None,
+        };
+        let workspace = Workspace::new(root.to_str().unwrap(), None);
+        let prompt = prompt_in(&root, "turn-agent-research", "what is new in X?", "api-test");
+        let recorder = crate::engines::Recorder::new();
+        let limits = research::Limits { max_searches: 1, max_pages: 2, max_minutes: 5 };
+
+        drive(Backend::Api, &target, &workspace, Options { autonomy: Autonomy::Auto, max_steps: 10, auto_check: false, research: Some(limits) }, None, &Default::default(), &prompt, &recorder.sink());
+        research::configure(&crate::store::sqlite::Store::in_memory().unwrap());
+
+        let bodies = server.join().unwrap();
+        let events = recorder.events();
+        let offered: Vec<String> = bodies[0]["tools"].as_array().unwrap().iter().map(|tool| tool["function"]["name"].as_str().unwrap().to_string()).collect();
+
+        assert!(offered.iter().all(|name| research::TOOLS.contains(&name.as_str())), "only the research tools: {offered:?}");
+        assert!(bodies[0]["messages"][0]["content"].as_str().unwrap().contains("SDC Research"), "the research brief");
+
+        let sent = bodies[3]["messages"].to_string();
+
+        assert!(sent.contains("[1] Release notes"), "results are numbered: {sent}");
+        assert!(sent.contains("research limit is reached"), "the second search is over the limit");
+        assert!(sent.contains("not part of a research turn"), "write_file is refused");
+        assert!(!root.join("notes.md").exists());
+
+        let sources = events.iter().find_map(|event| match event {
+            EngineEvent::Sources(sources) => Some(sources.clone()),
+            _ => None,
+        });
+        let sources = sources.expect("the turn lists its sources");
+
+        assert_eq!(sources[0]["n"], 1);
+        assert_eq!(sources[0]["url"], "https://example.org/notes");
+        assert_eq!(sources[0]["date"], "2026-03-01");
+        assert!(matches!(events.last(), Some(EngineEvent::Done { meta, .. }) if meta.contains("1 searches")));
 
         let _ = std::fs::remove_dir_all(&root);
     }

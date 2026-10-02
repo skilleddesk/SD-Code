@@ -15,6 +15,63 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [0.16.1] — Each chat keeps its own model, local models really run, and `/research`
+
+**The report:** *"akta chat a je model select kora onno chat onno model select korle aita automatic sob
+chat thake model change hoi"*. The window held one model for every chat, so a pick in the VPS chat's box
+changed the local chat beside it.
+
+**Each chat keeps its own model.** A pick belongs to the chat it was made in and is remembered across
+launches. A chat with no pick of its own shows the model its last turn ran. A new chat starts from the
+latest pick, and the chats already on screen are pinned first so they do not move. In split view only
+the clicked box opens its menu. Fix with agent, Connect's `Use`, Alt+M, Alt+E and the status bar act on
+the open chat only.
+
+**Local models (Ollama).**
+- A model picked from the Local group was routed as an API turn. That route skipped Ollama and failed
+  on `custom`'s missing key. It is now the local engine's turn.
+- The agent talks to Ollama's own `/api/chat` and names its context (`num_ctx`) on every request.
+  Before, it used `/v1`, which cannot set the context, so Ollama ran at its 4 096-token default while
+  SDC planned for 32 000. SDC's window for a local model is that same number: the catalogue's `ctx`,
+  capped at 16 384 by default (Settings → Research → Local model context).
+- Tool results, page text and search results are cut to fit a local model's window.
+- A model that is not downloaded, or a machine out of memory, gets a sentence that says what to do
+  (`ollama pull …`, a smaller context).
+- `qwen3.5:9b` is in the catalogue.
+
+**`/research <question>`.**
+- The question is answered from the web, with numbered sources `[n]` (title, address and date) listed
+  under the answer.
+- Before it starts, a card shows the model and where it runs, the search service, the limits and the
+  estimated cost.
+- A research turn has its own tools (search, fetch, sub-agents, plan, read) and limits on searches,
+  pages and minutes. A local model's cost governor sees $0, so the limits are what stop it.
+- Search services: DuckDuckGo (default, no key), SearXNG, Tavily, Brave and Serper. Keys are kept in
+  the OS keychain. A keyed service that fails falls back to DuckDuckGo with a note.
+- Pages are read for their article: the main text, title and published date, not the menus.
+- Optional: an API model can write the final answer from what a local model gathered.
+- A local model uses the web only through `/research` (this can be switched off). A `privacy =
+  "local-only"` folder opens the web for a research turn alone.
+- `/research stop` stops it. `/model <name>` picks this chat's model.
+
+**Review fixes:**
+- Ids can no longer repeat and replace rows.
+- The file guard follows symlinks, locally and on hosts.
+- Events the disk refused are kept and written later.
+- Passwords keep their spaces.
+- Masking a key with a non-Latin character no longer panics.
+- A panicking connection no longer holds the daemon open.
+- Slow handlers run on the blocking pool, and a reader that stops reading is let go.
+- A team name that is not on the team no longer locks the owner out.
+- The deploy duplicate check matches the exact site.
+- A stop that cannot reach the host is reported.
+- Forward rewind stays in its own chat.
+- The WebSocket transport fails waiting calls when the socket closes.
+- The background poll no longer toasts every second.
+- A folder is never bound to a chat on another machine.
+- An error without a turn becomes a toast.
+- The bridge retries a failed subscribe.
+
 ## [0.16.0] — SDC holds the VPS connection itself, and can stay signed in for good
 
 **The report:** *"ami cai ai rokom sign out jano kono vabai nah hoi"*. The VPS signed out six times in one

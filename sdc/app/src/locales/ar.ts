@@ -19,6 +19,7 @@ export const ar: StringsPack = {
       { id: 'appearance', label: 'المظهر', icon: 'palette' },
       { id: 'keymap', label: 'لوحة المفاتيح', icon: 'keyboard' },
       { id: 'safety', label: 'الأمان', icon: 'shield' },
+      { id: 'research', label: 'البحث', icon: 'globe' },
       { id: 'notifications', label: 'الإشعارات', icon: 'bell' },
       { id: 'backup', label: 'النسخ الاحتياطي', icon: 'databaseBackup' },
       { id: 'language', label: 'اللغة', icon: 'languages' },

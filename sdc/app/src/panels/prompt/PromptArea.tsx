@@ -24,6 +24,7 @@ import { FolderChip } from './FolderChip';
 import { ModelSelector } from './ModelSelector';
 import { QueuedChips } from './QueuedChips';
 import { IntentCard } from '../../kernel/IntentCard';
+import { ResearchCard } from './ResearchCard';
 import { VoiceButton } from '../../kernel/VoiceButton';
 import { usePrefsStore } from '../../store/prefs';
 
@@ -485,6 +486,18 @@ export function PromptArea({ sessionId }: PromptAreaProps = {}) {
       <div className="prompt-inner mx-auto max-w-[780px]">
         {cardSession === null ? null : <IntentCard sessionId={cardSession} />}
         {cardSession === null ? null : <QuestionCard sessionId={cardSession} />}
+        <ResearchCard
+          sessionId={cardSession}
+          onCancel={(text) => {
+            const textarea = textareaRef.current;
+
+            if (textarea !== null) {
+              textarea.value = text;
+              textarea.focus();
+              grow();
+            }
+          }}
+        />
 
         <QueuedChips sessionId={sessionId} />
 

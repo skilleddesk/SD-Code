@@ -1485,6 +1485,11 @@ impl Daemon {
            (`deepseek-v4-pro`, which this build's catalogue has never seen) resolvable to a real
            endpoint instead of the loopback `custom` one. */
         let provider = envelope.opt_str("provider").filter(|id| !id.trim().is_empty());
+        /* A model picked from the Local (Ollama) group arrives as `native_api` with `provider: "ollama"` -
+           the window has four engines, and Ollama is a provider of the API one. Routed as an API turn it
+           skipped Ollama (`endpoint_for` never sends a key-less turn there) and failed on `custom`'s
+           missing key (0.16.1). It is the local engine's turn. */
+        let engine_id = if provider.as_deref() == Some("ollama") { "ollama".to_string() } else { engine_id };
         let turn_id = self.state.fresh_id("turn-");
         let engine = self.state.engines.get(&engine_id).ok_or_else(|| {
             ErrorObject::not_found(format!(
@@ -1501,7 +1506,9 @@ impl Daemon {
         /* `/compact` (0.13): the chat's own model writes the summary later turns start from - as a plain
            answer, never with tools. */
         let compact = envelope.params.get("compact").and_then(Value::as_bool).unwrap_or(false);
-        let agent_mode = envelope.params.get("agent").and_then(Value::as_bool).unwrap_or(false) && !compact;
+        /* `/research` (0.16.1): an agent turn with the research brief, tools, limits and sources. */
+        let research = envelope.params.get("research").and_then(Value::as_bool).unwrap_or(false) && !compact;
+        let agent_mode = (envelope.params.get("agent").and_then(Value::as_bool).unwrap_or(false) || research) && !compact;
         let requested_autonomy = crate::agent::gate::Autonomy::parse(&envelope.opt_str("autonomy").unwrap_or_default());
 
         /*
@@ -1552,7 +1559,8 @@ impl Daemon {
             .with_policy(policy.clone())
             /* Settings → Agent → "Check the work when it says it is done" (0.13), on unless turned off. */
             .with_auto_check(!matches!(self.store().setting("agent.autoCheck").ok().flatten().as_deref(), Some("false" | "off")))
-        });
+        })
+        .map(|agent| if research { agent.with_research(crate::agent::research::config().limits) } else { agent });
 
         let history = fitted.messages.clone();
 
@@ -1731,6 +1739,16 @@ impl Daemon {
             None => prompt_text,
         };
         let prompt_text = if compact { crate::context::COMPACT_PROMPT.to_string() } else { prompt_text };
+        /* A CLI has its own web tools and loop; `/research` there is the same brief, in front of the words. */
+        let prompt_text = if research && !self_checkpointing {
+            format!(
+                "{}\n\n[The person's message]\n{prompt_text}",
+                crate::agent::research::system_prompt(&reading, &crate::agent::research::config().limits, "your own web search", false)
+                    .replace("Do not list the sources yourself - SDC adds the numbered list under your answer.", "End with the numbered list of sources: [n] title - address (date).")
+            )
+        } else {
+            prompt_text
+        };
         let plan = RunPlan {
             session_id,
             turn_id,
@@ -3659,6 +3677,9 @@ async fn run_turn(
                     session.clone(),
                     turn.clone(),
                 );
+            }
+            crate::engines::EngineEvent::Sources(sources) => {
+                out.push(event::research_sources(&plan.turn_id, &plan.session_id, sources), session.clone(), turn.clone());
             }
             crate::engines::EngineEvent::Plan(steps) => {
                 /* The plan outlives the turn and the daemon (long-task memory, 0.12): the next agent turn in

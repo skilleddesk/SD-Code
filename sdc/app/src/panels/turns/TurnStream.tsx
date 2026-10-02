@@ -5,6 +5,7 @@ import { toast } from '../../store/toast';
 import { FlowWork } from './FlowWork';
 import { ErrorCard } from './ErrorCard';
 import { PlanCard } from './PlanCard';
+import { SourcesList } from './SourcesList';
 import { TurnFooter } from './TurnFooter';
 import { ChangedFiles } from './ChangedFiles';
 import { UserMessage } from './UserMessage';
@@ -121,6 +122,9 @@ function TurnBlock({ turn, sessionId }: { turn: Turn; sessionId: string }) {
           out of, then what the engine actually said - and the error card above it, because a failed
           turn has an explanation where its answer would be. */}
       {turn.error ? <ErrorCard error={turn.error} /> : null}
+
+      {/* A `/research` answer's numbered sources (0.16.1): what every [n] in it points at. */}
+      {turn.sources !== undefined && turn.sources.length > 0 ? <SourcesList sources={turn.sources} /> : null}
 
       {turn.running ? null : <ChangedFiles items={turn.timeline} />}
 

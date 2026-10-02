@@ -35,7 +35,7 @@ use crate::engines::{EngineEvent, EventSink};
 
 /// The most text one tool answer hands back to the model. Longer output keeps its head and its tail,
 /// which is where a build's command and its error are.
-const RESULT_CAP: usize = 24_000;
+pub const RESULT_CAP: usize = 24_000;
 
 /// Lines of a diff drawn on an Edit card; the rest is counted, not dropped silently.
 const DIFF_CARD_LINES: usize = 160;
@@ -421,6 +421,12 @@ pub struct ToolContext<'a> {
     pub edits: usize,
     /// The edit count when the agent last ran a command: equal to `edits`, it ran something after its last change.
     pub ran_at: Option<usize>,
+    /// A `/research` turn's limits and sources (0.16.1), shared with its sub-agents - `None` otherwise.
+    pub research: Option<std::sync::Arc<super::research::Session>>,
+    /// The model runs on this machine (Ollama): its window is small, and the web is its only by `/research`.
+    pub local: bool,
+    /// The most one tool answer hands back - `RESULT_CAP`, or less for a local model's window.
+    pub result_cap: usize,
 }
 
 impl ToolContext<'_> {
@@ -560,6 +566,18 @@ impl Outcome {
 
 /// Runs one tool call, drawing its card as it goes.
 pub fn execute(context: &mut ToolContext, call: &ToolUse) -> Outcome {
+    let outcome = execute_call(context, call);
+
+    /* A local model's window holds less than one full answer (0.16.1): the cap follows the window. */
+    if context.result_cap < RESULT_CAP && outcome.content.len() > context.result_cap {
+        return Outcome { content: cap_to(&outcome.content, context.result_cap), ..outcome };
+    }
+
+    outcome
+}
+
+/// The answer of one call, before the window's cap.
+fn execute_call(context: &mut ToolContext, call: &ToolUse) -> Outcome {
     if let Some(raw) = call.input.get("__invalid_json") {
         return Outcome::error(format!(
             "The input for {} was not valid JSON ({}). Send the call again with a complete JSON object.",
@@ -575,6 +593,15 @@ pub fn execute(context: &mut ToolContext, call: &ToolUse) -> Outcome {
 
     if context.read_only && !READ_ONLY.contains(&call.name.as_str()) {
         return Outcome::error(format!("`{}` is not available to a sub-agent: it only reads. Report what should be changed instead.", call.name));
+    }
+
+    /* A research turn has its own small toolbox; a model that reaches past it is told what it has. */
+    if context.research.is_some() && !super::research::TOOLS.contains(&call.name.as_str()) {
+        return Outcome::error(format!(
+            "`{}` is not part of a research turn. The tools are: {}.",
+            call.name,
+            super::research::TOOLS.join(", ")
+        ));
     }
 
     let number = |key: &str| call.input[key].as_u64();
@@ -1157,18 +1184,56 @@ fn glob(context: &mut ToolContext, call_id: &str, pattern: &str, path: &str) -> 
     }
 }
 
+/// Why this turn may not use the web, or `None` when it may (0.16.1).
+///
+/// A folder whose policy keeps everything local opens the web for a `/research` turn alone - the command
+/// is the person's permission. A local model uses the web only through `/research` unless Settings →
+/// Research says otherwise; an API model keeps the web it always had.
+fn web_closed(context: &ToolContext, what: &str) -> Option<String> {
+    if context.research.is_some() {
+        return None;
+    }
+
+    if context.policy.privacy_local() {
+        return Some(format!("This project's policy keeps everything on this machine (privacy = local), so {what}. Ask with /research to look something up on the web."));
+    }
+
+    if context.local && super::research::config().local_web_only_research {
+        return Some(format!("On a local model {what} unless the person asks with /research (Settings → Research). Answer from what you know and what is in the folder, or tell the person to start the question with /research."));
+    }
+
+    None
+}
+
 fn web_fetch(context: &mut ToolContext, call_id: &str, url: &str) -> Outcome {
     started(context, call_id, "read", "Fetch", url);
 
-    if context.policy.privacy_local() {
-        return failed_with(context, call_id, "This project's policy keeps everything on this machine (privacy = local), so the web is not read.");
+    if let Some(reason) = web_closed(context, "the web is not read") {
+        return failed_with(context, call_id, reason);
     }
 
-    match super::web::fetch(url) {
-        Ok((final_url, text)) => {
-            completed(context, call_id, true, &format!("done · {} ln", text.lines().count()), None);
+    if let Some(session) = context.research.clone() {
+        if let Err(reason) = session.take_page() {
+            return failed_with(context, call_id, reason);
+        }
+    }
 
-            Outcome::ok(format!("[{final_url}]\n{text}"))
+    let page_cap = if context.local { context.result_cap.saturating_sub(400).max(2_000) } else { super::web::PAGE_CAP };
+
+    match super::web::fetch_page(url, page_cap) {
+        Ok(page) => {
+            completed(context, call_id, true, &format!("done · {} ln", page.text.lines().count()), None);
+
+            let dated = page.date.as_deref().map(|date| format!(" · {date}")).unwrap_or_default();
+
+            match &context.research {
+                Some(session) => {
+                    let n = session.cite(&page.url, &page.title, page.date.clone(), true);
+
+                    Outcome::ok(format!("[{n}] {}{dated}\n{}\n\n{}", page.title, page.url, page.text))
+                }
+                None => Outcome::ok(format!("[{}]{dated}\n{}", page.url, page.text)),
+            }
         }
         Err(error) => failed_with(context, call_id, error),
     }
@@ -1177,30 +1242,39 @@ fn web_fetch(context: &mut ToolContext, call_id: &str, url: &str) -> Outcome {
 fn web_search(context: &mut ToolContext, call_id: &str, query: &str) -> Outcome {
     started(context, call_id, "read", "Search web", query);
 
-    if context.policy.privacy_local() {
-        return failed_with(context, call_id, "This project's policy keeps everything on this machine (privacy = local), so the web is not searched.");
+    if let Some(reason) = web_closed(context, "the web is not searched") {
+        return failed_with(context, call_id, reason);
     }
 
-    match super::web::search(query, 8) {
-        Ok(results) if results.is_empty() => {
+    if let Some(session) = context.research.clone() {
+        if let Err(reason) = session.take_search() {
+            return failed_with(context, call_id, reason);
+        }
+    }
+
+    /* Fewer results for a small window: eight snippets are a quarter of a 4K context. */
+    let limit = if context.local { 5 } else { 8 };
+
+    match super::research::search(query, limit) {
+        Ok((results, _)) if results.is_empty() => {
             completed(context, call_id, true, "done · 0 results", None);
 
             Outcome::ok(format!("No results for `{query}`."))
         }
-        Ok(results) => {
-            completed(context, call_id, true, &format!("done · {} results", results.len()), None);
+        Ok((results, service)) => {
+            completed(context, call_id, true, &format!("done · {} results · {service}", results.len()), None);
 
             let lines: Vec<String> = results
                 .iter()
                 .enumerate()
-                .map(|(index, result)| {
-                    format!(
-                        "{}. {}\n   {}\n   {}",
-                        index + 1,
-                        result["title"].as_str().unwrap_or_default(),
-                        result["url"].as_str().unwrap_or_default(),
-                        result["snippet"].as_str().unwrap_or_default()
-                    )
+                .map(|(index, hit)| {
+                    let n = match &context.research {
+                        Some(session) => session.cite(&hit.url, &hit.title, hit.date.clone(), false),
+                        None => index + 1,
+                    };
+                    let dated = hit.date.as_deref().map(|date| format!(" · {date}")).unwrap_or_default();
+
+                    format!("[{n}] {}{dated}\n   {}\n   {}", hit.title, hit.url, hit.snippet)
                 })
                 .collect();
 
@@ -1453,6 +1527,10 @@ fn browser(context: &mut ToolContext, call_id: &str, input: &Value) -> Outcome {
     /* A public site can take real actions (a form sent, an order placed): asked like a command, unless the
        mode says otherwise. The person's own dev server and files are not asked about. */
     if action == "open" && !local_address(&url) {
+        if let Some(reason) = web_closed(context, "the browser does not open public sites").filter(|_| !context.policy.privacy_local()) {
+            return failed_with(context, call_id, reason);
+        }
+
         if context.policy.privacy_local() {
             return failed_with(context, call_id, "This project's policy keeps everything on this machine (privacy = local-only), so the browser does not open public sites.");
         }
@@ -1690,13 +1768,18 @@ fn card(diff: &[DiffLine]) -> Value {
 
 /// Head and tail of a long answer, with the cut said out loud.
 fn cap(text: &str) -> String {
-    if text.len() <= RESULT_CAP {
+    cap_to(text, RESULT_CAP)
+}
+
+/// `cap` at another size - a local model's window.
+fn cap_to(text: &str, limit: usize) -> String {
+    if text.len() <= limit {
         return text.to_string();
     }
 
-    let head: String = text.chars().take(RESULT_CAP * 2 / 3).collect();
+    let head: String = text.chars().take(limit * 2 / 3).collect();
     let tail: String = {
-        let reversed: String = text.chars().rev().take(RESULT_CAP / 3).collect();
+        let reversed: String = text.chars().rev().take(limit / 3).collect();
 
         reversed.chars().rev().collect()
     };
@@ -1730,6 +1813,9 @@ mod tests {
             plan: None,
             edits: 0,
             ran_at: None,
+            research: None,
+            local: false,
+            result_cap: RESULT_CAP,
         }
     }
 
@@ -1818,6 +1904,32 @@ mod tests {
         assert!(root.join("a.txt").exists());
         assert!(root.join("b.txt").exists());
         assert!(!root.join("c.txt").exists(), "the file over the limit must not be written");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 0.16.1: a local model reads the web only through `/research`; an API model keeps its web tools,
+    /// and a long answer is cut to a local model's window.
+    #[test]
+    fn a_local_model_is_kept_off_the_web_outside_research() {
+        let (root, workspace) = folder("webgate");
+        let recorder = Recorder::new();
+        let sink = recorder.sink();
+        let mut local = context(&workspace, &sink, Autonomy::Auto);
+
+        local.local = true;
+
+        let search = ToolUse { id: "w1".into(), name: "web_search".into(), input: json!({ "query": "anything" }) };
+        let refused = execute(&mut local, &search);
+
+        assert!(refused.is_error && refused.content.contains("/research"), "{}", refused.content);
+
+        local.result_cap = 3_000;
+        std::fs::write(root.join("long.txt"), "line of text\n".repeat(2_000)).unwrap();
+
+        let read = execute(&mut local, &ToolUse { id: "r1".into(), name: "read_file".into(), input: json!({ "path": "long.txt" }) });
+
+        assert!(read.content.len() < 3_200 && read.content.contains("characters cut"), "{}", read.content.len());
 
         let _ = std::fs::remove_dir_all(&root);
     }

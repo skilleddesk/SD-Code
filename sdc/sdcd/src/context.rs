@@ -80,6 +80,11 @@ pub fn tokens_of(text: &str) -> u64 {
 
 /// How many tokens the model holds: the catalogue's `ctx` for the model, or what the CLI's models have.
 pub fn window_tokens(engine: &str, provider: Option<&str>, model: &str) -> u64 {
+    /* A local model runs with the context SDC asks Ollama for (`num_ctx`), never its card's 128K (0.16.1). */
+    if engine == "ollama" || provider == Some("ollama") {
+        return crate::engines::ollama::context_for(model);
+    }
+
     let api_model = crate::engines::native_api::api_model(model);
     /* "default" is this build's word for "whatever the CLI picks": the engine's own window, not a row's. */
     let named = !model.trim().is_empty() && model != "default";
@@ -420,7 +425,10 @@ mod tests {
 
     #[test]
     fn the_window_comes_from_the_catalogue_or_the_engine() {
-        assert_eq!(window_tokens("ollama", Some("ollama"), "llama3.2:3b"), 128_000);
+        /* 0.16.1: a local model's window is the context SDC asks Ollama for - its card says 128K, the
+           ceiling (16 384 unless Settings says more) is what the graphics card is asked to hold. */
+        assert_eq!(window_tokens("ollama", Some("ollama"), "llama3.2:3b"), crate::engines::ollama::context_cap().min(128_000));
+        assert_eq!(window_tokens("native_api", Some("ollama"), "qwen3.5:9b"), crate::engines::ollama::context_cap().min(16_384));
         assert_eq!(window_tokens("claude_code", None, "default"), 200_000);
     }
 }

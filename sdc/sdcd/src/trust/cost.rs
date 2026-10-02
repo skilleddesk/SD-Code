@@ -119,6 +119,34 @@ pub fn estimate(engine: &str, provider: Option<&str>, model: &str, prompt: &str,
     })
 }
 
+/// What a `/research` will probably cost (0.16.1): one model call per search and per page and a few to
+/// plan and answer, each re-sending a conversation that grows by about a page's summary per page read.
+/// A local model is free - and its estimate says so rather than leaving the cost blank.
+pub fn research_estimate(provider: Option<&str>, model: &str, prompt: &str, limits: &crate::agent::research::Limits) -> Value {
+    const PER_PAGE: u64 = 2_500;
+
+    let steps = (limits.max_searches + limits.max_pages + 3) as u64;
+    let average = 2_500 + tokens_in(prompt) + PER_PAGE * limits.max_pages as u64 / 2;
+    let total_in = average * steps;
+    let total_out = 300 * steps + 1_500;
+    let price = price_of(provider, model);
+    let usd = price.map(|(per_in, per_out)| total_in as f64 / 1e6 * per_in + total_out as f64 / 1e6 * per_out);
+
+    json!({
+        "inputTokens": total_in,
+        "outputTokens": total_out,
+        "usd": usd,
+        "source": if usd.is_some() { "estimate" } else { "unknown" },
+    })
+}
+
+/// The final-answer model's share: it reads every page's notes once and writes the answer.
+pub fn synthesis_estimate(provider: &str, model: &str, limits: &crate::agent::research::Limits) -> Value {
+    let input = 3_000 + 2_500 * limits.max_pages as u64;
+
+    json!(price_of(Some(provider), model).map(|(per_in, per_out)| input as f64 / 1e6 * per_in + 2_000.0 / 1e6 * per_out))
+}
+
 /// How demanding a request looks - the router's only input. Deliberately plain: length, code, and the
 /// verbs of work that spans files.
 pub fn complexity(prompt: &str) -> &'static str {

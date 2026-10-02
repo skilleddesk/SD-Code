@@ -633,6 +633,9 @@ function reduce(state: AppState, entry: AppEvent): AppState {
         return { ...ended, timeline: [...ended.timeline, { kind: 'steer', text: event.text }] };
       });
 
+    case 'ResearchSources':
+      return patchTurn(state, event.turnId, (turn) => ({ ...turn, sources: event.sources.map((source) => ({ ...source })) }));
+
     case 'PlanUpdated':
       /* Whole each time: the newest checklist replaces the last, so a step that finished is ticked. */
       return patchTurn(state, event.turnId, (turn) => ({

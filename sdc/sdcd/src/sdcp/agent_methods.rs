@@ -15,6 +15,8 @@ use crate::sdcp::notifications::Notifier;
 
 /// The commands the composer offers after `/`, SDC's own. A project adds its own as Markdown files.
 pub const BUILT_IN_COMMANDS: &[(&str, &str)] = &[
+    ("research", "Answer a question from the web, with numbered sources: /research <question> (/research stop ends it)"),
+    ("model", "Pick this chat's model: /model <name>, or /model alone for the list"),
     ("compact", "Summarise this chat so far and continue from the summary - frees the model's context"),
     ("init", "Study this project and write .sdc/rules.md: how to build, test and run it, and its conventions"),
     ("review", "Review the uncommitted changes for bugs, security and style"),
@@ -44,6 +46,9 @@ impl Daemon {
                 Ok(json!({ "stopped": crate::agent::background::stop(&id) }))
             }
             "context.get" => self.context_get(envelope),
+            "research.status" => Ok(self.research_status()),
+            "research.key.set" => self.research_key_set(envelope),
+            "research.plan" => Ok(self.research_plan(envelope)),
             "app.erase" => self.app_erase(envelope),
             other => Err(ErrorObject::unsupported(other)),
         }
@@ -188,6 +193,93 @@ impl Daemon {
     }
 
     /// `context.get`: the meter before a turn - what the next turn of this chat would send to this model.
+    /// Settings → Research as it stands (0.16.1): the search service and whether each keyed one has a key
+    /// (masked, never the key), the limits, the final-answer model, the local model's context, and Ollama.
+    fn research_status(&self) -> Value {
+        let config = crate::agent::research::config();
+        let keys: Vec<Value> = crate::agent::research::KEYED
+            .iter()
+            .map(|id| {
+                let key = crate::auth::keychain::get(&crate::agent::research::key_ref(id)).filter(|key| !key.trim().is_empty());
+
+                json!({ "provider": id, "hasKey": key.is_some(), "masked": key.as_deref().map(crate::auth::keychain::mask) })
+            })
+            .collect();
+        let running = crate::engines::ollama::daemon_running();
+
+        json!({
+            "provider": config.provider.id(),
+            "providerLabel": config.provider.label(),
+            "searxngUrl": self.store().setting("research.searxngUrl").ok().flatten().unwrap_or_default(),
+            "keys": keys,
+            "limits": { "maxSearches": config.limits.max_searches, "maxPages": config.limits.max_pages, "maxMinutes": config.limits.max_minutes },
+            "localWebOnly": config.local_web_only_research,
+            "synthesis": config.synthesis.as_ref().map(|(provider, model)| json!({ "provider": provider, "model": model })),
+            "ollamaContext": crate::engines::ollama::context_cap(),
+            "ollamaRunning": running,
+            "ollamaModels": if running { crate::engines::ollama::list_models() } else { Vec::new() },
+        })
+    }
+
+    /// A search service's key, into the OS keychain - or out of it, when the key is empty.
+    fn research_key_set(&self, envelope: &Envelope) -> Result<Value, ErrorObject> {
+        let provider = envelope.require_str("provider")?;
+        let key = envelope.opt_str("key").unwrap_or_default();
+
+        if !crate::agent::research::KEYED.contains(&provider.as_str()) {
+            return Err(ErrorObject::bad_request(format!(
+                "`{provider}` takes no key. The services with a key are: {}.",
+                crate::agent::research::KEYED.join(", ")
+            )));
+        }
+
+        let name = crate::agent::research::key_ref(&provider);
+
+        if key.trim().is_empty() {
+            crate::auth::keychain::delete(&name)?;
+        } else {
+            crate::auth::keychain::set(&name, key.trim())?;
+        }
+
+        Ok(self.research_status())
+    }
+
+    /// What a `/research` will do, said before it starts (0.16.1): the model and where it runs, the
+    /// search service, the limits, and - for a model that is paid for - about what it will cost.
+    fn research_plan(&self, envelope: &Envelope) -> Value {
+        let config = crate::agent::research::config();
+        let engine = envelope.opt_str("engine").unwrap_or_else(|| "claude_code".into());
+        let provider = envelope.opt_str("provider").filter(|id| !id.trim().is_empty());
+        let model = envelope.opt_str("model").unwrap_or_default();
+        let prompt = envelope.opt_str("prompt").unwrap_or_default();
+        let local = provider.as_deref() == Some("ollama") || engine == "ollama";
+        let place = if local { "local" } else if engine == "native_api" { "api" } else { "cli" };
+        let mut estimate = crate::trust::cost::research_estimate(provider.as_deref(), &model, &prompt, &config.limits);
+
+        if let (Some((synth_provider, synth_model)), "local" | "api") = (&config.synthesis, place) {
+            let extra = crate::trust::cost::synthesis_estimate(synth_provider, synth_model, &config.limits);
+
+            estimate["synthesisUsd"] = extra;
+        }
+
+        let key_missing = config.provider.keyed()
+            && crate::auth::keychain::get(&crate::agent::research::key_ref(config.provider.id())).is_none_or(|key| key.trim().is_empty());
+
+        json!({
+            "place": place,
+            "engine": engine,
+            "model": model,
+            "provider": provider,
+            "search": config.provider.label(),
+            "searchKeyMissing": key_missing,
+            "limits": { "maxSearches": config.limits.max_searches, "maxPages": config.limits.max_pages, "maxMinutes": config.limits.max_minutes },
+            "synthesis": config.synthesis.as_ref().filter(|_| place != "cli").map(|(provider, model)| json!({ "provider": provider, "model": model })),
+            "localContext": if local { Some(crate::engines::ollama::context_for(&model)) } else { None },
+            "ollamaRunning": if local { Some(crate::engines::ollama::daemon_running()) } else { None },
+            "estimate": estimate,
+        })
+    }
+
     fn context_get(&self, envelope: &Envelope) -> Result<Value, ErrorObject> {
         let session_id = envelope.require_str("sessionId")?;
         let engine = envelope.opt_str("engine").unwrap_or_else(|| "claude_code".into());

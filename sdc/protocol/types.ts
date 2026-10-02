@@ -264,7 +264,10 @@ export type SdcpMethod =
   | 'process.list'
   | 'process.stop'
   | 'context.get'
-  | 'app.erase';
+  | 'app.erase'
+  | 'research.status'
+  | 'research.key.set'
+  | 'research.plan';
 
 /**
  * Host lifecycle (schema `$defs.eventTypes` → `HostStatus`).
@@ -702,6 +705,58 @@ export interface VerifyUpdatedEvent {
 }
 
 /** The agent's checklist for a turn (v4), whole each time: the newest one replaces the last. */
+/** Research limits (0.16.1). */
+export interface ResearchLimits {
+  maxSearches: number;
+  maxPages: number;
+  maxMinutes: number;
+}
+
+export interface ResearchStatus {
+  provider: 'duckduckgo' | 'searxng' | 'tavily' | 'brave' | 'serper';
+  providerLabel: string;
+  searxngUrl: string;
+  keys: { provider: 'tavily' | 'brave' | 'serper'; hasKey: boolean; masked: string | null }[];
+  limits: ResearchLimits;
+  localWebOnly: boolean;
+  synthesis: { provider: string; model: string } | null;
+  ollamaContext: number;
+  ollamaRunning: boolean;
+  ollamaModels: string[];
+}
+
+export interface ResearchPlan {
+  place: 'local' | 'api' | 'cli';
+  engine: string;
+  model: string;
+  provider: string | null;
+  search: string;
+  searchKeyMissing: boolean;
+  limits: ResearchLimits;
+  synthesis: { provider: string; model: string } | null;
+  localContext: number | null;
+  ollamaRunning: boolean | null;
+  estimate: { inputTokens: number; outputTokens: number; usd: number | null; source: string; synthesisUsd?: number | null };
+}
+
+/** One numbered source of a research answer. */
+export interface ResearchSource {
+  n: number;
+  title: string;
+  url: string;
+  date: string | null;
+  /** Read in full, not only seen in a result list. */
+  read: boolean;
+}
+
+/** A `/research` turn's sources (0.16.1): the list under its answer, cited in it as [n]. */
+export interface ResearchSourcesEvent {
+  type: 'ResearchSources';
+  turnId: string;
+  sessionId: string;
+  sources: ResearchSource[];
+}
+
 export interface PlanUpdatedEvent {
   type: 'PlanUpdated';
   turnId: string;
@@ -1400,6 +1455,7 @@ export type SdcpEvent =
   | DuelResolvedEvent
   | SessionBridgedEvent
   | PlanUpdatedEvent
+  | ResearchSourcesEvent
   | TurnSteeredEvent
   | ContextUpdatedEvent
   | QuestionAskedEvent
@@ -1455,6 +1511,7 @@ export const SDCP_EVENT_TYPES = [
   'DuelResolved',
   'SessionBridged',
   'PlanUpdated',
+  'ResearchSources',
   'TurnSteered',
   'ContextUpdated',
   'QuestionAsked',
@@ -1681,6 +1738,8 @@ export interface SdcpMethodMap {
       maxSteps?: number;
       /** `/compact` (0.13): the chat's model summarises the conversation; later turns start from the summary. */
       compact?: boolean;
+      /** `/research` (0.16.1): an agent turn with the research brief, web tools, limits and numbered sources. */
+      research?: boolean;
       /** How hard the model thinks (0.14): Claude Code `--effort`, Codex `model_reasoning_effort`, OpenAI `reasoning_effort`. */
       effort?: 'low' | 'medium' | 'high' | 'max';
       /** Images attached to the turn (0.13): base64, with their media type. */
@@ -2142,6 +2201,12 @@ export interface SdcpMethodMap {
   'process.stop': { params: { processId: string }; result: { stopped: boolean } };
   /** The context meter before a turn: what the next turn of the chat would send to this model. */
   'context.get': { params: { sessionId: string; engine?: string; model?: string; provider?: string }; result: { usedTokens: number; windowTokens: number; percent: number; compacted: boolean; resumed: boolean } };
+  /** Settings → Research (0.16.1): the search service, which keyed services have a key (masked), limits, the final-answer model, and Ollama. */
+  'research.status': { params: Record<string, never>; result: ResearchStatus };
+  /** A search service's key into the OS keychain; an empty key removes it. */
+  'research.key.set': { params: { provider: 'tavily' | 'brave' | 'serper'; key: string }; result: ResearchStatus };
+  /** What a `/research` will do - model, place, search service, limits, estimated cost - before it starts. */
+  'research.plan': { params: { engine: string; provider?: string; model: string; prompt: string }; result: ResearchPlan };
   /** Settings → Erase all SDC data: keys now, the data folder on the daemon's next start. `confirm` must be `ERASE`. */
   'app.erase': { params: { confirm: 'ERASE' }; result: { erasing: boolean } };
 }

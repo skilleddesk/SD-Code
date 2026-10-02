@@ -19,6 +19,7 @@ export const hi: StringsPack = {
       { id: 'appearance', label: 'रूप', icon: 'palette' },
       { id: 'keymap', label: 'कीबोर्ड', icon: 'keyboard' },
       { id: 'safety', label: 'सुरक्षा', icon: 'shield' },
+      { id: 'research', label: 'रिसर्च', icon: 'globe' },
       { id: 'notifications', label: 'सूचनाएँ', icon: 'bell' },
       { id: 'backup', label: 'बैकअप', icon: 'databaseBackup' },
       { id: 'language', label: 'भाषा', icon: 'languages' },

@@ -19,6 +19,7 @@ export const es: StringsPack = {
       { id: 'appearance', label: 'Apariencia', icon: 'palette' },
       { id: 'keymap', label: 'Teclado', icon: 'keyboard' },
       { id: 'safety', label: 'Seguridad', icon: 'shield' },
+      { id: 'research', label: 'Investigación', icon: 'globe' },
       { id: 'notifications', label: 'Notificaciones', icon: 'bell' },
       { id: 'backup', label: 'Copias', icon: 'databaseBackup' },
       { id: 'language', label: 'Idioma', icon: 'languages' },

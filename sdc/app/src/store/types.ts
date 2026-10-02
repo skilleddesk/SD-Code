@@ -6,6 +6,7 @@ import type {
   ProviderKind,
   ProviderLifecycle,
   RegistryModel,
+  ResearchSource,
   SdcpEvent,
   TierName, VerifyUpdatedEvent } from '../../../protocol/types';
 
@@ -168,6 +169,8 @@ export interface TurnView {
   thinkingSince: string | null;
   /** The agent's checklist (`PlanUpdated`, v4), newest version; empty for a turn without one. */
   plan: PlanStepView[];
+  /** A `/research` turn's numbered sources (`ResearchSources`, 0.16.1). */
+  sources?: ResearchSource[];
   /** The daemon's stamp of `TurnStarted` - what the Analytics tab groups by day. */
   startedAt: string;
   /** The stamp of `TurnCompleted` or `ErrorRaised` - where the stream's time ribbon ends (0.15). */

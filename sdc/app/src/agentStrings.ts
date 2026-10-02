@@ -9,7 +9,7 @@ export const agentStrings = {
     empty: 'No command matches',
     hint: '↑↓ choose · ↵ run · Esc close',
     fromProject: 'project',
-    help: 'Commands: /compact frees the model’s context · /init writes the project’s rules · /review checks the changes · /remember <fact> · /memory · /clear starts a new chat',
+    help: 'Commands: /research <question> answers from the web with sources · /model <name> picks this chat’s model · /compact frees the model’s context · /init writes the project’s rules · /review checks the changes · /remember <fact> · /memory · /clear starts a new chat',
     remembered: (path: string): string => `Remembered · ${path}`,
     rememberEmpty: 'Write the fact after /remember',
     rememberFailed: 'Could not save it to memory',

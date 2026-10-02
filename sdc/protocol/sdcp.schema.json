@@ -336,7 +336,10 @@
           "process.list",
           "process.stop",
           "context.get",
-          "app.erase"
+          "app.erase",
+          "research.status",
+          "research.key.set",
+          "research.plan"
         ]
       }
     },
@@ -373,6 +376,7 @@
           "DuelResolved",
           "SessionBridged",
           "PlanUpdated",
+          "ResearchSources",
           "TurnSteered",
           "VerifyUpdated",
           "ModelsUpdated",
@@ -805,7 +809,8 @@
             "autonomy": "ask|pro|auto?",
             "maxSteps": "integer?",
             "understand": "boolean?",
-            "intentId": "string?"
+            "intentId": "string?",
+            "research": "boolean?"
           },
           "result": {
             "turnId": "string"
@@ -2104,6 +2109,45 @@
           },
           "result": {
             "stopped": "boolean"
+          }
+        },
+        "research.status": {
+          "params": {},
+          "result": {
+            "provider": "string",
+            "providerLabel": "string",
+            "searxngUrl": "string",
+            "keys": "array",
+            "limits": "object",
+            "localWebOnly": "boolean",
+            "synthesis": "object?",
+            "ollamaContext": "integer",
+            "ollamaRunning": "boolean",
+            "ollamaModels": "array"
+          }
+        },
+        "research.key.set": {
+          "params": {
+            "provider": "tavily|brave|serper",
+            "key": "string"
+          },
+          "result": {
+            "provider": "string"
+          }
+        },
+        "research.plan": {
+          "params": {
+            "engine": "string",
+            "provider": "string?",
+            "model": "string",
+            "prompt": "string"
+          },
+          "result": {
+            "place": "local|api|cli",
+            "search": "string",
+            "searchKeyMissing": "boolean",
+            "limits": "object",
+            "estimate": "object"
           }
         },
         "context.get": {

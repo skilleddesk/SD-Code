@@ -27,7 +27,17 @@ export function lastTurnChoice(sessionId: string): ModelChoice | null {
     }
   }
 
-  if (last === null || last.model === '' || !ENGINES.includes(last.engine as EngineId)) {
+  if (last === null || last.model === '') {
+    return null;
+  }
+
+  /* A local turn is logged as the `ollama` engine (0.16.1); in the window it is an API-engine model of
+     the Ollama provider. */
+  if (last.engine === 'ollama') {
+    return { engine: 'native_api', model: last.model, providerId: 'ollama', tier: tierFromName(last.tier) };
+  }
+
+  if (!ENGINES.includes(last.engine as EngineId)) {
     return null;
   }
 

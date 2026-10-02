@@ -66,6 +66,7 @@ export function toTurns(
       ...(turn.status === 'running' || turn.status === 'stuck' ? { live: liveBarOf(turn) } : {}),
       ...((turn.status === 'running' || turn.status === 'stuck') && turn.draft !== undefined ? { draft: { ...turn.draft } } : {}),
       plan: turn.plan.map((step) => ({ text: step.text, status: step.status })),
+      ...(turn.sources === undefined ? {} : { sources: turn.sources }),
       running: turn.status === 'running' || turn.status === 'stuck',
       /* Running with nothing on screen yet: the pulse that stands in for the answer until the first
          event arrives, so a slow first token never reads as a dead turn (0.10.0). */

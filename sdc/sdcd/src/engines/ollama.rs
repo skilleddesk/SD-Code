@@ -23,6 +23,65 @@ use crate::engines::{Engine, EngineEvent, EngineStatus, EventSink, Prompt};
 /// Where the local daemon listens.
 pub const ENDPOINT: &str = "127.0.0.1:11434";
 
+/// The most context SDC asks Ollama to load when nobody has said otherwise (0.16.1).
+///
+/// Ollama loads 4 096 tokens on a machine with less than 24 GiB of VRAM unless a request says more,
+/// and SDC planned for 32 000 - so the agent's system prompt and tools alone filled the window and the
+/// rest was cut without a word. Every request now names its context (`num_ctx`), and this ceiling keeps
+/// a model whose card says 256K from asking the graphics card for memory it does not have. Settings →
+/// Agent can raise it (`ollama.contextTokens`).
+pub const DEFAULT_CONTEXT: u64 = 16_384;
+
+static CONTEXT_CAP: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(DEFAULT_CONTEXT);
+
+/// Sets the ceiling from the person's setting; kept between 2 048 and 262 144.
+pub fn set_context_cap(tokens: u64) {
+    CONTEXT_CAP.store(tokens.clamp(2_048, 262_144), std::sync::atomic::Ordering::SeqCst);
+}
+
+/// The ceiling in force.
+pub fn context_cap() -> u64 {
+    CONTEXT_CAP.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// The context a turn on this local model runs with - what `num_ctx` asks for, and what SDC plans the
+/// conversation for, so the two can never disagree again: the catalogue's `ctx` for the model (32 000
+/// for one the catalogue does not list), never more than the ceiling.
+pub fn context_for(model: &str) -> u64 {
+    let api_model = crate::engines::native_api::api_model(model);
+    let listed = crate::providers::models::blocked()
+        .into_iter()
+        .filter(|block| block.id == "ollama")
+        .flat_map(|block| block.models.into_iter())
+        .find(|row| row["id"].as_str().is_some_and(|id| id == model || id == api_model))
+        .and_then(|row| row["ctx"].as_u64())
+        .filter(|ctx| *ctx > 0)
+        .unwrap_or(32_000);
+
+    listed.min(context_cap())
+}
+
+/// Ollama's own error, as a sentence a person can act on (0.16.1): a model that is not downloaded, and a
+/// machine that ran out of memory loading it, used to arrive as Ollama's raw words.
+pub fn explain_error(raw: &str, model: &str) -> String {
+    let lowered = raw.to_lowercase();
+
+    if lowered.contains("not found") && (lowered.contains("pull") || lowered.contains("model")) {
+        return format!("The local model `{model}` is not downloaded yet. Run `ollama pull {model}` in a terminal, then send the prompt again. (Ollama said: {raw})");
+    }
+
+    let memory = ["out of memory", "cudamalloc", "cuda error", "insufficient memory", "requires more system memory", "resource exhausted", "not enough memory", "vram"];
+
+    if memory.iter().any(|needle| lowered.contains(needle)) {
+        return format!(
+            "This machine ran out of memory loading `{model}` with a {} token context. Lower Settings → Agent → Local model context (try 8192), pick a smaller model or quantisation, or close other programs using the graphics card. (Ollama said: {raw})",
+            context_for(model)
+        );
+    }
+
+    raw.to_string()
+}
+
 /// Plain-HTTP request/response. `GET` when `body` is empty, `POST` otherwise.
 fn call(path: &str, body: Option<&str>) -> Result<String, String> {
     let address: SocketAddr = ENDPOINT.parse().map_err(|error| format!("{ENDPOINT}: {error}"))?;
@@ -112,10 +171,16 @@ fn chat(body: &str, sink: &EventSink) {
     };
 
     if head.status != 0 && !(200..300).contains(&head.status) {
-        sink.send(EngineEvent::Failed(format!(
-            "{ENDPOINT} answered HTTP {}",
-            head.status
-        )));
+        /* Ollama's refusal is one JSON line with its reason (`model "x" not found`); that is the sentence. */
+        let mut rest = String::new();
+        let _ = reader.read_to_string(&mut rest);
+        let reason = rest
+            .lines()
+            .filter_map(|line| serde_json::from_str::<Value>(line.trim()).ok())
+            .find_map(|value| value["error"].as_str().map(str::to_string))
+            .unwrap_or_else(|| format!("{ENDPOINT} answered HTTP {}", head.status));
+
+        sink.send(EngineEvent::Failed(reason));
 
         return;
     }
@@ -301,9 +366,20 @@ impl Engine for Ollama {
             "model": model,
             "stream": true,
             "messages": messages,
+            /* The context to load, named on every request (0.16.1) - see `DEFAULT_CONTEXT`. */
+            "options": { "num_ctx": context_for(&model) },
         })
         .to_string();
-        let sink = sink.clone();
+        /* Ollama's failures, said as what to do about them. */
+        let sink = {
+            let inner = sink.clone();
+            let model = model.clone();
+
+            EventSink::new(move |event| match event {
+                EngineEvent::Failed(reason) => inner.send(EngineEvent::Failed(explain_error(&reason, &model))),
+                other => inner.send(other),
+            })
+        };
 
         /* The socket read blocks for as long as the model talks, so it runs on the blocking pool -
         and the answer travels out through the sink while this future is still pending. */
