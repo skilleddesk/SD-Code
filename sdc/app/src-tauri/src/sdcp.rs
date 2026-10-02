@@ -185,7 +185,14 @@ pub async fn connect(app: AppHandle, bridge: Arc<SdcpBridge>) -> Result<Value, S
 
     /* The notification connection: a *second* socket, because a notification is not a response and
        must not be able to interleave with one. */
-    subscribe(app, bridge.clone()).await?;
+    /* A subscribe that failed leaves the bridge not connected (0.16.1), so the next call tries both
+       sockets again. It used to stay `connected` with no notification reader - every call answered and
+       nothing live ever arrived until the app was restarted. */
+    if let Err(error) = subscribe(app, bridge.clone()).await {
+        bridge.connected.store(false, Ordering::SeqCst);
+
+        return Err(error);
+    }
 
     Ok(status_json(&bridge))
 }
@@ -376,11 +383,11 @@ pub async fn subscribe(app: AppHandle, bridge: Arc<SdcpBridge>) -> Result<(), St
         json!({ "v": "0.1", "id": "app-subscribe", "method": "event.list", "params": { "since": since } })
     };
 
-    reader
-        .get_mut()
-        .write_all(format!("{envelope}\n").as_bytes())
-        .await
-        .map_err(|error| error.to_string())?;
+    if let Err(error) = reader.get_mut().write_all(format!("{envelope}\n").as_bytes()).await {
+        bridge.subscribed.store(false, Ordering::SeqCst);
+
+        return Err(error.to_string());
+    }
 
     tokio::spawn(async move {
         let mut line = String::new();

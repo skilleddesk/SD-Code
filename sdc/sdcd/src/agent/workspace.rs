@@ -186,6 +186,12 @@ impl Workspace {
             return Err(outside(raw, &self.root));
         }
 
+        /* The same question asked of the disk (0.16.1): `..` is not the only way out of a folder - a
+           symlink inside it can point anywhere, and a read or a write follows it. */
+        if !crate::fs::real_path(&resolved).starts_with(crate::fs::real_path(&root)) {
+            return Err(outside(raw, &self.root));
+        }
+
         Ok(resolved.to_string_lossy().to_string())
     }
 

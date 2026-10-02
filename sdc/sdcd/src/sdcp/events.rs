@@ -41,6 +41,13 @@ pub struct EventLog {
     entries: Mutex<Vec<StoredEvent>>,
     /// Where every event is persisted as it is appended. `None` only for a throwaway log.
     store: Option<Arc<Store>>,
+    /// Events the database refused, oldest first, written before the next one (0.16.1).
+    ///
+    /// A failed write used to be dropped (`let _ = store.store_event(..)`): the subscribers had the
+    /// event, the disk did not, and after a restart the log handed the same seq to a different event -
+    /// history rewritten under the window. Now a refused event waits here and is written, in order,
+    /// as soon as the database takes writes again.
+    unsaved: Mutex<Vec<StoredEvent>>,
 }
 
 impl EventLog {
@@ -49,12 +56,12 @@ impl EventLog {
         let entries = store.recent_events(0)?;
         let next = entries.last().map(|entry| entry.seq + 1).unwrap_or(1);
 
-        Ok(Self { next: AtomicI64::new(next), entries: Mutex::new(entries), store: Some(store) })
+        Ok(Self { next: AtomicI64::new(next), entries: Mutex::new(entries), store: Some(store), unsaved: Mutex::new(Vec::new()) })
     }
 
     /// An empty log, for a test that does not want a database.
     pub fn empty() -> Self {
-        Self { next: AtomicI64::new(1), entries: Mutex::new(Vec::new()), store: None }
+        Self { next: AtomicI64::new(1), entries: Mutex::new(Vec::new()), store: None, unsaved: Mutex::new(Vec::new()) }
     }
 
     /// The highest sequence number in the log; `0` before the first event.
@@ -81,7 +88,7 @@ impl EventLog {
         };
 
         if let Some(store) = &self.store {
-            let _ = store.store_event(&entry);
+            self.persist(store, &entry);
 
             /* The Trust Kernel's ledger is fed here, the one path every event takes, so no feature can
                act without leaving its hash-chained row (trust::ledger). */
@@ -93,6 +100,38 @@ impl EventLog {
         }
 
         entry
+    }
+
+    /// Writes this event - after any the database refused before it, so the disk keeps the log's order.
+    fn persist(&self, store: &Store, entry: &StoredEvent) {
+        let Ok(mut unsaved) = self.unsaved.lock() else {
+            return;
+        };
+
+        unsaved.push(entry.clone());
+
+        let mut written = 0;
+
+        for waiting in unsaved.iter() {
+            match store.store_event(waiting) {
+                Ok(()) => written += 1,
+                Err(error) => {
+                    /* Said once per refused event, not once per retry. */
+                    if waiting.seq == entry.seq {
+                        eprintln!("sdcd: event {} is not on disk yet ({error}); it is kept and written with the next one", entry.seq);
+                    }
+
+                    break;
+                }
+            }
+        }
+
+        unsaved.drain(..written);
+    }
+
+    /// How many events are waiting to be written - `0` on a healthy disk.
+    pub fn unsaved(&self) -> usize {
+        self.unsaved.lock().map(|unsaved| unsaved.len()).unwrap_or(0)
     }
 
     /// Everything after `since`, oldest first - what `event.list` answers with.

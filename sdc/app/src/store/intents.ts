@@ -2358,10 +2358,14 @@ export async function sendPrompt(prompt: string, target?: string, extras: SendEx
         toast(strings.folder.routed(project.name));
       }
     } else if (mentioned !== null) {
+      /* Whether the chat this prompt runs in is on the machine it names. */
+      let onMentioned = mentioned.id === currentHost?.id;
+
       if (mentioned.id !== currentHost?.id) {
         const routed = await sessionOnHost(mentioned);
 
         if (routed !== null) {
+          onMentioned = true;
           sessionId = routed;
           landIn(routed);
           toast(strings.folder.routed(mentioned.name));
@@ -2373,7 +2377,11 @@ export async function sendPrompt(prompt: string, target?: string, extras: SendEx
          with no folder, which is why `landed === null` locates rather than skips. */
       const landed = sessionId === null ? null : findSession(useAppStore.getState().hosts, sessionId);
 
-      if (sessionId !== null && (landed === null || (landed.session.projectRoot ?? null) === null)) {
+      /* Only a chat on the mentioned machine gets that machine's folder (0.16.1): when the move above
+         failed, the chat is still on the old host, and binding the other host's folder to it mixed them. */
+      const here = landed === null ? onMentioned : landed.host.id === mentioned.id;
+
+      if (sessionId !== null && here && (landed === null || (landed.session.projectRoot ?? null) === null)) {
         const domain = hostDomain(mentioned) || mentioned.name;
         const candidates = await locateProject(mentioned.id, domain);
 
@@ -3002,6 +3010,14 @@ export async function runInBackground(line: string): Promise<void> {
   }
 }
 
+/**
+ * Polls in a row that failed for the process being watched. The poll runs every second, and a failure
+ * other than `not_found` used to raise a toast every second for as long as it lasted (0.16.1): now the
+ * first one is said, and after `MAX_POLL_FAILURES` the watch stops instead of looping.
+ */
+let pollFailures = { ptyId: '', count: 0 };
+const MAX_POLL_FAILURES = 5;
+
 /** One poll of the background process's output tail - `watchBackground` drives it. */
 export async function pollBackground(): Promise<void> {
   const background = useTerminalStore.getState().background;
@@ -3012,6 +3028,8 @@ export async function pollBackground(): Promise<void> {
 
   try {
     const answer = await sdcpCall('pty.output', { ptyId: background.ptyId });
+
+    pollFailures = { ptyId: background.ptyId, count: 0 };
     const terminal = useTerminalStore.getState();
 
     terminal.update(background.id, {
@@ -3038,7 +3056,21 @@ export async function pollBackground(): Promise<void> {
       return;
     }
 
-    reportFailure(error, 'Could not read the output');
+    const count = pollFailures.ptyId === background.ptyId ? pollFailures.count + 1 : 1;
+
+    pollFailures = { ptyId: background.ptyId, count };
+
+    if (count === 1) {
+      reportFailure(error, 'Could not read the output');
+    }
+
+    if (count >= MAX_POLL_FAILURES) {
+      const terminal = useTerminalStore.getState();
+      const reason = isSdcpError(error) ? error.message : 'Could not read the output';
+
+      terminal.finish(background.id, { state: 'failed', stderr: reason, code: null });
+      terminal.setBackground(null);
+    }
   }
 }
 

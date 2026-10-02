@@ -121,8 +121,13 @@ export abstract class BaseTransport implements SdcpTransport {
   }
 
   close(): void {
+    this.failPending('transport closed');
+  }
+
+  /** Every call still waiting is answered with this failure - the connection that would answer is gone. */
+  protected failPending(message: string): void {
     for (const waiter of this.pending.values()) {
-      waiter.reject(new SdcpCallError({ code: 'internal', message: 'transport closed' }));
+      waiter.reject(new SdcpCallError({ code: 'internal', message, retryable: true }));
     }
 
     this.pending.clear();
@@ -229,16 +234,55 @@ export class WebSocketTransport extends BaseTransport {
 
   private socket: WebSocket | null = null;
 
+  /** Requests made before the socket opened, sent once it does. */
+  private readonly queued: Envelope[] = [];
+
   constructor(url: string) {
     super();
     this.socket = new WebSocket(url);
+    this.socket.addEventListener('open', () => {
+      for (const envelope of this.queued.splice(0)) {
+        this.socket?.send(JSON.stringify(envelope));
+      }
+    });
     this.socket.addEventListener('message', (message) => {
-      this.accept(JSON.parse(String(message.data)) as Response | Notification);
+      /* A frame that is not JSON is skipped (0.16.1): it used to throw out of the listener. */
+      let parsed: Response | Notification;
+
+      try {
+        parsed = JSON.parse(String(message.data)) as Response | Notification;
+      } catch {
+        return;
+      }
+
+      this.accept(parsed);
+    });
+    /* A dropped socket answers every waiting call (0.16.1) instead of leaving its promise pending for ever. */
+    this.socket.addEventListener('close', () => {
+      this.socket = null;
+      this.failPending('the daemon connection was closed');
+    });
+    this.socket.addEventListener('error', () => {
+      this.failPending('the daemon connection failed');
     });
   }
 
   send(envelope: Envelope): void {
-    this.socket?.send(JSON.stringify(envelope));
+    const socket = this.socket;
+
+    if (socket === null || socket.readyState === WebSocket.CLOSING || socket.readyState === WebSocket.CLOSED) {
+      this.accept({ v: '0.1', id: envelope.id, error: { code: 'internal', message: 'the daemon connection is closed', retryable: true } } as Response);
+
+      return;
+    }
+
+    if (socket.readyState === WebSocket.CONNECTING) {
+      this.queued.push(envelope);
+
+      return;
+    }
+
+    socket.send(JSON.stringify(envelope));
   }
 
   override close(): void {

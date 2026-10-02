@@ -399,10 +399,7 @@ function reduce(state: AppState, entry: AppEvent): AppState {
       return {
         ...state,
         permission: state.permission?.id === event.permissionId ? null : state.permission,
-        resolvedPermissions: {
-          ...state.resolvedPermissions,
-          [event.permissionId]: event.decision,
-        },
+        resolvedPermissions: rememberDecision(state.resolvedPermissions, event.permissionId, event.decision),
       };
 
     case 'CheckpointSaved': {
@@ -442,12 +439,16 @@ function reduce(state: AppState, entry: AppEvent): AppState {
 
     case 'RewindApplied': {
       if (event.direction === 'forward') {
-        const restored = state.rewindStack.slice(0, event.turns);
+        /* This chat's own rewound checkpoints only (0.16.1): the stack holds every chat's, and taking the
+           first `turns` of it brought another chat's checkpoints back into this one. */
+        const restored = state.rewindStack
+          .filter((checkpoint) => checkpoint.sessionId === event.sessionId)
+          .slice(0, event.turns);
 
         return {
           ...state,
           checkpoints: [...restored, ...state.checkpoints].sort((a, b) => b.turn - a.turn),
-          rewindStack: state.rewindStack.slice(event.turns),
+          rewindStack: state.rewindStack.filter((checkpoint) => !restored.includes(checkpoint)),
         };
       }
 
@@ -671,8 +672,22 @@ function reduce(state: AppState, entry: AppEvent): AppState {
         stuckForMs: event.sinceMs,
       }));
 
-    case 'ErrorRaised':
-      return patchTurn(state, event.turnId ?? state.activeTurnId ?? '', (turn) => ({
+    case 'ErrorRaised': {
+      const target = event.turnId ?? state.activeTurnId ?? '';
+
+      /* An error with no turn on screen to land on is still said (0.16.1) - it used to vanish. */
+      if (!state.turns.some((turn) => turn.id === target)) {
+        const record: ToastRecord = {
+          id: state.toastsIssued + 1,
+          message: event.explanation === '' ? event.title : `${event.title} - ${event.explanation}`,
+          action: null,
+          holdMs: 8000,
+        };
+
+        return { ...state, toasts: [...state.toasts, record], toastsIssued: record.id };
+      }
+
+      return patchTurn(state, target, (turn) => ({
         ...withoutDraft(endThinking(turn, entry.ts)),
         status: 'failed',
         endedAt: turn.endedAt ?? entry.ts,
@@ -683,6 +698,7 @@ function reduce(state: AppState, entry: AppEvent): AppState {
           fixable: event.fixable ?? true,
         },
       }));
+    }
 
     case 'ConsoleError': {
       const existing = state.console.find(
@@ -764,6 +780,21 @@ function reduce(state: AppState, entry: AppEvent): AppState {
 }
 
 /** Applies a change to one turn, leaving every other turn's object identity alone. */
+/** How many answered permission questions are remembered - enough for any session, never unbounded. */
+const MAX_RESOLVED_PERMISSIONS = 500;
+
+/** Records a decision, letting the oldest go once the map is full (0.16.1: it only ever grew). */
+function rememberDecision(
+  resolved: AppState['resolvedPermissions'],
+  permissionId: string,
+  decision: AppState['resolvedPermissions'][string],
+): AppState['resolvedPermissions'] {
+  const entries = Object.entries(resolved).filter(([id]) => id !== permissionId);
+  const kept = entries.length >= MAX_RESOLVED_PERMISSIONS ? entries.slice(entries.length - MAX_RESOLVED_PERMISSIONS + 1) : entries;
+
+  return Object.fromEntries([...kept, [permissionId, decision]]);
+}
+
 function patchTurn(
   state: AppState,
   turnId: string,

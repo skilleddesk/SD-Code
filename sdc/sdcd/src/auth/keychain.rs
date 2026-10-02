@@ -381,13 +381,18 @@ mod test_store {
 
 /// The masked label a card shows: `sk-…4f8a`. Never the secret, and short enough to read.
 pub fn mask(secret: &str) -> String {
-    let trimmed = secret.trim();
+    let chars: Vec<char> = secret.trim().chars().collect();
 
-    if trimmed.len() <= 8 {
+    if chars.len() <= 8 {
         return "••••".to_string();
     }
 
-    format!("{}…{}", &trimmed[..4], &trimmed[trimmed.len() - 4..])
+    /* By character, not by byte (0.16.1): a key pasted with a `…` or a non-Latin letter in it panicked
+       here with "byte index 4 is not a char boundary", and the panic took the connection down. */
+    let head: String = chars[..4].iter().collect();
+    let tail: String = chars[chars.len() - 4..].iter().collect();
+
+    format!("{head}…{tail}")
 }
 
 #[cfg(test)]
@@ -473,6 +478,9 @@ mod tests {
     fn masks_a_key_without_revealing_it() {
         assert_eq!(mask("sk-ant-api03-4f8a"), "sk-a…4f8a");
         assert_eq!(mask("short"), "••••");
+        /* 0.16.1: multi-byte characters used to panic here. */
+        assert_eq!(mask("কীকীকীকীকীকী"), "কীকী…কীকী");
+        assert_eq!(mask("sk-…abcdefgh…"), "sk-……fgh…");
     }
 
     #[test]

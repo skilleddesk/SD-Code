@@ -63,6 +63,59 @@ pub fn remote_expr(path: &str) -> Result<String, ErrorObject> {
     )))
 }
 
+/// The exit code `link_guard` ends a command with when the file the path really is was refused.
+pub const LINK_REFUSED: i32 = 97;
+
+/// A shell prefix that resolves the path on the host and stops the command when the file it really is -
+/// symlinks followed - is one the guard refuses (0.16.1). `guard` only sees the name that was asked for,
+/// so `notes -> ~/.ssh/id_ed25519` in a repository used to be read as `notes`. It is the same list as
+/// `fs::blocked_reason` and `fs::BLOCKED_DIRS`, spelled as `case` patterns, and costs no extra round trip.
+pub fn link_guard(expr: &str) -> String {
+    let names = crate::fs::BLOCKED_EXACT
+        .iter()
+        .map(|name| name.to_string())
+        .chain(std::iter::once(".env*".to_string()))
+        .chain(crate::fs::BLOCKED_SUFFIXES.iter().map(|suffix| format!("*{suffix}")))
+        .collect::<Vec<_>>()
+        .join("|");
+    let folders = crate::fs::BLOCKED_DIRS.iter().map(|dir| format!("*/{dir}/*")).collect::<Vec<_>>().join("|");
+
+    format!(
+        "sdc_t=$(readlink -f -- {expr} 2>/dev/null || printf %s {expr}); \
+         sdc_n=$(basename -- \"$sdc_t\" | tr '[:upper:]' '[:lower:]'); \
+         case \"$sdc_n\" in {names}) echo \"$sdc_t\" >&2; exit {LINK_REFUSED};; esac; \
+         case \"$sdc_t\" in {folders}) echo \"$sdc_t\" >&2; exit {LINK_REFUSED};; esac; "
+    )
+}
+
+#[cfg(test)]
+mod link_guard_tests {
+    use super::*;
+
+    /// The shell spelling of the guard names every rule the Rust guard has.
+    #[test]
+    fn the_shell_guard_covers_the_same_names() {
+        let line = link_guard("'/srv/app/notes'");
+
+        for name in crate::fs::BLOCKED_EXACT {
+            assert!(line.contains(name), "{name} is missing from {line}");
+        }
+
+        assert!(line.contains(".env*") && line.contains("*.pem") && line.contains("*/.ssh/*"));
+        assert!(line.contains(&format!("exit {LINK_REFUSED}")));
+        assert!(line.starts_with("sdc_t=$(readlink -f -- '/srv/app/notes'"));
+    }
+}
+
+/// The refusal for a command `link_guard` stopped.
+fn link_refused(path: &str, output: &SshOutput) -> ErrorObject {
+    let real = output.stderr.trim();
+
+    ErrorObject::blocked(&format!(
+        "{path} was refused because it leads to {real}, a file that holds secrets or keys"
+    ))
+}
+
 /// A failure sentence that names the host as well as the reason.
 pub fn failed(ssh: &Ssh, what: &str, output: &SshOutput) -> ErrorObject {
     ErrorObject::internal(format!("{}: {what} failed - {}", ssh.label(), output.reason()))
@@ -215,7 +268,11 @@ pub fn read(ssh: &Ssh, path: &str, cap: usize) -> Result<Value, ErrorObject> {
     guard(path)?;
 
     let expr = remote_expr(path)?;
-    let sized = ssh.run(&format!("wc -c < {expr} 2>/dev/null || echo 0"), QUICK)?;
+    let sized = ssh.run(&format!("{}wc -c < {expr} 2>/dev/null || echo 0", link_guard(&expr)), QUICK)?;
+
+    if sized.code == Some(LINK_REFUSED) {
+        return Err(link_refused(path, &sized));
+    }
 
     if !sized.ok() {
         return Err(failed(ssh, "reading the file size", &sized));
@@ -295,10 +352,14 @@ pub fn write(ssh: &Ssh, path: &str, text: &str) -> Result<String, ErrorObject> {
 
     let expr = remote_expr(path)?;
     let output = ssh.run_with_stdin(
-        &format!("mkdir -p \"$(dirname {expr})\" && cat > {expr}"),
+        &format!("{}mkdir -p \"$(dirname {expr})\" && cat > {expr}", link_guard(&expr)),
         text,
         TRANSFER,
     )?;
+
+    if output.code == Some(LINK_REFUSED) {
+        return Err(link_refused(path, &output));
+    }
 
     if !output.ok() {
         return Err(failed(ssh, "saving the file", &output));

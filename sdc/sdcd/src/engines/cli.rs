@@ -647,10 +647,22 @@ impl CliAdapter {
             .and_then(|mut remotes| remotes.remove(turn_id));
 
         if let Some((ssh, pid_file)) = remote {
+            let turn = turn_id.to_string();
+
             std::thread::spawn(move || {
                 let line = crate::ssh::ops::kill_line(&pid_file);
 
-                let _ = ssh.run(&line, std::time::Duration::from_secs(15));
+                /* Tried twice: a dropped link is often back a moment later. A stop that still did not
+                   arrive is reported (0.16.1) - it used to be dropped, and the CLI went on running, and
+                   billing, on the host under a turn the window called stopped. */
+                for attempt in 0..2 {
+                    match ssh.run(&line, std::time::Duration::from_secs(15)) {
+                        Ok(output) if output.ok() => return,
+                        Ok(output) if attempt == 1 => crate::engines::cancel::remote_failed(&turn, &output.reason()),
+                        Err(error) if attempt == 1 => crate::engines::cancel::remote_failed(&turn, &error.message),
+                        _ => std::thread::sleep(std::time::Duration::from_secs(2)),
+                    }
+                }
             });
         }
 

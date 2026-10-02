@@ -42,9 +42,61 @@ pub fn blocked_reason(path: &Path) -> Option<String> {
     None
 }
 
-/// Refuses a blocked path. Every fs method calls this first.
+/// Folders that hold nothing but keys and credentials: a file anywhere under one is refused, whatever
+/// its name (`~/.ssh/id_ecdsa` has a name the list above does not know).
+pub const BLOCKED_DIRS: &[&str] = &[".ssh", ".gnupg", ".aws"];
+
+/// The path as the disk resolves it - every symlink followed. A path that does not exist yet (a file
+/// about to be written) is its nearest existing folder resolved, with the rest appended.
+pub fn real_path(path: &Path) -> PathBuf {
+    if let Ok(real) = std::fs::canonicalize(path) {
+        return real;
+    }
+
+    let mut rest = Vec::new();
+    let mut cursor = path;
+
+    while let Some(parent) = cursor.parent() {
+        if let Some(name) = cursor.file_name() {
+            rest.push(name.to_os_string());
+        }
+
+        if let Ok(real) = std::fs::canonicalize(parent) {
+            return rest.iter().rev().fold(real, |acc, name| acc.join(name));
+        }
+
+        cursor = parent;
+    }
+
+    path.to_path_buf()
+}
+
+/// Why the file a path **really** is would be refused (0.16.1).
+///
+/// The name rule alone looked at the name that was asked for: a repository holding
+/// `notes -> ~/.ssh/id_ed25519` passed as `notes`, and the read followed the link to the private key.
+/// The resolved path is checked too, and a key folder is refused by where it is.
+fn real_reason(path: &Path) -> Option<String> {
+    let real = real_path(path);
+
+    if real.as_path() != path {
+        if let Some(reason) = blocked_reason(&real) {
+            return Some(format!("it leads to {} - {reason}", real.display()));
+        }
+    }
+
+    let in_key_folder = real.components().any(|part| {
+        part.as_os_str()
+            .to_str()
+            .is_some_and(|name| BLOCKED_DIRS.contains(&name.to_lowercase().as_str()))
+    });
+
+    in_key_folder.then(|| format!("{} is inside a folder that holds keys", real.display()))
+}
+
+/// Refuses a blocked path - by its name, and by the file it really is. Every fs method calls this first.
 pub fn guard(path: &Path) -> Result<(), ErrorObject> {
-    match blocked_reason(path) {
+    match blocked_reason(path).or_else(|| real_reason(path)) {
         Some(reason) => Err(ErrorObject::blocked(&format!(
             "{} was refused because {reason}",
             path.display()
@@ -393,6 +445,46 @@ fn walk(root: &Path, query: &str, glob: Option<&str>, depth: usize, limit: usize
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 0.16.1: a link with an innocent name that leads to a key is refused, and so is a key folder.
+    #[test]
+    fn a_link_to_a_secret_is_refused_by_where_it_leads() {
+        let root = std::env::temp_dir().join(format!("sdc-link-guard-{}", std::process::id()));
+        let keys = root.join(".ssh");
+
+        std::fs::create_dir_all(&keys).unwrap();
+        std::fs::write(keys.join("id_ecdsa"), "PRIVATE").unwrap();
+        std::fs::write(root.join("secret.pem"), "PRIVATE").unwrap();
+        std::fs::write(root.join("readme.md"), "hello").unwrap();
+
+        /* A key folder is refused whatever the file in it is called. */
+        assert!(read(&keys.join("id_ecdsa")).is_err());
+        assert!(read(&root.join("readme.md")).is_ok());
+
+        #[cfg(unix)]
+        let linked = std::os::unix::fs::symlink(root.join("secret.pem"), root.join("notes")).is_ok();
+        #[cfg(windows)]
+        let linked = std::os::windows::fs::symlink_file(root.join("secret.pem"), root.join("notes")).is_ok();
+
+        /* Windows makes links only with Developer Mode or as an administrator; without it there is no
+           link to test, and the name and folder rules above still ran. */
+        if linked {
+            let refused = read(&root.join("notes")).unwrap_err();
+
+            assert!(refused.message.contains("leads to"), "{}", refused.message);
+            assert!(write(&root.join("notes"), "overwritten").is_err());
+        }
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn real_path_resolves_a_file_that_does_not_exist_yet() {
+        let root = std::env::temp_dir();
+        let fresh = root.join("sdc-not-there-yet").join("file.txt");
+
+        assert!(real_path(&fresh).ends_with(Path::new("sdc-not-there-yet").join("file.txt")));
+    }
 
     #[test]
     fn refuses_secrets_and_the_daemons_own_directory() {

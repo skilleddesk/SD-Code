@@ -257,6 +257,36 @@ describe('reducer', () => {
     expect(state.rewindStack).toHaveLength(0);
   });
 
+  it('a forward rewind restores only its own chat checkpoints (0.16.1)', () => {
+    const saved = (sessionId: string, id: string, turn: number) => ({
+      type: 'CheckpointSaved' as const,
+      sessionId,
+      checkpoint: { id, turn, ts: 'now', title: id, thumbnail: null, filesHash: id, rewindRef: null },
+    });
+    let state = fold(EMPTY_STATE, saved('a', 'cp-a', 5));
+
+    state = fold(state, saved('b', 'cp-b', 6));
+    state = fold(state, { type: 'RewindApplied', sessionId: 'a', direction: 'back', turn: 5, turns: 1, files: 1 });
+    state = fold(state, { type: 'RewindApplied', sessionId: 'b', direction: 'back', turn: 6, turns: 1, files: 1 });
+    expect(state.rewindStack.map((checkpoint) => checkpoint.id)).toEqual(['cp-b', 'cp-a']);
+
+    state = fold(state, { type: 'RewindApplied', sessionId: 'a', direction: 'forward', turn: 5, turns: 1, files: 1 });
+
+    expect(state.checkpoints.map((checkpoint) => checkpoint.id)).toEqual(['cp-a']);
+    expect(state.rewindStack.map((checkpoint) => checkpoint.id)).toEqual(['cp-b']);
+  });
+
+  it('an error with no turn to land on becomes a toast (0.16.1)', () => {
+    const state = fold(EMPTY_STATE, {
+      type: 'ErrorRaised',
+      title: 'Host unreachable',
+      explanation: 'The VPS did not answer',
+      source: 'ssh',
+    } as never);
+
+    expect(state.toasts.at(-1)?.message).toBe('Host unreachable - The VPS did not answer');
+  });
+
   it('records an approval by risk and remembers an `always allow`', () => {
     const requested = fold(EMPTY_STATE, {
       type: 'PermissionRequested',

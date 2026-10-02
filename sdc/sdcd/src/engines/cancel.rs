@@ -9,7 +9,7 @@
 //! between reads so the connection is dropped rather than drained. A CLI engine is also killed through
 //! its own `Engine::cancel`, which is what stops a process.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Mutex, OnceLock};
 
 fn set() -> &'static Mutex<HashSet<String>> {
@@ -28,6 +28,25 @@ pub fn request(turn_id: &str) {
 /// Whether a turn has been stopped.
 pub fn requested(turn_id: &str) -> bool {
     set().lock().map(|turns| turns.contains(turn_id)).unwrap_or(false)
+}
+
+fn failures() -> &'static Mutex<HashMap<String, String>> {
+    static FAILURES: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+
+    FAILURES.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// A stop that could not reach the host the turn runs on (0.16.1). The window already says the turn
+/// stopped; this is what lets the daemon add that the process may still be running there.
+pub fn remote_failed(turn_id: &str, reason: &str) {
+    if let Ok(mut failed) = failures().lock() {
+        failed.insert(turn_id.to_string(), reason.to_string());
+    }
+}
+
+/// The reason a remote stop failed, once - or `None`.
+pub fn take_remote_failure(turn_id: &str) -> Option<String> {
+    failures().lock().ok().and_then(|mut failed| failed.remove(turn_id))
 }
 
 /// Forgets a turn once it has ended, so the set does not grow for the daemon's whole life.

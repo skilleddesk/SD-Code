@@ -140,7 +140,7 @@ impl Daemon {
         let site = self.site(envelope)?;
         let kind = envelope.opt_str("kind").unwrap_or_else(|| "production".into());
 
-        if crate::trust::kill::active().iter().any(|work| work.kind == "deploy" && work.label.ends_with(&site.name)) {
+        if crate::trust::kill::active().iter().any(|work| work.kind == "deploy" && work.label == format!("Deploy {}", site.name)) {
             return Err(ErrorObject::bad_request(format!("A deploy of {} is already running.", site.name)));
         }
 
@@ -546,7 +546,19 @@ impl Daemon {
         }
 
         if let Some(current) = envelope.opt_str("current") {
-            self.store().set_setting("team.current", current.trim()).map_err(ErrorObject::internal)?;
+            let current = current.trim();
+            let members = ops::team::members(self.store());
+
+            /* A name the team does not have was a role of "client" - and a client cannot call
+               `team.set`, so one typo locked the owner out of their own Settings for good (0.16.1). */
+            if !members.is_empty() && !current.is_empty() && !members.iter().any(|member| member["name"].as_str() == Some(current)) {
+                return Err(ErrorObject::bad_request(format!(
+                    "{current} is not on this team. Pick one of: {}.",
+                    members.iter().filter_map(|member| member["name"].as_str()).collect::<Vec<_>>().join(", ")
+                )));
+            }
+
+            self.store().set_setting("team.current", current).map_err(ErrorObject::internal)?;
         }
 
         Ok(ops::team::to_json(self.store()))

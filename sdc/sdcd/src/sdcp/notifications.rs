@@ -24,7 +24,7 @@
 //!   sequence of a turn.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
@@ -52,11 +52,22 @@ pub trait Notifier: Send + Sync {
     }
 }
 
+/// How many lines a connection may have waiting before it is let go (0.16.1). The queue used to grow
+/// without a bound behind a reader that stopped reading, and the daemon's memory with it. A dropped
+/// connection is not a lost event: the client reconnects and replays what it missed (`event.list`).
+pub const MAX_BACKLOG: usize = 50_000;
+
+struct Subscriber {
+    sender: UnboundedSender<String>,
+    /// Lines sent and not yet written to the socket. The connection's writer counts them down.
+    backlog: Arc<AtomicUsize>,
+}
+
 /// The subscriber registry: every connection that wants notifications, by id.
 #[derive(Default)]
 pub struct Fanout {
     next: AtomicU64,
-    subscribers: Mutex<HashMap<u64, UnboundedSender<String>>>,
+    subscribers: Mutex<HashMap<u64, Subscriber>>,
 }
 
 impl Fanout {
@@ -66,13 +77,20 @@ impl Fanout {
 
     /// Registers a connection's queue and returns its id, which `unsubscribe` needs.
     pub fn subscribe(&self, sender: UnboundedSender<String>) -> u64 {
+        self.subscribe_counted(sender).0
+    }
+
+    /// `subscribe`, and the counter of lines waiting for this connection - the writer decrements it as
+    /// it writes each one, so the registry can tell a reader that has stopped.
+    pub fn subscribe_counted(&self, sender: UnboundedSender<String>) -> (u64, Arc<AtomicUsize>) {
         let id = self.next.fetch_add(1, Ordering::SeqCst);
+        let backlog = Arc::new(AtomicUsize::new(0));
 
         if let Ok(mut subscribers) = self.subscribers.lock() {
-            subscribers.insert(id, sender);
+            subscribers.insert(id, Subscriber { sender, backlog: backlog.clone() });
         }
 
-        id
+        (id, backlog)
     }
 
     /// Forgets a connection. Called when its loop ends, so a closed socket does not accumulate.
@@ -90,7 +108,21 @@ impl Fanout {
             return;
         };
 
-        subscribers.retain(|_, sender| sender.send(line.to_string()).is_ok());
+        subscribers.retain(|id, subscriber| {
+            if subscriber.backlog.load(Ordering::SeqCst) >= MAX_BACKLOG {
+                eprintln!("sdcd: connection {id} stopped reading ({MAX_BACKLOG} lines waiting); it is let go and will catch up when it reconnects");
+
+                return false;
+            }
+
+            let sent = subscriber.sender.send(line.to_string()).is_ok();
+
+            if sent {
+                subscriber.backlog.fetch_add(1, Ordering::SeqCst);
+            }
+
+            sent
+        });
     }
 
     /// How many connections are listening; `host.status` reports it.

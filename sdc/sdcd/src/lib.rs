@@ -91,6 +91,15 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const SDCP_VERSION: &str = "0.1";
 
 /// Everything a request handler needs. Built once at startup and shared by every connection.
+/// Holds one connection in the client count; dropping it (on any exit, a panic included) lets it go.
+pub struct ClientGuard(Arc<DaemonState>);
+
+impl Drop for ClientGuard {
+    fn drop(&mut self) {
+        self.0.client_left();
+    }
+}
+
 pub struct DaemonState {
     pub store: Arc<Store>,
     pub events: Arc<EventLog>,
@@ -155,6 +164,30 @@ impl DaemonState {
     /// One connection closed.
     pub fn client_left(&self) {
         self.clients.fetch_sub(1, Ordering::SeqCst);
+    }
+
+    /// One connection, counted for as long as the guard lives (0.16.1).
+    ///
+    /// `client_left` used to be the last line of the connection's task, so a handler that panicked
+    /// skipped it: the count never came back down and a daemon started with `--idle-exit` never left,
+    /// holding the port. A guard's `Drop` runs while a panic unwinds, so the count is right either way.
+    pub fn client_guard(self: &Arc<Self>) -> ClientGuard {
+        self.client_joined();
+
+        ClientGuard(self.clone())
+    }
+
+    /// A new id with this prefix, never handed out before (`h12`, `n13`, `turn-14`, …). See
+    /// `Store::next_id` for why the event log's next seq is not enough.
+    pub fn fresh_id(&self, prefix: &str) -> String {
+        static SPARE: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+        let floor = self.events.seq() + 2;
+
+        match self.store.next_id(floor) {
+            Ok(number) => format!("{prefix}{number}"),
+            /* A database that cannot be written to still must not hand out the same id twice. */
+            Err(_) => format!("{prefix}{floor}x{}", SPARE.fetch_add(1, Ordering::SeqCst)),
+        }
     }
 
     /// The number of connections open right now.
@@ -246,6 +279,53 @@ mod tests {
         assert_eq!(state.clients(), 2);
         state.client_left();
         assert_eq!(state.clients(), 1);
+    }
+
+    /// 0.16.1: a connection whose handler panicked still leaves the count, so `--idle-exit` can fire.
+    #[test]
+    fn a_panicking_connection_still_leaves_the_count() {
+        let state = state();
+        let guard = state.client_guard();
+
+        assert_eq!(state.clients(), 1);
+
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+            let _guard = guard;
+
+            panic!("a handler panicked");
+        }));
+
+        assert!(outcome.is_err());
+        assert_eq!(state.clients(), 0);
+    }
+
+    /// 0.16.1: ids never repeat - not between two callers, not across a restart's counter, and never
+    /// below what the event log's old `seq + 1` scheme could already have handed out.
+    #[test]
+    fn fresh_ids_never_repeat() {
+        let state = state();
+        let ids: Vec<String> = (0..50).map(|_| state.fresh_id("turn-")).collect();
+        let unique: std::collections::HashSet<&String> = ids.iter().collect();
+
+        assert_eq!(unique.len(), ids.len());
+
+        let shared = state.clone();
+        let threads: Vec<_> = (0..8)
+            .map(|_| {
+                let state = shared.clone();
+
+                std::thread::spawn(move || (0..25).map(|_| state.fresh_id("n")).collect::<Vec<_>>())
+            })
+            .collect();
+        let all: Vec<String> = threads.into_iter().flat_map(|thread| thread.join().unwrap()).collect();
+        let unique: std::collections::HashSet<&String> = all.iter().collect();
+
+        assert_eq!(unique.len(), all.len(), "two callers at once got the same id");
+
+        let floor = state.events.seq() + 1;
+        let next: i64 = state.fresh_id("").parse().unwrap();
+
+        assert!(next > floor, "an id must stay above the old scheme's seq + 1");
     }
 
     #[test]

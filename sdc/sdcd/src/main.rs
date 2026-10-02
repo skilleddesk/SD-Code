@@ -23,7 +23,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
 
 use sdcd::paths;
-use sdcd::sdcp::envelope::{Envelope, Response};
+use sdcd::sdcp::envelope::{Envelope, ErrorObject, Response};
 use sdcd::sdcp::notifications::{ChannelNotifier, Notifier};
 use sdcd::{DaemonState, SDCP_VERSION, VERSION};
 
@@ -217,12 +217,11 @@ async fn run() -> Result<()> {
                             Ok((stream, _)) => {
                                 let daemon_state = unix_state.clone();
 
-                                daemon_state.client_joined();
+                                let guard = daemon_state.client_guard();
 
                                 tokio::spawn(async move {
+                                    let _guard = guard;
                                     let _ = serve_unix(stream, daemon_state.clone()).await;
-
-                                    daemon_state.client_left();
                                 });
                             }
                             Err(error) => eprintln!("sdcd: socket accept failed: {error}"),
@@ -251,16 +250,17 @@ async fn run() -> Result<()> {
 
             let daemon_state = tcp_state.clone();
 
-            daemon_state.client_joined();
+            /* Counted by a guard, so a handler that panics still lets the count down (0.16.1). */
+            let guard = daemon_state.client_guard();
 
             tokio::spawn(async move {
+                let _guard = guard;
+
                 println!("sdcd: client {peer} connected");
 
                 if let Err(error) = serve(stream, daemon_state.clone()).await {
                     eprintln!("sdcd: client {peer} ended: {error}");
                 }
-
-                daemon_state.client_left();
             });
         }
     });
@@ -315,10 +315,12 @@ where
 
     /* This connection listens to everything: the events other clients cause reach it too, which is
        what lets the app keep a socket that only subscribes (`sdcp_subscribe`). */
-    let subscriber = state.fanout.subscribe(sender);
+    let (subscriber, backlog) = state.fanout.subscribe_counted(sender);
 
     tokio::spawn(async move {
         while let Some(line) = receiver.recv().await {
+            backlog.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+
             let mut sink = notifier_writer.lock().await;
 
             if sink.write_all(line.as_bytes()).await.is_err() || sink.write_all(b"\n").await.is_err() {
@@ -329,10 +331,14 @@ where
                 break;
             }
         }
+
+        /* The registry let this connection go (it stopped reading, 0.16.1), or the connection is ending.
+           Either way the socket closes, so the client sees it and reconnects - and replays what it
+           missed - rather than waiting for ever on notifications that no longer come. */
+        let _ = notifier_writer.lock().await.shutdown().await;
     });
 
     let notifier: Arc<dyn Notifier> = Arc::new(ChannelNotifier::new(state.events.clone(), state.fanout.clone()));
-    let daemon = state.handler();
     let mut lines = BufReader::new(reader).lines();
 
     while let Some(line) = lines.next_line().await? {
@@ -344,8 +350,21 @@ where
 
         /* The log persists every event as it is appended (`EventLog::append`), so this loop only has
            to answer: a turn's stream keeps landing in the database after the response is written. */
+        /* The handlers are synchronous and some wait on the network (an `ssh` call can take 20 s). On the
+           blocking pool that wait holds a thread meant for waiting, not one of the few that move every
+           other connection's notifications (0.16.1). Requests still answer in the order they came. */
         let response = match Envelope::parse(&line) {
-            Ok(envelope) => daemon.handle(&envelope, notifier.clone()),
+            Ok(envelope) => {
+                let daemon = state.handler();
+                let notifier = notifier.clone();
+                let id = envelope.id.clone();
+
+                tokio::task::spawn_blocking(move || daemon.handle(&envelope, notifier))
+                    .await
+                    .unwrap_or_else(|_| {
+                        Response::fail(id, ErrorObject::internal("the request stopped unexpectedly inside the daemon; the daemon is still running"))
+                    })
+            }
             Err(error) => Response::fail("unknown", error),
         };
 

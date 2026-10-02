@@ -232,6 +232,9 @@ impl Store {
 
         connection.pragma_update(None, "journal_mode", "WAL")?;
         connection.pragma_update(None, "foreign_keys", "ON")?;
+        /* Another process holding the file (a backup, the doctor's own read) is a wait, not a failure:
+           without this a locked database failed an event write at once (0.16.1). */
+        connection.busy_timeout(std::time::Duration::from_secs(5))?;
 
         let store = Self { connection: Mutex::new(connection), path: Some(path.to_path_buf()) };
 
@@ -591,6 +594,44 @@ impl Store {
     }
 
     /// Writes a setting, replacing any previous value.
+    /// A number no id this daemon handed out has used, and none it hands out later will (0.16.1).
+    ///
+    /// Ids used to be `events.seq() + 1`, read before anything was appended: two requests in flight
+    /// (two connections, or a handler whose first event is written later by a task - `verify.run`, a
+    /// pinned `host.add`) both read the same number, and the second `INSERT OR REPLACE` silently replaced
+    /// the first row. This counter is read and moved under the connection's lock, so two callers can
+    /// never get the same number, and it is stored, so a restart continues past it. `floor` is the
+    /// smallest number that is safe given the ids the old scheme made (the event log's next seq and one).
+    pub fn next_id(&self, floor: i64) -> Result<i64> {
+        let now = chrono::Utc::now().to_rfc3339();
+        let connection = self.connection.lock().unwrap();
+        let stored: Option<String> = connection
+            .query_row("SELECT value FROM settings WHERE key = 'ids.next'", [], |row| row.get(0))
+            .optional()?;
+        let logged: i64 = connection.query_row("SELECT COALESCE(MAX(seq), 0) + 2 FROM events", [], |row| row.get(0))?;
+        let next = stored.and_then(|value| value.parse::<i64>().ok()).unwrap_or(0).max(floor).max(logged);
+
+        connection.execute(
+            "INSERT INTO settings (key, value, updated_at) VALUES ('ids.next', ?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = ?1, updated_at = ?2",
+            params![(next + 1).to_string(), now],
+        )?;
+
+        Ok(next)
+    }
+
+    /// The seq a turn's `TurnStarted` was logged at - the point on the log a rewind to that turn means.
+    /// Read rather than parsed from the id, because since 0.16.1 the id's number is not a seq.
+    pub fn turn_started_seq(&self, turn_id: &str) -> Result<Option<i64>> {
+        let connection = self.connection.lock().unwrap();
+
+        Ok(connection.query_row(
+            "SELECT MIN(seq) FROM events WHERE turn_id = ?1 AND type = 'TurnStarted'",
+            params![turn_id],
+            |row| row.get::<_, Option<i64>>(0),
+        )?)
+    }
+
     pub fn set_setting(&self, key: &str, value: &str) -> Result<()> {
         let now = chrono::Utc::now().to_rfc3339();
         let connection = self.connection.lock().unwrap();
@@ -1171,6 +1212,15 @@ impl Store {
             Some(row) => Some(row.get::<_, String>(0)?),
             None => None,
         })
+    }
+
+    /// The chat a turn belongs to, or `None` for a turn this store has never seen.
+    pub fn turn_session(&self, id: &str) -> Result<Option<String>> {
+        let connection = self.connection.lock().unwrap();
+
+        Ok(connection
+            .query_row("SELECT session_id FROM turns WHERE id = ?1", params![id], |row| row.get::<_, String>(0))
+            .optional()?)
     }
 
     pub fn turns(&self, session_id: &str) -> Result<Vec<Value>> {

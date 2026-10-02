@@ -72,7 +72,12 @@ impl Daemon {
            what the role may not do. With no team configured the one person is the owner. */
         let role = crate::ops::team::current_role(self.store());
 
-        if role != "owner" {
+        /* Switching who is at the desk (`team.set` with only `current`) is open to every role - it is what
+           the refusal below tells a person to do, and a role that could not do it was stuck in it for
+           good (0.16.1). The members and their roles stay the owner's to change. */
+        let switching = envelope.method == "team.set" && envelope.params.get("members").is_none();
+
+        if role != "owner" && !switching {
             crate::ops::team::allowed(&role, &envelope.method).map_err(ErrorObject::permission_denied)?;
         }
 
@@ -112,7 +117,7 @@ impl Daemon {
 
             /* Engines ------------------------------------------------------------------------- */
             "engine.start" => self.engine_start(envelope, out),
-            "engine.cancel" | "engine.kill" => self.engine_stop(envelope, &*out),
+            "engine.cancel" | "engine.kill" => self.engine_stop(envelope, out),
             /* 0.12.5: words for a turn that is still running - `accepted: false` when it cannot take them. */
             "engine.steer" => {
                 let turn_id = envelope.require_str("turnId")?;
@@ -311,7 +316,9 @@ impl Daemon {
         let target = ssh.target.user_host.clone();
         /* Used for one install and dropped. It is never stored, never logged, and never part of a
            sentence the UI shows. */
-        let password = envelope.opt_str("password").unwrap_or_default().trim().to_string();
+        /* Exactly as typed (0.16.1): a space at either end is part of a password, and trimming it saved
+           a different password than the host has. Only a pasted line break is dropped. */
+        let password = exact_password(envelope.opt_str("password").unwrap_or_default());
         /* The host's one-time code, for a host that asks for one (0.8.1). Spent with the password, kept
            nowhere. */
         let code = envelope.opt_str("code").unwrap_or_default().trim().to_string();
@@ -368,7 +375,7 @@ impl Daemon {
                 existing
             }
             None => {
-                let host_id = format!("h{}", self.state.events.seq() + 1);
+                let host_id = self.state.fresh_id("h");
 
                 self.store()
                     .upsert_host(&host_id, &label, "ssh", Some(&target), "connecting", None)
@@ -520,7 +527,9 @@ impl Daemon {
     fn host_trust(&self, envelope: &Envelope, out: Arc<dyn Notifier>) -> Result<Value, ErrorObject> {
         let host_id = envelope.require_str("hostId")?;
         let fingerprint = envelope.require_str("fingerprint")?;
-        let password = envelope.opt_str("password").unwrap_or_default().trim().to_string();
+        /* Exactly as typed (0.16.1): a space at either end is part of a password, and trimming it saved
+           a different password than the host has. Only a pasted line break is dropped. */
+        let password = exact_password(envelope.opt_str("password").unwrap_or_default());
         let code = envelope.opt_str("code").unwrap_or_default().trim().to_string();
 
         let Some(ssh) = self.ssh_for(&host_id)? else {
@@ -1024,7 +1033,7 @@ impl Daemon {
         let title = envelope.opt_str("title").unwrap_or_else(|| "New chat".into());
         let prompt = envelope.opt_str("prompt").unwrap_or_default();
         let project_id = envelope.opt_str("projectId").filter(|id| !id.trim().is_empty());
-        let session_id = format!("n{}", self.state.events.seq() + 1);
+        let session_id = self.state.fresh_id("n");
 
         let host_name = if host_id == "local" { "Local" } else { host_id.as_str() };
 
@@ -1155,8 +1164,24 @@ impl Daemon {
         /* A chat that was closed (or never existed) is refused (0.12.8): an update to it used to be
            accepted and announced, and a folder bound to a deleted chat looked like a fix that never
            reached the chat on screen. */
-        if self.store().session(&session_id).map_err(ErrorObject::internal)?.is_none() {
+        let Some(session) = self.store().session(&session_id).map_err(ErrorObject::internal)? else {
             return Err(ErrorObject::not_found(format!("no chat `{session_id}` - it was closed, or never opened")));
+        };
+
+        /* A chat works on its own machine's folders (0.16.1). The window's routing could bind a folder on
+           host B to a chat that stayed on host A when the move to B failed - a chat that then ran in a
+           path that machine does not have. Refused here, where it cannot be skipped. */
+        if let Some(id) = project_id.as_deref() {
+            let project = self.store().project(id).map_err(ErrorObject::internal)?;
+            let chat_host = session["hostId"].as_str().unwrap_or("local");
+
+            if let Some(folder_host) = project.as_ref().and_then(|project| project["hostId"].as_str()) {
+                if folder_host != chat_host {
+                    return Err(ErrorObject::bad_request(format!(
+                        "That folder is on another machine ({folder_host}) than this chat ({chat_host}). Open a chat on {folder_host} to work in it."
+                    )));
+                }
+            }
         }
 
         self.store()
@@ -1215,7 +1240,7 @@ impl Daemon {
         let root = parent["projectRoot"].as_str().map(str::to_string);
         let title = parent["title"].as_str().unwrap_or("Chat").to_string();
         let prompt = parent["prompt"].as_str().unwrap_or_default().to_string();
-        let fork_id = format!("n{}", self.state.events.seq() + 1);
+        let fork_id = self.state.fresh_id("n");
         let fork_title = format!("{title} (fork)");
 
         self.store()
@@ -1460,7 +1485,7 @@ impl Daemon {
            (`deepseek-v4-pro`, which this build's catalogue has never seen) resolvable to a real
            endpoint instead of the loopback `custom` one. */
         let provider = envelope.opt_str("provider").filter(|id| !id.trim().is_empty());
-        let turn_id = format!("turn-{}", self.state.events.seq() + 1);
+        let turn_id = self.state.fresh_id("turn-");
         let engine = self.state.engines.get(&engine_id).ok_or_else(|| {
             ErrorObject::not_found(format!(
                 "`{engine_id}` is not an engine this daemon has; known: {}",
@@ -1758,7 +1783,7 @@ impl Daemon {
                 provider: reviewer["provider"].as_str().filter(|id| !id.is_empty()).map(str::to_string),
             })
         });
-        let verify_id = format!("verify-{}", self.state.events.seq() + 1);
+        let verify_id = self.state.fresh_id("verify-");
         let request = crate::verify::Request {
             verify_id: verify_id.clone(),
             session_id,
@@ -1808,7 +1833,7 @@ impl Daemon {
         Ok(json!({ "verifyId": verify_id }))
     }
 
-    fn engine_stop(&self, envelope: &Envelope, out: &dyn Notifier) -> Result<Value, ErrorObject> {
+    fn engine_stop(&self, envelope: &Envelope, out: Arc<dyn Notifier>) -> Result<Value, ErrorObject> {
         let turn_id = envelope.require_str("turnId")?;
         let killed = envelope.method == "engine.kill";
         let summary = if killed { "Force killed" } else { "Interrupted" };
@@ -1834,9 +1859,31 @@ impl Daemon {
 
         if let Some(engine) = engine {
             let turn = turn_id.clone();
+            let notifier = out.clone();
+            let session = self.store().turn_session(&turn_id).ok().flatten();
 
             tokio::spawn(async move {
                 engine.cancel(&turn).await;
+
+                /* A stop sent to a host goes on a thread of its own; give it the time its two tries take,
+                   then say so if it did not arrive. */
+                for _ in 0..40 {
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+
+                    if let Some(reason) = crate::engines::cancel::take_remote_failure(&turn) {
+                        notifier.push(
+                            event::toast(
+                                &format!("The stop did not reach the host ({reason}). The command may still be running there - check it from the Terminal, or press Stop again."),
+                                None,
+                                Some(12_000),
+                            ),
+                            session,
+                            None,
+                        );
+
+                        return;
+                    }
+                }
             });
         }
 
@@ -2476,7 +2523,7 @@ impl Daemon {
             return Err(ErrorObject::permission_denied(format!("{command}: {reason}")));
         }
 
-        let pid_file = crate::ssh::ops::pid_file(&format!("pty-{}", self.state.events.seq() + 1));
+        let pid_file = crate::ssh::ops::pid_file(&self.state.fresh_id("pty-"));
         let remote_line = match line.as_deref() {
             Some(raw) => crate::ssh::ops::process_raw_line(raw, cwd.as_deref(), &pid_file)?,
             None => crate::ssh::ops::process_line(&command, &args, cwd.as_deref(), &pid_file)?,
@@ -2807,7 +2854,7 @@ impl Daemon {
         let timeout = Duration::from_secs(
             envelope.opt_i64("timeoutMs").map(|ms| (ms as u64 / 1000).max(1)).unwrap_or(120),
         );
-        let call_id = format!("shell-{}", self.state.events.seq() + 1);
+        let call_id = self.state.fresh_id("shell-");
 
         /*
          * A `shell.run` for a chat whose folder is on a host: the command runs **there**, in that
@@ -2909,7 +2956,7 @@ impl Daemon {
 
     fn permission_request(&self, envelope: &Envelope, out: &dyn Notifier) -> Result<Value, ErrorObject> {
         let session_id = envelope.opt_str("sessionId").unwrap_or_else(|| "s1".into());
-        let permission_id = format!("perm-{}", self.state.events.seq() + 1);
+        let permission_id = self.state.fresh_id("perm-");
 
         out.push(
             event::permission_requested(json!({
@@ -2971,7 +3018,15 @@ impl Daemon {
 
     fn rewind_apply(&self, envelope: &Envelope, out: &dyn Notifier) -> Result<Value, ErrorObject> {
         let session_id = envelope.opt_str("sessionId").unwrap_or_else(|| "s1".into());
-        let turn = crate::checkpoints::turn_of(&envelope.require_str("turnId")?);
+        let turn_id = envelope.require_str("turnId")?;
+        /* Where the turn began on the log - its `TurnStarted` seq, which is what checkpoints are numbered
+           by. The id's own number was that seq until 0.16.1 made ids unique; it stays the fallback. */
+        let turn = self
+            .store()
+            .turn_started_seq(&turn_id)
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| crate::checkpoints::turn_of(&turn_id));
         /* The session's folder when the caller does not send one: a rewind restores the files of the chat
            it belongs to, which is the folder that chat works in - locally or on a host (0.7.13). */
         self.refuse_while_running(&session_id)?;
@@ -3046,7 +3101,7 @@ impl Daemon {
             })
             .unwrap_or_else(|| vec!["claude_code".to_string(), "codex".to_string()]);
         let engines = duel::plan(&requested)?;
-        let duel_id = format!("duel-{}", self.state.events.seq() + 1);
+        let duel_id = self.state.fresh_id("duel-");
 
         out.push(
             event::duel_started(
@@ -4199,6 +4254,16 @@ fn changed_sentence(target: &str, pinned: &[String], seen: &[crate::ssh::hostkey
 /// The last segment of a path: the name `Open folder` gives a project without asking the user for one.
 /// `H:\SDC` becomes `SDC`, `/home/me/app` becomes `app`, and a path with no last segment (a drive root,
 /// `/`) keeps itself rather than becoming an empty label.
+/// A password as the person typed it. Whitespace-only is no password; otherwise only the line break a
+/// paste can bring along is removed - spaces are characters of the password.
+fn exact_password(raw: String) -> String {
+    if raw.trim().is_empty() {
+        return String::new();
+    }
+
+    raw.trim_end_matches(['\r', '\n']).to_string()
+}
+
 fn folder_name(root: &str) -> String {
     std::path::Path::new(root)
         .file_name()
@@ -4310,6 +4375,14 @@ fn first_line(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 0.16.1: a password keeps its spaces; only a pasted line break goes, and blank is no password.
+    #[test]
+    fn a_password_is_kept_as_typed() {
+        assert_eq!(exact_password(" pass word ".into()), " pass word ");
+        assert_eq!(exact_password("secret\r\n".into()), "secret");
+        assert_eq!(exact_password("   ".into()), "");
+    }
 
     /// 0.10.0: an agent turn in a folderless chat gets a provisioned workspace instead of a refusal,
     /// and the folder's name is the chat's, sluggified, with the session id keeping two "New chat"s
