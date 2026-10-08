@@ -101,26 +101,8 @@ function TurnBlock({ turn, sessionId, latest }: { turn: Turn; sessionId: string;
           above the input (`LiveBar`), where it cannot scroll away. */}
       <FlowWork turn={turn} sessionId={sessionId} latest={latest} />
 
-      {/* Between Send and the first event there used to be nothing at all here, and a slow first
-          token read as a dead turn. Three pulsing dots and a sentence are the honest version of
-          "still alive": they claim no progress, only that the turn is waiting on the engine. */}
-      {turn.waiting === true ? (
-        <div
-          className="waiting mb-[8px] flex items-center gap-[9px] px-[2px] py-[6px] text-[12px] text-text-muted"
-          role="status"
-        >
-          <span className="flex gap-[3px]" aria-hidden="true">
-            {[0, 1, 2].map((dot) => (
-              <span
-                key={dot}
-                className="h-[5px] w-[5px] animate-pulse rounded-full bg-accent motion-reduce:animate-none"
-                style={{ animationDelay: `${dot * 220}ms` }}
-              />
-            ))}
-          </span>
-          <span>{strings.turns.answer.waiting(turn.meta.model)}</span>
-        </div>
-      ) : null}
+      {/* Between Send and the first event the transcript's own status line (FlowWork's NowLine) says the turn
+          is alive - waiting for the model, with its clock. */}
 
       {/* The answer sits between the work and the totals: thinking, the tool cards the answer came
           out of, then what the engine actually said - and the error card above it, because a failed

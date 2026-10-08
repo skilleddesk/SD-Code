@@ -15,6 +15,29 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [0.19.0] — A new shell and a deep live transcript
+
+**A new layout.** A navigation rail now runs down the window's left edge: the logo (About), New chat, Search,
+the sidebar and right-panel toggles (lit while open), Providers, Agency, and theme and Settings pinned at the
+bottom. The top bar is a calm command bar - the machine, a centred search, the mode switch and Stop all. Chat
+tabs are pills, the prompt you sent is a framed card, and the sidebar's New chat is a quiet outline (the rail
+carries the primary one).
+
+**The live transcript, Claude Code style - with everything in it.** Every step is its own row on one rail, in
+order, nothing grouped away:
+
+- **Thinking** streams into its own box while the model thinks (pink, breathing dot), then folds to
+  `Thought for 3.2s · headline`; one click reads it again as Markdown.
+- **Read** shows the first lines of the file the model read, numbered; **Grep / Glob / List / Search / Fetch**
+  show what they found. (The SDC Agent now reports what each of these saw - the first 40 lines - on its card;
+  Claude Code already did.)
+- **Edit / Write** show the diff; **Bash** shows **IN** (the command, copyable) and **OUT** (streaming live).
+- A failed step has a red dot and its error in red.
+- The bottom line is Claude Code's: a turning ✻, a warm word for what is happening (`Running Bash…`,
+  `Cerebrating…`), the clock, tokens so far, the plan step and `esc to stop`.
+- Long boxes fold to their first (a file) or last (a command) lines with one click for all. The time ribbon,
+  filters and Copy log sit under a finished turn.
+
 ## [0.18.1] — the 0.18.0 build, with a steady test suite
 
 0.18.0's release build stopped at `cargo test` on three systems: two background-process tests shared the process-wide

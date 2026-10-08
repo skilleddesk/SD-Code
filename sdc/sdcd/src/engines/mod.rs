@@ -637,7 +637,7 @@ const RESULT_LINES: usize = 40;
 const RESULT_LINE_CHARS: usize = 300;
 
 /// A tool's result as the card's output lines, with one line saying how many were left out.
-fn result_lines(call_id: &str, text: &str, failed: bool) -> Vec<EngineEvent> {
+pub(crate) fn result_lines(call_id: &str, text: &str, failed: bool) -> Vec<EngineEvent> {
     let level = if failed { "fail" } else { "dim" };
     let lines: Vec<&str> = text.lines().filter(|line| !line.trim().is_empty()).collect();
     let mut events: Vec<EngineEvent> = lines

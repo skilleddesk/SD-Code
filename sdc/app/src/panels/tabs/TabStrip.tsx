@@ -86,7 +86,7 @@ export function TabStrip() {
   };
 
   return (
-    <div className="tabstrip relative flex min-w-0 shrink-0 items-stretch border-b border-border-subtle h-[38px]">
+    <div className="tabstrip relative flex h-[44px] min-w-0 shrink-0 items-stretch border-b border-border-subtle px-[6px]">
       <div
         ref={wrapRef}
         className={
@@ -97,7 +97,7 @@ export function TabStrip() {
       >
         <div
           ref={scrollRef}
-          className="tabstrip-scroll flex h-full items-stretch overflow-x-auto [scrollbar-width:none] [scroll-behavior:smooth] [&::-webkit-scrollbar]:hidden"
+          className="tabstrip-scroll flex h-full items-stretch gap-[4px] overflow-x-auto [scrollbar-width:none] [scroll-behavior:smooth] [&::-webkit-scrollbar]:hidden"
           id="tabstripScroll"
         >
           {openTabs.map((id) => {
@@ -123,7 +123,7 @@ export function TabStrip() {
         </div>
       </div>
 
-      <div className="tabstrip-actions flex shrink-0 items-center gap-[2px] border-l border-border-subtle px-[6px]">
+      <div className="tabstrip-actions flex shrink-0 items-center gap-[2px] pl-[6px]">
         <IconButton
           id="splitBtn"
           icon={Columns2}

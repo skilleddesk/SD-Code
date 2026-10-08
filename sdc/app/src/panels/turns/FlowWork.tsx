@@ -5,41 +5,46 @@ import { strings } from '../../strings';
 import { toast } from '../../store/toast';
 import { AnswerBlock } from './AnswerBlock';
 import { DraftCard } from './DraftCard';
-import { changeTotals, headline, matches, ribbon, steps, tail, transcript, type Filter, type Step } from './flow';
-import { Sparkline, StepBody, TimeRibbon } from './StepParts';
-import { duration, hasBody, reveal, useNow, usePace } from './stepKit';
+import { changeTotals, headline, matches, ribbon, steps, transcript, type Filter, type Step } from './flow';
 import { Markdown } from './Markdown';
 import { Narration } from './Narration';
+import { Sparkline, StepBody, TimeRibbon } from './StepParts';
+import { duration, hasBody, reveal, useNow, usePace } from './stepKit';
 import { ToolCard } from './ToolCard';
 import type { DiffLine, RunLine, Turn } from './types';
 import { copyText } from '../../lib/external';
 
 const FILTERS: Filter[] = ['all', 'think', 'read', 'edit', 'run', 'say'];
 
-/** How many lines of output or diff a folded box shows before "Show all". */
-const FOLDED_OUT = 8;
-const FOLDED_DIFF = 12;
+/** How many lines a folded box keeps: the top of a file someone read, the end of a command's output. */
+const FOLDED_READ = 6;
+const FOLDED_OUT = 10;
+const FOLDED_DIFF = 14;
 
 /**
- * **The work timeline** (0.18) - what the agent does, step by step, as it does it.
+ * **The live transcript** (0.19) - everything the agent does, as it does it, the way Claude Code shows it.
  *
- * One hairline rail with a dot per step, the way a careful colleague would narrate: `Thought for 3.2s`,
- * `Read router.ts · 84 ln`, `Edit guard.ts +4 −2` with the diff right under it, `Bash` with its command
- * (IN) and what it printed (OUT), live while it runs. The dot says how each step went - green done, red
- * failed, violet breathing while it runs - and every step keeps its own measured time.
+ * One rail, one dot per step, in the order things happened:
  *
- * What it keeps from Flow (0.15), because no other agent UI shows it: the time ribbon (where the turn's
- * seconds went, by kind, including the grey *deciding* between steps), the output pace while it runs,
- * filters on a long run, and "Copy log". What it adds: the IN / OUT boxes and diffs are visible without
- * a click (folded to their first lines, faded, one click for all of them), thinking reads as one quiet
- * `Thought for…` line, and the bottom of a running turn always says what is happening this second with a
- * turning spark, its clock, the tokens so far and how to stop it.
+ *   ○ Thinking…            the reasoning itself, streaming in its own box while the model thinks;
+ *                          `Thought for 3.2s` afterwards, one click to read it again
+ *   ● Read src/auth.ts     what the model read - the first lines of the file, numbered
+ *   ● Grep "redirectTo"    the matches it found
+ *   ● Edit guard.ts +4 −2  the diff
+ *   ● Bash                 IN the command, OUT what it printed, live
+ *   ✻ Cerebrating…         what is happening this second: the clock, the tokens, how to stop it
  *
- * The newest turn stays open when it finishes; older turns fold to their one-line summary and ribbon.
+ * Every step keeps its own measured time and its outcome (green done, red failed, violet running). Nothing
+ * is grouped away: a turn that read nine files shows nine reads. A long box folds to its first (or last)
+ * lines with a fade and one click for all of it.
+ *
+ * Under the steps, once the turn is over: where its time went (the ribbon, by kind, the grey being the
+ * model deciding between steps), filters for a long run, and Copy log. The newest turn stays open;
+ * older ones fold to that one summary line.
  */
 export function FlowWork({ turn, sessionId, latest = true }: { turn: Turn; sessionId: string; latest?: boolean }) {
   const now = useNow(250, turn.running);
-  const list = steps(turn.timeline, now, turn.endedAt, turn.running);
+  const list = steps(turn.timeline, now, turn.endedAt, turn.running, false);
   const work = list.filter((step) => step.kind !== 'answer');
   const answers = list.filter((step) => step.kind === 'answer');
   const { segments, totals, total } = ribbon(list, turn.startedAt, now, turn.endedAt, turn.running);
@@ -64,7 +69,7 @@ export function FlowWork({ turn, sessionId, latest = true }: { turn: Turn; sessi
   }
 
   const shown = work.filter((step) => matches(step, filter));
-  const tools = work.filter((step) => step.drawn.kind === 'tool' || step.drawn.kind === 'explore').length;
+  const tools = work.filter((step) => step.drawn.kind === 'tool').length;
   const copy = (): void => {
     void copyText(`${turn.user.body}\n\n${transcript(list, turn.startedAt)}`).then((ok) => {
       if (ok) {
@@ -73,52 +78,55 @@ export function FlowWork({ turn, sessionId, latest = true }: { turn: Turn; sessi
     });
   };
 
+  /* The one line a folded (or finished) turn is summed up in. */
+  const summaryLine = (
+    <div className="flow-head group flex w-full min-w-0 items-center gap-[8px] text-[12px]">
+      <button
+        type="button"
+        className="flex min-w-0 flex-1 items-center gap-[7px] rounded-sm py-[2px] text-left"
+        aria-expanded={open}
+        title={open ? strings.turns.flow.hide : strings.turns.flow.show}
+        onClick={() => setChosen(!open)}
+      >
+        <ChevronRight size={13} aria-hidden="true" className={'shrink-0 text-text-muted transition-transform duration-200 ' + (open ? 'rotate-90' : '')} />
+        <span className={'min-w-0 truncate font-medium ' + (turn.running ? 'shimmer-text' : 'text-text-secondary')}>
+          {turn.running ? strings.turns.flow.working(work.length) : strings.turns.flow.worked(strings.turns.thinking.seconds(total), work.length)}
+        </span>
+        {change.files > 0 ? (
+          <span className="inline-flex shrink-0 items-center gap-[4px] rounded-full border border-border-subtle bg-bg-raised px-[7px] py-[1px] font-mono text-[10.5px] text-text-muted">
+            <FileDiff size={11} aria-hidden="true" />
+            {change.files}
+            <span className="text-diff-addText">+{change.added}</span>
+            <span className="text-diff-removeText">−{change.removed}</span>
+          </span>
+        ) : null}
+      </button>
+      {turn.running ? (
+        <span className="hidden shrink-0 items-center gap-[5px] font-mono text-[10.5px] tabular-nums text-text-muted sm:inline-flex" title={strings.turns.flow.pace}>
+          <Sparkline samples={pace} width={56} height={14} />
+          {strings.turns.stats.pace(pace[pace.length - 1] ?? 0)}
+        </span>
+      ) : null}
+      {tools > 0 ? <span className="hidden shrink-0 font-mono text-[10.5px] text-text-muted md:inline">{strings.turns.stats.tools(tools)}</span> : null}
+      <span className="shrink-0 font-mono text-[10.5px] tabular-nums text-text-muted">{strings.turns.thinking.seconds(total)}</span>
+      <button
+        type="button"
+        className="grid h-[22px] w-[22px] shrink-0 place-items-center rounded-sm text-text-muted hover:bg-bg-hover hover:text-text-primary"
+        title={strings.turns.flow.copy}
+        aria-label={strings.turns.flow.copy}
+        onClick={copy}
+      >
+        <Copy size={12} aria-hidden="true" />
+      </button>
+    </div>
+  );
+
   return (
     <div className="flow-work mb-[10px]" data-flow>
-      <div className="flow-head group mb-[10px] flex w-full flex-col gap-[7px]">
-        <div className="flex w-full min-w-0 items-center gap-[8px] text-[12px]">
-          <button
-            type="button"
-            className="flex min-w-0 flex-1 items-center gap-[7px] rounded-sm py-[2px] text-left"
-            aria-expanded={open}
-            title={open ? strings.turns.flow.hide : strings.turns.flow.show}
-            onClick={() => setChosen(!open)}
-          >
-            <ChevronRight size={13} aria-hidden="true" className={'shrink-0 text-text-muted transition-transform duration-200 ' + (open ? 'rotate-90' : '')} />
-            <span className={'min-w-0 truncate font-medium ' + (turn.running ? 'shimmer-text' : 'text-text-secondary')}>
-              {turn.running ? strings.turns.flow.working(work.length) : strings.turns.flow.worked(strings.turns.thinking.seconds(total), work.length)}
-            </span>
-            {change.files > 0 ? (
-              <span className="inline-flex shrink-0 items-center gap-[4px] rounded-full border border-border-subtle bg-bg-raised px-[7px] py-[1px] font-mono text-[10.5px] text-text-muted">
-                <FileDiff size={11} aria-hidden="true" />
-                {change.files}
-                <span className="text-diff-addText">+{change.added}</span>
-                <span className="text-diff-removeText">−{change.removed}</span>
-              </span>
-            ) : null}
-          </button>
-          {turn.running ? (
-            <span className="hidden shrink-0 items-center gap-[5px] font-mono text-[10.5px] tabular-nums text-text-muted sm:inline-flex" title={strings.turns.flow.pace}>
-              <Sparkline samples={pace} width={56} height={14} />
-              {strings.turns.stats.pace(pace[pace.length - 1] ?? 0)}
-            </span>
-          ) : null}
-          {tools > 0 ? <span className="hidden shrink-0 font-mono text-[10.5px] text-text-muted md:inline">{strings.turns.stats.tools(tools)}</span> : null}
-          <span className="shrink-0 font-mono text-[10.5px] tabular-nums text-text-muted">{strings.turns.thinking.seconds(total)}</span>
-          <button
-            type="button"
-            className="grid h-[22px] w-[22px] shrink-0 place-items-center rounded-sm text-text-muted opacity-0 transition-opacity hover:bg-bg-hover hover:text-text-primary focus-visible:opacity-100 group-hover:opacity-100"
-            title={strings.turns.flow.copy}
-            aria-label={strings.turns.flow.copy}
-            onClick={copy}
-          >
-            <Copy size={12} aria-hidden="true" />
-          </button>
-        </div>
-        <TimeRibbon segments={segments} totals={totals} total={total} running={turn.running} onPick={pick} compact={!open} />
-      </div>
+      {/* While it runs, the summary rides on top - steps so far, pace, clock - so the newest step stays at the
+          bottom where the eye already is. */}
+      {turn.running || !open ? <div className="mb-[10px] flex flex-col gap-[6px]">{summaryLine}<TimeRibbon segments={segments} totals={totals} total={total} running={turn.running} onPick={pick} compact /></div> : null}
 
-      {/* A long run gets filters: "what did it run?" in one click instead of a scroll. */}
       {open && work.length >= 6 ? (
         <div className="mb-[8px] ml-[2px] flex flex-wrap items-center gap-[3px]" role="group" aria-label={strings.turns.flow.filter}>
           {FILTERS.map((key) => {
@@ -144,23 +152,31 @@ export function FlowWork({ turn, sessionId, latest = true }: { turn: Turn; sessi
       ) : null}
 
       {open ? (
-        <ol className="tl-rail pl-[22px]">
+        <ol className="tl-rail pl-[24px]">
           {shown.map((step) => (
             <TimelineStep key={step.key} step={step} turnId={turn.id} sessionId={sessionId} now={now} />
           ))}
 
           {turn.draft === undefined || filter !== 'all' ? null : (
-            <li className="relative pb-[10px]">
+            <li className="relative pb-[12px]">
               <span className="tl-dot" data-state="running" aria-hidden="true" />
               <DraftCard draft={turn.draft} />
             </li>
           )}
 
-          {turn.running && filter === 'all' && turn.live?.phase !== 'drafting' ? <NowLine turn={turn} now={now} /> : null}
+          {turn.running && filter === 'all' ? <NowLine turn={turn} now={now} /> : null}
         </ol>
       ) : null}
 
       {answerBlocks}
+
+      {/* Finished and open: where the time went, under everything it measured. */}
+      {!turn.running && open ? (
+        <div className="mt-[6px] flex flex-col gap-[6px] rounded-lg border border-border-subtle bg-bg-raised px-[12px] py-[8px]">
+          {summaryLine}
+          <TimeRibbon segments={segments} totals={totals} total={total} running={false} onPick={pick} />
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -168,7 +184,7 @@ export function FlowWork({ turn, sessionId, latest = true }: { turn: Turn; sessi
 /** The dot's colour: how the step went, or what kind of step it is when it has no outcome. */
 function dotState(step: Step): string {
   if (step.status === 'running') {
-    return 'running';
+    return step.kind === 'think' ? 'thinking' : 'running';
   }
 
   if (step.status === 'failed') {
@@ -179,15 +195,16 @@ function dotState(step: Step): string {
 }
 
 function TimelineStep({ step, turnId, sessionId, now }: { step: Step; turnId: string; sessionId: string; now: number }) {
-  const id = `step-${turnId}-${step.key}`;
-
   return (
-    <li id={id} className="relative rounded-sm pb-[11px]" data-step={step.kind} data-status={step.status}>
+    <li id={`step-${turnId}-${step.key}`} className="tl-step relative rounded-sm pb-[13px]" data-step={step.kind} data-status={step.status}>
       <span className="tl-dot" data-state={dotState(step)} aria-hidden="true" />
       <StepContent step={step} sessionId={sessionId} now={now} />
     </li>
   );
 }
+
+/** A read-like tool: its result is what the model saw, so the top of it is what is shown. */
+const READS = new Set(['Read', 'View', 'List', 'Grep', 'Glob', 'Search', 'Search web', 'Fetch', 'Diff', 'Output', 'WebFetch', 'WebSearch', 'LS']);
 
 function StepContent({ step, sessionId, now }: { step: Step; sessionId: string; now: number }) {
   const drawn = step.drawn;
@@ -208,15 +225,13 @@ function StepContent({ step, sessionId, now }: { step: Step; sessionId: string; 
   }
 
   if (drawn.kind === 'thinking') {
-    return <ThoughtLine text={drawn.thinking.text} live={step.status === 'running'} took={took} />;
-  }
-
-  if (drawn.kind === 'explore') {
-    return <ExploreStep step={step} took={took} />;
+    return <ThoughtBlock text={drawn.thinking.text} live={step.status === 'running'} took={took} />;
   }
 
   if (drawn.kind === 'tool') {
     const tool = drawn.tool;
+    const failed = tool.status === 'failed';
+    const live = tool.status === 'running';
 
     if (tool.name === 'Question') {
       return <ToolCard tool={tool} />;
@@ -225,8 +240,8 @@ function StepContent({ step, sessionId, now }: { step: Step; sessionId: string; 
     if (tool.kind === 'run') {
       return (
         <>
-          <StepLine name={tool.name} target="" detail={tool.meta} took={took} failed={tool.status === 'failed'} />
-          <IoBox command={tool.target} output={tool.output} live={tool.status === 'running'} />
+          <StepLine name={tool.name} target="" detail={tool.meta} took={took} failed={failed} />
+          <IoBox command={tool.target} output={tool.output} live={live} />
         </>
       );
     }
@@ -234,17 +249,19 @@ function StepContent({ step, sessionId, now }: { step: Step; sessionId: string; 
     if (tool.kind === 'edit') {
       return (
         <>
-          <StepLine name={tool.name} target={tool.target} detail={step.detail} took={took} failed={tool.status === 'failed'} />
+          <StepLine name={tool.name} target={tool.target} detail={step.detail} took={took} failed={failed} />
           {tool.diff.length > 0 ? <DiffBox diff={tool.diff} /> : null}
         </>
       );
     }
 
     /* A read, a search, a fetch - or a sub-agent, whose report is its output. */
+    const output = tool.output ?? [];
+
     return (
       <>
-        <StepLine name={tool.name} target={tool.target} detail={tool.meta} took={took} failed={tool.status === 'failed'} />
-        {(tool.output?.length ?? 0) > 0 ? <OutBox output={tool.output ?? []} live={tool.status === 'running'} /> : null}
+        <StepLine name={tool.name} target={tool.target} detail={tool.meta} took={took} failed={failed} />
+        {output.length > 0 ? <OutBox output={output} live={live} head={READS.has(tool.name)} /> : null}
       </>
     );
   }
@@ -253,27 +270,31 @@ function StepContent({ step, sessionId, now }: { step: Step; sessionId: string; 
   return <Expandable title={<StepLine name={step.title} target="" detail="" took="" />} body={hasBody(step) ? <StepBody step={step} sessionId={sessionId} /> : null} />;
 }
 
-/** `Bash  pnpm test …  exit 0 · 3.8s` - the name in the strong weight, the target in the accent. */
+/** `Bash  …  exit 0 · 3.8s` - the name in the strong weight, the target in the accent. */
 function StepLine({ name, target, detail, took, failed = false }: { name: string; target: string; detail: string; took: string; failed?: boolean }) {
   return (
-    <div className="flex min-w-0 items-baseline gap-[8px] text-[12.5px] leading-[1.5]">
+    <div className="flex min-w-0 items-baseline gap-[8px] text-[13px] leading-[1.5]">
       <span className="shrink-0 font-semibold text-text-primary">{name}</span>
       {target === '' ? null : (
-        <span className="min-w-0 truncate font-mono text-[11.5px] text-accent" title={target}>
+        <span className="min-w-0 truncate font-mono text-[12px] text-accent" title={target}>
           {target}
         </span>
       )}
       <span className="ml-auto flex shrink-0 items-baseline gap-[8px] pl-[6px] font-mono text-[10.5px] tabular-nums">
         {detail === '' ? null : <span className={failed ? 'text-state-error' : 'text-text-muted'}>{detail}</span>}
-        {took === '' ? null : <span className="text-text-faint">{took}</span>}
+        {took === '' ? null : <span className="text-text-muted">{took}</span>}
       </span>
     </div>
   );
 }
 
-/** `Thought for 3.2s · Tracing the redirect` - one quiet line; a click opens the whole thought. */
-function ThoughtLine({ text, live, took }: { text: string; live: boolean; took: string }) {
-  const [open, setOpen] = useState(false);
+/**
+ * The reasoning. While the model thinks, its words stream into their own box, newest at the bottom; once
+ * it moves on, the box folds to `Thought for 3.2s · its headline`, and one click reads it again.
+ */
+function ThoughtBlock({ text, live, took }: { text: string; live: boolean; took: string }) {
+  const [chosen, setChosen] = useState<boolean | null>(null);
+  const open = chosen ?? live;
   const box = useRef<HTMLDivElement>(null);
   const title = headline(text);
 
@@ -287,101 +308,52 @@ function ThoughtLine({ text, live, took }: { text: string; live: boolean; took: 
     <div className="thought" data-thought={live ? 'live' : 'done'}>
       <button
         type="button"
-        className="flex w-full min-w-0 items-baseline gap-[7px] rounded-sm text-left text-[12.5px] leading-[1.5] text-text-muted transition-colors hover:text-text-secondary"
+        className="flex w-full min-w-0 items-baseline gap-[7px] rounded-sm text-left text-[13px] leading-[1.5] text-text-muted transition-colors hover:text-text-secondary"
         aria-expanded={text.trim() === '' ? undefined : open}
         title={open ? strings.turns.thinking.collapse : strings.turns.thinking.expand}
-        onClick={() => setOpen((current) => !current)}
+        onClick={() => setChosen(!open)}
       >
-        <span className={'shrink-0 font-medium ' + (live ? 'shimmer-text' : '')}>
-          {live ? strings.turns.flow.thinking : took === '' ? strings.turns.thinking.thought : strings.turns.thinking.thoughtFor(took)}
+        <span className={'shrink-0 font-medium ' + (live ? 'text-purple' : '')}>
+          {live ? `${strings.turns.flow.thinking}…` : took === '' ? strings.turns.thinking.thought : strings.turns.thinking.thoughtFor(took)}
         </span>
         {live && took !== '' ? <span className="shrink-0 font-mono text-[10.5px] tabular-nums">{took}</span> : null}
-        {title === '' ? null : <span className="min-w-0 truncate italic text-text-faint">· {title}</span>}
+        {title === '' || open ? null : <span className="min-w-0 truncate italic text-text-muted opacity-80">· {title}</span>}
         <ChevronRight size={11} aria-hidden="true" className={'ml-auto shrink-0 self-center transition-transform duration-200 ' + (open ? 'rotate-90' : '')} />
       </button>
 
-      {/* A thought still going on shows its newest lines, fading upward - the reasoning as it forms. */}
-      {live && !open ? (
-        <div className="think-tail mt-[3px] border-l border-purple/40 pl-[10px] text-[11.5px] italic leading-[1.6] text-text-muted">
-          {tail(text, 4)
-            .map((line) => line.replace(/\*\*/g, '').replace(/^#{1,4}\s+/, ''))
-            .filter((line) => line !== title)
-            .slice(-3)
-            .map((line, index) => (
-              <div key={`${index}-${line}`} className="truncate">
-                {line}
-              </div>
-            ))}
-        </div>
-      ) : null}
-
-      {open ? (
-        <div ref={box} className="thought-md mt-[5px] max-h-[320px] overflow-y-auto border-l border-purple/40 pl-[11px]">
+      {open && text.trim() !== '' ? (
+        <div
+          ref={box}
+          className={'thought-md mt-[6px] overflow-y-auto rounded-md border border-border-subtle bg-bg-input px-[12px] py-[8px] ' + (live ? 'think-live max-h-[220px]' : 'max-h-[360px]')}
+        >
           <Markdown text={text} />
+          {live ? <span className="ml-[1px] animate-pulse text-purple motion-reduce:animate-none" aria-hidden="true">▍</span> : null}
         </div>
       ) : null}
     </div>
   );
 }
 
-/** Reads in a row, gathered: `Explored 3 files, 1 search`, and each one under it, one row apiece. */
-function ExploreStep({ step, took }: { step: Step; took: string }) {
-  const drawn = step.drawn;
-  const [all, setAll] = useState(false);
+/** One line of output: a file's line number set apart, coloured by what the engine said it was. */
+function OutLine({ line }: { line: RunLine }) {
+  const numbered = /^\s*(\d+)\t(.*)$/.exec(line.text);
+  const tone = line.level === 'ok' ? 'text-state-success' : line.level === 'fail' ? 'text-state-error' : 'text-text-secondary';
 
-  if (drawn.kind !== 'explore') {
-    return null;
+  if (numbered !== null) {
+    return (
+      <div className={'flex ' + tone}>
+        <span className="w-[38px] shrink-0 select-none pr-[10px] text-right text-text-muted opacity-70">{numbered[1]}</span>
+        <span className="min-w-0 whitespace-pre-wrap break-words">{numbered[2] === '' ? ' ' : numbered[2]}</span>
+      </div>
+    );
   }
 
-  const searches = drawn.tools.filter((tool) => tool.name === 'Grep' || tool.name === 'Glob' || tool.name.startsWith('Search')).length;
-  const shown = all ? drawn.tools : drawn.tools.slice(0, 4);
-  const failed = drawn.tools.filter((tool) => tool.status === 'failed').length;
-
-  return (
-    <>
-      <StepLine
-        name={strings.turns.explored}
-        target=""
-        detail={[strings.turns.flow.explored(drawn.tools.length - searches, searches), failed > 0 ? strings.turns.exploredFailed(failed) : ''].filter((part) => part !== '').join(' · ')}
-        took={took}
-        failed={failed > 0}
-      />
-      <div className="mt-[3px] flex flex-col gap-[1px]">
-        {shown.map((tool, index) => (
-          <div key={`${tool.startedAt}-${index}`} className="flex min-w-0 items-baseline gap-[8px] text-[11.5px]">
-            <span className="w-[14px] shrink-0 text-center text-text-faint" aria-hidden="true">
-              ⎿
-            </span>
-            <span className="w-[44px] shrink-0 text-text-muted">{tool.name}</span>
-            <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-text-secondary" title={tool.target}>
-              {tool.target}
-            </span>
-            <span className={'shrink-0 font-mono text-[10px] ' + (tool.status === 'failed' ? 'text-state-error' : 'text-text-faint')}>{tool.meta}</span>
-          </div>
-        ))}
-        {drawn.tools.length > 4 ? (
-          <button type="button" className="ml-[22px] self-start text-[11px] text-text-muted hover:text-accent" onClick={() => setAll(!all)}>
-            {all ? strings.turns.flow.showLess : `+${drawn.tools.length - 4}`}
-          </button>
-        ) : null}
-      </div>
-    </>
-  );
-}
-
-/** One line of output, coloured by what the engine said it was. */
-function OutLine({ line }: { line: RunLine }) {
-  return (
-    <div className={'whitespace-pre-wrap break-words ' + (line.level === 'ok' ? 'text-state-success' : line.level === 'fail' ? 'text-state-error' : 'text-text-secondary')}>
-      {line.text === '' ? ' ' : line.text}
-    </div>
-  );
+  return <div className={'whitespace-pre-wrap break-words ' + (line.text.startsWith('… ') ? 'italic text-text-muted' : tone)}>{line.text === '' ? ' ' : line.text}</div>;
 }
 
 /**
- * The command and what it printed: `IN` the command, `OUT` the output. While it runs the output
- * follows its newest line; finished, a long one folds to its last lines (where the result is) and one
- * click shows all of it.
+ * The command and what it printed: `IN` the command, `OUT` the output. While it runs the output follows
+ * its newest line; finished, a long one folds to its last lines (where the result is).
  */
 function IoBox({ command, output, live }: { command: string; output: readonly RunLine[]; live: boolean }) {
   const copy = (): void => {
@@ -393,14 +365,14 @@ function IoBox({ command, output, live }: { command: string; output: readonly Ru
   };
 
   return (
-    <div className="io-box group/io mt-[6px] font-mono text-[11.5px] leading-[1.6]" data-io={live ? 'live' : 'done'}>
-      <div className="io-row grid grid-cols-[38px_1fr]">
-        <div className="select-none px-[8px] py-[6px] text-[9.5px] font-semibold tracking-[.08em] text-text-muted">{strings.turns.flow.in}</div>
-        <div className="relative min-w-0 py-[6px] pr-[30px]">
+    <div className="io-box group/io mt-[7px] font-mono text-[12px] leading-[1.6]" data-io={live ? 'live' : 'done'}>
+      <div className="io-row grid grid-cols-[42px_1fr]">
+        <div className="io-label select-none px-[9px] py-[7px] text-[9.5px] font-semibold tracking-[.1em] text-text-muted">{strings.turns.flow.in}</div>
+        <div className="relative min-w-0 py-[7px] pr-[32px]">
           <span className="whitespace-pre-wrap break-words text-text-primary">{command}</span>
           <button
             type="button"
-            className="absolute right-[6px] top-[5px] grid h-[20px] w-[20px] place-items-center rounded-sm text-text-muted opacity-0 transition-opacity hover:bg-bg-hover hover:text-text-primary focus-visible:opacity-100 group-hover/io:opacity-100"
+            className="absolute right-[6px] top-[6px] grid h-[20px] w-[20px] place-items-center rounded-sm text-text-muted opacity-0 transition-opacity hover:bg-bg-hover hover:text-text-primary focus-visible:opacity-100 group-hover/io:opacity-100"
             title={strings.turns.flow.copyCommand}
             aria-label={strings.turns.flow.copyCommand}
             onClick={copy}
@@ -409,30 +381,32 @@ function IoBox({ command, output, live }: { command: string; output: readonly Ru
           </button>
         </div>
       </div>
-      <div className="io-row grid grid-cols-[38px_1fr]">
-        <div className="select-none px-[8px] py-[6px] text-[9.5px] font-semibold tracking-[.08em] text-text-muted">{strings.turns.flow.out}</div>
-        <OutLines output={output} live={live} />
+      <div className="io-row grid grid-cols-[42px_1fr]">
+        <div className="io-label select-none px-[9px] py-[7px] text-[9.5px] font-semibold tracking-[.1em] text-text-muted">{strings.turns.flow.out}</div>
+        <OutLines output={output} live={live} head={false} />
       </div>
     </div>
   );
 }
 
-/** Output with no command - a sub-agent's report, an answered read. */
-function OutBox({ output, live }: { output: readonly RunLine[]; live: boolean }) {
+/** Output with no command - the file read, the matches, a sub-agent's report. */
+function OutBox({ output, live, head }: { output: readonly RunLine[]; live: boolean; head: boolean }) {
   return (
-    <div className="io-box mt-[6px] font-mono text-[11.5px] leading-[1.6]">
-      <div className="pl-[10px]">
-        <OutLines output={output} live={live} />
+    <div className="io-box mt-[7px] font-mono text-[12px] leading-[1.6]">
+      <div className="io-row grid grid-cols-[42px_1fr]">
+        <div className="io-label select-none px-[9px] py-[7px] text-[9.5px] font-semibold tracking-[.1em] text-text-muted">{strings.turns.flow.out}</div>
+        <OutLines output={output} live={live} head={head} />
       </div>
     </div>
   );
 }
 
-function OutLines({ output, live }: { output: readonly RunLine[]; live: boolean }) {
+function OutLines({ output, live, head }: { output: readonly RunLine[]; live: boolean; head: boolean }) {
   const [all, setAll] = useState(false);
   const box = useRef<HTMLDivElement>(null);
-  const folded = !live && !all && output.length > FOLDED_OUT;
-  const lines = folded ? output.slice(-FOLDED_OUT) : output;
+  const keep = head ? FOLDED_READ : FOLDED_OUT;
+  const folded = !live && !all && output.length > keep;
+  const lines = folded ? (head ? output.slice(0, keep) : output.slice(-keep)) : output;
 
   useEffect(() => {
     if (live && box.current !== null) {
@@ -441,26 +415,25 @@ function OutLines({ output, live }: { output: readonly RunLine[]; live: boolean 
   }, [live, output.length]);
 
   if (output.length === 0) {
-    return <div className="py-[6px] italic text-text-faint">{live ? '…' : strings.turns.flow.noOutput}</div>;
+    return <div className="py-[7px] italic text-text-muted">{live ? '…' : strings.turns.flow.noOutput}</div>;
   }
 
+  const toggle =
+    output.length > keep && !live ? (
+      <button type="button" className="font-ui text-[11px] text-text-muted hover:text-accent" onClick={() => setAll(!all)}>
+        {all ? strings.turns.flow.showLess : strings.turns.flow.showAll(output.length)}
+      </button>
+    ) : null;
+
   return (
-    <div className="min-w-0 py-[6px] pr-[10px]">
-      {folded ? (
-        <button type="button" className="mb-[2px] font-ui text-[11px] text-text-muted hover:text-accent" onClick={() => setAll(true)}>
-          {strings.turns.flow.showAll(output.length)}
-        </button>
-      ) : null}
-      <div ref={box} className={(live || all ? 'max-h-[300px] overflow-y-auto ' : '') + (folded ? 'io-fade-top' : '')}>
+    <div className="min-w-0 py-[7px] pr-[10px]">
+      {folded && !head ? <div className="mb-[2px]">{toggle}</div> : null}
+      <div ref={box} className={(live || all ? 'max-h-[320px] overflow-y-auto ' : '') + (folded ? (head ? 'io-fade' : 'io-fade-top') : '')}>
         {lines.map((line, index) => (
           <OutLine key={`${index}-${line.text}`} line={line} />
         ))}
       </div>
-      {all && output.length > FOLDED_OUT ? (
-        <button type="button" className="mt-[2px] font-ui text-[11px] text-text-muted hover:text-accent" onClick={() => setAll(false)}>
-          {strings.turns.flow.showLess}
-        </button>
-      ) : null}
+      {(folded && head) || all ? <div className="mt-[2px]">{toggle}</div> : null}
     </div>
   );
 }
@@ -472,14 +445,14 @@ function DiffBox({ diff }: { diff: readonly DiffLine[] }) {
   const rows = folded ? diff.slice(0, FOLDED_DIFF) : diff;
 
   return (
-    <div className="io-box mt-[6px]" data-diff>
-      <div className={'max-h-[420px] overflow-auto py-[4px] font-mono text-[11.5px] leading-[1.65] ' + (folded ? 'io-fade' : '')}>
+    <div className="io-box mt-[7px]" data-diff>
+      <div className={'max-h-[440px] overflow-auto py-[4px] font-mono text-[12px] leading-[1.65] ' + (folded ? 'io-fade' : '')}>
         {rows.map((line, index) => (
           <div
             key={`${line.lineNumber}-${line.change}-${index}`}
             className={'diff-line flex min-w-max pr-[12px] ' + (line.change === 'add' ? 'add bg-diff-addBg text-diff-addText' : 'rem bg-diff-removeBg text-diff-removeText')}
           >
-            <span className="ln w-[40px] shrink-0 select-none pr-[8px] text-right text-text-faint">{line.lineNumber}</span>
+            <span className="ln w-[42px] shrink-0 select-none pr-[8px] text-right text-text-muted opacity-70">{line.lineNumber}</span>
             <span className="w-[14px] shrink-0 select-none opacity-80">{line.change === 'add' ? '+' : '−'}</span>
             <span className="whitespace-pre">{line.text}</span>
           </div>
@@ -512,12 +485,14 @@ function Expandable({ title, body }: { title: ReactNode; body: ReactNode }) {
   );
 }
 
-const SPARK = ['✻', '✽', '✶', '✳', '✢', '·', '✢', '✳', '✶', '✽'];
+/** Claude Code's spinner: a star that grows and shrinks through these shapes, and back. */
+const SPARK = ['·', '✢', '✳', '✶', '✻', '✽', '✻', '✶', '✳', '✢'];
 
 /**
  * The bottom of a running turn: what is happening this second. A turning spark, a word for the phase
  * (`Running Bash`, `Writing the answer`, or - while the model decides - a word that changes every few
- * seconds so a long wait never looks frozen), then the clock, the tokens so far and how to stop it.
+ * seconds so a long wait never looks frozen), then the clock, the tokens so far, the plan step and how to
+ * stop it.
  */
 function NowLine({ turn, now }: { turn: Turn; now: number }) {
   const live = turn.live;
@@ -541,13 +516,13 @@ function NowLine({ turn, now }: { turn: Turn; now: number }) {
   const facts = [strings.turns.thinking.seconds(elapsed), ...(tokens > 0 ? [`↓ ${strings.turns.stats.tokens(tokens)}`] : []), strings.turns.flow.stop];
 
   return (
-    <li className="relative pb-[4px]" data-now={live?.phase ?? 'waiting'}>
-      <span className="sdc-spark absolute left-[-24px] top-[0px] text-[15px] leading-none" aria-hidden="true">
-        {SPARK[Math.floor(now / 160) % SPARK.length]}
+    <li className="now-line relative pb-[4px]" data-now={live?.phase ?? 'waiting'}>
+      <span className="sdc-spark absolute left-[-25px] top-[1px] w-[16px] text-center text-[15px] leading-none" aria-hidden="true">
+        {SPARK[Math.floor(now / 140) % SPARK.length]}
       </span>
-      <div className="flex min-w-0 flex-wrap items-baseline gap-x-[8px] gap-y-[2px] text-[12.5px]" role="status">
-        <span className="shimmer-text font-medium">{label}…</span>
-        <span className="font-mono text-[10.5px] tabular-nums text-text-muted">({facts.join(' · ')})</span>
+      <div className="flex min-w-0 flex-wrap items-baseline gap-x-[8px] gap-y-[3px] text-[13px]" role="status">
+        <span className="now-label font-medium">{label}…</span>
+        <span className="font-mono text-[11px] tabular-nums text-text-muted">({facts.join(' · ')})</span>
         {live?.step === null || live?.step === undefined ? null : (
           <span className="min-w-0 max-w-full truncate rounded-full bg-accent-subtle px-[8px] py-[1px] text-[10.5px] text-accent" title={live.step.text}>
             {strings.turns.flow.step(live.step.index, live.step.total, live.step.text)}

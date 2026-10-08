@@ -85,6 +85,7 @@ export const bn: StringsPack = {
       step: (index: number, total: number, text: string): string => `ধাপ ${index}/${total} · ${text}`,
     },
   },
+  rail: { label: 'নেভিগেশন' },
   sidebar: {
     noProject: 'কোনো ফোল্ডার নেই',
     machines: 'মেশিন',

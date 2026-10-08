@@ -61,19 +61,20 @@ function Attachment({ attachment }: { attachment: AttachmentData }) {
 }
 
 export function UserMessage({ message }: UserMessageProps) {
-  /* 0.18: the person's words in a bubble on the right - the one thing on screen they wrote - and the
-     agent's work on the left under it, the way every conversation reads. */
+  /* 0.19: the person's words in their own framed card at the top of the turn, full width - the prompt the
+     whole transcript below answers, the way Claude Code frames it. */
   return (
-    <div className="user-msg mb-[16px] flex flex-col items-end">
-      <div className="who sr-only">{message.who}</div>
-
-      <div className="body max-w-[86%] whitespace-pre-wrap break-words rounded-[18px] rounded-br-[6px] border border-accent/20 px-[15px] py-[10px] text-[14px] leading-[1.6] text-text-primary shadow-sm [background-image:var(--grad-brand-soft)]">
-        {message.body}
+    <div className="user-msg mb-[18px] rounded-xl border border-border-default bg-bg-raised px-[16px] py-[12px] shadow-sm">
+      <div className="who mb-[6px] flex items-center gap-[8px] text-[10.5px] font-semibold uppercase tracking-[.1em] text-text-muted">
+        <span className="h-[6px] w-[6px] rounded-full [background-image:var(--grad-brand)]" aria-hidden="true" />
+        {message.who}
       </div>
+
+      <div className="body whitespace-pre-wrap break-words text-[14.5px] leading-[1.65] text-text-primary">{message.body}</div>
 
       {message.reading === undefined ? null : (
         <div
-          className="reading mt-[6px] inline-flex items-center gap-[5px] rounded-full border border-border-subtle bg-bg-raised px-[8px] py-[2px] text-[10.5px] text-text-muted"
+          className="reading mt-[8px] inline-flex items-center gap-[5px] rounded-full border border-border-subtle bg-bg-raised px-[8px] py-[2px] text-[10.5px] text-text-muted"
           title={strings.turns.readingTitle}
           data-reading={message.reading.label}
         >
@@ -83,7 +84,7 @@ export function UserMessage({ message }: UserMessageProps) {
       )}
 
       {message.attachments.length === 0 ? null : (
-        <div className="meta mt-[8px] flex flex-wrap items-center justify-end gap-[6px]">
+        <div className="meta mt-[10px] flex flex-wrap items-center gap-[6px]">
           {message.attachments.map((attachment, index) => (
             <Attachment key={`${attachment.kind}-${index}`} attachment={attachment} />
           ))}

@@ -94,6 +94,10 @@ const english = {
   },
 
   /** Sidebar - spec section 7.3. */
+  /** 0.19: the navigation rail down the window's left edge. */
+  rail: {
+    label: 'Navigation',
+  },
   sidebar: {
     newChat: 'New chat',
     newChatShortcut: '⌘N',

@@ -1,7 +1,7 @@
 ﻿import type { CSSProperties } from 'react';
 import { useEffect } from 'react';
 
-import { MainArea, RightPanel, Sidebar, StatusBar, Topbar } from './layout/Shell';
+import { MainArea, NavRail, RightPanel, Sidebar, StatusBar, Topbar } from './layout/Shell';
 import { useResponsiveShell } from './layout/useShellLayout';
 import { useKeys } from './hooks/useKeys';
 import { AddHost } from './modals/AddHost';
@@ -110,6 +110,8 @@ export function App() {
   return (
     <>
       <div id="app">
+        <NavRail />
+        <NavRail />
         <Topbar />
 
         <div id="workspace" className={workspaceClassName(layout)} style={shellStyle}>

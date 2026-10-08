@@ -40,6 +40,8 @@
   --statusbar-h: 28px;
   /* The gap between the floating panels and around them (0.18). */
   --gutter: 8px;
+  /* The navigation rail (0.19). */
+  --rail-w: 64px;
   --sidebar-min-w: 200px;
   --rightpanel-min-w: 320px;
   --main-min-w: 480px;
@@ -157,10 +159,11 @@
   .tab.active::after {
     content: '';
     position: absolute;
-    bottom: -1px;
-    left: 0;
-    right: 0;
+    bottom: 3px;
+    left: 14px;
+    right: 14px;
     height: 2px;
+    border-radius: 2px;
     background: var(--grad-brand);
     box-shadow: 0 0 10px var(--accent-glow);
   }
@@ -664,4 +667,42 @@
   font-size: 12.5px;
   line-height: 1.65;
   color: var(--text-secondary);
+}
+
+/* 0.19 transcript: a thought being written breathes in its own colour; the status line glows warm. */
+.tl-dot[data-state='thinking'] {
+  background: var(--purple);
+  animation: sdcThink 1.4s ease-in-out infinite;
+}
+
+@keyframes sdcThink {
+  0%, 100% { box-shadow: 0 0 0 3px var(--bg-base), 0 0 0 3px var(--purple-subtle); }
+  50% { box-shadow: 0 0 0 3px var(--bg-base), 0 0 0 7px var(--purple-subtle); }
+}
+
+.think-live {
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 28px);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 28px);
+}
+
+.now-label {
+  background: linear-gradient(90deg, var(--orange) 0%, var(--orange) 35%, #FFE1C7 50%, var(--orange) 65%, var(--orange) 100%);
+  background-size: 250% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: sdcShimmer 2s linear infinite;
+}
+
+[data-theme="light"] .now-label {
+  background-image: linear-gradient(90deg, var(--orange) 0%, var(--orange) 35%, #FDBA74 50%, var(--orange) 65%, var(--orange) 100%);
+}
+
+.tl-step:last-child::after {
+  content: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tl-dot[data-state='thinking'], .now-label { animation: none; }
+  .now-label { -webkit-text-fill-color: var(--orange); background: none; }
 }

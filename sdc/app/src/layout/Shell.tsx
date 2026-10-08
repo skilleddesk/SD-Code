@@ -25,6 +25,7 @@
 
 import './Shell.css';
 
+export { NavRail } from '../panels/rail/NavRail';
 export { Topbar } from '../panels/topbar';
 export { Sidebar } from '../panels/sidebar';
 export { MainArea } from '../panels/main';

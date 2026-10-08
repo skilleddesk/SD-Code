@@ -87,8 +87,9 @@ function toolKind(name: string, kind: 'read' | 'edit' | 'run'): StepKind {
  * The timeline as steps, in order, with times. `now` closes the step still going on; `endedAt` (the
  * turn's own end) closes the last one of a finished turn.
  */
-export function steps(items: readonly TimelineItem[], now: number, endedAt: string | undefined, running: boolean): Step[] {
-  const drawn = gather(items);
+export function steps(items: readonly TimelineItem[], now: number, endedAt: string | undefined, running: boolean, group = true): Step[] {
+  /* `group: false` (0.19) keeps every read as its own step - the transcript shows what each one saw. */
+  const drawn: Drawn[] = group ? gather(items) : items.map((item) => item);
   const out: Step[] = drawn.map((item): Step => {
     switch (item.kind) {
       case 'thinking':

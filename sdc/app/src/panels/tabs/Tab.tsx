@@ -34,11 +34,11 @@ export function Tab({ id, title, hostName, state, active, onOpen, onClose }: Tab
     <div
       className={
         'tab group relative flex min-w-[140px] max-w-[220px] shrink-0 cursor-pointer items-center gap-[8px] ' +
-        'whitespace-nowrap border-r border-border-subtle py-0 pl-[12px] pr-[10px] text-[12px] ' +
+        'my-[5px] whitespace-nowrap rounded-lg border py-0 pl-[12px] pr-[8px] text-[12px] ' +
         'transition-all duration-fast ease-ease ' +
         (active
-          ? 'active bg-bg-hover text-text-primary'
-          : 'text-text-secondary hover:bg-bg-hover hover:text-text-primary')
+          ? 'active border-border-default bg-bg-active text-text-primary shadow-sm'
+          : 'border-transparent text-text-secondary hover:bg-bg-hover hover:text-text-primary')
       }
       role="button"
       tabIndex={0}

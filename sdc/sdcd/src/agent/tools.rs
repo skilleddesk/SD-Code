@@ -51,6 +51,10 @@ pub struct Caps {
 }
 
 /// The tools a sub-agent (`task`) may use: they read, search and look - they never change anything.
+/// Tools whose result is shown on their card (0.19): what the model read, found or fetched. Commands
+/// already stream their own output, and edits carry a diff.
+const SEEN: &[&str] = &["read_file", "list_dir", "search", "grep", "glob", "git_diff", "web_fetch", "web_search", "process_output"];
+
 pub const READ_ONLY: &[&str] = &["read_file", "list_dir", "search", "grep", "glob", "git_diff", "web_fetch", "web_search", "view_image", "process_output"];
 
 /// Every tool, for a turn whose model cannot see and which is not a sub-agent.
@@ -573,7 +577,19 @@ impl Outcome {
 
 /// Runs one tool call, drawing its card as it goes.
 pub fn execute(context: &mut ToolContext, call: &ToolUse) -> Outcome {
+    let before = context.calls;
     let outcome = execute_call(context, call);
+
+    /* 0.19: what the model *saw* - the file it read, the matches, the page - goes on its card too, so the
+       person watches the same material the model reasons over. Only for tools that print nothing of their
+       own while they run, only the first lines, and never for an error the card already says. */
+    if SEEN.contains(&call.name.as_str()) && context.calls == before + 1 && !outcome.content.trim().is_empty() {
+        let call_id = format!("{}-{}", context.turn_id, context.calls);
+
+        for event in crate::engines::result_lines(&call_id, &outcome.content, outcome.is_error) {
+            context.sink.send(event);
+        }
+    }
 
     /* A local model's window holds less than one full answer (0.16.1): the cap follows the window. */
     if context.result_cap < RESULT_CAP && outcome.content.len() > context.result_cap {
@@ -2091,6 +2107,31 @@ mod tests {
         let outcome = execute(&mut context, &call("read_file", json!({ "path": "big.txt", "offset": 10, "limit": 3 })));
 
         assert_eq!(outcome.content, "   10\tline 10\n   11\tline 11\n   12\tline 12\n[lines 10-12 of 50]");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 0.19: a read's card shows what the model read - the file's first lines, numbered - after its end.
+    #[test]
+    fn a_read_shows_the_person_what_the_model_read() {
+        let (root, workspace) = folder("seen");
+        let recorder = Recorder::new();
+        let sink = recorder.sink();
+        let mut context = context(&workspace, &sink, Autonomy::Auto);
+
+        workspace.write("notes.txt", "first\nsecond\n").unwrap();
+        execute(&mut context, &call("read_file", json!({ "path": "notes.txt" })));
+
+        let shown: Vec<String> = recorder
+            .events()
+            .into_iter()
+            .filter_map(|event| match event {
+                EngineEvent::ToolOutput { text, .. } => Some(text),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(shown, vec!["    1\tfirst".to_string(), "    2\tsecond".to_string()]);
 
         let _ = std::fs::remove_dir_all(&root);
     }

@@ -56,10 +56,76 @@
  * and status bar have no surface of their own - they are the window's frame. */
 #app {
   display: grid;
+  /* 0.19: the navigation rail runs the full height of the window on the left; the bar, the workspace and
+     the status line stack beside it. */
+  grid-template-columns: var(--rail-w) minmax(0, 1fr);
   grid-template-rows: var(--topbar-h) 1fr var(--statusbar-h);
   height: 100vh;
   width: 100vw;
   background: var(--aurora), var(--bg-base);
+}
+
+#app > .navrail { grid-column: 1; grid-row: 1 / 4; }
+#app > .topbar,
+#app > .workspace,
+#app > .statusbar { grid-column: 2; }
+
+/* NAVIGATION RAIL (0.19) */
+.navrail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 0 12px;
+  min-height: 0;
+  overflow: hidden auto;
+  scrollbar-width: none;
+}
+
+.navrail .rail-btn {
+  position: relative;
+  border-radius: var(--r-lg);
+  color: var(--text-muted);
+}
+
+.navrail .rail-btn:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+/* The panel a button opens is showing: a lit tile and a bar on the rail's edge. */
+.navrail .rail-btn.bg-accent-subtle {
+  color: var(--accent);
+  background: var(--accent-subtle);
+}
+
+.navrail .rail-btn.bg-accent-subtle::before {
+  content: '';
+  position: absolute;
+  left: -12px;
+  top: 10px;
+  bottom: 10px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--grad-brand);
+}
+
+.navrail .rail-primary {
+  color: var(--text-on-accent);
+  background-image: var(--grad-brand);
+  box-shadow: 0 8px 20px -8px rgba(192, 38, 211, 0.65), inset 0 1px 0 rgba(255, 255, 255, 0.22);
+}
+
+.navrail .rail-primary:hover {
+  color: var(--text-on-accent);
+  filter: brightness(1.08);
+}
+
+.rail-sep {
+  width: 22px;
+  height: 1px;
+  margin: 6px 0;
+  background: var(--border-default);
 }
 
 /* WORKSPACE - spec section 7.2: 280px / 1fr / 400px. */
@@ -269,4 +335,8 @@
   .host-pill .host-label {
     display: none;
   }
+}
+@media (max-width: 640px) {
+  #app { --rail-w: 52px; }
+  .navrail .rail-btn { width: 36px !important; height: 36px !important; }
 }
