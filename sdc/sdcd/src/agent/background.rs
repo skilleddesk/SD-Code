@@ -300,8 +300,19 @@ fn strip_ansi(line: &str) -> String {
 mod tests {
     use super::*;
 
+    /// The registry and its limit are process-wide, and cargo runs tests in parallel: the limiter test
+    /// counts what is running, fills the rest, and expects the next start to be refused - a process the
+    /// other test starts in between took a slot it had counted as free, and the last fill failed. Every
+    /// test that starts a process holds this lock, so the count it reads stays true while it works.
+    static PROCESS_TESTS: Mutex<()> = Mutex::new(());
+
+    fn serial() -> std::sync::MutexGuard<'static, ()> {
+        PROCESS_TESTS.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     #[test]
     fn a_background_process_runs_prints_and_stops() {
+        let _serial = serial();
         let root = std::env::temp_dir();
         let line = if cfg!(windows) { "echo ready& ping -n 30 127.0.0.1 >nul" } else { "echo ready; sleep 30" };
         let id = start("s-bg", root.to_str().unwrap(), None, line).unwrap();
@@ -338,6 +349,7 @@ mod tests {
     /// process-wide and another test's background process may still be alive alongside this one.
     #[test]
     fn starting_past_max_running_is_refused_until_one_stops() {
+        let _serial = serial();
         let root = std::env::temp_dir();
         let root = root.to_str().unwrap();
         let line = if cfg!(windows) { "ping -n 30 127.0.0.1 >nul" } else { "sleep 30" };

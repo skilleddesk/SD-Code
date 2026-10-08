@@ -15,6 +15,12 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [0.18.1] — the 0.18.0 build, with a steady test suite
+
+0.18.0's release build stopped at `cargo test` on three systems: two background-process tests shared the process-wide
+limit of 12 running processes and raced when cargo ran them in parallel. They now take turns (a test-only lock), and
+the CI workflow file parses again (three step names had an unquoted `: `). The app itself is 0.18.0's.
+
 ## [0.18.0] — Aurora Glass: a new look, a live work timeline, a sharper agent
 
 **The new logo, everywhere.** The SDC hexagon (background removed) is the app icon on Windows, macOS and Linux
