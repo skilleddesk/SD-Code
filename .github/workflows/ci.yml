@@ -85,7 +85,7 @@ jobs:
         working-directory: sdc
         run: pnpm install --frozen-lockfile
 
-      - name: Protocol: schema, types and daemon dispatch agree
+      - name: 'Protocol: schema, types and daemon dispatch agree'
         working-directory: sdc
         run: node protocol/check.mjs
 
@@ -125,13 +125,13 @@ jobs:
         working-directory: sdc
         run: pnpm install --frozen-lockfile
 
-      - name: Relay: typecheck and tests (on workerd)
+      - name: 'Relay: typecheck and tests (on workerd)'
         working-directory: sdc/cloud
         run: |
           pnpm typecheck
           pnpm test
 
-      - name: Browser app: typecheck, vectors, build
+      - name: 'Browser app: typecheck, vectors, build'
         working-directory: sdc/web
         run: |
           pnpm typecheck
