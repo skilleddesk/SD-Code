@@ -88,7 +88,7 @@ function ConsoleRow({ entry }: { entry: ConsoleEntry }) {
       </div>
 
       {entry.count > 1 ? (
-        <div className="console-count self-start rounded-full bg-bg-base px-[6px] py-[1px] font-mono text-[9.5px] font-semibold text-text-muted">
+        <div className="console-count self-start rounded-full bg-bg-active px-[6px] py-[1px] font-mono text-[9.5px] font-semibold text-text-muted">
           {entry.count}
         </div>
       ) : null}

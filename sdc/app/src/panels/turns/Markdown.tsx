@@ -14,7 +14,7 @@ export function Markdown({ text }: { text: string }) {
   const chunks = useMemo(() => paragraphs(text), [text]);
 
   return (
-    <div className="markdown flex flex-col gap-[8px] text-[13px] leading-[1.65] text-text-primary">
+    <div className="markdown flex flex-col gap-[9px] text-[13.5px] leading-[1.7] text-text-primary">
       {chunks.map((chunk, index) => (
         <Chunk key={index} source={chunk} />
       ))}
@@ -44,7 +44,7 @@ function BlockView({ block }: { block: Block }) {
     case 'code':
       return <CodeBlock lang={block.lang} text={block.text} />;
     case 'heading': {
-      const size = block.level === 1 ? 'text-[15px]' : block.level === 2 ? 'text-[14px]' : 'text-[13px]';
+      const size = block.level === 1 ? 'text-[17px] tracking-[-0.02em]' : block.level === 2 ? 'text-[15px] tracking-[-0.015em]' : 'text-[13.5px]';
 
       return <div className={`mt-[4px] font-semibold text-text-primary ${size}`} role="heading" aria-level={block.level + 2}>{inlines(block.children)}</div>;
     }
@@ -79,7 +79,7 @@ function inlines(nodes: Inline[]): ReactNode {
 function inline(node: Inline): ReactNode {
   switch (node.kind) {
     case 'code':
-      return <code className="rounded-xs border border-border-subtle bg-bg-input px-[4px] py-[1px] font-mono text-[11.5px] text-text-primary">{node.text}</code>;
+      return <code className="rounded-[5px] border border-border-subtle bg-bg-active px-[5px] py-[1px] font-mono text-[12px] text-accent-hover">{node.text}</code>;
     case 'strong':
       return <strong className="font-semibold">{inlines(node.children)}</strong>;
     case 'em':
@@ -89,7 +89,7 @@ function inline(node: Inline): ReactNode {
         <a
           href={node.href}
           rel="noreferrer noopener"
-          className="text-accent underline decoration-accent/40 underline-offset-2 hover:decoration-accent"
+          className="text-accent underline decoration-accent-glow underline-offset-2 hover:decoration-accent"
           title={node.href}
           onClick={(event) => {
             /* The window is not a browser: a link opens in the person's own. */
@@ -119,7 +119,7 @@ function CodeBlock({ lang, text }: { lang: string; text: string }) {
   };
 
   return (
-    <div className="code-block overflow-hidden rounded-md border border-border-subtle bg-bg-input">
+    <div className="code-block overflow-hidden rounded-lg border border-border-subtle bg-bg-input shadow-sm">
       <div className="flex items-center gap-[8px] border-b border-border-subtle px-[10px] py-[4px] font-mono text-[10px] text-text-muted">
         <span>{lang === '' ? strings.turns.answer.code : lang}</span>
         <button
@@ -132,7 +132,7 @@ function CodeBlock({ lang, text }: { lang: string; text: string }) {
           {copied ? strings.turns.answer.copied : strings.turns.answer.copy}
         </button>
       </div>
-      <pre className="overflow-x-auto px-[10px] py-[8px] font-mono text-[11.5px] leading-[1.6] text-text-primary">
+      <pre className="overflow-x-auto px-[14px] py-[10px] font-mono text-[12px] leading-[1.65] text-text-primary">
         <code>{text}</code>
       </pre>
     </div>

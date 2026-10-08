@@ -480,9 +480,9 @@ export function PromptArea({ sessionId }: PromptAreaProps = {}) {
   const typing = running !== null;
 
   return (
-    <div className="prompt-area relative shrink-0 bg-bg-base px-[24px] pb-[16px] pt-[8px] max-600:px-[14px]">
-      {/* The conversation fades into the composer instead of ending on a hard edge. */}
-      <div className="pointer-events-none absolute inset-x-0 -top-[24px] h-[24px] bg-gradient-to-t from-bg-base to-transparent" aria-hidden="true" />
+    <div className="prompt-area relative shrink-0 px-[24px] pb-[16px] pt-[6px] max-600:px-[14px]">
+      {/* The conversation fades into the composer instead of ending on a hard edge: a mask on the scroll
+          area (.pane-scroll in globals.css), so the glass panel behind both shows through. */}
       <div className="prompt-inner mx-auto max-w-[780px]">
         {cardSession === null ? null : <IntentCard sessionId={cardSession} />}
         {cardSession === null ? null : <QuestionCard sessionId={cardSession} />}
@@ -512,10 +512,10 @@ export function PromptArea({ sessionId }: PromptAreaProps = {}) {
         )}
         <div
           className={
-            'prompt-box rounded-[18px] border bg-bg-raised shadow-[0_8px_28px_-12px_rgba(0,0,0,.45)] transition-[border-color,box-shadow] duration-base ease-ease ' +
+            'prompt-box composer-glass rounded-[20px] border transition-[border-color,box-shadow] duration-base ease-ease ' +
             (typing
-              ? 'border-accent/40 shadow-[0_0_0_1px_var(--accent-glow),0_8px_28px_-12px_rgba(0,0,0,.45)]'
-              : 'border-border-default hover:border-border-strong focus-within:!border-accent/50 focus-within:shadow-[0_0_0_4px_color-mix(in_srgb,var(--border-focus)_14%,transparent),0_8px_28px_-12px_rgba(0,0,0,.45)]')
+              ? 'border-accent/40'
+              : 'border-border-default hover:border-border-strong')
           }
         >
           {/* No ring of its own: the box around it is the focus indicator, and the textarea's quiet
@@ -625,7 +625,7 @@ export function PromptArea({ sessionId }: PromptAreaProps = {}) {
                 <>
                   <button
                     type="button"
-                    className="send-btn grid h-[34px] w-[34px] place-items-center rounded-full bg-accent-fill text-text-on-accent transition-all duration-fast ease-ease hover:bg-accent-hover active:scale-[.94]"
+                    className="send-btn brand-fill grid h-[34px] w-[34px] place-items-center rounded-full bg-accent-fill text-text-on-accent active:scale-[.94]"
                     title={strings.prompt.steerSend}
                     aria-label={strings.prompt.steerSend}
                     onClick={send}
@@ -645,7 +645,7 @@ export function PromptArea({ sessionId }: PromptAreaProps = {}) {
               ) : (
                 <button
                   type="button"
-                  className="send-btn grid h-[34px] w-[34px] place-items-center rounded-full bg-accent-fill text-text-on-accent shadow-[0_2px_8px_-2px_var(--accent-glow)] transition-all duration-fast ease-ease hover:bg-accent-hover hover:shadow-[0_3px_12px_var(--accent-glow)] active:scale-[.94]"
+                  className="send-btn brand-fill grid h-[34px] w-[34px] place-items-center rounded-full bg-accent-fill text-text-on-accent active:scale-[.94]"
                   title={strings.prompt.send}
                   aria-label={strings.prompt.send}
                   onClick={send}

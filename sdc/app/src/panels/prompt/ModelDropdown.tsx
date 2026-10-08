@@ -310,7 +310,7 @@ function EffortRow() {
   return (
     <div className="mdd-effort mx-[4px] mt-[2px] flex items-center gap-[6px] px-[6px]" title={words.hint}>
       <span className="shrink-0 text-[11px] text-text-muted">{words.label}</span>
-      <div className="flex min-w-0 flex-1 rounded-md border border-border-subtle bg-bg-base p-[2px]" role="radiogroup" aria-label={words.label}>
+      <div className="flex min-w-0 flex-1 rounded-md border border-border-subtle bg-bg-input p-[2px]" role="radiogroup" aria-label={words.label}>
         {EFFORTS.map((level) => (
           <button
             key={level}

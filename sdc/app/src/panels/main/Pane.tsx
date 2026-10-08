@@ -1,4 +1,4 @@
-import { ArrowDown, MessageSquare } from 'lucide-react';
+import { ArrowDown } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
 import { strings } from '../../strings';
@@ -8,6 +8,7 @@ import { PromptArea } from '../prompt';
 import { collapsedSummary, toTurns } from '../turns/live';
 import { TurnStream } from '../turns';
 import { LiveBar } from '../turns/LiveBar';
+import { BrandLogo } from '../ui/BrandLogo';
 import { HostIcon } from '../ui/HostIcon';
 
 /**
@@ -170,15 +171,16 @@ export function Pane({ session, host, showHeader }: PaneProps) {
           {streamTurns.length === 0 ? (
             /* A fresh session, and the app says so instead of drawing someone else's conversation. */
             <div
-              className="pane-empty grid place-items-center py-[56px] text-center"
+              className="pane-empty grid min-h-[55vh] place-items-center py-[56px] text-center"
               id="paneEmpty"
             >
               <div>
-                <span className="mx-auto mb-[12px] grid h-[38px] w-[38px] place-items-center rounded-lg border border-border-subtle bg-bg-raised text-text-muted">
-                  <MessageSquare size={17} aria-hidden="true" />
+                <span className="relative mx-auto mb-[14px] grid w-fit place-items-center">
+                  <span className="absolute h-[90px] w-[90px] rounded-full opacity-50 blur-[30px] [background-image:var(--grad-brand)]" aria-hidden="true" />
+                  <BrandLogo size={56} glow className="relative" />
                 </span>
-                <p className="text-[13.5px] font-medium text-text-primary">{strings.main.emptyPane.title}</p>
-                <p className="mx-auto mt-[6px] max-w-[360px] text-[12.5px] text-text-secondary">
+                <p className="text-[19px] font-semibold tracking-[-0.02em] text-text-primary">{strings.main.emptyPane.title}</p>
+                <p className="mx-auto mt-[8px] max-w-[400px] text-[13px] leading-[1.6] text-text-secondary">
                   {strings.main.emptyPane.body}
                 </p>
               </div>
@@ -189,7 +191,9 @@ export function Pane({ session, host, showHeader }: PaneProps) {
         </div>
       </div>
 
-      {liveTurn?.live !== undefined && liveTurn.stats !== undefined ? (
+      {/* 0.18: the timeline's own bottom line says what is happening now; the sticky bar is for when the
+          reader has scrolled away from it. */}
+      {behind && liveTurn?.live !== undefined && liveTurn.stats !== undefined ? (
         <LiveBar live={liveTurn.live} stats={liveTurn.stats} model={liveTurn.meta.model} behind={behind} onJump={jumpToLatest} />
       ) : null}
 

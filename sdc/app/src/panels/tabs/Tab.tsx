@@ -37,7 +37,7 @@ export function Tab({ id, title, hostName, state, active, onOpen, onClose }: Tab
         'whitespace-nowrap border-r border-border-subtle py-0 pl-[12px] pr-[10px] text-[12px] ' +
         'transition-all duration-fast ease-ease ' +
         (active
-          ? 'active bg-bg-base text-text-primary'
+          ? 'active bg-bg-hover text-text-primary'
           : 'text-text-secondary hover:bg-bg-hover hover:text-text-primary')
       }
       role="button"

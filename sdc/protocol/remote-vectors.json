@@ -1,0 +1,143 @@
+{
+  "canonical": [
+    {
+      "canonical": "{\"a\":[true,null,\"x\"],\"b\":1,\"c\":{\"y\":3,\"z\":2}}",
+      "input": {
+        "a": [
+          true,
+          null,
+          "x"
+        ],
+        "b": 1,
+        "c": {
+          "y": 3,
+          "z": 2
+        }
+      },
+      "name": "sorted keys, no whitespace",
+      "sha256": "314f2eef2e2c337360016312c9b39b0a86b99feebcc5bda2f976e5dd46e0d324"
+    },
+    {
+      "canonical": "{\"a\":4,\"\":3,\"😀\":2,\"דּ\":1}",
+      "input": {
+        "a": 4,
+        "": 3,
+        "דּ": 1,
+        "😀": 2
+      },
+      "name": "utf-16 key order",
+      "sha256": "8f81d2f3ad91fd345d683d20507d3b0d40c7a48acf5735cce774acbd5adc98ed"
+    },
+    {
+      "canonical": "\"a\\\"b\\\\c\\n\\t\\b\\f\\r\\u001fé \"",
+      "input": "a\"b\\c\n\t\b\f\r\u001fé ",
+      "name": "escapes",
+      "sha256": "848d50a1f97b758a07e759f618b41366bb0fbd46a496015a032efb3722663d69"
+    },
+    {
+      "canonical": "[0,-5,9007199254740991,-9007199254740991]",
+      "input": [
+        0,
+        -5,
+        9007199254740991,
+        -9007199254740991
+      ],
+      "name": "integers",
+      "sha256": "ad95c9042b898e0507fbe89cc1dd680416f4edbd24824712b57ac48ffe24e727"
+    },
+    {
+      "canonical": "{\"a\":{},\"b\":[],\"c\":\"\"}",
+      "input": {
+        "a": {},
+        "b": [],
+        "c": ""
+      },
+      "name": "empty containers",
+      "sha256": "e052004170cc85d084722ffe760c499548014bfdbdf5275548b688255770dfc2"
+    },
+    {
+      "canonical": "[[3,2,1],{\"k\":[{\"a\":2,\"b\":1}]}]",
+      "input": [
+        [
+          3,
+          2,
+          1
+        ],
+        {
+          "k": [
+            {
+              "a": 2,
+              "b": 1
+            }
+          ]
+        }
+      ],
+      "name": "nested arrays keep order",
+      "sha256": "3c07e1384ccdda2ccc411c68ba0c783559316a8926f8643dcd285243069e5b84"
+    },
+    {
+      "canonical": "{\"emoji\":\"🚀\",\"reason_localized\":\"ডাটাবেস migration চালানো হবে\"}",
+      "input": {
+        "emoji": "🚀",
+        "reason_localized": "ডাটাবেস migration চালানো হবে"
+      },
+      "name": "non-latin text",
+      "sha256": "3be53bdbb2294fbb16f60ca90a4e660c6837512c78c9ddb7d38101eb7623366e"
+    }
+  ],
+  "derived": {
+    "daemon_id": "a82pnVjlliuR1w-cXSSOBw",
+    "decision_allow_message_hex": "7364632d616e7977686572652f76312f6465636973696f6e0909090909090909090909090909090909090909090909090909090909090909616c6c6f775f6f6e6365",
+    "decision_deny_message_hex": "7364632d616e7977686572652f76312f6465636973696f6e090909090909090909090909090909090909090909090909090909090909090964656e79",
+    "decision_hash_hex": "0909090909090909090909090909090909090909090909090909090909090909",
+    "device_public_hex": "04000306090c0f1215181b1e2124272a2d303336393c3f4245484b4e5154575a5d606366696c6f7275787b7e8184878a8d909396999c9fa2a5a8abaeb1b4b7babd",
+    "fingerprint": "6bcd-a99d-58e5-962b-91d7",
+    "hub_auth_message": "sdc-anywhere/v1/hub-auth|NONCE|DAEMONID",
+    "identity_public_hex": "04000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+    "pair_challenge_hex": "4f0acd1508556b1ff5efa48e362965376086d3628bc8f7a37ac623c8f2dc74c9",
+    "pair_nonce": "AAAAAAAAAAAAAAAAAAAAAA",
+    "sas_code": "010 459",
+    "sas_token": "the-token",
+    "unlock_challenge_operate_hex": "dcb15ec4922b6e0e9793b33e32484ce139f43f22bb842ce99d1cb768cb45b656",
+    "unlock_challenge_view_hex": "f69222008a610e0713fcdfafc63f3ae256e2f20680e7cea8e7dbe5f2736bf5e2",
+    "unlock_nonce_hex": "0707070707070707070707070707070707070707070707070707070707070707"
+  },
+  "envelope": {
+    "action_hash_b64u": "RIF4hPU1pydvhUMrzpyYGrZLXQJMWbZggh4pMJcRmKQ",
+    "action_hash_hex": "44817884f535a7276f85432bce9c981ab64b5d024c59b660821e2930971198a4",
+    "canonical": "{\"action\":\"run\",\"args\":[\"pnpm\",\"prisma\",\"migrate\",\"deploy\"],\"blast_radius\":{\"db_tables\":2,\"files\":0,\"notes\":[],\"services\":[]},\"cwd\":\"/var/www/shop\",\"est_cost_micro_usd\":40000,\"expires_at\":1900000000000,\"file_hashes\":{\"prisma/schema.prisma\":\"blake3:00\"},\"host\":\"client-vps-1\",\"nonce\":\"AAAAAAAAAAAAAAAAAAAAAA\",\"reason\":\"The checkout page needs the new column.\",\"request_id\":\"apr_perm-turn-3-1\",\"risk\":\"DANGEROUS\",\"rollback\":\"chk_812\",\"session_id\":\"s1\",\"target\":\"pnpm prisma migrate deploy\",\"title\":\"Run a migration\",\"turn_id\":\"turn-3\",\"v\":1}",
+    "input": {
+      "action": "run",
+      "args": [
+        "pnpm",
+        "prisma",
+        "migrate",
+        "deploy"
+      ],
+      "blast_radius": {
+        "db_tables": 2,
+        "files": 0,
+        "notes": [],
+        "services": []
+      },
+      "cwd": "/var/www/shop",
+      "est_cost_micro_usd": 40000,
+      "expires_at": 1900000000000,
+      "file_hashes": {
+        "prisma/schema.prisma": "blake3:00"
+      },
+      "host": "client-vps-1",
+      "nonce": "AAAAAAAAAAAAAAAAAAAAAA",
+      "reason": "The checkout page needs the new column.",
+      "request_id": "apr_perm-turn-3-1",
+      "risk": "DANGEROUS",
+      "rollback": "chk_812",
+      "session_id": "s1",
+      "target": "pnpm prisma migrate deploy",
+      "title": "Run a migration",
+      "turn_id": "turn-3",
+      "v": 1
+    }
+  },
+  "note": "Generated by sdcd (UPDATE_VECTORS=1 cargo test vectors). The TypeScript side must reproduce every value."
+}

@@ -35,7 +35,7 @@ const CHIP_BASE =
 const CHIP = CHIP_BASE + ' border-border-subtle bg-bg-raised text-text-secondary';
 
 /** `.chip.accent` - the `@src/auth.ts` reference: an accent tint with an accent border. */
-const CHIP_ACCENT = CHIP_BASE + ' accent border-[rgba(91,156,255,.3)] bg-accent-subtle text-accent';
+const CHIP_ACCENT = CHIP_BASE + ' accent border-accent/30 bg-accent-subtle text-accent';
 
 function Attachment({ attachment }: { attachment: AttachmentData }) {
   if (attachment.kind === 'thumb') {
@@ -61,18 +61,19 @@ function Attachment({ attachment }: { attachment: AttachmentData }) {
 }
 
 export function UserMessage({ message }: UserMessageProps) {
+  /* 0.18: the person's words in a bubble on the right - the one thing on screen they wrote - and the
+     agent's work on the left under it, the way every conversation reads. */
   return (
-    <div className="user-msg mb-[14px]">
-      <div className="who mb-[8px] flex items-center gap-[10px] text-[10.5px] font-semibold uppercase tracking-[.06em] text-text-muted">
-        {message.who}
-        <span className="h-px flex-1 bg-border-subtle" aria-hidden="true" />
-      </div>
+    <div className="user-msg mb-[16px] flex flex-col items-end">
+      <div className="who sr-only">{message.who}</div>
 
-      <div className="body whitespace-pre-wrap break-words text-[14.5px] leading-[1.6] text-text-primary">{message.body}</div>
+      <div className="body max-w-[86%] whitespace-pre-wrap break-words rounded-[18px] rounded-br-[6px] border border-accent/20 px-[15px] py-[10px] text-[14px] leading-[1.6] text-text-primary shadow-sm [background-image:var(--grad-brand-soft)]">
+        {message.body}
+      </div>
 
       {message.reading === undefined ? null : (
         <div
-          className="reading mt-[7px] inline-flex items-center gap-[5px] rounded-full border border-border-subtle bg-bg-raised px-[8px] py-[2px] text-[10.5px] text-text-muted"
+          className="reading mt-[6px] inline-flex items-center gap-[5px] rounded-full border border-border-subtle bg-bg-raised px-[8px] py-[2px] text-[10.5px] text-text-muted"
           title={strings.turns.readingTitle}
           data-reading={message.reading.label}
         >
@@ -82,7 +83,7 @@ export function UserMessage({ message }: UserMessageProps) {
       )}
 
       {message.attachments.length === 0 ? null : (
-        <div className="meta mt-[10px] flex flex-wrap items-center gap-[6px]">
+        <div className="meta mt-[8px] flex flex-wrap items-center justify-end gap-[6px]">
           {message.attachments.map((attachment, index) => (
             <Attachment key={`${attachment.kind}-${index}`} attachment={attachment} />
           ))}

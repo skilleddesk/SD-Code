@@ -11,6 +11,7 @@ import { anyProviderNeedsAuth, useProviderStore } from '../../store/providers';
 import { toast } from '../../store/toast';
 import { HostPill } from './HostPill';
 import { IconButton } from './IconButton';
+import { BrandLogo } from '../ui/BrandLogo';
 import { ModeSwitch } from './ModeSwitch';
 /**
  * The topbar region - spec section 7.1, eleven elements left to right.
@@ -60,14 +61,14 @@ export function Topbar() {
       <div className="brand flex items-center gap-[8px] pr-[4px] shrink-0 font-semibold text-[13px]">
         <button
           type="button"
-          className="brand-mark grid place-items-center w-[24px] h-[24px] rounded-[6px] text-on-accent text-[12px] font-bold [background-image:var(--grad-brand)] shadow-[0_0_0_1px_rgba(255,255,255,.08),0_0_16px_rgba(91,156,255,.3)]"
+          className="brand-mark grid h-[28px] w-[28px] place-items-center rounded-md transition-transform duration-base ease-spring hover:scale-[1.06]"
           title={strings.topbar.brandTitle}
           aria-label={strings.topbar.brandTitle}
           onClick={() => openSettings('about')}
         >
-          {strings.topbar.brandInitial}
+          <BrandLogo size={26} glow />
         </button>
-        <span className="brand-text">{strings.topbar.brandText}</span>
+        <span className="brand-text text-[14px] font-semibold tracking-[-0.02em] text-text-primary">{strings.topbar.brandText}</span>
       </div>
 
       <HostPill />
@@ -87,7 +88,7 @@ export function Topbar() {
           <Search size={12} aria-hidden="true" />
           <span className="max-1100:hidden">{strings.topbar.palette.label}</span>
         </span>
-        <span className="kbd inline-flex items-center px-[5px] py-[1px] rounded-[3px] bg-bg-base border border-border-default border-b-2 font-mono text-[9.5px] font-medium leading-none text-text-secondary max-1100:hidden">
+        <span className="kbd inline-flex items-center px-[5px] py-[1px] rounded-[4px] bg-bg-active border border-border-default border-b-2 font-mono text-[9.5px] font-medium leading-none text-text-secondary max-1100:hidden">
           {strings.topbar.palette.shortcut}
         </span>
       </button>

@@ -36,8 +36,10 @@
 :root {
   --sidebar-w: 280px;
   --rightpanel-w: 400px;
-  --topbar-h: 46px;
-  --statusbar-h: 30px;
+  --topbar-h: 48px;
+  --statusbar-h: 28px;
+  /* The gap between the floating panels and around them (0.18). */
+  --gutter: 8px;
   --sidebar-min-w: 200px;
   --rightpanel-min-w: 320px;
   --main-min-w: 480px;
@@ -142,13 +144,13 @@
   .session-item.active::before {
     content: '';
     position: absolute;
-    left: 14px;
+    left: 0;
     top: 7px;
     bottom: 7px;
-    width: 2px;
+    width: 3px;
     border-radius: 2px;
-    background: var(--accent);
-    box-shadow: 0 0 6px var(--accent-glow);
+    background: var(--grad-brand);
+    box-shadow: 0 0 8px var(--accent-glow);
   }
 
   /* Active tab (spec section 7.4): the same bar along the bottom edge of the tab. */
@@ -159,8 +161,8 @@
     left: 0;
     right: 0;
     height: 2px;
-    background: var(--accent);
-    box-shadow: 0 0 8px var(--accent-glow);
+    background: var(--grad-brand);
+    box-shadow: 0 0 10px var(--accent-glow);
   }
 
   /* ---------------------------------------------------------------------------------------------
@@ -182,8 +184,9 @@
     align-items: flex-start;
     justify-content: center;
     padding-top: 10vh;
-    background: rgba(3, 4, 8, 0.72);
-    backdrop-filter: blur(12px);
+    background: rgba(6, 4, 14, 0.62);
+    -webkit-backdrop-filter: blur(10px) saturate(1.2);
+    backdrop-filter: blur(10px) saturate(1.2);
     animation: modalFade 150ms var(--ease-out);
   }
 
@@ -201,8 +204,10 @@
     overflow: hidden auto;
     background: var(--bg-overlay);
     border: 1px solid var(--border-default);
-    border-radius: var(--r-lg);
-    box-shadow: var(--shadow-xl);
+    border-radius: var(--r-xl);
+    box-shadow: var(--shadow-xl), inset 0 1px 0 var(--edge-light);
+    -webkit-backdrop-filter: blur(28px) saturate(1.5);
+    backdrop-filter: blur(28px) saturate(1.5);
     animation: modalDrop 220ms var(--spring);
   }
 
@@ -238,13 +243,13 @@
     width: 16px;
     height: 16px;
     border-radius: var(--r-full);
-    background: var(--bg-overlay);
+    background: var(--text-on-accent);
     box-shadow: var(--shadow-sm);
     transition: transform var(--fast) var(--ease);
   }
 
   .toggle.on {
-    background: var(--accent);
+    background: var(--grad-brand);
   }
 
   .toggle.on::after {
@@ -331,8 +336,11 @@
        --letter-spacing in tokens.css for code that needs them outside these two elements. */
     font-size: 13px;
     line-height: 1.5;
-    letter-spacing: -0.005em;
+    letter-spacing: var(--letter-spacing);
     -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    font-feature-settings: 'ss01' on, 'cv11' on;
   }
 
   /* #root fills the window so every panel can size itself against a known height. */
@@ -476,4 +484,184 @@
 @media (prefers-reduced-motion: reduce) {
   .shimmer-text, .ribbon-edge, .node-live, .step-flash { animation: none; }
   .shimmer-text { -webkit-text-fill-color: currentColor; background: none; }
+}
+
+/* ---------------------------------------------------------------------------------------------------
+ * 0.18 "Aurora Glass" - the pieces a utility class cannot say.
+ * ------------------------------------------------------------------------------------------------ */
+
+[data-theme="light"] .modal-bd {
+  background: rgba(40, 30, 80, 0.22);
+}
+
+/* Every popover and menu (they all open with one of these two animations) is frosted glass. */
+.animate-drop-up,
+.animate-drop-down,
+.animate-toast-in {
+  -webkit-backdrop-filter: blur(24px) saturate(1.5);
+  backdrop-filter: blur(24px) saturate(1.5);
+}
+
+/* The brand fill: the logo's violet -> fuchsia -> coral, for the one or two primary actions per view. */
+.brand-fill {
+  background-image: var(--grad-brand);
+  color: var(--text-on-accent);
+  box-shadow: 0 6px 20px -8px rgba(192, 38, 211, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.22);
+  transition: filter var(--fast) var(--ease), box-shadow var(--base) var(--ease), transform var(--fast) var(--ease);
+}
+
+.brand-fill:hover {
+  filter: brightness(1.08) saturate(1.05);
+  box-shadow: 0 10px 28px -8px rgba(192, 38, 211, 0.7), inset 0 1px 0 rgba(255, 255, 255, 0.28);
+}
+
+.brand-fill:active {
+  transform: translateY(0.5px) scale(0.99);
+}
+
+.brand-fill:disabled {
+  filter: grayscale(0.6) brightness(0.8);
+  box-shadow: none;
+  cursor: not-allowed;
+}
+
+/* Text painted with the brand light. */
+.brand-text-fill {
+  background-image: var(--grad-brand-text);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* The logo, wherever it stands: a soft halo of its own colours. */
+.logo-glow {
+  filter: drop-shadow(0 0 10px rgba(192, 38, 211, 0.35)) drop-shadow(0 0 2px rgba(124, 58, 237, 0.4));
+}
+
+/* The composer: glass, and a brand-lit ring while it has focus. */
+.composer-glass {
+  background: var(--bg-glass);
+  -webkit-backdrop-filter: blur(20px) saturate(1.4);
+  backdrop-filter: blur(20px) saturate(1.4);
+  box-shadow: var(--shadow-lg), inset 0 1px 0 var(--edge-light);
+}
+
+.composer-glass:focus-within {
+  border-color: transparent;
+  box-shadow:
+    0 0 0 1px var(--accent-glow),
+    0 0 0 4px var(--accent-subtle),
+    0 18px 50px -14px rgba(124, 58, 237, 0.45),
+    inset 0 1px 0 var(--edge-light);
+}
+
+/* ---- The work stream (0.18): the timeline of what the agent does, step by step. ---- */
+
+/* The rail: one hairline the step dots sit on, fading out at its end. */
+.tl-rail {
+  position: relative;
+}
+
+.tl-rail::before {
+  content: '';
+  position: absolute;
+  left: 7px;
+  top: 12px;
+  bottom: 14px;
+  width: 1px;
+  background: linear-gradient(to bottom, var(--border-default), var(--border-subtle) 85%, transparent);
+}
+
+/* A step's dot. The colour says how it went; while it runs it breathes. */
+.tl-dot {
+  position: absolute;
+  left: -19px;
+  top: 7px;
+  width: 9px;
+  height: 9px;
+  border-radius: 9999px;
+  background: var(--state-idle);
+  box-shadow: 0 0 0 3px var(--bg-base);
+}
+
+.tl-dot[data-state='done'] { background: var(--state-success); }
+.tl-dot[data-state='failed'] { background: var(--state-error); }
+.tl-dot[data-state='think'] { background: var(--text-faint); }
+.tl-dot[data-state='say'] { background: var(--text-secondary); }
+.tl-dot[data-state='running'] {
+  background: var(--accent);
+  animation: sdcNode 1.6s ease-out infinite;
+}
+
+/* The IN / OUT box under a command or a write: label column, then mono content. */
+.io-box {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-md);
+  background: var(--bg-input);
+  overflow: hidden;
+}
+
+.io-row + .io-row {
+  border-top: 1px solid var(--border-subtle);
+}
+
+/* A long OUT folds to its first lines, fading at the bottom edge until it is opened. */
+.io-fade {
+  -webkit-mask-image: linear-gradient(to bottom, #000 55%, transparent);
+  mask-image: linear-gradient(to bottom, #000 55%, transparent);
+}
+
+.io-fade-top {
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 45%);
+  mask-image: linear-gradient(to bottom, transparent, #000 45%);
+}
+
+/* The spinner glyph of a working turn: a star that turns and changes shape as it goes. */
+.sdc-spark {
+  display: inline-grid;
+  place-items: center;
+  width: 14px;
+  color: var(--orange);
+  animation: sdcSpark 2.4s linear infinite;
+}
+
+@keyframes sdcSpark {
+  0% { transform: rotate(0deg) scale(1); color: var(--orange); }
+  33% { color: var(--purple); }
+  50% { transform: rotate(180deg) scale(0.86); }
+  66% { color: var(--accent); }
+  100% { transform: rotate(360deg) scale(1); color: var(--orange); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tl-dot[data-state='running'], .sdc-spark { animation: none; }
+}
+
+/* The chat column fades out at its two edges instead of ending on a hard line. */
+.pane-scroll {
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 14px, #000 calc(100% - 22px), transparent 100%);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 14px, #000 calc(100% - 22px), transparent 100%);
+}
+
+/* Token colours with an opacity modifier (`border-accent/30`). The tokens are CSS variables, which
+   Tailwind 3 cannot fade, so it never generated these classes and the borders fell back to a light
+   grey. They are written here once: a plain fallback first, the exact mix where the engine has
+   color-mix(). */
+.border-accent\/20 { border-color: var(--accent-subtle); border-color: color-mix(in srgb, var(--accent) 20%, transparent); }
+.border-accent\/25 { border-color: var(--accent-subtle); border-color: color-mix(in srgb, var(--accent) 25%, transparent); }
+.border-accent\/30 { border-color: var(--accent-glow); border-color: color-mix(in srgb, var(--accent) 30%, transparent); }
+.border-accent\/40 { border-color: var(--accent-glow); border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
+.border-purple\/40 { border-color: var(--purple-subtle); border-color: color-mix(in srgb, var(--purple) 40%, transparent); }
+.border-state-error\/40 { border-color: var(--red-subtle); border-color: color-mix(in srgb, var(--state-error) 40%, transparent); }
+.border-state-error\/60 { border-color: var(--state-error); border-color: color-mix(in srgb, var(--state-error) 60%, transparent); }
+.border-state-warning\/40 { border-color: var(--orange-subtle); border-color: color-mix(in srgb, var(--state-waiting) 40%, transparent); }
+.border-state-success\/40 { border-color: var(--green-subtle); border-color: color-mix(in srgb, var(--state-success) 40%, transparent); }
+.bg-bg-raised\/90 { background-color: var(--bg-overlay); }
+
+/* An opened thought: the reasoning as Markdown, quieter than the answer. */
+.thought-md .markdown {
+  gap: 6px;
+  font-size: 12.5px;
+  line-height: 1.65;
+  color: var(--text-secondary);
 }

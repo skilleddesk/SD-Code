@@ -29,6 +29,16 @@ coverage/
 .env.*
 !.env.example
 
+# SDC Anywhere (Phase 0): Worker local secrets and loose key files
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
+.wrangler/
+*api*.txt
+*API*.txt
+*Api*.txt
+pass.txt
+
 # Keys and certificates
 *.key
 *.pem

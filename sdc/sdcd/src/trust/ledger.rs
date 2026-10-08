@@ -24,7 +24,7 @@ pub fn audited(event: &Value) -> bool {
     match kind {
         "TurnStarted" | "TurnCompleted" | "ToolCallStarted" | "ToolCallCompleted" | "PermissionRequested"
         | "PermissionResolved" | "CheckpointSaved" | "RewindApplied" | "ErrorRaised" | "SessionOpened" | "SessionClosed"
-        | "HostRemoved" | "CostUpdated" | "PolicyViolation" | "KillSwitch" | "TrustScored" | "FileRestored"
+        | "HostRemoved" | "CostUpdated" | "PolicyViolation" | "KillSwitch" | "RemoteActivity" | "TrustScored" | "FileRestored"
         | "CheckpointLabeled" | "IntentConfirmed" | "ApprovalRecorded" | "HealthAlert" | "BudgetStop" | "GuardianAction" => true,
         "VerifyUpdated" => event["state"] == "done",
         "DeployUpdated" => matches!(event["state"].as_str(), Some("success" | "failed" | "rolled_back" | "rollback_failed")),
@@ -42,6 +42,15 @@ fn actor(store: &Store, event: &Value, turn_id: Option<&str>) -> String {
         .filter(|name| !name.trim().is_empty())
         .map(|name| format!("person:{name}"))
         .unwrap_or_else(|| "person".to_string());
+
+    /* A decision made in a browser is the person too, but the ledger says which device (SDC Anywhere). */
+    if event["via"] == "anywhere" {
+        return format!("device:{}", event["deviceName"].as_str().unwrap_or("browser"));
+    }
+
+    if event["type"] == "RemoteActivity" {
+        return format!("device:{}", event["detail"]["device"].as_str().unwrap_or("browser"));
+    }
 
     match event["type"].as_str().unwrap_or_default() {
         "PermissionResolved" | "RewindApplied" | "CheckpointLabeled" | "IntentConfirmed" | "ApprovalRecorded" | "FileRestored"
@@ -85,7 +94,11 @@ fn describe(event: &Value) -> (String, Value) {
             format!("Asked: {} {} [{}]", text("title"), text("target"), text("risk")),
             json!({ "permissionId": text("permissionId"), "action": text("action"), "risk": text("risk"), "target": text("target") }),
         ),
-        "PermissionResolved" => (format!("Decided: {}", text("decision")), json!({ "permissionId": text("permissionId") })),
+        "PermissionResolved" => (
+            format!("Decided: {}{}", text("decision"), if event["via"] == "anywhere" { format!(" (from {})", text("deviceName")) } else { String::new() }),
+            json!({ "permissionId": text("permissionId"), "via": event["via"], "deviceId": event["deviceId"] }),
+        ),
+        "RemoteActivity" => (format!("Remote: {}", text("what")), event["detail"].clone()),
         "CheckpointSaved" => {
             let checkpoint = &event["checkpoint"];
 

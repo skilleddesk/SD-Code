@@ -41,6 +41,8 @@ mod intent_methods;
 mod ops_methods;
 #[path = "agent_methods.rs"]
 pub(crate) mod agent_methods;
+#[path = "anywhere_methods.rs"]
+mod anywhere_methods;
 
 /// One connection's request handler. It holds the shared daemon state and nothing else, so a second
 /// connection is a second `Daemon` over the same state rather than a second source of truth.

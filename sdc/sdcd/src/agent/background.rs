@@ -329,4 +329,36 @@ mod tests {
     fn colour_codes_are_removed() {
         assert_eq!(strip_ansi("\u{1b}[32m  ➜  Local:\u{1b}[0m http://localhost:5173/"), "  ➜  Local: http://localhost:5173/");
     }
+
+    /// The running-processes limiter: [`MAX_RUNNING`] processes may run at once, all chats together, so
+    /// a caller past that is turned back - naming the count rather than queuing forever - and the next
+    /// slot opens the moment one of them stops.
+    ///
+    /// Counted from whatever is already running rather than an assumed zero, since the registry is
+    /// process-wide and another test's background process may still be alive alongside this one.
+    #[test]
+    fn starting_past_max_running_is_refused_until_one_stops() {
+        let root = std::env::temp_dir();
+        let root = root.to_str().unwrap();
+        let line = if cfg!(windows) { "ping -n 30 127.0.0.1 >nul" } else { "sleep 30" };
+        let session = "s-bg-limit";
+
+        let already_running = list(None).iter().filter(|process| process["running"] == true).count();
+        let needed = MAX_RUNNING.saturating_sub(already_running);
+
+        assert!(needed > 0, "MAX_RUNNING already reached before this test started any process");
+
+        let ids: Vec<String> = (0..needed).map(|_| start(session, root, None, line).unwrap()).collect();
+
+        let error = start(session, root, None, line).unwrap_err();
+        assert!(error.message.contains("already running"), "{}", error.message);
+
+        assert!(stop(&ids[0]), "freeing a slot");
+
+        let freed = start(session, root, None, line).unwrap();
+
+        for id in ids[1..].iter().chain(std::iter::once(&freed)) {
+            stop(id);
+        }
+    }
 }

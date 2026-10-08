@@ -85,7 +85,7 @@ export function Palette() {
   return (
     <Modal open={open} label={strings.topbar.palette.title} onClose={close} className="palette">
       <div
-        className="flex items-center gap-[10px] border-b border-border-subtle px-[18px] py-[15px]"
+        className="flex items-center gap-[10px] border-b border-border-subtle py-[15px] pl-[18px] pr-[44px]"
         onKeyDown={(event) => {
           if (event.key === 'ArrowDown') {
             event.preventDefault();
@@ -118,7 +118,7 @@ export function Palette() {
             setIndex(0);
           }}
         />
-        <span className="kbd inline-flex items-center rounded-[3px] border border-border-default border-b-2 bg-bg-base px-[5px] py-[1px] font-mono text-[9.5px] text-text-secondary">
+        <span className="kbd inline-flex items-center rounded-[4px] border border-border-default border-b-2 bg-bg-active px-[5px] py-[1px] font-mono text-[9.5px] text-text-secondary">
           Esc
         </span>
       </div>

@@ -1,0 +1,149 @@
+# ===========================================================================
+# Continuous integration (0.17).
+#
+# Until SDC Anywhere there was no test workflow: release.yml builds installers and secret-scan.yml looks for
+# secrets, but nothing ran the tests on a push. Plan section 14 asks for the Rust suite on Windows, macOS and Linux
+# (path handling and the OS idle/keep-awake hooks differ), and for the browser and relay to be tested too.
+#
+#   rust       cargo test on all three systems; clippy -D warnings and the protocol drift check on Linux
+#   frontend   the desktop app: typecheck, lint, unit tests
+#   anywhere   the relay (workerd), the PWA unit tests and byte-level vectors, then the end-to-end suite:
+#              a real sdcd, the real Worker and a real Chrome with a virtual authenticator
+#
+# Nothing here needs a secret, and nothing is allowed to write to the repository.
+# ===========================================================================
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    name: rust (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: sdc/sdcd
+
+      - name: Test
+        working-directory: sdc/sdcd
+        run: cargo test --no-fail-fast
+
+      - name: Clippy
+        if: matrix.os == 'ubuntu-latest'
+        working-directory: sdc/sdcd
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Seal and open cost (informational)
+        if: matrix.os == 'ubuntu-latest'
+        working-directory: sdc/sdcd
+        run: cargo test --release --lib bench_seal_and_open -- --ignored --nocapture
+
+  frontend:
+    name: desktop app
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: sdc/package.json
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: sdc/pnpm-lock.yaml
+
+      - name: Install
+        working-directory: sdc
+        run: pnpm install --frozen-lockfile
+
+      - name: Protocol: schema, types and daemon dispatch agree
+        working-directory: sdc
+        run: node protocol/check.mjs
+
+      - name: Typecheck, lint, test
+        working-directory: sdc
+        run: |
+          pnpm --filter @sdc/app typecheck
+          pnpm --filter @sdc/app lint
+          pnpm --filter @sdc/app test
+
+  anywhere:
+    name: SDC Anywhere (relay, browser, end to end)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: sdc/package.json
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: sdc/pnpm-lock.yaml
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: sdc/sdcd
+
+      - name: Install
+        working-directory: sdc
+        run: pnpm install --frozen-lockfile
+
+      - name: Relay: typecheck and tests (on workerd)
+        working-directory: sdc/cloud
+        run: |
+          pnpm typecheck
+          pnpm test
+
+      - name: Browser app: typecheck, vectors, build
+        working-directory: sdc/web
+        run: |
+          pnpm typecheck
+          pnpm test
+          pnpm build
+
+      - name: Build the daemon the end-to-end suite starts
+        working-directory: sdc/sdcd
+        run: cargo build
+
+      - name: End to end (real sdcd, real Worker, real Chrome)
+        working-directory: sdc/web
+        env:
+          CHROME_PATH: /usr/bin/google-chrome
+        run: pnpm e2e

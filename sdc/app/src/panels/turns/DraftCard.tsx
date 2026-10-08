@@ -53,7 +53,7 @@ export function DraftCard({ draft }: { draft: DraftData }) {
       {lines === 0 ? null : (
         <pre
           ref={body}
-          className="max-h-[190px] overflow-hidden border-t border-border-subtle bg-bg-base px-[12px] py-[8px] font-mono text-[11.5px] leading-[1.55] text-text-secondary"
+          className="max-h-[190px] overflow-hidden border-t border-border-subtle bg-bg-input px-[12px] py-[8px] font-mono text-[11.5px] leading-[1.55] text-text-secondary"
           data-draft-preview
         >
           {draft.preview}

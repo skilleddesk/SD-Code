@@ -39,13 +39,15 @@ export function AnswerBlock({ answer }: AnswerBlockProps) {
 
   return (
     <div
-      className="answer mb-[8px] rounded-md border border-border-subtle border-l-2 border-l-accent bg-bg-raised px-[13px] py-[10px]"
+      className="answer mb-[10px] mt-[2px] text-[13.5px]"
       data-answer={answer.streaming ? 'streaming' : 'done'}
     >
-      <div className="answer-head mb-[6px] flex items-center gap-[8px] text-[10px] font-semibold uppercase tracking-[.08em] text-text-muted">
+      {/* 0.18: the answer is the conversation, so it reads as prose - no card, no label - under the work
+          that produced it. The label stays for screen readers. */}
+      <div className="answer-head sr-only">
         <Sparkles size={12} aria-hidden="true" />
         <span>{strings.turns.answer.title}</span>
-        {answer.streaming ? <span className="font-normal normal-case tracking-normal">{strings.turns.answer.streaming}</span> : null}
+        {answer.streaming ? <span>{strings.turns.answer.streaming}</span> : null}
       </div>
 
       {understood === null ? null : (

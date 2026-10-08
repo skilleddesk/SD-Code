@@ -50,7 +50,7 @@ function Row({ entry, armed, onArm }: { entry: CheckpointView; armed: boolean; o
     >
       <div className="flex gap-[10px] p-[10px]">
         {entry.thumbnail === null ? (
-          <div className="tm-thumb grid h-[48px] w-[48px] shrink-0 place-items-center rounded-sm border border-border-subtle bg-bg-base text-text-muted" aria-hidden="true">
+          <div className="tm-thumb grid h-[48px] w-[48px] shrink-0 place-items-center rounded-sm border border-border-subtle bg-bg-input text-text-muted" aria-hidden="true">
             <History size={16} />
           </div>
         ) : (

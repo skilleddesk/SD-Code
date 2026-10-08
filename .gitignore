@@ -60,6 +60,17 @@ kubeconfig
 *credentials*.json
 *service-account*.json
 
+# SDC Anywhere (Phase 0): Cloudflare Worker local secrets, and the loose key files kept at H:\
+# (emailapi.txt, alibabaapi.txt, deepseakapi.txt, TAVILY_API_KEY.txt, pass.txt). Case variants are
+# listed because git on Linux CI is case-sensitive while Windows is not.
+.dev.vars
+.dev.vars.*
+.wrangler/
+*api*.txt
+*API*.txt
+*Api*.txt
+pass.txt
+
 # ---------------------------------------------------------------------------
 # 2. Local databases — they hold chat history and tokens (spec §3.4)
 # ---------------------------------------------------------------------------

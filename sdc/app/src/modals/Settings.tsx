@@ -12,6 +12,7 @@ import {
   Keyboard,
   Palette as PaletteIcon,
   Shield,
+  Smartphone,
   SlidersHorizontal,
   Stethoscope,
   type LucideIcon,
@@ -32,7 +33,9 @@ import { LanguageTab, TeamTab, UpdatesTab } from '../kernel/SettingsTabs';
 import { useKernelUi } from '../store/kernelUi';
 import { AgentSettings } from '../kernel/AgentSettings';
 import { ResearchSettings } from '../kernel/ResearchSettings';
+import { AnywhereSettings } from '../kernel/AnywhereSettings';
 import { playCue } from '../lib/alerts';
+import { BrandLogo } from '../panels/ui/BrandLogo';
 import { platformHint } from '../lib/external';
 
 /**
@@ -66,6 +69,7 @@ const TAB_ICON: Record<string, LucideIcon> = {
   download: Download,
   info: Info,
   globe: Globe,
+  smartphone: Smartphone,
 };
 
 type RowValue = boolean | string;
@@ -183,6 +187,7 @@ export function Settings() {
 
         {tab === 'safety' ? <AgentSettings /> : null}
         {tab === 'research' ? <ResearchSettings /> : null}
+        {tab === 'anywhere' ? <AnywhereSettings /> : null}
 
         {tab === 'safety' ? (
           <button
@@ -197,7 +202,7 @@ export function Settings() {
           </button>
         ) : null}
 
-        {tab !== 'keymap' && tab !== 'about' && tab !== 'backup' && tab !== 'language' && tab !== 'team' && tab !== 'updates' && tab !== 'research' ? (
+        {tab !== 'keymap' && tab !== 'about' && tab !== 'backup' && tab !== 'language' && tab !== 'team' && tab !== 'updates' && tab !== 'research' && tab !== 'anywhere' ? (
           <GroupTable
             table={tableFor(tab)}
             values={values}
@@ -445,7 +450,10 @@ function AboutTab({
 
   return (
     <>
-      <h2 className="text-[19px] font-semibold text-text-primary">{about.title}</h2>
+      <div className="mb-[12px] flex items-center gap-[12px]">
+        <BrandLogo size={48} glow />
+        <h2 className="text-[19px] font-semibold text-text-primary">{about.title}</h2>
+      </div>
       <p className="mb-[18px] text-[12.5px] text-text-muted">{about.desc}</p>
 
       <div className="mb-[22px]">

@@ -166,6 +166,24 @@ CREATE TABLE IF NOT EXISTS approvals (
   created_at TEXT NOT NULL, decided_at TEXT);
 "#,
     ),
+    /* SDC Anywhere (0.17): paired browser devices, the hello nonces already seen, and the passkey counters.
+       Public keys only - the daemon's own private keys live in the keychain (anywhere::identity). */
+    (
+        "0100-anywhere",
+        r#"
+CREATE TABLE IF NOT EXISTS anywhere_devices (
+  id TEXT PRIMARY KEY, name TEXT NOT NULL, user_agent TEXT NOT NULL DEFAULT '',
+  sign_pub TEXT NOT NULL, passkey_id TEXT NOT NULL DEFAULT '', passkey_pub TEXT NOT NULL DEFAULT '',
+  passkey_counter INTEGER NOT NULL DEFAULT 0, guest INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL, last_seen INTEGER, revoked_at INTEGER, expires_at INTEGER);
+CREATE TABLE IF NOT EXISTS anywhere_nonces (
+  nonce TEXT PRIMARY KEY, device_id TEXT NOT NULL, seen_at INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS anywhere_nonces_seen ON anywhere_nonces(seen_at);
+CREATE TABLE IF NOT EXISTS anywhere_pairings (
+  token_hash TEXT PRIMARY KEY, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL,
+  guest INTEGER NOT NULL DEFAULT 0, used_at INTEGER);
+"#,
+    ),
 ];
 
 /// The daemon's database handle.

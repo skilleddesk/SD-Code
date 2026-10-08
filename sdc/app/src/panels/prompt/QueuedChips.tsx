@@ -28,12 +28,12 @@ export function QueuedChips({ sessionId }: { sessionId?: string }) {
       {queued.map((prompt) => (
         <span
           key={prompt}
-          className="queued-chip flex items-center gap-[6px] rounded-md border border-[rgba(91,156,255,.3)] bg-accent-subtle px-[8px] py-[4px] text-[11px] text-accent"
+          className="queued-chip flex items-center gap-[6px] rounded-md border border-accent/30 bg-accent-subtle px-[8px] py-[4px] text-[11px] text-accent"
         >
           {prompt}
           <button
             type="button"
-            className="grid h-[14px] w-[14px] place-items-center rounded-sm text-accent hover:bg-[rgba(91,156,255,.2)] hover:text-accent-hover"
+            className="grid h-[14px] w-[14px] place-items-center rounded-sm text-accent hover:bg-accent-glow hover:text-accent-hover"
             title={strings.prompt.queued.remove}
             aria-label={strings.prompt.queued.remove}
             onClick={() => {

@@ -123,6 +123,10 @@ async fn run() -> Result<()> {
     let default_database = database.is_none();
     let state = DaemonState::bootstrap(database)?;
 
+    /* SDC Anywhere starts only if the person left it on (plan principle 8: off by default). */
+    state.anywhere.attach(tokio::runtime::Handle::current());
+    state.anywhere.resume(&state);
+
     /* The day's copy of the real database (0.15.5), off the start-up path. A scratch `--database` is
        nobody's history and is not copied. */
     if default_database {

@@ -19,7 +19,7 @@ Five files, and nothing else types it by hand:
 Bump all five with one command, from the repo root:
 
 ```powershell
-node _verify/bump-version.mjs 0.7.6
+node sdc/scripts/tools/bump-version.mjs 0.7.6
 ```
 
 The two `Cargo.lock` entries follow on the next build, because `cargo` writes them. **Kill the running
@@ -31,9 +31,9 @@ The same number has to be readable from four places, and 0.7.5 is the release wh
 lying (About's rows were literals saying `v0.4.4` on a 0.7.5 build):
 
 ```powershell
-node _verify/version-report.mjs                                        # all of it at once; exit 1 when the five disagree
+node sdc/scripts/tools/version-report.mjs                                        # all of it at once; exit 1 when the five disagree
 sdc/sdcd/target/release/sdcd.exe --version                             # sdcd 0.7.5 (SDCP 0.1)
-node _verify/probe-versions.mjs 9251                                   # inside the running window: status bar cell + About rows
+node sdc/scripts/tools/probe-versions.mjs 9251                                   # inside the running window: status bar cell + About rows
 (Get-Item sdc/app/src-tauri/target/release/sdc.exe).VersionInfo.FileVersion
 ```
 
@@ -48,12 +48,12 @@ surprising rather than expected.
 | Lint | `pnpm lint` | `eslint`, including the hooks rules. |
 | Frontend tests | `pnpm test` | The reducer, the command registry, and the store-selector rule. |
 | The window renders | `pnpm build && pnpm --filter @sdc/app smoke` | The built bundle mounts in a real browser: `#root` is not empty, `#app` is there, there is text, and nothing threw. |
-| A live provider call | `node _verify/live-provider-test.mjs` | One round trip over TLS with a key nobody wants: `provider.test` on `anthropic-api` answers `verified: true` and the provider's own sentence (`API key is invalid. (401)`). This is the check 0.7.11 added, because the README had claimed for two releases that no TLS client was linked. |
+| A live provider call | `node sdc/scripts/tools/live-provider-test.mjs` | One round trip over TLS with a key nobody wants: `provider.test` on `anthropic-api` answers `verified: true` and the provider's own sentence (`API key is invalid. (401)`). This is the check 0.7.11 added, because the README had claimed for two releases that no TLS client was linked. |
 | Daemon tests | `cargo test --manifest-path sdcd/Cargo.toml` | 167 tests, including the nine that start the real daemon (idle exit, `host.shutdown`, hand-started stays, the prompt a turn carries, a folder a chat works in and the tree that lists it, a fork that carries the conversation, a Save that takes a checkpoint first, a chat that has run a turn being deleted, a host added once), the two in `tests/streaming.rs` that measure a turn arriving while the engine talks, and the four keychain tests - which 0.7.10 also runs with `--features keychain`, where the store is DPAPI and the file fallback is not used. |
 | Protocol agreement | `node protocol/check.mjs` | Eighteen lines of reading, and it is the only thing that has ever *parsed* `protocol/sdcp.schema.json`: it compares the schema's method names, shapes and event types with `protocol/types.ts` and with the daemon's dispatch table (64 methods, 26 events, 0 differences). |
 | The window is accessible | `pnpm --filter @sdc/app smoke:a11y` | The same built `dist`, audited by axe-core over WCAG 2.0/2.1 A + AA with `serious`/`critical` failures failing the build: 0 violations on the screen the app opens on, and the `moderate`/`minor` findings printed with their counts. |
 | Clippy | `cargo clippy --manifest-path sdcd/Cargo.toml --all-targets -- -D warnings` and the same for `app/src-tauri/Cargo.toml` | No warnings, in the daemon or the bridge. |
-| Versions agree | `node _verify/version-report.mjs` | One number in the five files, in both lockfiles, in the daemon's `--version`, in the window's `VersionInfo` and in the installer names - and it exits 1 if the five disagree. |
+| Versions agree | `node sdc/scripts/tools/version-report.mjs` | One number in the five files, in both lockfiles, in the daemon's `--version`, in the window's `VersionInfo` and in the installer names - and it exits 1 if the five disagree. |
 
 ## The packaged app (Windows, WebView2)
 
@@ -69,8 +69,8 @@ Start-Process $setup -ArgumentList '/S' -Wait
 # 2. Open it with the WebView2's debugging port, so the DOM can be read rather than guessed at.
 $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = '--remote-debugging-port=9227'
 Start-Process "$env:LOCALAPPDATA\SDC\sdc.exe"
-node H:/SDC/_verify/boot-check.mjs 9227 http://tauri.localhost   # expect: #app present, grid, no errors
-node H:/SDC/_verify/shot.mjs 9227 H:/SDC/_verify/installed.png   # a screenshot, to look at
+node sdc/scripts/tools/boot-check.mjs 9227 http://tauri.localhost   # expect: #app present, grid, no errors
+node sdc/scripts/tools/shot.mjs 9227 installed.png   # a screenshot, to look at
 
 # 3. The daemon is this build's, and has no console window of its own.
 Get-Process sdcd | Select-Object Path, MainWindowTitle            # the installed sdcd.exe, empty title
@@ -85,7 +85,7 @@ Get-Process sdc | Stop-Process -Force; Start-Sleep 12; Get-Process sdcd     # go
 Start-Process "$env:LOCALAPPDATA\SDC\uninstall.exe" -ArgumentList '/S' -Wait
 ```
 
-`_verify/` is a developer-only directory (gitignored): `boot-check.mjs` reads `#root`'s children, the
+`scripts/tools/` holds the developer tools these steps use (run them from the repository root): `boot-check.mjs` reads `#root`'s children, the
 computed display of `#app` and the console log over CDP; `shot.mjs` writes a PNG. Both take a port and,
 for `boot-check.mjs`, the window's URL.
 
@@ -99,7 +99,7 @@ for `boot-check.mjs`, the window's URL.
    release; run the workflow from the Actions tab (or `gh release delete <tag> --yes --cleanup-tag`) to
    retry it by hand.
 1. Push the tag and watch the four `release` jobs plus `Secret scan`:
-   `node H:/SDC/_verify/ci-status.mjs` (or the Actions tab).
+   `node sdc/scripts/tools/ci-status.mjs` (or the Actions tab).
 2. All four jobs must be green **before** the release is announced: a macOS or Linux job that failed
    leaves the release with a subset of the assets, which is worse than no release.
 3. Check the asset list: `*_x64-setup.exe`, `*_x64_en-US.msi`, `*_x64.dmg`, `*_aarch64.dmg`,

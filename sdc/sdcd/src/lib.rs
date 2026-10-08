@@ -41,6 +41,7 @@
 //! acceptance list of this step expects.
 
 pub mod agent;
+pub mod anywhere;
 pub mod auth;
 pub mod checkpoints;
 pub mod cli;
@@ -119,6 +120,8 @@ pub struct DaemonState {
     /// so a *request* can end the process rather than a signal, which is the only way a client that
     /// only has a socket can ask for it.
     pub stopping: Arc<AtomicBool>,
+    /// SDC Anywhere (0.17). Off until the person turns it on; while off it holds nothing but a mutex.
+    pub anywhere: Arc<crate::anywhere::runtime::Anywhere>,
 }
 
 impl DaemonState {
@@ -156,6 +159,7 @@ impl DaemonState {
             fanout: Fanout::new(),
             clients: Arc::new(AtomicUsize::new(0)),
             stopping: Arc::new(AtomicBool::new(false)),
+            anywhere: Arc::new(crate::anywhere::runtime::Anywhere::default()),
         }))
     }
 

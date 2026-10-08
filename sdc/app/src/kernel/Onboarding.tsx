@@ -1,4 +1,6 @@
-import { Check, FolderOpen, Globe, History, OctagonX, Plug, Rocket, Server, Sparkles, Stethoscope } from 'lucide-react';
+import { Check, FolderOpen, Globe, History, OctagonX, Plug, Server, Sparkles, Stethoscope } from 'lucide-react';
+
+import { BrandLogo } from '../panels/ui/BrandLogo';
 import { useEffect, useState } from 'react';
 
 import { strings } from '../strings';
@@ -85,7 +87,7 @@ export function Onboarding() {
     <Modal open={open && !covered} label={k.title} onClose={finish} center className="flex max-h-[92vh] w-[min(640px,96vw)] flex-col overflow-hidden">
       <div className="border-b border-border-subtle px-[24px] py-[16px]">
         <h2 className="flex items-center gap-[8px] text-[16px] font-semibold text-text-primary">
-          <Rocket size={16} className="text-accent" aria-hidden="true" />
+          <BrandLogo size={22} glow />
           {k.title}
         </h2>
         <ol className="mt-[10px] flex gap-[6px]" aria-label={k.progress}>

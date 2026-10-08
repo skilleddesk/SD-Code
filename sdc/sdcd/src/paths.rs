@@ -20,8 +20,12 @@ use anyhow::{Context, Result};
 
 /// `…/sdc` - the daemon's data directory. Created on first use.
 pub fn data_dir() -> Result<PathBuf> {
-    let root = dirs::data_dir().context("no platform data directory for this user")?;
-    let dir = root.join("sdc");
+    /* `SDC_DATA_DIR` moves the whole data directory: for tests that must not touch the real one, and for a
+       portable install on a stick. Unset, the platform's own location is used. */
+    let dir = match std::env::var_os("SDC_DATA_DIR").filter(|value| !value.is_empty()) {
+        Some(custom) => PathBuf::from(custom),
+        None => dirs::data_dir().context("no platform data directory for this user")?.join("sdc"),
+    };
 
     std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
 

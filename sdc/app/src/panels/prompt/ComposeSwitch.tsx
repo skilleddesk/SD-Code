@@ -22,7 +22,7 @@ export function ComposeSwitch() {
 
   return (
     <div
-      className="compose-switch inline-flex h-[26px] items-center gap-[1px] rounded-full border border-border-subtle bg-bg-base p-[2px]"
+      className="compose-switch inline-flex h-[26px] items-center gap-[1px] rounded-full border border-border-subtle bg-bg-input p-[2px]"
       role="radiogroup"
       aria-label={strings.prompt.compose.label}
     >

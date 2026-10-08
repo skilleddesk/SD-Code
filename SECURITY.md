@@ -141,6 +141,17 @@ Being precise about this saves everyone time. As of this policy:
 * nothing in this repository needs a secret in order to build it. If you find
   something that looks like it does, that is itself worth reporting.
 
+## SDC Anywhere (0.17)
+
+SDC Anywhere lets a browser control a person's own SDC through a relay. It is off until the person turns it on.
+Its design, threat model and wire protocol are in `sdc/docs/remote/` (`THREAT-MODEL.md`, `PROTOCOL.md`); reports against
+it are in scope, in particular anything that lets the relay, a browser without a paired device, or a paired device without
+its passkey cause an action, read a file, or change a limit. The cryptography is not home-made: HPKE (`hpke`), ECDSA P-256
+(`p256`), AES-256-GCM, SHA-256, WebAuthn verified by the daemon. Dependencies added for it, and why: `hpke` (RFC 9180
+session), `p256` (device, daemon and passkey signatures), `getrandom`, `tokio-tungstenite` with rustls (the outbound
+link), `futures-util`, `windows-sys` (idle time, keep-awake). The relay keeps no secret that opens a session, and holds
+the e-mail key only as a Worker secret (`wrangler secret put EMAIL_API_KEY`).
+
 ## What we do to reduce the chance of a report
 
 * `.env`, `*.key`, `*.pem` and local databases are ignored by git; `.env.example`

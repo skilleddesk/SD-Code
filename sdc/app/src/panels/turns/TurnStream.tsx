@@ -9,6 +9,7 @@ import { SourcesList } from './SourcesList';
 import { TurnFooter } from './TurnFooter';
 import { ChangedFiles } from './ChangedFiles';
 import { UserMessage } from './UserMessage';
+import { BrandLogo } from '../ui/BrandLogo';
 import {
   type CollapsedSummaryData,
   type Turn,
@@ -63,28 +64,31 @@ export function TurnStream({ turns, collapsed = null, sessionId }: TurnStreamPro
         </div>
       ) : null}
 
-      {turns.map((turn) => (
-        <TurnBlock key={turn.id} turn={turn} sessionId={sessionId} />
+      {turns.map((turn, index) => (
+        <TurnBlock key={turn.id} turn={turn} sessionId={sessionId} latest={index === turns.length - 1} />
       ))}
     </>
   );
 }
 
 /** One `.turn`: the user's message, the meta line, then whatever the engine produced. */
-function TurnBlock({ turn, sessionId }: { turn: Turn; sessionId: string }) {
+function TurnBlock({ turn, sessionId, latest }: { turn: Turn; sessionId: string; latest: boolean }) {
   return (
-    <div className="turn mb-[26px]">
+    <div className="turn mb-[30px]">
       <UserMessage message={turn.user} />
 
-      <div className="turn-meta mb-[12px] flex flex-wrap items-center gap-[10px] font-mono text-[11px] text-text-muted">
-        <span>
+      {/* Who is answering (0.18): the mark, the name, and the engine and model in quiet mono. */}
+      <div className="turn-meta mb-[12px] flex flex-wrap items-center gap-[8px] text-[11px] text-text-muted">
+        <BrandLogo size={18} className={turn.running ? 'animate-pulse motion-reduce:animate-none' : ''} />
+        <span className="text-[12.5px] font-semibold text-text-primary">{strings.topbar.brandText}</span>
+        <span className="rounded-full border border-border-subtle bg-bg-raised px-[8px] py-[1px] font-mono text-[10.5px]">
           {turn.meta.tier} · {turn.meta.engine} · {turn.meta.model}
         </span>
         {/* The forecast span, and why it is conditional: `TurnStarted` no longer carries a price, so an
             unconditional span left a `·` with nothing after it on screen - the kind of stray mark that
             makes a working window look broken. */}
         {turn.meta.forecast === '' ? null : (
-          <span className="forecast before:mr-[10px] before:text-border-strong before:content-['·']">
+          <span className="forecast font-mono text-[10.5px]">
             {turn.meta.forecast}
           </span>
         )}
@@ -95,7 +99,7 @@ function TurnBlock({ turn, sessionId }: { turn: Turn; sessionId: string }) {
 
       {/* Everything the turn did, in the order it did it (0.12.5). The live line moved to the sticky bar
           above the input (`LiveBar`), where it cannot scroll away. */}
-      <FlowWork turn={turn} sessionId={sessionId} />
+      <FlowWork turn={turn} sessionId={sessionId} latest={latest} />
 
       {/* Between Send and the first event there used to be nothing at all here, and a slow first
           token read as a dead turn. Three pulsing dots and a sentence are the honest version of

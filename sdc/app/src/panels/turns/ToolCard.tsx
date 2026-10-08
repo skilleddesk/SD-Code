@@ -112,7 +112,7 @@ export function ToolCard({ tool }: ToolCardProps) {
       className={
         'tool-card mb-[6px] overflow-hidden rounded-md border border-border-subtle bg-bg-raised ' +
         'transition-all duration-fast ease-ease hover:border-border-default ' +
-        (spinning ? 'running border-[rgba(91,156,255,.35)] shadow-[0_0_0_1px_rgba(91,156,255,.06)]' : '')
+        (spinning ? 'running border-accent/40 shadow-[0_0_0_1px_var(--accent-subtle)]' : '')
       }
     >
       <div

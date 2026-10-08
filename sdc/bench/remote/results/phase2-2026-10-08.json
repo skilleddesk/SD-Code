@@ -1,0 +1,62 @@
+{
+  "when": "2026-10-08T16:57:18.447Z",
+  "node": "v24.18.0",
+  "platform": "win32 x64",
+  "topology": "relay, daemon, mail catcher and browser code on one machine (loopback); no push service, no mail provider",
+  "results": [
+    {
+      "scenario": "push: RFC 8291 encrypt (ECDH + 2 HKDF + AES-GCM)",
+      "samples": 200,
+      "p50": 0.436,
+      "p95": 0.569,
+      "max": 1.304,
+      "unit": "ms",
+      "note": "Node, not workerd; the message is 45 bytes"
+    },
+    {
+      "scenario": "push: VAPID JWT sign (ECDSA P-256)",
+      "samples": 200,
+      "p50": 0.15,
+      "p95": 0.2,
+      "max": 0.97,
+      "unit": "ms",
+      "note": "Node, not workerd"
+    },
+    {
+      "scenario": "push: whole send() to a stub push service",
+      "samples": 200,
+      "p50": 0.606,
+      "p95": 0.803,
+      "max": 1.483,
+      "unit": "ms",
+      "note": "Node, not workerd; includes both of the above"
+    },
+    {
+      "scenario": "email hand-off lateness: request -> provider call, minus the 1 s delay",
+      "samples": 8,
+      "p50": 37.448,
+      "p95": 52.421,
+      "max": 52.421,
+      "unit": "ms",
+      "note": "the provider call is to a local catcher; delivery time itself is not measured"
+    },
+    {
+      "scenario": "sign-in link: request accepted -> mail handed to the provider",
+      "samples": 5,
+      "p50": 26.464,
+      "p95": 39.83,
+      "max": 39.83,
+      "unit": "ms",
+      "note": "local catcher; includes D1 writes and the Worker's deferred send"
+    },
+    {
+      "scenario": "sign-in link: button -> pairing offer (Worker, D1, Durable Object, daemon, and back)",
+      "samples": 5,
+      "p50": 38.749,
+      "p95": 51.208,
+      "max": 51.208,
+      "unit": "ms",
+      "note": "loopback; 5 samples because the daemon allows one offer per 10 s"
+    }
+  ]
+}

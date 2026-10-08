@@ -95,7 +95,7 @@ export function PreviewFile() {
               key={tab.path}
               className={
                 'file-tab group flex max-w-[180px] shrink-0 items-center gap-[6px] border-r border-border-subtle pl-[10px] pr-[4px] text-[11.5px] ' +
-                (active ? 'bg-bg-base text-text-primary shadow-[inset_0_-2px_0_var(--accent)]' : 'text-text-muted hover:bg-bg-hover hover:text-text-secondary')
+                (active ? 'bg-bg-active text-text-primary shadow-[inset_0_-2px_0_var(--accent)]' : 'text-text-muted hover:bg-bg-hover hover:text-text-secondary')
               }
               title={tab.path}
             >

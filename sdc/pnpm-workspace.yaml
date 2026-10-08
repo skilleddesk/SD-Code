@@ -5,4 +5,6 @@
 # `sdcd/` is a Rust crate, not an npm package - it is built with cargo (see README.md).
 packages:
   - app
+  - cloud
+  - web
   # - protocol

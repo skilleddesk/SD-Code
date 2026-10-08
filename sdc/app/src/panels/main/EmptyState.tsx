@@ -1,5 +1,7 @@
 import { FolderOpen, Plug, Plus, ServerCog, Sparkles } from 'lucide-react';
 
+import { BrandLogo } from '../ui/BrandLogo';
+
 import { strings } from '../../strings';
 import { openFolder } from '../../store/intents';
 import { anchorBelow, useOverlayStore } from '../../store/overlays';
@@ -35,24 +37,24 @@ export function EmptyState() {
 
   return (
     <div className="empty-wrap flex flex-1 flex-col items-center justify-center gap-[10px] px-[24px] py-[40px] text-center">
-      <div className="empty-icon mb-[8px] grid h-[56px] w-[56px] place-items-center rounded-lg text-accent shadow-[0_0_0_1px_var(--border-subtle),0_6px_20px_rgba(91,156,255,.12)] [background-image:linear-gradient(135deg,var(--accent-subtle),var(--purple-subtle))]">
-        {hasProject ? (
-          <Sparkles size={26} aria-hidden="true" />
-        ) : (
-          <FolderOpen size={26} aria-hidden="true" />
-        )}
+      {/* 0.18: the mark itself, lit, above a headline in the brand light. */}
+      <div className="empty-icon relative mb-[10px] grid place-items-center">
+        <span className="absolute h-[120px] w-[120px] rounded-full opacity-60 blur-[38px] [background-image:var(--grad-brand)]" aria-hidden="true" />
+        <BrandLogo size={76} glow className="relative" />
       </div>
 
-      <div className="empty-title text-[16px] font-semibold text-text-primary">{title}</div>
+      <div className="empty-title text-[22px] font-semibold tracking-[-0.025em] text-text-primary">
+        {hasProject ? <span className="brand-text-fill">{title}</span> : title}
+      </div>
 
-      <div className="empty-desc max-w-[400px] text-[12.5px] leading-[1.6] text-text-muted">
+      <div className="empty-desc max-w-[440px] text-[13px] leading-[1.65] text-text-secondary">
         {description}
       </div>
 
       <div className="empty-chips mt-[10px] flex flex-wrap justify-center gap-[6px]">
         <button
           type="button"
-          className="empty-chip inline-flex items-center gap-[6px] rounded-full border border-border-subtle bg-bg-raised px-[12px] py-[6px] text-[12px] text-text-secondary transition-all duration-fast ease-ease hover:-translate-y-px hover:border-border-default hover:bg-bg-hover hover:text-text-primary"
+          className="empty-chip inline-flex items-center gap-[7px] rounded-full border border-border-default bg-bg-raised px-[14px] py-[7px] text-[12.5px] text-text-secondary shadow-sm transition-all duration-base ease-ease hover:-translate-y-[2px] hover:border-accent/40 hover:bg-bg-hover hover:text-text-primary hover:shadow-md"
           onClick={() => void openFolder()}
         >
           <FolderOpen size={12} aria-hidden="true" />
@@ -60,7 +62,7 @@ export function EmptyState() {
         </button>
         <button
           type="button"
-          className="empty-chip inline-flex items-center gap-[6px] rounded-full border border-border-subtle bg-bg-raised px-[12px] py-[6px] text-[12px] text-text-secondary transition-all duration-fast ease-ease hover:-translate-y-px hover:border-border-default hover:bg-bg-hover hover:text-text-primary"
+          className="empty-chip inline-flex items-center gap-[7px] rounded-full border border-border-default bg-bg-raised px-[14px] py-[7px] text-[12.5px] text-text-secondary shadow-sm transition-all duration-base ease-ease hover:-translate-y-[2px] hover:border-accent/40 hover:bg-bg-hover hover:text-text-primary hover:shadow-md"
           onClick={() => useOverlayStore.getState().openNewProject()}
         >
           <Sparkles size={12} aria-hidden="true" />
@@ -68,7 +70,7 @@ export function EmptyState() {
         </button>
         <button
           type="button"
-          className="empty-chip inline-flex items-center gap-[6px] rounded-full border border-border-subtle bg-bg-raised px-[12px] py-[6px] text-[12px] text-text-secondary transition-all duration-fast ease-ease hover:-translate-y-px hover:border-border-default hover:bg-bg-hover hover:text-text-primary"
+          className="empty-chip inline-flex items-center gap-[7px] rounded-full border border-border-default bg-bg-raised px-[14px] py-[7px] text-[12.5px] text-text-secondary shadow-sm transition-all duration-base ease-ease hover:-translate-y-[2px] hover:border-accent/40 hover:bg-bg-hover hover:text-text-primary hover:shadow-md"
           onClick={(event) => openNewChat(anchorBelow(event.currentTarget))}
         >
           <Plus size={12} aria-hidden="true" />
@@ -76,7 +78,7 @@ export function EmptyState() {
         </button>
         <button
           type="button"
-          className="empty-chip inline-flex items-center gap-[6px] rounded-full border border-border-subtle bg-bg-raised px-[12px] py-[6px] text-[12px] text-text-secondary transition-all duration-fast ease-ease hover:-translate-y-px hover:border-border-default hover:bg-bg-hover hover:text-text-primary"
+          className="empty-chip inline-flex items-center gap-[7px] rounded-full border border-border-default bg-bg-raised px-[14px] py-[7px] text-[12.5px] text-text-secondary shadow-sm transition-all duration-base ease-ease hover:-translate-y-[2px] hover:border-accent/40 hover:bg-bg-hover hover:text-text-primary hover:shadow-md"
           onClick={() => openHub()}
         >
           <Plug size={12} aria-hidden="true" />
@@ -84,7 +86,7 @@ export function EmptyState() {
         </button>
         <button
           type="button"
-          className="empty-chip inline-flex items-center gap-[6px] rounded-full border border-border-subtle bg-bg-raised px-[12px] py-[6px] text-[12px] text-text-secondary transition-all duration-fast ease-ease hover:-translate-y-px hover:border-border-default hover:bg-bg-hover hover:text-text-primary"
+          className="empty-chip inline-flex items-center gap-[7px] rounded-full border border-border-default bg-bg-raised px-[14px] py-[7px] text-[12.5px] text-text-secondary shadow-sm transition-all duration-base ease-ease hover:-translate-y-[2px] hover:border-accent/40 hover:bg-bg-hover hover:text-text-primary hover:shadow-md"
           onClick={() => openAddHost()}
         >
           <ServerCog size={12} aria-hidden="true" />

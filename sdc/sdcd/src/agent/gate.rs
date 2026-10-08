@@ -42,11 +42,13 @@ impl Autonomy {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Decision {
     Allow,
     AlwaysAllow,
     Deny,
+    /// A refusal with the person's reason (SDC Anywhere, 0.17): the words go to the model as an instruction.
+    DenyWith(String),
     /// "Show me": the person wants to see the change before deciding.
     ShowMe,
     /// The turn was stopped while the question was open.
@@ -122,6 +124,19 @@ pub fn resolve(permission_id: &str, decision: &str) -> bool {
     }
 }
 
+/// What an answer string means. `deny:<reason>` is a refusal with the person's words.
+pub fn decision_from(answer: &str) -> Decision {
+    match answer {
+        "allow_once" | "allow" => Decision::Allow,
+        "always_allow" => Decision::AlwaysAllow,
+        "show_me" => Decision::ShowMe,
+        other => match other.strip_prefix("deny:") {
+            Some(reason) if !reason.trim().is_empty() => Decision::DenyWith(reason.trim().to_string()),
+            _ => Decision::Deny,
+        },
+    }
+}
+
 /// Asks, and waits for the answer - or for the turn to be stopped.
 #[allow(clippy::too_many_arguments)]
 pub fn ask(
@@ -152,14 +167,7 @@ pub fn ask(
 
     let decision = loop {
         match answers.recv_timeout(Duration::from_millis(250)) {
-            Ok(answer) => {
-                break match answer.as_str() {
-                    "allow_once" | "allow" => Decision::Allow,
-                    "always_allow" => Decision::AlwaysAllow,
-                    "show_me" => Decision::ShowMe,
-                    _ => Decision::Deny,
-                };
-            }
+            Ok(answer) => break decision_from(&answer),
             Err(RecvTimeoutError::Timeout) => {
                 if crate::engines::cancel::requested(turn_id) {
                     break Decision::Stopped;
@@ -273,5 +281,28 @@ mod tests {
 
         assert_eq!(waiter.join().unwrap(), Decision::Stopped);
         crate::engines::cancel::clear("turn-gate-stop");
+    }
+}
+
+#[cfg(test)]
+mod decision_tests {
+    use super::*;
+
+    #[test]
+    fn answers_mean_what_the_card_buttons_say() {
+        assert_eq!(decision_from("allow_once"), Decision::Allow);
+        assert_eq!(decision_from("allow"), Decision::Allow);
+        assert_eq!(decision_from("always_allow"), Decision::AlwaysAllow);
+        assert_eq!(decision_from("show_me"), Decision::ShowMe);
+        assert_eq!(decision_from("deny"), Decision::Deny);
+        assert_eq!(decision_from("anything else"), Decision::Deny, "an unknown answer is a refusal, never an allow");
+    }
+
+    #[test]
+    fn a_refusal_can_carry_the_persons_reason() {
+        assert_eq!(decision_from("deny:use the staging database"), Decision::DenyWith("use the staging database".into()));
+        assert_eq!(decision_from("deny:  padded  "), Decision::DenyWith("padded".into()));
+        assert_eq!(decision_from("deny:"), Decision::Deny);
+        assert_eq!(decision_from("deny:   "), Decision::Deny);
     }
 }

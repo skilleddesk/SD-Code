@@ -140,7 +140,7 @@ export function RightPanel() {
         `role="tabpanel"` + `aria-labelledby` back to the tab.
       */}
       <div
-        className="panel-tabs flex shrink-0 items-center gap-[2px] overflow-x-auto border-b border-border-subtle bg-bg-base px-[8px] py-[6px] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        className="panel-tabs flex shrink-0 items-center gap-[2px] overflow-x-auto border-b border-border-subtle px-[8px] py-[6px] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         role="tablist"
         aria-label={strings.rightPanel.tabsLabel}
       >

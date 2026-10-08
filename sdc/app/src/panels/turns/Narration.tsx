@@ -15,7 +15,7 @@ export function Narration({ text, streaming }: { text: string; streaming: boolea
   const { understood, rest } = splitUnderstood(shown, streaming);
 
   return (
-    <div className="narration mb-[10px] px-[2px]" data-narration={streaming ? 'streaming' : 'done'} aria-live={streaming ? 'polite' : undefined}>
+    <div className="narration px-[1px]" data-narration={streaming ? 'streaming' : 'done'} aria-live={streaming ? 'polite' : undefined}>
       {understood === null ? null : (
         <div className="understood mb-[6px] flex items-start gap-[8px] rounded-md border border-accent/25 bg-accent-subtle px-[10px] py-[6px]" data-understood>
           <Target size={13} aria-hidden="true" className="mt-[3px] shrink-0 text-accent" />

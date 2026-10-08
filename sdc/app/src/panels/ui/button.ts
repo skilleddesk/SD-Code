@@ -54,7 +54,7 @@ export const BTN_GHOST =
  * design/ui-prototype.html should find the same words.
  */
 export const BTN_PRIMARY =
-  'primary border-accent-fill bg-accent-fill text-text-on-accent hover:border-accent-fill-hover hover:bg-accent-fill-hover';
+  'primary brand-fill border-transparent bg-accent-fill text-text-on-accent';
 
 /** Destructive: `Remove this host`, and nothing else. */
 export const BTN_DANGER =

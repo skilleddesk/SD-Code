@@ -499,6 +499,12 @@ fn guard_edit(context: &mut ToolContext, path: &str, content: Option<&str>) -> O
     None
 }
 
+/// What the model is told when the person refused and said why. The reason is their own words (from the desktop
+/// or a signed message from their browser), so it is passed on as their instruction, quoted.
+fn declined_with(reason: &str) -> String {
+    format!("The person declined this action and said: \"{reason}\". Follow what they said; do not try the action again in another way.")
+}
+
 /// A question the kernel asks whatever the autonomy level: `DANGEROUS` is the risk the gate never skips.
 fn ask_always(context: &mut ToolContext, title: &str, sub: &str, target: &str, explain: &str) -> Option<Outcome> {
     match gate::ask(context.sink, context.turn_id, context.calls, "edit", title, sub, target, "DANGEROUS", explain) {
@@ -506,6 +512,7 @@ fn ask_always(context: &mut ToolContext, title: &str, sub: &str, target: &str, e
         Decision::Deny => Some(Outcome::error(
             "The person declined this change: it touches something the project's policy protects. Do not try it another way; explain what you wanted to do.",
         )),
+        Decision::DenyWith(reason) => Some(Outcome::error(declined_with(&reason))),
         Decision::ShowMe => Some(Outcome::error(
             "The person wants to see exactly what this changes before allowing it. Stop calling tools now and show the change in your answer.",
         )),
@@ -1706,6 +1713,7 @@ fn ask(
         Decision::Deny => Some(Outcome::error(
             "The person declined this action. Do not try it again in another way; explain what you wanted to do, or continue without it.",
         )),
+        Decision::DenyWith(reason) => Some(Outcome::error(declined_with(&reason))),
         Decision::ShowMe => Some(Outcome::error(
             "The person wants to see exactly what this does before allowing it. Stop calling tools now: show the exact change or command in your answer, say why it is needed, and wait for their reply.",
         )),

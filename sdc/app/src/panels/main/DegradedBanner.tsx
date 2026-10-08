@@ -37,7 +37,7 @@ export function DegradedBanner() {
 
     return (
       <div
-        className="degraded-banner flex shrink-0 items-center gap-[10px] border-b border-[rgba(245,165,36,.3)] bg-orange-subtle px-[14px] py-[8px] text-[12px] text-state-waiting"
+        className="degraded-banner mx-[10px] mt-[10px] flex shrink-0 items-center gap-[10px] rounded-lg border border-state-warning/40 bg-orange-subtle px-[12px] py-[7px] text-[12px] text-state-waiting"
         id="degradedBanner"
         data-daemon-offline="true"
         role="status"
@@ -47,7 +47,7 @@ export function DegradedBanner() {
         <div className="spacer flex-1" />
         <button
           type="button"
-          className="rounded-sm px-[8px] py-[3px] font-semibold text-state-waiting transition-colors duration-fast ease-ease hover:bg-[rgba(245,165,36,.15)]"
+          className="rounded-sm px-[8px] py-[3px] font-semibold text-state-waiting transition-colors duration-fast ease-ease hover:bg-orange-subtle"
           data-action="retry-daemon"
           onClick={() => void heartbeat()}
         >
@@ -63,7 +63,7 @@ export function DegradedBanner() {
 
   return (
     <div
-      className="degraded-banner flex shrink-0 items-center gap-[10px] border-b border-[rgba(245,165,36,.3)] bg-orange-subtle px-[14px] py-[8px] text-[12px] text-state-waiting"
+      className="degraded-banner mx-[10px] mt-[10px] flex shrink-0 items-center gap-[10px] rounded-lg border border-state-warning/40 bg-orange-subtle px-[12px] py-[7px] text-[12px] text-state-waiting"
       id="degradedBanner"
       role="status"
     >
@@ -72,7 +72,7 @@ export function DegradedBanner() {
       <div className="spacer flex-1" />
       <button
         type="button"
-        className="rounded-sm px-[8px] py-[3px] font-semibold text-state-waiting transition-colors duration-fast ease-ease hover:bg-[rgba(245,165,36,.15)]"
+        className="rounded-sm px-[8px] py-[3px] font-semibold text-state-waiting transition-colors duration-fast ease-ease hover:bg-orange-subtle"
         data-action="reconnect-host"
         onClick={() => {
           const host = broken[0];

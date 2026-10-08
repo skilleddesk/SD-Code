@@ -190,7 +190,7 @@ function CommandsView() {
       <div className="flex flex-wrap items-center gap-[8px] border-b border-border-subtle px-[12px] py-[8px]">
         <span className="font-mono text-[10.5px] text-text-muted">{subject.where}</span>
         {running ? (
-          <span className="rounded-full bg-bg-base px-[6px] py-[1px] font-mono text-[9.5px] text-accent">
+          <span className="rounded-full bg-bg-input px-[6px] py-[1px] font-mono text-[9.5px] text-accent">
             {strings.terminal.running}
           </span>
         ) : null}
@@ -223,7 +223,7 @@ function CommandsView() {
           <span className="font-mono text-[11.5px] text-text-muted">$</span>
           {/* The wrapper paints the box and the ring; the input stays transparent (the smoke gate's rule -
               this one painted itself and failed the gate from 0.7.13 on, mounted and hidden in its tab). */}
-          <span className="flex h-[28px] min-w-0 flex-1 rounded-md border border-border-default bg-bg-base focus-within:border-accent-fill">
+          <span className="flex h-[28px] min-w-0 flex-1 rounded-md border border-border-default bg-bg-input focus-within:border-accent-fill">
             <input
               className="h-full min-w-0 flex-1 bg-transparent px-[8px] font-mono text-[11.5px] text-text-primary outline-none disabled:opacity-40"
               value={line}

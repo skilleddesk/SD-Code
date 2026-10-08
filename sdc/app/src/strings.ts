@@ -14,6 +14,7 @@
 import { currentLocale, merge } from './i18n';
 import { agentStrings } from './agentStrings';
 import { researchStrings } from './researchStrings';
+import { anywhereStrings } from './anywhereStrings';
 import { kernelStrings } from './kernelStrings';
 import { PACKS } from './locales';
 
@@ -295,6 +296,24 @@ const english = {
       pace: 'Output pace over the last 40 seconds',
       filter: 'Show only',
       filters: { all: 'All', think: 'Thinking', read: 'Reads', edit: 'Edits', run: 'Commands', say: 'Messages' },
+      /** 0.18 timeline: the words of the step lines and their IN / OUT boxes. */
+      thinking: 'Thinking',
+      explored: (files: number, searches: number): string =>
+        [files > 0 ? `${files} ${files === 1 ? 'file' : 'files'}` : '', searches > 0 ? `${searches} ${searches === 1 ? 'search' : 'searches'}` : ''].filter((part) => part !== '').join(', '),
+      in: 'IN',
+      out: 'OUT',
+      noOutput: 'No output yet',
+      showAll: (lines: number): string => `Show all ${lines} lines`,
+      showLess: 'Show less',
+      lines: (count: number): string => `${count} ${count === 1 ? 'line' : 'lines'}`,
+      copyCommand: 'Copy the command',
+      copiedCommand: 'The command is on the clipboard',
+      stop: 'esc to stop',
+      /** What the working line says while the model decides - one word, turning every few seconds, so a long wait still reads as alive. */
+      verbs: ['Thinking', 'Reasoning', 'Cerebrating', 'Connecting the dots', 'Weighing options', 'Synthesizing', 'Planning the next move', 'Crafting'],
+      running: (name: string): string => `Running ${name}`,
+      writingReply: 'Writing the answer',
+      step: (index: number, total: number, text: string): string => `Step ${index}/${total} · ${text}`,
     },
     /** 0.13: reads folded into one line, and the files a turn changed. */
     explored: 'Explored',
@@ -1381,6 +1400,7 @@ const english = {
       { id: 'keymap', label: 'Keymap', icon: 'keyboard' },
       { id: 'safety', label: 'Safety', icon: 'shield' },
       { id: 'research', label: 'Research', icon: 'globe' },
+      { id: 'anywhere', label: 'SDC Anywhere', icon: 'smartphone' },
       { id: 'notifications', label: 'Notifications', icon: 'bell' },
       { id: 'backup', label: 'Backup', icon: 'databaseBackup' },
       { id: 'language', label: 'Language', icon: 'languages' },
@@ -1706,6 +1726,8 @@ const english = {
   agent: agentStrings,
   /** 0.16.1: `/research`, `/model`, Settings → Research and the local model - see researchStrings.ts. */
   research: researchStrings,
+  /** 0.17: Settings → SDC Anywhere - see anywhereStrings.ts. */
+  anywhere: anywhereStrings,
 } as const;
 
 export type Strings = typeof english;

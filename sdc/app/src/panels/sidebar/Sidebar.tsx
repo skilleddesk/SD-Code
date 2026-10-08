@@ -50,12 +50,12 @@ export function Sidebar() {
         <button
           type="button"
           id="newChatBtn"
-          className="new-chat-btn flex items-center gap-[8px] rounded-lg bg-accent-fill px-[12px] py-[8px] text-[12.5px] font-semibold text-text-on-accent shadow-sm transition-all duration-fast ease-ease hover:bg-accent-hover hover:shadow-[0_3px_12px_var(--accent-glow)] active:scale-[.98]"
+          className="new-chat-btn brand-fill flex items-center gap-[8px] rounded-lg bg-accent-fill px-[12px] py-[9px] text-[12.5px] font-semibold text-text-on-accent"
           onClick={() => host !== undefined && newChatOnHost(host.id)}
         >
           <MessageSquarePlus size={15} aria-hidden="true" />
           {strings.sidebar.newChat}
-          <span className="kbd-lite ml-auto rounded-[3px] bg-[rgba(0,0,0,.28)] px-[5px] py-[1px] font-mono text-[9.5px] font-medium max-900:hidden">
+          <span className="kbd-lite ml-auto rounded-[3px] bg-black/20 px-[5px] py-[1px] font-mono text-[9.5px] font-medium max-900:hidden">
             {strings.sidebar.newChatShortcut}
           </span>
         </button>

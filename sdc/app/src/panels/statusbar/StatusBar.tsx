@@ -15,6 +15,7 @@ import { toast } from '../../store/toast';
 import { CONNECTION_DOT_CLASS, HOST_STATUS_DOT_CLASS, HOST_STATUS_LABEL } from '../ui/status';
 import { StatusItem } from './StatusItem';
 import { CostMeter } from '../../kernel/CostMeter';
+import { AnywhereBadge } from '../../kernel/AnywhereBadge';
 import { copyText } from '../../lib/external';
 
 /**
@@ -153,6 +154,8 @@ export function StatusBar() {
       </span>
 
       <CostMeter />
+
+      <AnywhereBadge />
 
       <div className="spacer flex-1 min-w-[4px]" />
 

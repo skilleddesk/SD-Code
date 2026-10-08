@@ -65,7 +65,7 @@ export function SearchOverlay() {
 
   return (
     <Modal open={open} label="Search everything" onClose={close} className="search-overlay">
-      <div className="search-head flex items-center gap-[10px] border-b border-border-subtle px-[18px] py-[15px]">
+      <div className="search-head flex items-center gap-[10px] border-b border-border-subtle py-[15px] pl-[18px] pr-[44px]">
         <Search size={16} aria-hidden="true" className="text-text-muted" />
         <input
           className="search-input min-w-0 flex-1 bg-transparent text-[15px] text-text-primary placeholder:text-text-muted"
@@ -82,7 +82,7 @@ export function SearchOverlay() {
             }
           }}
         />
-        <span className="kbd inline-flex items-center rounded-[3px] border border-border-default border-b-2 bg-bg-base px-[5px] py-[1px] font-mono text-[9.5px] text-text-secondary">
+        <span className="kbd inline-flex items-center rounded-[4px] border border-border-default border-b-2 bg-bg-active px-[5px] py-[1px] font-mono text-[9.5px] text-text-secondary">
           Esc
         </span>
       </div>

@@ -67,7 +67,7 @@ function Question({ questionId, turnId, sessionId, question, options }: { questi
         }}
       >
         <input
-          className="h-[30px] min-w-0 flex-1 rounded-md border border-border-default bg-bg-base px-[10px] text-[12.5px] text-text-primary placeholder:text-text-muted"
+          className="h-[30px] min-w-0 flex-1 rounded-md border border-border-default bg-bg-input px-[10px] text-[12.5px] text-text-primary placeholder:text-text-muted"
           value={text}
           placeholder={words.placeholder}
           aria-label={words.placeholder}

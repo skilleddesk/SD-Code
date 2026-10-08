@@ -1,6 +1,6 @@
 [package]
 name = "sdcd"
-version = "0.16.1"
+version = "0.18.0"
 description = "SDC host daemon - session, engine, file, PTY, git and event-log service (spec section 3.1)"
 authors = ["Skilleddesk"]
 edition = "2021"
@@ -39,6 +39,11 @@ russh = { version = "0.62", default-features = false, features = ["ring", "rsa"]
 # The authenticator code for "Stay signed in" (RFC 6238 TOTP, `ssh::totp`).
 hmac = "0.13"
 sha1 = "0.11"
+p256 = { version = "0.14.0", features = ["ecdsa", "std"] }
+getrandom = "0.4.3"
+tokio-tungstenite = { version = "0.30.0", features = ["rustls-tls-webpki-roots"] }
+futures-util = { version = "0.3.34", default-features = false, features = ["sink", "std"] }
+hpke = { version = "0.14.1", default-features = false, features = ["x25519", "aes", "getrandom", "alloc"] }
 
 [dev-dependencies]
 tempfile = "3"
@@ -57,6 +62,9 @@ tempfile = "3"
 [features]
 default = []
 keychain = ["dep:keyring"]
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_SystemInformation", "Win32_UI_Input_KeyboardAndMouse", "Win32_System_Power"] }
 
 [dependencies.keyring]
 version = "3"

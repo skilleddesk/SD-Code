@@ -1,0 +1,53 @@
+{
+  "name": "@sdc/web",
+  "private": true,
+  "version": "0.18.0",
+  "type": "module",
+  "description": "SDC Anywhere: the browser app (PWA). Talks to the user's own sdcd through the relay; everything between is end-to-end encrypted.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "e2e": "vitest run --config vitest.e2e.config.ts",
+    "bench:remote": "vitest run --config vitest.bench.config.ts"
+  },
+  "dependencies": {
+    "@codemirror/lang-css": "^6.3.1",
+    "@codemirror/lang-html": "^6.4.12",
+    "@codemirror/lang-javascript": "^6.2.5",
+    "@codemirror/lang-json": "^6.0.2",
+    "@codemirror/lang-markdown": "^6.5.2",
+    "@codemirror/lang-php": "^6.0.2",
+    "@codemirror/lang-python": "^6.2.1",
+    "@codemirror/lang-rust": "^6.0.2",
+    "@codemirror/lang-sql": "^6.10.0",
+    "@codemirror/lang-xml": "^6.1.0",
+    "@codemirror/language": "^6.12.4",
+    "@codemirror/state": "^6.7.6",
+    "@codemirror/view": "^6.43.13",
+    "@fontsource-variable/geist": "^5.3.0",
+    "@fontsource-variable/geist-mono": "^5.3.0",
+    "@fontsource/hind-siliguri": "^5.3.0",
+    "@hpke/core": "^1.9.0",
+    "@hpke/dhkem-x25519": "^1.8.0",
+    "@lezer/highlight": "^1.2.4",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.4",
+    "@types/react": "^18.3.31",
+    "@types/react-dom": "^18.3.7",
+    "@types/ws": "^8.18.2",
+    "@vitejs/plugin-react": "^4.7.0",
+    "axe-core": "^4.13.0",
+    "fake-indexeddb": "^6.2.5",
+    "jsdom": "^30.1.2",
+    "playwright-core": "^1.64.0",
+    "typescript": "^7.0.2",
+    "vite": "^6.4.3",
+    "vitest": "^4.1.11",
+    "ws": "^8.22.0"
+  }
+}

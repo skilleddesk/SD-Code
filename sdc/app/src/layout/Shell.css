@@ -49,22 +49,48 @@
  * styles/globals.css.
  */
 
-/* #app - spec section 7.0: topbar 46px / workspace flexible / statusbar 30px. */
+/* #app - spec section 7.0: topbar / workspace flexible / statusbar.
+ *
+ * 0.18 "Aurora Glass": the window is painted with the brand's soft light (--aurora) and the three
+ * regions float on it as rounded translucent panels, with an 8px gutter between them. The topbar
+ * and status bar have no surface of their own - they are the window's frame. */
 #app {
   display: grid;
   grid-template-rows: var(--topbar-h) 1fr var(--statusbar-h);
   height: 100vh;
   width: 100vw;
+  background: var(--aurora), var(--bg-base);
 }
 
 /* WORKSPACE - spec section 7.2: 280px / 1fr / 400px. */
 .workspace {
   display: grid;
   grid-template-columns: var(--sidebar-w) 1fr var(--rightpanel-w);
+  column-gap: var(--gutter);
+  padding: 0 var(--gutter);
   overflow: hidden;
-  transition: grid-template-columns 260ms var(--ease);
-  background: var(--bg-base);
+  transition: grid-template-columns 260ms var(--ease), padding 260ms var(--ease);
   position: relative;
+}
+
+/* The three floating panels share one surface. */
+.sidebar,
+.main,
+.rightpanel {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-xl);
+  box-shadow: var(--shadow-panel);
+}
+
+/* A folded column is 0px wide, so its gutter is taken back from the workspace's padding - the open
+   panels keep an even 8px frame whichever side is folded. */
+.workspace.no-sidebar { padding-left: 0; }
+.workspace.no-right { padding-right: 0; }
+.workspace.no-sidebar .sidebar,
+.workspace.no-right .rightpanel {
+  border-color: transparent;
+  box-shadow: none;
 }
 
 /* `.show-right` is declared before the two collapse rules on purpose. Two rules of equal weight are
@@ -94,9 +120,8 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 0 12px;
-  background: var(--bg-base);
-  border-bottom: 1px solid var(--border-subtle);
+  padding: 0 14px;
+  background: transparent;
   user-select: none;
   position: relative;
   z-index: 100;
@@ -105,8 +130,6 @@
 
 /* SIDEBAR region (spec section 7.3). */
 .sidebar {
-  background: var(--bg-base);
-  border-right: 1px solid var(--border-subtle);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -120,14 +143,11 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: var(--bg-base);
   min-width: 0;
 }
 
 /* RIGHT PANEL region (spec sections 7.7-7.12). */
 .rightpanel {
-  background: var(--bg-base);
-  border-left: 1px solid var(--border-subtle);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -144,9 +164,8 @@
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 0 12px;
-  background: var(--bg-base);
-  border-top: 1px solid var(--border-subtle);
+  padding: 0 16px;
+  background: transparent;
   font-size: 10.5px;
   font-family: var(--font-mono);
   color: var(--text-secondary);
@@ -158,6 +177,16 @@
 @media (max-width: 1200px) {
   .workspace:not(.show-right) {
     grid-template-columns: var(--sidebar-w) 1fr 0;
+    padding-right: 0;
+  }
+
+  .workspace.no-sidebar:not(.show-right) {
+    grid-template-columns: 0 1fr 0;
+  }
+
+  .workspace:not(.show-right) .rightpanel {
+    border-color: transparent;
+    box-shadow: none;
   }
 }
 
@@ -174,6 +203,15 @@
   .workspace.no-right,
   .workspace.no-sidebar.no-right {
     grid-template-columns: 1fr;
+    padding: 0 var(--gutter);
+  }
+
+  /* The drawers are opaque: there is chat text under them. */
+  .sidebar,
+  .rightpanel {
+    background: var(--bg-overlay);
+    -webkit-backdrop-filter: blur(24px) saturate(1.4);
+    backdrop-filter: blur(24px) saturate(1.4);
   }
 
   .sidebar {

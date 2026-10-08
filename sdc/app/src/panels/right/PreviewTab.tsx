@@ -524,7 +524,7 @@ export function PreviewTab() {
       <div className="min-h-0 flex-1 overflow-auto px-[10px] py-[10px]">
         {url === '' ? (
           <div
-            className="preview-frame mx-auto grid min-h-[220px] w-full place-items-center rounded-md border border-dashed border-border-default bg-bg-base"
+            className="preview-frame mx-auto grid min-h-[220px] w-full place-items-center rounded-md border border-dashed border-border-default bg-bg-input"
             id="previewEmpty"
           >
             <div className="p-[20px] text-center">

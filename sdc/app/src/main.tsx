@@ -2,14 +2,13 @@ import { applyDocumentLocale } from './i18n';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 
-/* Self-hosted fonts (spec section 4.1: no CDN). Inter for UI, JetBrains Mono for code,
-   paths and diffs. Weights match the prototype's Google Fonts request. */
-import '@fontsource/inter/400.css';
-import '@fontsource/inter/500.css';
-import '@fontsource/inter/600.css';
-import '@fontsource/inter/700.css';
-import '@fontsource/jetbrains-mono/400.css';
-import '@fontsource/jetbrains-mono/500.css';
+/* Self-hosted fonts (no CDN): Geist for the interface, Geist Mono for code, paths and diffs, and Hind
+   Siliguri for Bangla script, which Geist does not cover (0.18). */
+import '@fontsource-variable/geist';
+import '@fontsource-variable/geist-mono';
+import '@fontsource/hind-siliguri/bengali-400.css';
+import '@fontsource/hind-siliguri/bengali-500.css';
+import '@fontsource/hind-siliguri/bengali-600.css';
 
 import './styles/globals.css';
 

@@ -15,6 +15,75 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [0.18.0] — Aurora Glass: a new look, a live work timeline, a sharper agent
+
+**The new logo, everywhere.** The SDC hexagon (background removed) is the app icon on Windows, macOS and Linux
+(`.ico`, `.icns`, every PNG size), the topbar mark, the empty states, About, onboarding, and the SDC Anywhere web app
+(favicon, PWA icons including a maskable one, notification icon).
+
+**Aurora Glass design.** Dark glass by default, light glass one click away. The window carries a soft light in the
+logo's colours (violet, fuchsia, coral) and the sidebar, chat and right panel float on it as rounded translucent
+panels; menus, dialogs and the composer are frosted glass. New palette with every text colour checked for WCAG AA
+contrast in both themes; New chat, Send and primary buttons use the brand gradient.
+
+**Premium type.** Geist for the interface, Geist Mono for code and the terminal, and Hind Siliguri for Bangla script
+(Geist has no Bengali glyphs). All self-hosted.
+
+**The live work timeline.** A turn's work is now one rail with a dot per step, coloured by how it went: `Thought for
+3.2s` (one click opens the reasoning as Markdown), `Explored 2 files, 1 search` with each read listed, `Edit` with its
+diff right under it, and `Bash` with **IN** (the command, copyable) and **OUT** (the output, streaming live, folded to its
+last lines when long). The bottom line always says what is happening this second - a turning spark, the phase, the
+clock, tokens so far, the plan step and `esc to stop`. The time ribbon, pace sparkline, filters and Copy log stay. The
+person's message is a bubble, the answer reads as prose under an SDC header, the plan card has a progress bar.
+
+**A sharper agent.** SDC Agent's brief now asks for a senior engineer's method: restate the goal and what "done" means,
+ground every claim in the project's own code, find a bug's root cause before fixing it, think through edge cases,
+narrate each step in one line, review its own change before answering, never claim a test passed without running it,
+and finish with a structured summary (result, changes, cause, verification, what is left).
+
+**Fixed.** Colour classes with an opacity modifier (`border-accent/30` and eight others) were never generated, so those
+borders fell back to a light grey; they now have their colours, and a bare `border` defaults to the subtle hairline.
+
+## [0.17.0] — SDC Anywhere, phase 1: a safe foundation
+
+Control this computer's SDC from any browser, with nothing to install. **Off by default.** With it off, SDC behaves
+exactly as before; with the relay down, the desktop is unaffected.
+
+**What a person can do.** Pair a phone or a borrowed laptop with a QR code and a passkey, compare six digits on both
+screens, confirm on the computer. From the browser: see the live stream, see and answer permission requests (Allow
+once, Deny with a reason the AI receives), stop everything (Stop all, no unlock needed). Settings → SDC Anywhere on
+the desktop turns it on, pairs, lists and revokes devices, and sets the limits. See `docs/remote/`.
+
+**How it is built.** The PC dials out to a relay (a Cloudflare Worker and one Durable Object per computer); nothing
+is opened on the PC. Everything between browser and daemon is end-to-end encrypted (HPKE, X25519 and AES-256-GCM, a
+counter-numbered context per direction), so the relay forwards ciphertext it cannot read, alter or replay. A device is a
+non-extractable ECDSA key plus a passkey; the daemon verifies the WebAuthn assertion itself. An approval is a signature
+over the SHA-256 of the exact action shown; the daemon compares it with its own copy before anything runs.
+
+**Rules the code enforces** (not settings): four levels - locked, view (passkey, locks after 15 idle minutes), operate (passkey,
+5 minutes), and a fresh passkey for every dangerous action; a browser may call only an allow-list of daemon methods and
+never `anywhere.*`, policy, keychain, SSH keys or audit; a guest is view-only for at most 2 hours; revoking a device cuts
+its session at once. A connection that drops comes back at the same level for 2 minutes without a passkey.
+
+**New in the daemon.** `sdcd/src/anywhere/` (`core`, `crypto`, `router`, `session`, `webauthn`, `registry`, `relay`, `os`);
+ten `anywhere.*` methods and the `RemoteActivity` event; the ledger records which device decided and why; `SDC_DATA_DIR`
+moves the data folder; `Decision::DenyWith` carries a refusal's reason to the model; the Windows/macOS/Linux idle and
+keep-awake hooks. New dependencies: `hpke`, `p256`, `getrandom`, `tokio-tungstenite` (rustls), `futures-util`, `windows-sys`.
+
+**New packages.** `cloud/` (the relay), `web/` (the PWA; English and Bangla so far), `bench/remote/`.
+
+**Measured** (relay, daemon and browser on one machine, so software overhead only): an approval reaches an open page
+in 5.5 ms p50 / 6.9 ms p95, Allow round trip 7.3 / 8.5 ms, a stream event 2.5 / 2.8 ms, reconnect 554 / 635 ms, a
+256 KB frame seals in 0.5 ms, the daemon grows 12.6 MB. `docs/remote/PERF.md` has the method and what is not measured yet.
+
+**Tests.** 160 new Rust unit tests (crypto, WebAuthn, router, capability levels, the whole core against a software
+browser), 31 relay tests on workerd, 16 TypeScript vector tests that must agree byte for byte with Rust, 25 end-to-end
+tests with a real `sdcd`, the real Worker and the real page in Edge with a virtual authenticator (including axe
+WCAG 2 AA checks).
+
+**Not in this release** (by the plan): the file explorer and editor (0.18/0.19), terminal, preview, push and e-mail
+notifications, the magic link (0.18), WebRTC (0.20).
+
 ## [0.16.1] — Each chat keeps its own model, local models really run, and `/research`
 
 **The report:** *"akta chat a je model select kora onno chat onno model select korle aita automatic sob

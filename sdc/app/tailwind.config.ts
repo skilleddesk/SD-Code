@@ -32,6 +32,8 @@ const config: Config = {
           active: 'var(--bg-active)',
           /* Glass chrome - overlays, palette, topbar (a token spec section 8.1 lists). */
           glass: 'var(--bg-glass)',
+          /* The translucent shell regions floating on the aurora (0.18). */
+          panel: 'var(--bg-panel)',
         },
 
         /* Hairlines: 1px everywhere, 2px only for the focus ring (spec section 8.3) */
@@ -104,8 +106,13 @@ const config: Config = {
       },
       fontFamily: {
         /* Self-hosted through fontsource in src/main.tsx (spec section 4.1 - no CDN). */
-        ui: 'Inter, system-ui, -apple-system, sans-serif',
-        mono: 'JetBrains Mono, Menlo, Consolas, monospace',
+        ui: 'var(--font-ui)',
+        mono: 'var(--font-mono)',
+      },
+      /* A bare `border` (and any colour class Tailwind cannot generate) gets the subtle hairline, never
+         preflight's #e5e7eb grey - which is what a token with an opacity modifier used to fall back to. */
+      borderColor: {
+        DEFAULT: 'var(--border-subtle)',
       },
       borderRadius: {
         xs: 'var(--r-xs)',

@@ -390,10 +390,10 @@ Reading it:
 5. **`SDC-OK`** → the host accepts SDC's key and the whole chain works; **`Permission denied`** → §6, the
    install is the missing step.
 
-For the daemon's side of the same thing, `_verify/probe-remote.mjs` drives the real methods over SDCP:
+For the daemon's side of the same thing, `sdc/scripts/remote/probe-remote.mjs` drives the real methods over SDCP:
 
 ```powershell
-node _verify/probe-remote.mjs 'deploy@203.0.113.10:8443' 7811
+node sdc/scripts/remote/probe-remote.mjs 'deploy@203.0.113.10:8443' 7811
 ```
 
 Against the host from the original report it prints, in order: `host.add` → the pin already in place →

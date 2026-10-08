@@ -1,0 +1,17 @@
+# Copy to .dev.vars (gitignored) for `wrangler dev`. In production these are set with `wrangler secret put` / wrangler.jsonc vars.
+# Never put a real key in this example file.
+
+# Web Push. Make a pair with: node scripts/vapid.mjs
+VAPID_PUBLIC_KEY=
+VAPID_PRIVATE_KEY=
+VAPID_SUBJECT=mailto:you@example.com
+
+# Email (open question OQ-14: which provider owns the key). 'resend' or 'generic'; unset = email off.
+EMAIL_PROVIDER=
+EMAIL_API_KEY=
+EMAIL_FROM=SDC <notify@skilleddesk.com>
+# 'generic' only: an HTTPS endpoint that accepts JSON { from, to: [..], subject, text, html }
+EMAIL_API_URL=
+# 'generic' only, if the provider does not use `Authorization: Bearer <key>`
+EMAIL_AUTH_HEADER=
+EMAIL_AUTH_SCHEME=

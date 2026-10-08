@@ -277,7 +277,7 @@ it is reached.
   `engines/native_api.rs`. The sentence that stood here ("a remote `https://` endpoint answers *a TLS client is
   not linked in this build*… the next crate to add (`rustls` + `hyper`)") was two releases out of date, and
   0.7.11 **measured** it instead of re-reading it: a key nobody wants, sent to the provider's own model list,
-  came back with the provider's sentence and `verified: true` (`_verify/live-provider-test.mjs`). What is still
+  came back with the provider's sentence and `verified: true` (`scripts/tools/live-provider-test.mjs`). What is still
   narrow is the attention this build has had on the *streaming* remote path - the transport under it is the same
   agent, but a turn against a paid endpoint has not been exercised from here - and the `http://` loopback path
   that LM Studio, vLLM and llama.cpp speak, which is the one a test can drive without a network.
@@ -312,7 +312,7 @@ it is reached.
   provider's own sentence (`API key is invalid. (401)`) and `verified: true` as well, because the question *was*
   asked. `verified: false` is what "we could not ask" means - no key stored, or the endpoint unreachable - and
   0.7.11 measured the first case live rather than trusting the note that used to be here
-  (`_verify/live-provider-test.mjs`). A local Ollama daemon is probed the same way, over `http://`.
+  (`scripts/tools/live-provider-test.mjs`). A local Ollama daemon is probed the same way, over `http://`.
 * **Installers for macOS and Linux, and a signed build.** CI publishes all of them (`*.dmg` ×2,
   `*.AppImage`, `*.deb`, `*.msi`, `*_x64-setup.exe`); on Windows the **installed** app was verified end
   to end in 0.4.4 — silent install, the window renders, the daemon it started is 0.4.4, no console

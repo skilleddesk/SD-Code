@@ -1,5 +1,5 @@
 /**
- * SDCP 0.1 — TypeScript mirror of `protocol/sdcp.schema.json` (spec section 5).
+ * SDCP 0.1 â€” TypeScript mirror of `protocol/sdcp.schema.json` (spec section 5).
  *
  * HAND-WRITTEN MIRROR, ON PURPOSE. Spec section 5.10 wants the JSON Schema to be the single source
  * of truth and the Rust/TypeScript types to be *generated* from it. The generator needs the v2.0
@@ -49,7 +49,7 @@ export interface Envelope<P = Record<string, unknown>> {
   hostId?: string;
 }
 
-/** Exactly one of `result` / `error` — the schema enforces it, this union types it. */
+/** Exactly one of `result` / `error` â€” the schema enforces it, this union types it. */
 export type Response<R = Record<string, unknown>> =
   | { v: ProtocolVersion; id: string; result: R }
   | { v: ProtocolVersion; id: string; error: SdcpError };
@@ -76,7 +76,7 @@ export type SdcpMethod =
    * `host.add` scans the machine's host key and, when it is not the one SDC pinned, records the host
    * `untrusted` and puts the fingerprint on the screen. This method pins it - after scanning **again**,
    * so what was confirmed is what is stored - and only then may the password (when the dialog still has
-   * it) be spent on the one-time key install. See `docs/REMOTE.md` §4.
+   * it) be spent on the one-time key install. See `docs/REMOTE.md` Â§4.
    */
   | 'host.trust'
   /**
@@ -199,6 +199,17 @@ export type SdcpMethod =
   | 'policy.set'
   | 'kill.all'
   | 'kill.list'
+  /* 0.17: SDC Anywhere - the desktop's settings for the browser feature. */
+  | 'anywhere.status'
+  | 'anywhere.enable'
+  | 'anywhere.disable'
+  | 'anywhere.configure'
+  | 'anywhere.pair.begin'
+  | 'anywhere.pair.requests'
+  | 'anywhere.pair.confirm'
+  | 'anywhere.devices.list'
+  | 'anywhere.devices.revoke'
+  | 'anywhere.reset'
   | 'cost.summary'
   | 'cost.estimate'
   | 'cost.budget.set'
@@ -270,7 +281,7 @@ export type SdcpMethod =
   | 'research.plan';
 
 /**
- * Host lifecycle (schema `$defs.eventTypes` → `HostStatus`).
+ * Host lifecycle (schema `$defs.eventTypes` â†’ `HostStatus`).
  *
  * `untrusted` is 0.7.13's fifth state, and it is the one that asks a question: the host answered, its
  * key is one SDC has never seen, and nothing has been sent to it. `HostStatusEvent.hostKey` carries the
@@ -278,7 +289,7 @@ export type SdcpMethod =
  */
 export type HostStatusValue = 'connected' | 'untrusted' | 'degraded' | 'offline' | 'connecting';
 
-/** Provider lifecycle — `needs-auth` is the state that lights the topbar dot. */
+/** Provider lifecycle â€” `needs-auth` is the state that lights the topbar dot. */
 export type ProviderLifecycle = 'connected' | 'needs-auth' | 'available' | 'error';
 
 export type ProviderKind = 'subscription' | 'api-key' | 'local' | 'custom';
@@ -458,10 +469,10 @@ export interface FsEntry {
  * The append-only event catalogue (spec section 5.4), as a discriminated union on `type`.
  *
  * These are the events the UI reducer projects (spec section 3.3). The first eighteen are the
- * subset the UI needs; the last five are the differentiator events of spec section 2.5 —
+ * subset the UI needs; the last five are the differentiator events of spec section 2.5 â€”
  * `StuckDetected` (12.9), `ConsoleError` (15.4), `DuelStarted`/`DuelResolved` (16.6) and
  * `SessionBridged` (16.5). Every one of them is emitted by the daemon and *never* by the UI; the
- * UI's only way in is `dispatch(intent)` → `sdcp_call` → daemon appends → notification back.
+ * UI's only way in is `dispatch(intent)` â†’ `sdcp_call` â†’ daemon appends â†’ notification back.
  */
 
 export interface HostStatusEvent {
@@ -472,15 +483,15 @@ export interface HostStatusEvent {
   status: HostStatusValue;
   /** sdcd version on the far side, e.g. `0.4.1`. */
   sdcd?: string;
-  /** Machine line for the tooltip: `macOS 15.1 · arm64`, `Debian 12 · x64`. */
+  /** Machine line for the tooltip: `macOS 15.1 Â· arm64`, `Debian 12 Â· x64`. */
   platform?: string;
   /**
    * What just happened to this host, in words (0.7.13).
    *
    * `platform` is the machine line and this is the *sentence* - `root@vps is reachable`, `copying SDC's
-   * key with that password…`, `its host key is not the one SDC pinned for it…`. Until 0.7.13 the
+   * key with that passwordâ€¦`, `its host key is not the one SDC pinned for itâ€¦`. Until 0.7.13 the
    * daemon had one parameter for both jobs and the sentences travelled in `platform`, so the card that
-   * reads the machine line read "copying SDC's key…" instead.
+   * reads the machine line read "copying SDC's keyâ€¦" instead.
    */
   detail?: string | null;
   /**
@@ -815,7 +826,7 @@ export interface ErrorRaisedEvent {
   sessionId?: string | null;
   turnId?: string | null;
   title: string;
-  /** The plain-English translation of spec section 14.9 — never a raw stack trace. */
+  /** The plain-English translation of spec section 14.9 â€” never a raw stack trace. */
   explanation: string;
   /** The raw line, kept for `Show code`. */
   source?: string;
@@ -923,7 +934,7 @@ export interface DuelStartedEvent {
 export interface DuelResolvedEvent {
   type: 'DuelResolved';
   duelId: string;
-  /** The engine that was kept, or null for `Keep neither` — both are archived, not deleted. */
+  /** The engine that was kept, or null for `Keep neither` â€” both are archived, not deleted. */
   kept: string | null;
 }
 
@@ -1294,6 +1305,61 @@ export interface BudgetStopEvent {
   sentence: string;
 }
 
+/** Something a browser did through SDC Anywhere: `unlock`, `kill`, `decision.refused`, `device.revoked`, ... */
+export interface RemoteActivityEvent {
+  type: 'RemoteActivity';
+  what: string;
+  detail: Record<string, unknown>;
+}
+
+/** SDC Anywhere (0.17): where the daemon stands, for Settings â†’ SDC Anywhere. */
+export interface AnywhereStatus {
+  enabled: boolean;
+  running: boolean;
+  connected: boolean;
+  lastError: string | null;
+  relay: string;
+  daemonId: string | null;
+  browserConnections: number;
+  waitingApprovals: number;
+  pairingRequests: number;
+  keyStorage: { backend: 'os' | 'file'; protection: string; acceptedFileKey: boolean };
+  settings: {
+    notifyWhen: 'idle' | 'always' | 'never';
+    idleMinutes: number;
+    approvalTimeoutSec: number;
+    onTimeout: 'pause' | 'deny';
+    viewIdleLockMinutes: number;
+    operateWindowMinutes: number;
+    guestSessionMaxMinutes: number;
+    maxScopedGrantMinutes: number;
+    /** Where the relay sends a nudge or a sign-in link; empty = email off. */
+    email: string;
+    escalateEmailSec: number;
+  };
+}
+
+export interface AnywhereDevice {
+  id: string;
+  name: string;
+  userAgent: string;
+  guest: boolean;
+  createdAt: number;
+  lastSeen: number | null;
+  revokedAt: number | null;
+  expiresAt: number | null;
+}
+
+export interface AnywherePairRequest {
+  deviceId: string;
+  name: string;
+  userAgent: string;
+  guest: boolean;
+  /** The six digits (`123 456`) the phone shows too. Confirm only if they match. */
+  code: string;
+  askedAt: number;
+}
+
 export interface KillSwitchEvent {
   type: 'KillSwitch';
   stopped: ActiveWork[];
@@ -1466,6 +1532,7 @@ export type SdcpEvent =
   | PolicyViolationEvent
   | BudgetStopEvent
   | KillSwitchEvent
+  | RemoteActivityEvent
   | TrustScoredEvent
   | CheckpointUpdatedEvent
   | FileRestoredEvent
@@ -1481,7 +1548,7 @@ export type SdcpEvent =
   | ShadowDbUpdatedEvent
   | StagingUpdatedEvent;
 
-/** The `type` literals, in catalogue order — used by tests and by the reducer's exhaustiveness. */
+/** The `type` literals, in catalogue order â€” used by tests and by the reducer's exhaustiveness. */
 export const SDCP_EVENT_TYPES = [
   'HostStatus',
   'HostRemoved',
@@ -1522,6 +1589,7 @@ export const SDCP_EVENT_TYPES = [
   'PolicyViolation',
   'BudgetStop',
   'KillSwitch',
+  'RemoteActivity',
   'TrustScored',
   'CheckpointUpdated',
   'FileRestored',
@@ -1544,7 +1612,7 @@ export type SdcpEventByType = {
 };
 
 /**
- * Method contracts — the `methods` block of the schema, in TypeScript.
+ * Method contracts â€” the `methods` block of the schema, in TypeScript.
  *
  * `SdcpMethodMap` is what makes `sdcpCall()` typed at the call site: the params object is checked
  * against the method's `params`, and the resolved value against its `result`. Methods the UI never
@@ -1595,7 +1663,7 @@ export interface SdcpMethodMap {
   /**
    * The answer to the trust question `host.add` may have asked (0.7.13).
    *
-   * `fingerprint` is the string the dialog showed (`SHA256:…`), and it is re-checked against the
+   * `fingerprint` is the string the dialog showed (`SHA256:â€¦`), and it is re-checked against the
    * machine before anything is written: a key that changed between the question and the answer is
    * refused rather than pinned. `password` is only spent **after** the pin, which is what makes the
    * one-time key install safe on a host whose identity was never checked.
@@ -1700,7 +1768,7 @@ export interface SdcpMethodMap {
    * Where a named thing lives on a machine (0.11.0) - the answer to *"give me my skilleddesk.com
    * project files"* when no project is bound yet. For a domain it reads the web server's own answer
    * first (an nginx `root` / Apache `DocumentRoot` whose server name matches), then the conventional
-   * homes (`/var/www/<q>`, `/srv/<q>`, `~/<q>`, …); locally it looks through the usual code folders.
+   * homes (`/var/www/<q>`, `/srv/<q>`, `~/<q>`, â€¦); locally it looks through the usual code folders.
    * Candidates are ordered best-first and every one is a real directory on that machine.
    */
   'project.locate': {
@@ -2129,6 +2197,16 @@ export interface SdcpMethodMap {
   'policy.set': { params: { sessionId?: string; root?: string; hostId?: string; text?: string; policy?: Partial<Policy> }; result: { policy: Policy; path: string } };
   'kill.all': { params: Record<string, never>; result: { stopped: ActiveWork[]; processes: number; checkpoints: { sessionId: string; checkpointId: string }[] } };
   'kill.list': { params: Record<string, never>; result: { active: ActiveWork[] } };
+  'anywhere.status': { params: Record<string, never>; result: AnywhereStatus };
+  'anywhere.enable': { params: Record<string, never>; result: AnywhereStatus };
+  'anywhere.disable': { params: Record<string, never>; result: AnywhereStatus };
+  'anywhere.configure': { params: { relay?: string; acceptFileKey?: boolean; notifyWhen?: 'idle' | 'always' | 'never'; idleMinutes?: number; approvalTimeoutSec?: number; onTimeout?: 'pause' | 'deny'; viewIdleLockMinutes?: number; operateWindowMinutes?: number; guestSessionMaxMinutes?: number; maxScopedGrantMinutes?: number; email?: string; escalateEmailSec?: number }; result: AnywhereStatus };
+  'anywhere.pair.begin': { params: { guest?: boolean }; result: { url: string; fingerprint: string; expiresAt: number; guest: boolean } };
+  'anywhere.pair.requests': { params: Record<string, never>; result: { requests: AnywherePairRequest[] } };
+  'anywhere.pair.confirm': { params: { deviceId: string; accept?: boolean }; result: { paired: boolean } };
+  'anywhere.devices.list': { params: Record<string, never>; result: { devices: AnywhereDevice[] } };
+  'anywhere.devices.revoke': { params: { deviceId: string }; result: { revoked: boolean } };
+  'anywhere.reset': { params: Record<string, never>; result: { reset: boolean } };
   'cost.summary': { params: Record<string, never>; result: CostSummary };
   'cost.estimate': { params: { prompt: string; engine: string; model: string; provider?: string; sessionId?: string; agent?: boolean }; result: { estimate: CostEstimate; cheaper: CheaperModel | null; spent: CostSpent; budgets: CostBudgets } };
   'cost.budget.set': { params: { turn?: number | null; chat?: number | null; day?: number | null; month?: number | null; baseline?: string }; result: CostSummary };
@@ -2201,13 +2279,13 @@ export interface SdcpMethodMap {
   'process.stop': { params: { processId: string }; result: { stopped: boolean } };
   /** The context meter before a turn: what the next turn of the chat would send to this model. */
   'context.get': { params: { sessionId: string; engine?: string; model?: string; provider?: string }; result: { usedTokens: number; windowTokens: number; percent: number; compacted: boolean; resumed: boolean } };
-  /** Settings → Research (0.16.1): the search service, which keyed services have a key (masked), limits, the final-answer model, and Ollama. */
+  /** Settings â†’ Research (0.16.1): the search service, which keyed services have a key (masked), limits, the final-answer model, and Ollama. */
   'research.status': { params: Record<string, never>; result: ResearchStatus };
   /** A search service's key into the OS keychain; an empty key removes it. */
   'research.key.set': { params: { provider: 'tavily' | 'brave' | 'serper'; key: string }; result: ResearchStatus };
   /** What a `/research` will do - model, place, search service, limits, estimated cost - before it starts. */
   'research.plan': { params: { engine: string; provider?: string; model: string; prompt: string }; result: ResearchPlan };
-  /** Settings → Erase all SDC data: keys now, the data folder on the daemon's next start. `confirm` must be `ERASE`. */
+  /** Settings â†’ Erase all SDC data: keys now, the data folder on the daemon's next start. `confirm` must be `ERASE`. */
   'app.erase': { params: { confirm: 'ERASE' }; result: { erasing: boolean } };
 }
 

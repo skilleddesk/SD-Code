@@ -271,6 +271,16 @@
           "policy.set",
           "kill.all",
           "kill.list",
+          "anywhere.status",
+          "anywhere.enable",
+          "anywhere.disable",
+          "anywhere.configure",
+          "anywhere.pair.begin",
+          "anywhere.pair.requests",
+          "anywhere.pair.confirm",
+          "anywhere.devices.list",
+          "anywhere.devices.revoke",
+          "anywhere.reset",
           "cost.summary",
           "cost.estimate",
           "cost.budget.set",
@@ -384,6 +394,7 @@
           "PolicyViolation",
           "BudgetStop",
           "KillSwitch",
+          "RemoteActivity",
           "TrustScored",
           "CheckpointUpdated",
           "FileRestored",
@@ -1512,6 +1523,101 @@
           "params": {},
           "result": {
             "active": "array"
+          }
+        },
+        "anywhere.status": {
+          "params": {},
+          "result": {
+            "enabled": "boolean",
+            "running": "boolean",
+            "connected": "boolean",
+            "relay": "string",
+            "daemonId": "string",
+            "browserConnections": "number",
+            "waitingApprovals": "number",
+            "pairingRequests": "number",
+            "keyStorage": "object",
+            "settings": "object"
+          }
+        },
+        "anywhere.enable": {
+          "params": {},
+          "result": {
+            "enabled": "boolean",
+            "running": "boolean",
+            "connected": "boolean"
+          }
+        },
+        "anywhere.disable": {
+          "params": {},
+          "result": {
+            "enabled": "boolean",
+            "running": "boolean"
+          }
+        },
+        "anywhere.configure": {
+          "params": {
+            "relay": "string",
+            "acceptFileKey": "boolean",
+            "notifyWhen": "string",
+            "idleMinutes": "number",
+            "approvalTimeoutSec": "number",
+            "onTimeout": "string",
+            "viewIdleLockMinutes": "number",
+            "operateWindowMinutes": "number",
+            "guestSessionMaxMinutes": "number",
+            "maxScopedGrantMinutes": "number",
+            "email": "string",
+            "escalateEmailSec": "number"
+          },
+          "result": {
+            "enabled": "boolean"
+          }
+        },
+        "anywhere.pair.begin": {
+          "params": {
+            "guest": "boolean"
+          },
+          "result": {
+            "url": "string",
+            "fingerprint": "string",
+            "expiresAt": "number",
+            "guest": "boolean"
+          }
+        },
+        "anywhere.pair.requests": {
+          "params": {},
+          "result": {
+            "requests": "array"
+          }
+        },
+        "anywhere.pair.confirm": {
+          "params": {
+            "deviceId": "string",
+            "accept": "boolean"
+          },
+          "result": {
+            "paired": "boolean"
+          }
+        },
+        "anywhere.devices.list": {
+          "params": {},
+          "result": {
+            "devices": "array"
+          }
+        },
+        "anywhere.devices.revoke": {
+          "params": {
+            "deviceId": "string"
+          },
+          "result": {
+            "revoked": "boolean"
+          }
+        },
+        "anywhere.reset": {
+          "params": {},
+          "result": {
+            "reset": "boolean"
           }
         },
         "cost.summary": {

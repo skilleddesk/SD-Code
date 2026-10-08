@@ -86,7 +86,7 @@ export function TabStrip() {
   };
 
   return (
-    <div className="tabstrip relative flex min-w-0 shrink-0 items-stretch border-b border-border-subtle bg-bg-base h-[38px]">
+    <div className="tabstrip relative flex min-w-0 shrink-0 items-stretch border-b border-border-subtle h-[38px]">
       <div
         ref={wrapRef}
         className={

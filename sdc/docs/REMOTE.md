@@ -214,16 +214,16 @@ What it deliberately is not, in this release:
 | `app/src/store/terminal.ts` | The tab's own state: entries (capped), the ↑ history, the one background process, `busy`. |
 | `app/src/store/intents.ts` | `terminalSubject`, `runCommand`, `runInBackground`, `pollBackground`, `stopBackground`, `watchBackground` — and the `hostId` on every file/git/shell call. |
 | `docs/SSH-CONNECT.md` | The same chain **operationally**: each step's real code, the exact `ssh` command to check it by hand, and the failure table. Start here when a host will not connect. |
-| `_verify/ssh-doctor.mjs` | One command, five layers, outside the app: client, port, host key, SDC's key, probe — the same binaries SDC uses, with exit code 1 when the probe fails. |
-| `_verify/probe-remote.mjs` | Drives the daemon's real methods against a live SSH server: `host.add` → `host.key` → `host.trust` → `host.doctor` → `ssh.key` → `fs.list` → `git.status` → `shell.run {line}` → `pty.open`/`output`/`close`. |
+| `sdc/scripts/remote/ssh-doctor.mjs` | One command, five layers, outside the app: client, port, host key, SDC's key, probe — the same binaries SDC uses, with exit code 1 when the probe fails. |
+| `sdc/scripts/remote/probe-remote.mjs` | Drives the daemon's real methods against a live SSH server: `host.add` → `host.key` → `host.trust` → `host.doctor` → `ssh.key` → `fs.list` → `git.status` → `shell.run {line}` → `pty.open`/`output`/`close`. |
 
 Tests: `cargo test --manifest-path sdcd/Cargo.toml` covers quoting, fingerprinting, known-hosts parsing,
 the listing/read/write parsers, the trust decision table, the remote turn line (port, folder, pid file and
 args-inside-the-line, plus the `setsid` group and the group-kill escalation), the line guard
 (`refuses_a_denied_program_anywhere_in_a_line`) and the shell a line becomes; `protocol/check.mjs` keeps the schema, `types.ts` and the daemon's dispatch in
 step; the app's `vitest` run covers the intent paths, the status map, the pin and the host's doctor.
-`_verify/probe-remote.mjs` is the live one: it drives `host.add` → `untrusted` → `host.trust` → the probe
-against a real server (`node _verify/probe-remote.mjs root@github.com 7899` against a daemon started with
+`sdc/scripts/remote/probe-remote.mjs` is the live one: it drives `host.add` → `untrusted` → `host.trust` → the probe
+against a real server (`node sdc/scripts/remote/probe-remote.mjs root@github.com 7899` against a daemon started with
 `--port 7899 --database <temp>`), and prints every `HostStatus` so the sentences and the fingerprint can be
 read as they arrive.
 

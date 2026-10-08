@@ -50,6 +50,7 @@ impl Daemon {
             "research.key.set" => self.research_key_set(envelope),
             "research.plan" => Ok(self.research_plan(envelope)),
             "app.erase" => self.app_erase(envelope),
+            other if other.starts_with("anywhere.") => self.dispatch_anywhere(envelope, out),
             other => Err(ErrorObject::unsupported(other)),
         }
     }

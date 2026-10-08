@@ -484,6 +484,12 @@ pub mod event {
         base("BudgetStop", json!({ "sessionId": session_id, "turnId": turn_id, "kind": kind, "sentence": sentence }))
     }
 
+    /// Something a browser did through SDC Anywhere (0.17): unlock, Kill, a refused decision, a revoked
+    /// device. Audited, so the ledger says which device did it.
+    pub fn remote_activity(what: &str, detail: Value) -> Value {
+        base("RemoteActivity", json!({ "what": what, "detail": detail }))
+    }
+
     /// The kill switch: everything that was stopped, and the checkpoints that keep the state it stopped in.
     pub fn kill_switch(stopped: Value, checkpoints: Value) -> Value {
         base("KillSwitch", json!({ "stopped": stopped, "checkpoints": checkpoints }))

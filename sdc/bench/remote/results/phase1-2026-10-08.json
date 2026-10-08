@@ -1,0 +1,51 @@
+{
+  "when": "2026-10-08T16:56:18.629Z",
+  "node": "v24.18.0",
+  "platform": "win32 x64",
+  "topology": "relay, daemon and browser code on one machine (loopback)",
+  "results": [
+    {
+      "scenario": "1a the daemon’s own permission.request call (allocates an id: one SQLite commit), for reference",
+      "samples": 100,
+      "p50": 2.53,
+      "p95": 3.33,
+      "max": 5.42,
+      "unit": "ms"
+    },
+    {
+      "scenario": "1 request reaches an open page (from the start of the request)",
+      "samples": 100,
+      "p50": 5.32,
+      "p95": 6.71,
+      "max": 7.88,
+      "unit": "ms"
+    },
+    {
+      "scenario": "4 allow: decision signed, sent, checked, gate resolved, answered",
+      "samples": 100,
+      "p50": 6.08,
+      "p95": 7.26,
+      "max": 8.28,
+      "unit": "ms"
+    },
+    {
+      "scenario": "5 a stream event is shown",
+      "samples": 100,
+      "p50": 2.36,
+      "p95": 2.81,
+      "max": 3.79,
+      "unit": "ms"
+    },
+    {
+      "scenario": "15 reconnect: socket lost, session back at the level it had (includes the first retry delay)",
+      "samples": 20,
+      "p50": 554.57,
+      "p95": 648.52,
+      "max": 652.25,
+      "unit": "ms"
+    }
+  ],
+  "daemonMemoryBeforeEnable": 15073280,
+  "daemonMemoryEnabledOneBrowser": 28508160,
+  "daemonExtraMemoryMB": 12.81
+}

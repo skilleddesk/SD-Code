@@ -268,7 +268,7 @@ export function ShellView({ subject }: { subject: TerminalSubject }) {
     const token = (name: string): string | undefined => styles.getPropertyValue(name).trim() || undefined;
     const view = new Terminal({
       cursorBlink: true,
-      fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+      fontFamily: '"Geist Mono Variable", ui-monospace, Menlo, Consolas, monospace',
       fontSize: 12,
       lineHeight: 1.15,
       scrollback: 5000,

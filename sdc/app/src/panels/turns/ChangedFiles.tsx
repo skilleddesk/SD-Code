@@ -19,7 +19,7 @@ export function ChangedFiles({ items }: { items: readonly TimelineItem[] }) {
   const removed = files.reduce((sum, file) => sum + file.removed, 0);
 
   return (
-    <div className="changed-files mb-[8px] mt-[2px] rounded-md border border-border-subtle bg-bg-raised px-[12px] py-[8px]" data-changed-files={files.length}>
+    <div className="changed-files mb-[8px] mt-[4px] rounded-lg border border-border-subtle bg-bg-raised px-[13px] py-[9px] shadow-sm" data-changed-files={files.length}>
       <div className="flex items-center gap-[8px] text-[11.5px] text-text-secondary">
         <FileDiff size={13} aria-hidden="true" className="text-text-muted" />
         <span className="font-medium text-text-primary">{strings.turns.changed(files.length)}</span>
