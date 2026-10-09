@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 import { framelessWindow } from '../../lib/frameless';
 import { strings } from '../../strings';
@@ -51,7 +52,12 @@ export function WindowControls() {
     void import('@tauri-apps/api/window').then(({ getCurrentWindow }) => getCurrentWindow()[action]());
   };
 
-  return (
+  /* 0.22: drawn on the window's top layer (a portal over everything), so a dialog's backdrop never covers them -
+     the window could not be minimised, closed or dragged while the welcome wizard or any dialog was open (found by
+     the Linux real-mouse check). The caption strip is the drag area while a dialog is open (CSS: body:has(.modal-bd)). */
+  return createPortal(
+    <>
+    <div className="caption-strip" data-tauri-drag-region aria-hidden="true" />
     <div className="win-controls" role="group" aria-label={strings.topbar.window.group}>
       <button type="button" className="win-btn" title={strings.topbar.window.minimize} aria-label={strings.topbar.window.minimize} onClick={() => run('minimize')}>
         <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
@@ -82,6 +88,8 @@ export function WindowControls() {
         </svg>
       </button>
     </div>
+    </>,
+    document.body,
   );
 }
 

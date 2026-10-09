@@ -197,13 +197,33 @@
 /* 0.21: on every platform the topbar is the window's caption, and the window buttons sit flush with the right
    edge, full height - one look on Windows, macOS and Linux: close turns red, the others take the hover tint. */
 .topbar.has-win-controls {
-  padding-right: 0;
+  /* The three 46 px buttons sit over the right end on their own layer (WindowControls); the row leaves room. */
+  padding-right: 146px;
 }
 
 .win-controls {
+  position: fixed;
+  top: 0;
+  right: 0;
+  height: var(--topbar-h);
   display: flex;
-  align-self: stretch;
-  margin-left: 6px;
+  z-index: 2000;
+}
+
+/* While a dialog is open its backdrop covers the title bar: this transparent strip above it keeps the window
+   draggable (and double-click maximises). The rest of the time it lets every click through to the title bar. */
+.caption-strip {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 138px;
+  height: var(--topbar-h);
+  z-index: 1999;
+  pointer-events: none;
+}
+
+body:has(.modal-bd) .caption-strip {
+  pointer-events: auto;
 }
 
 .win-btn {
