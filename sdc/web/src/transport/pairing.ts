@@ -128,14 +128,23 @@ export async function pair(options: PairOptions): Promise<PairedRecord> {
     let established: Awaited<ReturnType<typeof handshake.finish>> | null = null;
     let chain: Promise<unknown> = Promise.resolve();
     const rx = new Reassembler();
+    let settled = false;
     const fail = (message: string) => {
+      if (settled) return;
+
+      settled = true;
       socket.close(1000, 'pairing failed');
       reject(new Error(message));
     };
 
+    /* 0.21.1: the close is handled after every message that arrived before it. The computer sends `pair.done` and
+       closes at once; the message is opened and saved asynchronously, so a close handled on arrival won the race
+       and a confirmed pairing read "ended before your computer confirmed it" (seen on Linux CI, possible anywhere). */
     socket.onclose = () => {
-      if (!established) fail('The computer refused the pairing. The link may have expired or been used already; make a new one.');
-      else fail('The pairing ended before your computer confirmed it.');
+      chain = chain.then(() => {
+        if (!established) fail('The computer refused the pairing. The link may have expired or been used already; make a new one.');
+        else fail('The pairing ended before your computer confirmed it.');
+      });
     };
     socket.onmessage = (event) => {
       chain = chain.then(async () => {
@@ -186,6 +195,7 @@ export async function pair(options: PairOptions): Promise<PairedRecord> {
               }
 
               await options.store.save(record);
+              settled = true;
               options.onProgress({ step: 'done' });
               socket.onclose = null;
               socket.close(1000, 'done');
