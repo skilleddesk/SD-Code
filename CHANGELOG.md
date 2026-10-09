@@ -15,6 +15,50 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [0.20.0] — A faster agent: fewer steps, less waiting
+
+Where an agent turn's time goes is the model's calls (6–10 s each on the route measured) - tools took 1–2 s of a
+minute-long turn. So the work is *fewer steps*, and no step wasted. Measured, not guessed: the same three tasks
+(a question, a fix, a three-file feature) on a real model (`deepseek-v4.1-flash` through Alibaba), the 0.19.0
+daemon against this one, run side by side, twice each - 12 runs, every result correct:
+
+| | 0.19.0 | 0.20.0 |
+|---|---|---|
+| Model steps (6 runs) | 52 | 37 (−29%) |
+| Input tokens | 289k | 200k (−31%) |
+| Wall time, total | 603 s | 472 s (−22%) |
+| A question | 61 s, 8 steps | 27 s, 3–4 steps (−56%) |
+| A one-file fix | 84 s | 61 s (−27%) |
+| A three-file feature | 157 s | 148 s (within the noise: n = 2) |
+
+**Pace.** The agent reads the person's own words, locally (no model call), and a plain question is told to answer
+directly - no plan, no narration, no review - while a large task is told to plan first. Code identifiers
+(`add(2, 3)`) are not taken for requests. The system prompt was rewritten shorter and adaptive: it asks for
+independent tool calls in one reply, for grep-then-range reads, and no longer asks for a line of narration before
+every call (0.18.0's prompt did, which cost time).
+
+**Orientation.** A new turn used to start blind - the history keeps what was said, not what the tools returned - and
+spent its first steps on `list_dir .` and finding the test command. It now gets the folder's top level, the project's
+own check commands and what is uncommitted, in about 150 tokens (not for a quick question).
+
+**Self-review.** A change across two files or more than 40 lines is shown back to the model once, as a diff of the
+files it changed (not the person's other uncommitted work), for a strict re-read before the summary. A small change
+skips it. Together with the existing completion gate (run the project's checks) this is the verification the agent
+does before it says "done".
+
+**Plumbing.** Reads inside a reply run together for every *run* of reads, not only for a reply made of nothing else
+("read a, read b, edit c, read d" reads a and b at once). One HTTP client for the whole process, so the connection to
+the provider stays open between steps (measured from this PC: DeepSeek 376 → 164 ms per step, OpenAI 122 → 29 ms,
+Anthropic 362 → 284 ms). Anthropic requests cache the conversation up to its newest block, so each step reads the
+history back from the cache instead of resending it at full price and full time-to-first-token.
+
+**Where the time went.** A turn's footer now says it: `8 steps · 47.8k in · 2.2k out · model 2m 08s · tools 1.0s`.
+
+**Honest limits.** The model's own speed per step is the floor; none of this makes a slow model fast, it asks it
+fewer questions. The three-file feature showed no reliable gain in two runs, and the new self-review adds a step to
+a multi-file change on purpose. The Claude Code, Codex and Gemini engines run their own loops: they get the pace
+line, not the orientation or the cache. `sdc/scripts/tools/bench-agent.mjs` reproduces the measurement.
+
 ## [0.19.0] — A new shell and a deep live transcript
 
 **A new layout.** A navigation rail now runs down the window's left edge: the logo (About), New chat, Search,

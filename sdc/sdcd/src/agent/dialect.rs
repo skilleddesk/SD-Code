@@ -78,7 +78,7 @@ pub fn body(
                     "description": tool.description,
                     "input_schema": tool.schema,
                 })).collect::<Vec<_>>(),
-                "messages": messages,
+                "messages": with_tail_cache(messages),
             });
 
             if thinking {
@@ -104,6 +104,42 @@ pub fn body(
             })
         }
     }
+}
+
+/// The conversation with a cache breakpoint on its last block (0.20).
+///
+/// The system prompt and the tools were cached from the start; the conversation was not, so every step of
+/// a turn sent all of it again - the file the agent read in step two, the output of the build in step six -
+/// at full price and full time-to-first-token, and a long turn re-read a long history a dozen times. With a
+/// breakpoint on the newest block, each step reads everything before it back from the cache and only the
+/// new results are new. The stored `messages` are not touched: the copy carries the mark.
+fn with_tail_cache(messages: &[Value]) -> Vec<Value> {
+    let mut out = messages.to_vec();
+    let mark = json!({ "type": "ephemeral" });
+
+    if let Some(last) = out.last_mut() {
+        let text = last["content"].as_str().map(str::to_string);
+
+        match text {
+            /* A plain string is a text block that can carry the mark; an empty one cannot be cached. */
+            Some(text) if !text.is_empty() => {
+                last["content"] = json!([{ "type": "text", "text": text, "cache_control": mark }]);
+            }
+            Some(_) => {}
+            None => {
+                if let Some(block) = last["content"].as_array_mut().and_then(|blocks| blocks.last_mut()) {
+                    /* Thinking blocks cannot carry a mark, and neither can an empty text block. */
+                    let empty_text = block["type"] == "text" && block["text"].as_str().is_none_or(str::is_empty);
+
+                    if block.is_object() && block["type"] != "thinking" && block["type"] != "redacted_thinking" && !empty_text {
+                        block["cache_control"] = mark;
+                    }
+                }
+            }
+        }
+    }
+
+    out
 }
 
 /// A plain user message, in either dialect.
@@ -665,6 +701,35 @@ fn append(block: &mut Value, key: &str, piece: &str) {
 mod tests {
     use super::*;
     use crate::engines::Recorder;
+
+    /// 0.20: the newest block of the conversation carries the cache mark, the stored messages do not, and
+    /// a block that cannot be cached (a thinking block, empty text) is left alone.
+    #[test]
+    fn the_anthropic_request_caches_the_conversation_up_to_its_newest_block() {
+        let messages = vec![
+            user_message("read the router"),
+            json!({ "role": "assistant", "content": [{ "type": "tool_use", "id": "t1", "name": "read_file", "input": {} }] }),
+            json!({ "role": "user", "content": [{ "type": "tool_result", "tool_use_id": "t1", "content": "file text" }] }),
+        ];
+        let body = body(Dialect::Anthropic, "claude", "system", &messages, &[], false);
+
+        assert_eq!(body["messages"][2]["content"][0]["cache_control"], json!({ "type": "ephemeral" }));
+        assert!(body["messages"][0]["content"].is_string(), "older messages are sent as they were");
+        assert!(messages[2]["content"][0].get("cache_control").is_none(), "the stored conversation is not marked");
+
+        /* A plain-text last message becomes a text block that carries the mark. */
+        let plain = body_of(vec![user_message("hello")]);
+
+        assert_eq!(plain["messages"][0]["content"][0], json!({ "type": "text", "text": "hello", "cache_control": { "type": "ephemeral" } }));
+
+        /* Nothing that cannot be cached is marked. */
+        assert!(body_of(vec![json!({ "role": "user", "content": [{ "type": "text", "text": "" }] })])["messages"][0]["content"][0].get("cache_control").is_none());
+        assert!(body_of(vec![json!({ "role": "user", "content": "" })])["messages"][0]["content"].is_string());
+    }
+
+    fn body_of(messages: Vec<Value>) -> Value {
+        body(Dialect::Anthropic, "claude", "system", &messages, &[], false)
+    }
 
     fn stream(lines: &[&str]) -> Box<dyn BufRead + Send> {
         Box::new(std::io::Cursor::new(lines.join("\n").into_bytes()))

@@ -1705,6 +1705,9 @@ impl Daemon {
         /* The engine reads the brief and the message; the store and the history keep the message alone. */
         /* A confirmed Intent Contract (0.12) wins over the reading brief: the person already saw and agreed
            to what SDC understood, and the Prompt Compiler writes it the way this engine works best. */
+        /* Pace (0.20): one line in front of the message when it is a plain question or a large task - read from
+           the person's own words, locally. A confirmed contract, research and a compaction carry their own brief. */
+        let pace_note = crate::agent::orient::pace_note(crate::agent::orient::pace_of(&prompt_text)).filter(|_| !research && !compact);
         let compiled = envelope
             .opt_str("intentId")
             .and_then(|intent_id| self.compiled_prompt(&intent_id, &engine_id, envelope).ok());
@@ -1720,6 +1723,12 @@ impl Daemon {
                 }
                 _ => prompt_text,
             },
+        };
+        let prompt_text = match pace_note.filter(|_| include_memory_file) {
+            Some(note) => format!("{note}
+
+{prompt_text}"),
+            None => prompt_text,
         };
         /* Long-task memory (0.12): an unfinished plan and the project's .sdc/memory.md travel in front of the
            words - for this turn only; the stored prompt stays the person's own. */

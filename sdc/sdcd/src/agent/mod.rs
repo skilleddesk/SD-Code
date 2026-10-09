@@ -27,6 +27,7 @@ pub mod dialect;
 pub mod gate;
 pub mod mcp;
 pub mod ollama_native;
+pub mod orient;
 pub mod patch;
 pub mod research;
 pub mod search;
@@ -315,29 +316,35 @@ fn system_prompt(workspace: &Workspace, vision: bool, language: &crate::understa
          Machine: {place}\n\
          Shell for run_command: {shell}\n\
          \n\
-         How to think (the standard a senior engineer holds):\n\
-         - Restate the goal to yourself in one sentence, with what \"done\" means: the behaviour that must work, and how you will prove it. If the request hides several asks, list every one and do them all.\n\
-         - Ground every claim in evidence from this project: read the code, the config and the error before you decide. Never assume an API, a file, a flag or a version exists - check it.\n\
-         - For a bug, find the root cause, not the symptom: reproduce it (a failing test or a command that shows it), form a hypothesis, confirm it in the code, then fix the cause. Say what the cause was.\n\
-         - Prefer the smallest change that fully solves the problem and fits the project's design. Think through edge cases (empty, missing, huge, concurrent, wrong input, offline) and handle the ones that matter.\n\
-         - Write production-quality code: correct types, clear names, errors handled where they can happen, no dead code, no secrets, no debugging leftovers. A UI is accessible and works at phone width.\n\
+         Match your effort to the request - this is how you stay fast:\n\
+         - A question, or a small change: answer it or do it directly, in as few steps as possible. No plan, no narration, no self-review. The shortest correct answer comes first.\n\
+         - A change across several files, or a bug whose cause is not obvious: understand first, then change, then verify.\n\
+         - A large task (many parts, a refactor, a feature): plan it with update_plan, work through it, verify, review.\n\
+         - A message may start with an [SDC pace: ...] line, or a map of the project: follow the first, and use the second instead of listing the folder again.\n\
+         \n\
+         How to think:\n\
+         - Know what \"done\" means before you start. If a message hides several requests, do every one.\n\
+         - Ground every claim in this project: read the code, the config, the error. Never assume an API, a file, a flag or a version exists - check it.\n\
+         - For a bug, find the root cause, not the symptom: reproduce it, form a hypothesis, confirm it in the code, fix the cause, and say what it was.\n\
+         - The smallest change that fully solves it, in the project's own style. Handle the edge cases that matter (empty, missing, huge, wrong input). No secrets, dead code or debugging leftovers; a UI works at phone width.\n\
          \n\
          How to work:\n\
-         - Understand before changing: find the files that matter with glob and grep, then read them (offset and limit for long files). Independent reads and searches go in one reply so they run together.\n\
+         - Put independent tool calls in ONE reply: reads, greps and globs run together, so asking for four files at once costs one step, not four. Never read one file per reply when you already know you need several.\n\
+         - Find with grep or glob, then read only the lines you need (offset and limit). Do not read a large file whole, and do not read again what you have already read this turn. Stop looking as soon as you can answer.\n\
          - For broad exploration or research, hand self-contained jobs to task sub-agents - several in one reply run in parallel - instead of reading everything yourself.\n\
-         - For anything with more than two steps, call update_plan first. The person watches that checklist: call update_plan again each time a step starts or finishes, and mark every step done before your final answer.\n\
-         - Before each tool call, say in one short line what you are about to do and why - the person follows your work through these lines.\n\
+         - For anything with more than two steps, call update_plan first; the person watches that checklist. Call it again each time a step starts or finishes, and mark every step done before your final answer.\n\
+         - Say what you are doing in one short line when you start a larger task or change direction - not before every call.\n\
          - Change files with edit_file (exact text replacement); use write_file for new files or full rewrites. Match the project's existing style.\n\
-         - Verify your work: build it, run the tests or run the program with run_command, read the output, and fix what fails. Add or update a test when you fix a bug or add behaviour and the project has tests.\n\
-         - Before your final answer, review your own change as a strict reviewer would: re-read every edited file around the edit, look for regressions, broken callers, typos and missed cases, and fix them.\n\
-         - Be honest about results: never say a test passes or a thing works unless you ran it and saw it. If something still fails or you could not verify it, say so plainly.\n\
+         - Verify what you change: build it, run the tests or the program with run_command, read the output, fix what fails. Add or update a test when you fix a bug or add behaviour and the project has tests.\n\
+         - For a change across files SDC may show you your own diff before you finish. Re-read it as a strict reviewer: fix a real problem, otherwise give your summary.\n\
+         - Be honest: never say a test passes or a thing works unless you ran it and saw it. If something still fails, or you could not verify it, say so.\n\
          - A command that does not exit on its own (a dev server, a watcher) goes in start_process, never in run_command. Stop what you started when you no longer need it, unless the person will want it running.{look}\n\
          - When you are unsure how a library, framework or API works, or the person asks about anything current (news, prices, versions, weather), look it up with web_search and web_fetch instead of guessing, and give the source address.\n\
          - When a decision belongs to the person (a design choice, deleting data, two readings of the request), ask with ask_user and offer options. Do not ask about what you can find out yourself.\n\
          - When the person states a lasting preference or a project convention, keep it with remember.\n\
          - Stay inside the project folder. Secrets (.env, keys) are hidden from you on purpose; do not try to read them.\n\
          - If the person declines an action, do not try it another way; explain what you wanted to do.\n\
-         - Keep going until the task is completely done; do not stop half-way to ask whether to continue. When you are done, stop calling tools and answer with a short, well-organised summary in Markdown: a one-line result first, then what you changed (with file paths), the root cause for a fix, how you verified it (the commands and their outcome), and anything the person must do themselves. No filler, no repetition of the question.\n\
+         - Keep going until the task is completely done; do not stop half-way to ask whether to continue. When you are done, stop calling tools and answer. A question gets its answer, directly. After work, a short Markdown summary: the result in one line, then what changed (with paths), the root cause for a fix, how you verified it (commands and outcome), and anything the person must do. No filler, and do not repeat the question.\n\
          - Language: the person writes in {label}. Write every answer, summary and question to them in {reply} - never switch to another language (not Chinese, not German, not English unless that is theirs). Keep code, commands, paths and error messages exactly as they are.",
         label = language.label,
         reply = if language.code == "en" { "English" } else { language.reply_in },
@@ -747,6 +754,70 @@ fn completion_note(context: &ToolContext) -> Option<String> {
     ))
 }
 
+/// How long a turn spent waiting for the model and for its tools: ` · model 18s · tools 6.1s` after the
+/// totals (0.20), so where a slow turn went is on the screen and not a guess. Nothing for a quick turn.
+fn timing(model: std::time::Duration, tools: std::time::Duration) -> String {
+    let short = |time: std::time::Duration| {
+        let seconds = time.as_secs_f64();
+
+        if seconds < 10.0 {
+            format!("{seconds:.1}s")
+        } else if seconds < 60.0 {
+            format!("{}s", seconds.round() as u64)
+        } else {
+            format!("{}m {:02}s", seconds as u64 / 60, seconds as u64 % 60)
+        }
+    };
+
+    if model + tools < std::time::Duration::from_secs(2) {
+        return String::new();
+    }
+
+    format!(" · model {} · tools {}", short(model), short(tools))
+}
+
+/// A change this size is worth one strict re-read: files, or changed lines.
+const REVIEW_FILES: usize = 2;
+const REVIEW_LINES: usize = 40;
+/// The most of the diff that is handed back.
+const REVIEW_CHARS: usize = 9_000;
+
+/// The self-review note (0.20): the diff of the files the agent changed - only those, so the person's own
+/// earlier uncommitted work in other files is not read as the agent's - when the change is big enough to
+/// hide a mistake. `None` for a small change, a folder with no git history to diff against, or new files
+/// only.
+fn review_note(workspace: &Workspace, changed: &HashSet<String>) -> Option<String> {
+    let mut paths: Vec<&String> = changed.iter().filter(|path| checkable(path)).collect();
+
+    if paths.is_empty() {
+        return None;
+    }
+
+    paths.sort();
+
+    let posix = workspace.is_remote() || !cfg!(windows);
+    let quoted = paths.iter().map(|path| if posix { crate::ssh::sh_quote(path) } else { format!("\"{path}\"") }).collect::<Vec<_>>().join(" ");
+    let report = workspace
+        .run(&format!("git diff HEAD --no-color -U2 -- {quoted}"), std::time::Duration::from_secs(8))
+        .ok()
+        .filter(|report| report.ok && !report.timed_out)?;
+    let lines = report.stdout.lines().filter(|line| (line.starts_with('+') || line.starts_with('-')) && !line.starts_with("+++") && !line.starts_with("---")).count();
+
+    if report.stdout.trim().is_empty() || (paths.len() < REVIEW_FILES && lines < REVIEW_LINES) {
+        return None;
+    }
+
+    let diff: String = report.stdout.chars().take(REVIEW_CHARS).collect();
+    let cut = if report.stdout.chars().count() > REVIEW_CHARS { "\n… (the rest of the diff is cut)" } else { "" };
+
+    Some(format!(
+        "[SDC: before you finish, re-read your own change as a strict reviewer would. It touches {} file(s), {lines} changed lines:\n```diff\n{diff}{cut}\n```\n\
+         Look for: logic that is wrong or only half done, callers or other files that now break, cases it does not handle (empty, missing, huge, wrong input), typos, leftovers from debugging. \
+         If you find a real problem, fix it and run the relevant check again. If the change is right, give your summary now - do not repeat the diff.]",
+        paths.len()
+    ))
+}
+
 /// The loop over a resolved endpoint - separate from `run` so a test can point it at a loopback
 /// server and watch a whole turn: files written, commands run, the answer, the footer.
 #[allow(clippy::too_many_arguments)]
@@ -828,6 +899,18 @@ fn drive(
         prompt.text.clone()
     };
 
+    /* The map of the folder (0.20), unless the turn is a quick question: the first step can then be the one
+       that matters instead of `list_dir .`. For this turn only - the conversation keeps the person's words. */
+    let text = {
+        let words = prompt.text.rsplit("[The person's message]").next().unwrap_or(&prompt.text);
+        let wants_map = research_session.is_none() && orient::pace_of(words) != orient::Pace::Quick;
+
+        match wants_map.then(|| orient::orientation(workspace)).flatten() {
+            Some(map) => format!("{map}\n\n{text}"),
+            None => text,
+        }
+    };
+
     messages.push(dialect::user_message_with_images(target.dialect, &text, &images));
 
     let mut context = ToolContext {
@@ -876,6 +959,10 @@ fn drive(
        answered from one page with the brief saying two). */
     let mut sources_nudged = false;
     let mut check_rounds = 0;
+    /* Where the turn's time went (0.20): the model's calls, and the tools between them. */
+    let (mut model_time, mut tool_time) = (std::time::Duration::ZERO, std::time::Duration::ZERO);
+    /* The change was shown back to the model for one strict re-read (0.20). */
+    let mut reviewed = false;
     /* The edit count when the checks last ran: they run again only after the agent changed something. */
     let mut checked_at = usize::MAX;
     /* Words sent while the turn runs join it between steps (0.12.5) - closed when the loop returns. */
@@ -911,7 +998,12 @@ fn drive(
         }
 
         let step_specs: &[dialect::ToolSpec] = if out_of_time { &[] } else { &specs };
-        let reply: Reply = match ask_model(backend, target, &system, &messages, step_specs, &notes_sink(said_something), &stopped) {
+        let asked_at = std::time::Instant::now();
+        let asked = ask_model(backend, target, &system, &messages, step_specs, &notes_sink(said_something), &stopped);
+
+        model_time += asked_at.elapsed();
+
+        let reply: Reply = match asked {
             Ok(reply) => {
                 filtered = 0;
 
@@ -1017,6 +1109,18 @@ fn drive(
                     continue;
                 }
             }
+
+            /* The self-review (0.20): a change across files, or a long one, is shown back once, as a diff, for a
+               strict re-read before the summary. A small change skips it - the point is to catch what a big one
+               hides, not to add a step to every turn. */
+            if !reviewed && research_session.is_none() && !stopped() {
+                if let Some(note) = review_note(workspace, &context.changed) {
+                    reviewed = true;
+                    dialect::append_user_text(target.dialect, &mut messages, &note);
+
+                    continue;
+                }
+            }
         }
 
         if reply.tool_uses.is_empty() {
@@ -1049,40 +1153,74 @@ fn drive(
 
             sink.send(EngineEvent::Done {
                 summary: summary.to_string(),
-                meta: meta(step, input_tokens, output_tokens, target.price),
+                meta: format!("{}{}", meta(step, input_tokens, output_tokens, target.price), timing(model_time, tool_time)),
                 pass: None,
             });
 
             return;
         }
 
+        let tools_at = std::time::Instant::now();
+
         /* The step's calls, in order - except `task`, whose sub-agents run all at once. */
         let mut results: Vec<Option<dialect::ToolResult>> = vec![None; reply.tool_uses.len()];
         let tasks: Vec<(usize, &dialect::ToolUse)> = reply.tool_uses.iter().enumerate().filter(|(_, call)| call.name == "task").collect();
 
-        /* A reply that only reads runs its reads at the same time (0.15.6). On a VPS each one is a round
-           trip (~500 ms against the report's host), and a model often asks for four or five at once. Only
-           when every call reads: a read after an edit in the same reply must see the edit. */
-        let reads: Vec<(usize, &dialect::ToolUse)> =
-            reply.tool_uses.iter().enumerate().filter(|(_, call)| call.name != "task").collect();
+        /* Reads run at the same time (0.15.6): on a VPS each one is a round trip (~500 ms against the report's
+           host), and a model often asks for four or five at once. Since 0.20 that holds for every *run* of
+           reads inside a reply, not only for a reply made of nothing else - "read a, read b, edit c, read d"
+           reads a and b together, then edits, then reads d, in the order the model wrote them, so a read
+           after an edit still sees the edit. */
+        let parallel = |call: &dialect::ToolUse, mcp: &Option<mcp::McpTools>| {
+            PARALLEL_READS.contains(&call.name.as_str()) && mcp.as_ref().is_none_or(|servers| !servers.handles(&call.name))
+        };
+        let mut index = 0;
 
-        if reads.len() > 1 && mcp.as_ref().is_none_or(|servers| !reads.iter().any(|(_, call)| servers.handles(&call.name))) && reads.iter().all(|(_, call)| PARALLEL_READS.contains(&call.name.as_str())) {
-            let first = context.calls;
-
-            context.calls += reads.len();
-
-            for (index, outcome) in run_reads(&context, first, &reads) {
-                results[index] = Some((reply.tool_uses[index].id.clone(), outcome.content, outcome.is_error, outcome.image));
-            }
-        }
-
-        for (index, call) in reply.tool_uses.iter().enumerate() {
+        while index < reply.tool_uses.len() {
             if stopped() {
                 return;
             }
 
+            let call = &reply.tool_uses[index];
+
             if call.name == "task" || results[index].is_some() {
+                index += 1;
+
                 continue;
+            }
+
+            if parallel(call, &mcp) {
+                /* The run of reads that starts here (a `task` between them runs later anyway). */
+                let mut run: Vec<(usize, &dialect::ToolUse)> = Vec::new();
+                let mut next = index;
+
+                while next < reply.tool_uses.len() {
+                    let candidate = &reply.tool_uses[next];
+
+                    if candidate.name != "task" {
+                        if !parallel(candidate, &mcp) {
+                            break;
+                        }
+
+                        run.push((next, candidate));
+                    }
+
+                    next += 1;
+                }
+
+                if run.len() > 1 {
+                    let first = context.calls;
+
+                    context.calls += run.len();
+
+                    for (position, outcome) in run_reads(&context, first, &run) {
+                        results[position] = Some((reply.tool_uses[position].id.clone(), outcome.content, outcome.is_error, outcome.image));
+                    }
+
+                    index = next;
+
+                    continue;
+                }
             }
 
             let outcome = match mcp.as_mut() {
@@ -1091,6 +1229,7 @@ fn drive(
             };
 
             results[index] = Some((call.id.clone(), outcome.content, outcome.is_error, outcome.image));
+            index += 1;
         }
 
         if !tasks.is_empty() {
@@ -1102,6 +1241,8 @@ fn drive(
 
             sink.send(EngineEvent::Usage { input_tokens, output_tokens, cost_usd: None });
         }
+
+        tool_time += tools_at.elapsed();
 
         let results: Vec<dialect::ToolResult> = results
             .into_iter()
@@ -1130,7 +1271,7 @@ fn drive(
     )));
     sink.send(EngineEvent::Done {
         summary: "Paused at the step limit".to_string(),
-        meta: meta(options.max_steps, input_tokens, output_tokens, target.price),
+        meta: format!("{}{}", meta(options.max_steps, input_tokens, output_tokens, target.price), timing(model_time, tool_time)),
         pass: None,
     });
 }
@@ -1229,6 +1370,61 @@ fn unreachable(backend: Backend, model: &str, reason: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 0.20: where a turn's time went is said after its totals - and nothing is said for a quick turn.
+    #[test]
+    fn a_slow_turn_says_where_its_time_went() {
+        let secs = std::time::Duration::from_secs_f64;
+
+        assert_eq!(timing(secs(0.5), secs(0.3)), "");
+        assert_eq!(timing(secs(18.2), secs(6.1)), " · model 18s · tools 6.1s");
+        assert_eq!(timing(secs(75.0), secs(2.0)), " · model 1m 15s · tools 2.0s");
+    }
+
+    fn git(root: &std::path::Path, args: &[&str]) -> bool {
+        std::process::Command::new("git").args(args).current_dir(root).output().is_ok_and(|output| output.status.success())
+    }
+
+    /// 0.20: a change across files is shown back as a diff of *those* files; a small one is not, and neither is
+    /// a folder with nothing to diff against.
+    #[test]
+    fn a_change_across_files_is_shown_back_for_a_strict_reread() {
+        let root = std::env::temp_dir().join(format!("sdc-review-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        if !git(&root, &["init", "-q"]) {
+            return; /* no git on this machine: nothing to diff with */
+        }
+
+        for name in ["a.ts", "b.ts", "other.ts"] {
+            std::fs::write(root.join(name), "one\ntwo\nthree\n").unwrap();
+        }
+
+        assert!(git(&root, &["add", "."]));
+        assert!(git(&root, &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "first"]));
+
+        let workspace = Workspace::new(root.to_str().unwrap(), None);
+        let changed = |names: &[&str]| names.iter().map(|name| name.to_string()).collect::<HashSet<String>>();
+
+        /* One small change: no review. */
+        std::fs::write(root.join("a.ts"), "one\nTWO\nthree\n").unwrap();
+        assert!(review_note(&workspace, &changed(&["a.ts"])).is_none());
+
+        /* Two files: reviewed, and the person's own change in another file is not part of it. */
+        std::fs::write(root.join("b.ts"), "one\nTWO\nthree\n").unwrap();
+        std::fs::write(root.join("other.ts"), "someone else's work\n").unwrap();
+
+        let note = review_note(&workspace, &changed(&["a.ts", "b.ts"])).expect("two files are reviewed");
+
+        assert!(note.contains("2 file(s)") && note.contains("+TWO") && note.contains("strict reviewer"), "{note}");
+        assert!(!note.contains("someone else's work"), "only the agent's files: {note}");
+
+        /* A note or an image is not code: nothing to review. */
+        assert!(review_note(&workspace, &changed(&["notes.md", "logo.png"])).is_none());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn a_catalogue_price_is_read_as_two_numbers() {
@@ -1407,6 +1603,139 @@ mod end_to_end {
         chunk(serde_json::json!({ "tool_calls": [{ "index": 0, "id": id, "function": { "name": name, "arguments": arguments.to_string() } }] }))
             + "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n"
             + "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":20}}\n\ndata: [DONE]\n\n"
+    }
+
+    /// Several tool calls in one reply, the way OpenAI-shaped providers stream them: one delta, an index each.
+    fn calls(list: Vec<(&str, &str, Value)>) -> String {
+        let deltas: Vec<Value> = list
+            .into_iter()
+            .enumerate()
+            .map(|(index, (id, name, arguments))| serde_json::json!({ "index": index, "id": id, "function": { "name": name, "arguments": arguments.to_string() } }))
+            .collect();
+
+        chunk(serde_json::json!({ "tool_calls": deltas }))
+            + "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n"
+            + "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":20}}\n\ndata: [DONE]\n\n"
+    }
+
+    /// 0.20: "read a, read b, write c, read c" in one reply - the two reads run together, then the write, then
+    /// the read, in the order the model wrote them, so the last read sees what the write made.
+    #[test]
+    fn a_read_after_a_write_in_the_same_reply_sees_the_write() {
+        let root = std::env::temp_dir().join(format!("sdc-agent-mixed-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a.txt"), "alpha\n").unwrap();
+        std::fs::write(root.join("b.txt"), "bravo\n").unwrap();
+
+        let (url, server) = provider(vec![
+            calls(vec![
+                ("c1", "read_file", serde_json::json!({ "path": "a.txt" })),
+                ("c2", "read_file", serde_json::json!({ "path": "b.txt" })),
+                ("c3", "write_file", serde_json::json!({ "path": "c.txt", "content": "charlie\n" })),
+                ("c4", "read_file", serde_json::json!({ "path": "c.txt" })),
+            ]),
+            chunk(serde_json::json!({ "content": "Read three files." })) + "data: [DONE]\n\n",
+        ]);
+        let target = Target {
+            url,
+            headers: vec![("content-type".to_string(), "application/json".to_string())],
+            dialect: Dialect::OpenAi,
+            model: "local-test".to_string(),
+            price: None,
+            thinking: false,
+            effort: None,
+            local_context: None,
+        };
+        let workspace = Workspace::new(root.to_str().unwrap(), None);
+        let prompt = Prompt {
+            session_id: "s1".into(),
+            turn_id: "turn-agent-mixed".into(),
+            text: "write c.txt after reading a.txt and b.txt".into(),
+            model: "local-test".into(),
+            provider: None,
+            history: Vec::new(),
+            project_root: Some(root.to_str().unwrap().to_string()),
+            remote: None,
+            autonomy: Default::default(),
+            resume: None,
+            images: Vec::new(),
+            effort: None,
+        };
+        let recorder = crate::engines::Recorder::new();
+
+        drive(Backend::Api, &target, &workspace, Options { autonomy: Autonomy::Auto, max_steps: 6, auto_check: false, research: None }, None, &Default::default(), &prompt, &recorder.sink());
+
+        let bodies = server.join().unwrap();
+        let results: Vec<(String, String)> = bodies[1]["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|message| message["role"] == "tool")
+            .map(|message| (message["tool_call_id"].as_str().unwrap().to_string(), message["content"].as_str().unwrap().to_string()))
+            .collect();
+
+        assert_eq!(results.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(), ["c1", "c2", "c3", "c4"], "answered in the order asked");
+        assert!(results[0].1.contains("alpha") && results[1].1.contains("bravo"), "{results:?}");
+        assert!(results[3].1.contains("charlie"), "the read after the write sees the write: {results:?}");
+        assert!(bodies[0]["messages"][1]["content"].as_str().unwrap().contains("write c.txt after reading"), "the person's words reach the model");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 0.20: the model is handed a map of the folder - top level and the project's own check - with the
+    /// person's words, except for a plain question.
+    #[test]
+    fn the_model_gets_a_map_of_the_project_except_for_a_quick_question() {
+        let ask = |text: &str, label: &str| -> String {
+            let root = std::env::temp_dir().join(format!("sdc-agent-map-{label}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&root);
+            std::fs::create_dir_all(root.join("src")).unwrap();
+            std::fs::write(root.join("package.json"), r#"{"scripts":{"test":"vitest run"}}"#).unwrap();
+
+            let (url, server) = provider(vec![chunk(serde_json::json!({ "content": "ok" })) + "data: [DONE]\n\n"]);
+            let target = Target {
+                url,
+                headers: vec![("content-type".to_string(), "application/json".to_string())],
+                dialect: Dialect::OpenAi,
+                model: "local-test".to_string(),
+                price: None,
+                thinking: false,
+                effort: None,
+                local_context: None,
+            };
+            let prompt = Prompt {
+                session_id: "s1".into(),
+                turn_id: format!("turn-map-{label}"),
+                text: text.into(),
+                model: "local-test".into(),
+                provider: None,
+                history: Vec::new(),
+                project_root: Some(root.to_str().unwrap().to_string()),
+                remote: None,
+                autonomy: Default::default(),
+                resume: None,
+                images: Vec::new(),
+                effort: None,
+            };
+            let recorder = crate::engines::Recorder::new();
+
+            drive(Backend::Api, &target, &Workspace::new(root.to_str().unwrap(), None), Options { autonomy: Autonomy::Auto, max_steps: 3, auto_check: false, research: None }, None, &Default::default(), &prompt, &recorder.sink());
+
+            let sent = server.join().unwrap()[0]["messages"][1]["content"].as_str().unwrap().to_string();
+            let _ = std::fs::remove_dir_all(&root);
+
+            sent
+        };
+
+        let task = ask("add a dark mode toggle to the header", "task");
+
+        assert!(task.contains("a map of the project") && task.contains("src/") && task.contains("package.json"), "{task}");
+        assert!(task.ends_with("add a dark mode toggle to the header"), "the person's words come last: {task}");
+
+        let question = ask("why does the header flicker?", "question");
+
+        assert_eq!(question, "why does the header flicker?", "a quick question is sent as it was typed");
     }
 
     #[test]

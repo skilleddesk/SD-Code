@@ -556,11 +556,26 @@ fn drain_sse(mut lines: impl std::io::BufRead, sink: &EventSink, stop: &dyn Fn()
 /// `timeout_connect` is the same eight seconds `ssh` gets in `probe_ssh`: a black-holed address costs
 /// seconds rather than a stuck turn. `timeout_read` is per read, not for the whole body, so a turn
 /// that streams tokens for two minutes is fine while a socket that has gone quiet is not.
+///
+/// **One agent for the whole process (0.20).** It used to be built per request, which threw its connection
+/// pool away every time: each step of an agent turn paid a fresh TCP connect and TLS handshake (two or three
+/// round trips - measured at several hundred milliseconds each from Bangladesh to a US or EU endpoint) on top
+/// of the model's own time, and a 20-step turn paid it 20 times. A shared agent keeps the connection to the
+/// provider alive between steps; a connection the server closed meanwhile is retried on a fresh one by
+/// `ureq` itself, and anything else falls to `with_retries`.
 fn agent() -> ureq::Agent {
-    ureq::AgentBuilder::new()
-        .timeout_connect(std::time::Duration::from_secs(8))
-        .timeout_read(std::time::Duration::from_secs(120))
-        .build()
+    static SHARED: std::sync::OnceLock<ureq::Agent> = std::sync::OnceLock::new();
+
+    SHARED
+        .get_or_init(|| {
+            ureq::AgentBuilder::new()
+                .timeout_connect(std::time::Duration::from_secs(8))
+                .timeout_read(std::time::Duration::from_secs(120))
+                /* Sub-agents and parallel reads talk to the same provider at once. */
+                .max_idle_connections_per_host(8)
+                .build()
+        })
+        .clone()
 }
 
 /// The `https://` path: `ureq` does the TLS, the chunked decoding and the redirects, and its body
