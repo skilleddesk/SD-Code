@@ -384,8 +384,17 @@ fn install_cli(root: &Path, tool: &Tool, progress: &Progress) -> Result<String, 
 
 /// The newest release's asset whose name passes `pick`, from GitHub: `(version, url, name)`.
 fn github_asset(repo: &str, pick: impl Fn(&str) -> bool) -> Result<(String, String, String), String> {
-    let release: Value = serde_json::from_str(&get_text(&format!("https://api.github.com/repos/{repo}/releases/latest"))?)
-        .map_err(|error| format!("GitHub's answer about {repo} could not be read: {error}"))?;
+    let api = get_text(&format!("https://api.github.com/repos/{repo}/releases/latest")).and_then(|text| {
+        serde_json::from_str::<Value>(&text).map_err(|error| format!("GitHub's answer about {repo} could not be read: {error}"))
+    });
+
+    let release = match api {
+        Ok(release) => release,
+        /* 0.22: GitHub's API answers 60 anonymous requests an hour per address - an office or a mobile carrier
+           behind one address runs out (seen on a CI runner: HTTP 403). The release page itself has no such
+           limit: its redirect names the newest tag, and the page that lists that tag's files names the assets. */
+        Err(api_error) => return github_asset_from_pages(repo, &pick).map_err(|page_error| format!("{api_error}; and from the release page: {page_error}")),
+    };
     let tag = release["tag_name"].as_str().unwrap_or("latest").to_string();
 
     release["assets"]
@@ -393,6 +402,41 @@ fn github_asset(repo: &str, pick: impl Fn(&str) -> bool) -> Result<(String, Stri
         .and_then(|assets| assets.iter().find(|asset| asset["name"].as_str().is_some_and(&pick)))
         .and_then(|asset| Some((tag.clone(), asset["browser_download_url"].as_str()?.to_string(), asset["name"].as_str()?.to_string())))
         .ok_or_else(|| format!("{repo} {tag} has no download for this computer ({} {})", std::env::consts::OS, std::env::consts::ARCH))
+}
+
+/// The newest release's asset from GitHub's ordinary pages (no API, no rate limit): `/releases/latest` redirects
+/// to `/releases/tag/<tag>`, and `/releases/expanded_assets/<tag>` links every file of that release.
+fn github_asset_from_pages(repo: &str, pick: &impl Fn(&str) -> bool) -> Result<(String, String, String), String> {
+    let latest = format!("https://github.com/{repo}/releases/latest");
+    let response = ureq::AgentBuilder::new()
+        .timeout_connect(Duration::from_secs(15))
+        .timeout_read(Duration::from_secs(30))
+        .redirects(0)
+        .user_agent(&format!("sdcd/{}", crate::VERSION))
+        .build()
+        .get(&latest)
+        .call();
+    let location = match response {
+        Ok(response) => response.header("location").map(str::to_string),
+        Err(ureq::Error::Status(_, response)) => response.header("location").map(str::to_string),
+        Err(error) => return Err(format!("{latest}: {error}")),
+    }
+    .ok_or_else(|| format!("{latest} did not name the newest release"))?;
+    let tag = location.rsplit("/tag/").next().filter(|tag| !tag.is_empty() && !tag.contains('/')).ok_or_else(|| format!("{latest} pointed at {location}"))?.to_string();
+    let page = get_text(&format!("https://github.com/{repo}/releases/expanded_assets/{tag}"))?;
+
+    asset_from_page(repo, &tag, &page, pick).ok_or_else(|| format!("{repo} {tag} has no download for this computer ({} {})", std::env::consts::OS, std::env::consts::ARCH))
+}
+
+/// The first `href="/<repo>/releases/download/<tag>/<name>"` on a release-assets page whose name passes `pick`.
+pub fn asset_from_page(repo: &str, tag: &str, page: &str, pick: &impl Fn(&str) -> bool) -> Option<(String, String, String)> {
+    let prefix = format!("/{repo}/releases/download/{tag}/");
+
+    page.split("href=\"").skip(1).filter_map(|rest| rest.split('"').next()).find_map(|href| {
+        let name = href.strip_prefix(&prefix)?;
+
+        pick(name).then(|| (tag.to_string(), format!("https://github.com{href}"), name.to_string()))
+    })
 }
 
 /// The Ollama archive for this machine - the plain build, not the ROCm / MLX / Jetson variants.
@@ -1277,6 +1321,30 @@ mod tests {
             assert!(crate::host::program::resolve(program).is_some_and(|found| found.starts_with(&dir)), "{program} is not the one SDC installed");
         }
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_release_page_names_the_asset_when_the_api_is_out_of_requests() {
+        let page = r#"<a href="/BurntSushi/ripgrep/releases/download/15.2.0/ripgrep-15.2.0-x86_64-pc-windows-msvc.zip" rel="nofollow">
+            <a href="/BurntSushi/ripgrep/releases/download/15.2.0/ripgrep-15.2.0-aarch64-apple-darwin.tar.gz">
+            <a href="/BurntSushi/ripgrep/releases/download/15.2.0/ripgrep-15.2.0-x86_64-unknown-linux-musl.tar.gz">
+            <a href="/BurntSushi/ripgrep/archive/refs/tags/15.2.0.zip">"#;
+        let found = asset_from_page("BurntSushi/ripgrep", "15.2.0", page, &|name: &str| name.ends_with("aarch64-apple-darwin.tar.gz")).unwrap();
+
+        assert_eq!(found.0, "15.2.0");
+        assert_eq!(found.1, "https://github.com/BurntSushi/ripgrep/releases/download/15.2.0/ripgrep-15.2.0-aarch64-apple-darwin.tar.gz");
+        assert_eq!(found.2, "ripgrep-15.2.0-aarch64-apple-darwin.tar.gz");
+        assert!(asset_from_page("BurntSushi/ripgrep", "15.2.0", page, &|name: &str| name.ends_with(".rar")).is_none());
+    }
+
+    /// Over the network: the page route alone finds this machine's ripgrep (`-- --ignored`).
+    #[test]
+    #[ignore]
+    fn live_release_page_fallback() {
+        let found = github_asset_from_pages("BurntSushi/ripgrep", &ripgrep_asset).unwrap();
+
+        println!("{found:?}");
+        assert!(ripgrep_asset(&found.2));
     }
 
     #[test]

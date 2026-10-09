@@ -15,6 +15,35 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [0.22.0] — Any local model, voice through your Alibaba key, Git everywhere, the window proven on every OS
+
+- **Any local model server, not only Ollama.** Settings → Providers → Local models looks on this computer for
+  LM Studio, llama.cpp / llamafile / LocalAI, vLLM, SGLang, Jan, KoboldCpp, text-generation-webui and GPT4All and
+  connects one with a click; any other OpenAI-compatible server - a model someone built and serves themselves, or
+  a GPU box on the network (`http://192.168.x.x:PORT/v1`) - is added by its address. No key needed (one can be
+  given for a server started with one); the context size is read from the server. Each server is its own provider
+  in the model menu and works in chat and agent mode, tools included. Verified live: found on port 1234, connected,
+  its models listed, a reply streamed and the model called tools.
+- **Voice with the Alibaba key.** DeepSeek's API has no speech-to-text, but the Alibaba Cloud key that serves
+  DeepSeek, Qwen and Kimi does: voice now uses Qwen3-ASR through it (Model Studio's own endpoint, with the
+  compatible one as a fallback). Verified live with the owner's key: a spoken sentence came back word for word.
+- **Git installs itself on every platform, silently.** macOS and Linux get Git from conda-forge through
+  micromamba into SDC's tools folder - no Apple installer window, no password prompt - on first start, the way
+  Windows already got PortableGit. On a Mac without Apple's Command Line Tools SDC's Git comes before Apple's
+  stub, and nothing runs the stub (it would open Apple's installer).
+- **Proof that the window is the same everywhere.** A new `window check` workflow builds the real app on Linux,
+  macOS and Windows and runs its self-test (`SDC_WINDOW_SELFTEST`): no native frame, the three buttons, the drag
+  regions, maximise / restore / resize / minimise. On Linux the title bar is also driven with a real mouse
+  (xdotool: maximise and restore buttons, dragging by the caption, double-click, minimise). The same workflow
+  installs Git, ripgrep, Node.js and the agent's browser for real on Linux and macOS and runs each.
+- **Signed provenance.** Every installer now carries a Sigstore build-provenance attestation (who built it, from
+  which commit, with which workflow - `gh attestation verify <file> --repo skilleddesk/SD-Code`), and the release
+  has a `SHA256SUMS.txt`. Windows SmartScreen and macOS Gatekeeper still ask once: removing that takes a paid
+  code-signing identity, which is the owner's decision.
+- **The token saving, proven end to end.** A test drives the real agent loop against a scripted model: a file
+  read twice unchanged reaches the model in full once and as one line the second time; after an edit, in full.
+- The Local tab is called "Local models"; a local server's group in the model menu says "local", not "API key".
+
 ## [0.21.1] — The rest of "nothing to type": the agent's browser, servers, Linux packages, green CI
 
 - **The agent's browser, installed by SDC.** On a machine with no Chrome, Edge, Chromium or Brave (many Linux

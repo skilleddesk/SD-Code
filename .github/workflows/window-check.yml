@@ -68,6 +68,15 @@ jobs:
         working-directory: sdc/sdcd
         run: cargo build
 
+      - name: Put the daemon where the app expects its sidecar
+        shell: bash
+        run: |
+          triple=$(rustc -vV | sed -n 's/^host: //p')
+          ext=""
+          if [ "$RUNNER_OS" = "Windows" ]; then ext=".exe"; fi
+          mkdir -p sdc/app/src-tauri/binaries
+          cp "sdc/sdcd/target/debug/sdcd$ext" "sdc/app/src-tauri/binaries/sdcd-$triple$ext"
+
       - name: Build the app (with the page inside)
         working-directory: sdc/app/src-tauri
         run: cargo build --features tauri/custom-protocol
