@@ -35,6 +35,10 @@ working build is a trap rather than a history. The entries below are kept for th
   credential-file scan flagged `cloud/.dev.vars.example` (empty placeholders only); it is `cloud/dev.vars.example`
   now, and the scan's rule is unchanged. A test helper no longer takes a slow daemon answer for no answer, and the
   single-element loop newer clippy flags is gone.
+- **SDC Anywhere: a confirmed phone pairing could be lost.** The computer sends "pairing done" and closes the
+  connection at once; the page opened and saved that message asynchronously but handled the close immediately, so
+  a fast close won the race and the page said "The pairing ended before your computer confirmed it". The close is
+  now handled after the messages that came before it. (Found through the Linux e2e, which failed on exactly this.)
 - Tests for what 0.21.0 left unproven: a real `.tar.zst` unpacks with its program runnable (Ollama for Linux - its
   frame window was checked too), the server install script passes `sh -n`, and the server command line keeps its
   `$$` pid.
