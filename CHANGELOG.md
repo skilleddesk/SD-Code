@@ -42,6 +42,16 @@ working build is a trap rather than a history. The entries below are kept for th
   code-signing identity, which is the owner's decision.
 - **The token saving, proven end to end.** A test drives the real agent loop against a scripted model: a file
   read twice unchanged reaches the model in full once and as one line the second time; after an edit, in full.
+- **The window buttons work while a dialog is open.** A dialog's backdrop covered the title bar, so the window could
+  not be minimised, maximised, closed or dragged while the welcome wizard (or any dialog) was open - found by the
+  Linux real-mouse check, true on every platform. The buttons now sit on the top layer, and the title bar stays
+  draggable while a dialog is open.
+- **Linux: double-click on the title bar maximises every time.** Tauri starts a window move on the first press,
+  and on Linux the window manager then took the second press of a double-click; the move now starts only when the
+  mouse moves.
+- **Installs past GitHub's API limit.** GitHub answers 60 anonymous API calls an hour per address (an office or a
+  mobile network runs out - a CI runner did, HTTP 403); SDC now falls back to the release pages, which have no
+  such limit.
 - The Local tab is called "Local models"; a local server's group in the model menu says "local", not "API key".
 
 ## [0.21.1] — The rest of "nothing to type": the agent's browser, servers, Linux packages, green CI
