@@ -183,8 +183,11 @@ fn request_collect(
         match reader.read_line(&mut line) {
             Ok(0) => break,
             Ok(_) => {}
-            /* A read timeout: nothing more is coming, which is the end of the interesting part. */
-            Err(_) => break,
+            /* A read timeout after the answer: nothing more is coming, which is the end of the interesting
+               part. Before the answer it only means the daemon is slow (a checkpoint's git commit on a
+               busy CI runner took longer than the 3 s read timeout) - keep waiting until the deadline. */
+            Err(_) if answer.is_some() => break,
+            Err(_) => continue,
         }
 
         let Ok(message) = serde_json::from_str::<serde_json::Value>(line.trim()) else {

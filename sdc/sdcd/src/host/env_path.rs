@@ -74,10 +74,8 @@ pub fn extra_dirs(home: Option<&Path>) -> Vec<PathBuf> {
     let mut dirs: Vec<PathBuf> = Vec::new();
 
     if cfg!(windows) {
-        for var in ["APPDATA"] {
-            if let Some(base) = std::env::var_os(var) {
-                dirs.push(PathBuf::from(base).join("npm"));
-            }
+        if let Some(base) = std::env::var_os("APPDATA") {
+            dirs.push(PathBuf::from(base).join("npm"));
         }
 
         if let Some(base) = std::env::var_os("LOCALAPPDATA") {
