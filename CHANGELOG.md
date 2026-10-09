@@ -15,6 +15,31 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [0.21.1] — The rest of "nothing to type": the agent's browser, servers, Linux packages, green CI
+
+- **The agent's browser, installed by SDC.** On a machine with no Chrome, Edge, Chromium or Brave (many Linux
+  desktops have only Firefox) the agent could not look at a page it built. Settings → Environment now has a
+  "Browser for the agent" row whose Install fetches Google's Chrome for Testing headless shell (Windows, macOS
+  Intel/Apple Silicon, Linux x64/arm64) into SDC's tools folder; an installed browser is still preferred. Verified
+  live: installed, then driven by the agent's own code - page opened, read, photographed.
+- **Servers too.** On a host's environment card, Node.js and the Claude Code / Codex / Gemini CLIs install into
+  `~/.sdc/tools` on the server over SDC's own connection, without `sudo` (the Install there used to open a terminal),
+  and every command SDC runs on a host finds them first on its `PATH`.
+- **Linux packages.** A `.rpm` for Fedora / openSUSE next to the `.deb` and the AppImage; the release notes send
+  Ubuntu and Debian to the `.deb`, which installs with a double-click (the AppImage needs FUSE 2 there).
+- **Voice** says the no-install way first: connect Groq (a free key) or OpenAI. whisper.cpp ships no ready-made
+  programs, so fully offline voice stays opt-in.
+- **CI is green for the first time since 0.18.** The e2e harness stopped a relay by killing `wrangler` alone on
+  Linux, leaving its `workerd` serving - "the relay goes away" never happened and the page-pairing suites failed
+  there (Windows ends the whole tree, so they passed locally). The relay now runs in its own process group. The
+  credential-file scan flagged `cloud/.dev.vars.example` (empty placeholders only); it is `cloud/dev.vars.example`
+  now, and the scan's rule is unchanged. A test helper no longer takes a slow daemon answer for no answer, and the
+  single-element loop newer clippy flags is gone.
+- Tests for what 0.21.0 left unproven: a real `.tar.zst` unpacks with its program runnable (Ollama for Linux - its
+  frame window was checked too), the server install script passes `sh -n`, and the server command line keeps its
+  `$$` pid.
+- Verified live with the owner's own Alibaba key on a copy of the data: the footer read `27.5k in · 19.7k cached`.
+
 ## [0.21.0] — All in one: no terminal, the same window everywhere, a live stream that reads like Claude Code
 
 **Nothing to type in a terminal, on any platform.** SDC now installs what it needs itself, into its own folder

@@ -69,8 +69,15 @@ impl Daemon {
             "tool.list" => Ok(crate::host::tools::list()),
             "tool.install" => {
                 let id = envelope.require_str("id")?;
+                let host_id = envelope.opt_str("hostId").unwrap_or_else(|| "local".into());
 
-                Ok(crate::host::tools::install(&id).map_err(ErrorObject::bad_request)?.to_json())
+                /* 0.21.1: on a server, Node and the CLIs go into ~/.sdc/tools over SDC's own connection. */
+                let job = match self.ssh_for(&host_id)? {
+                    Some(ssh) => crate::host::tools::install_remote(ssh, &host_id, &id),
+                    None => crate::host::tools::install(&id),
+                };
+
+                Ok(job.map_err(ErrorObject::bad_request)?.to_json())
             }
             "tool.status" => {
                 let id = envelope.require_str("jobId")?;

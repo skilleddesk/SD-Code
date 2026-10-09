@@ -845,7 +845,7 @@ impl Daemon {
 
     /// The SSH side of a host, when the daemon has an address for it: `None` for `local`, and `None`
     /// for a host row that was never added as an SSH target.
-    fn ssh_for(&self, host_id: &str) -> Result<Option<crate::ssh::Ssh>, ErrorObject> {
+    pub(super) fn ssh_for(&self, host_id: &str) -> Result<Option<crate::ssh::Ssh>, ErrorObject> {
         if host_id == "local" {
             return Ok(None);
         }

@@ -32,7 +32,6 @@ coverage/
 # SDC Anywhere (Phase 0): Worker local secrets and loose key files
 .dev.vars
 .dev.vars.*
-!.dev.vars.example
 .wrangler/
 *api*.txt
 *API*.txt

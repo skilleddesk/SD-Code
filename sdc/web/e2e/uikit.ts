@@ -84,7 +84,16 @@ export async function startUi(options: { vars?: Record<string, string> } = {}): 
       const request = await waitFor('the request on the computer', async () => (await daemon.call('anywhere.pair.requests')).requests[0]);
 
       await daemon.call('anywhere.pair.confirm', { deviceId: request.deviceId, accept: true });
-      await page.getByText('Locked').first().waitFor({ timeout: 15_000 });
+      await page
+        .getByText('Locked')
+        .first()
+        .waitFor({ timeout: 15_000 })
+        .catch(async (error: Error) => {
+          /* A pairing that never reaches Locked says what the page showed instead (0.21.1). */
+          const shown = await page.locator('body').innerText().catch(() => '(no page text)');
+
+          throw new Error(`${error.message}\n--- the page said:\n${shown.slice(0, 800)}\n--- page errors:\n${errors.join('\n')}`);
+        });
     },
   };
 }

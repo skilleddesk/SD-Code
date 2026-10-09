@@ -1,7 +1,7 @@
 {
   "name": "@sdc/web",
   "private": true,
-  "version": "0.21.0",
+  "version": "0.21.1",
   "type": "module",
   "description": "SDC Anywhere: the browser app (PWA). Talks to the user's own sdcd through the relay; everything between is end-to-end encrypted.",
   "scripts": {

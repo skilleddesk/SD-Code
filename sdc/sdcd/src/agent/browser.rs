@@ -24,6 +24,11 @@ use tungstenite::{Message, WebSocket};
 
 /// A Chromium on this machine: Chrome, Edge, Chromium or Brave, where each installs itself.
 pub fn find_browser() -> Option<PathBuf> {
+    /* `SDC_BROWSER` names one outright (tests, a portable Chromium). */
+    if let Some(path) = std::env::var_os("SDC_BROWSER").map(PathBuf::from).filter(|path| path.is_file()) {
+        return Some(path);
+    }
+
     let mut candidates: Vec<PathBuf> = Vec::new();
 
     if cfg!(windows) {
@@ -44,6 +49,10 @@ pub fn find_browser() -> Option<PathBuf> {
             }
         }
     }
+
+    /* 0.21.1: the one SDC installs itself (Settings → Environment → Browser), last - an installed
+       Chrome or Edge is used first. */
+    candidates.push(crate::host::tools::managed_browser());
 
     candidates.into_iter().find(|path| path.is_file())
 }

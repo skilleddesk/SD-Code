@@ -15,7 +15,7 @@ import { useAppStore } from './store';
  */
 
 /** The ids the daemon can install itself (`host/tools.rs` TOOLS). */
-export const INSTALLABLE = new Set(['node', 'claude', 'codex', 'gemini', 'ollama', 'ripgrep', 'git']);
+export const INSTALLABLE = new Set(['node', 'claude', 'codex', 'gemini', 'ollama', 'ripgrep', 'git', 'browser']);
 
 /** Roughly what each install downloads - said on its button before the press (the daemon's `TOOLS` sizes). */
 export function toolSize(id: string): string | undefined {
@@ -28,6 +28,7 @@ export function toolSize(id: string): string | undefined {
     ollama: mac ? '~30 MB' : '~1.5 GB',
     ripgrep: '~2 MB',
     git: '~60 MB',
+    browser: '~100 MB',
   };
 
   return sizes[id];
@@ -104,7 +105,12 @@ function refreshProviders(): void {
   );
 }
 
-export const installTool = (id: string): JobStart => () => sdcpCall('tool.install', { id });
+/** The tools SDC can install on a server, into ~/.sdc/tools (`host/tools.rs` remote_installable). */
+export const REMOTE_INSTALLABLE = new Set(['node', 'claude', 'codex', 'gemini']);
+
+/** Installs a tool here, or on the server `hostId` names. */
+export const installTool = (id: string, hostId?: string): JobStart => () =>
+  sdcpCall('tool.install', hostId === undefined || hostId === 'local' ? { id } : { id, hostId });
 
 export const pullModel = (model: string): JobStart => () => sdcpCall('ollama.pull', { model });
 

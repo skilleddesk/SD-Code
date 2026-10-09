@@ -61,7 +61,7 @@ pub fn status() -> Value {
         "hint": if local || !online.is_empty() {
             Value::Null
         } else {
-            json!("Voice needs a transcriber: install whisper.cpp and put a model (for example ggml-small.bin) in SDC's data folder under whisper/, or connect Groq or OpenAI in the Provider Hub.")
+            json!("Voice needs a transcriber: connect Groq (a free key) or OpenAI in the Provider Hub - nothing to install. (Fully offline voice uses whisper.cpp with a model in SDC's data folder under whisper/, when you have it.)")
         },
     })
 }

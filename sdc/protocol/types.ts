@@ -2267,7 +2267,7 @@ export interface SdcpMethodMap {
   'settings.set': { params: { key: string; value: string | boolean }; result: { key: string; value: string } };
   'update.check': { params: { channel?: 'stable' | 'beta' }; result: UpdateInfo };
   'tool.list': { params: Record<string, never>; result: { tools: ToolRow[]; root: string } };
-  'tool.install': { params: { id: string }; result: ToolJob };
+  'tool.install': { params: { id: string; hostId?: string }; result: ToolJob };
   'tool.status': { params: { jobId: string }; result: ToolJob };
   'ollama.start': { params: Record<string, never>; result: { running: boolean } };
   'ollama.pull': { params: { model: string }; result: ToolJob };

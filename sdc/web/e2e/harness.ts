@@ -120,7 +120,9 @@ export async function startRelayOn(port: number, host = '127.0.0.1', extra: Reco
       '--var', `WEB_ORIGIN:http://${host}:${port}`, '--var', `RP_ID:${host}`,
       ...Object.entries(extra).flatMap(([name, value]) => ['--var', `${name}:${value}`]),
     ],
-    { cwd: join(root, 'cloud'), stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true },
+    /* `detached` on Linux and macOS makes the relay the leader of its own process group, so `killTree` can end
+       wrangler *and* the workerd it starts - killing only wrangler left workerd serving the port. */
+    { cwd: join(root, 'cloud'), stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, detached: process.platform !== 'win32' },
   );
   let log = '';
 
@@ -150,7 +152,15 @@ async function killTree(child: ChildProcess): Promise<void> {
   if (process.platform === 'win32') {
     await new Promise<void>((done) => spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], { stdio: 'ignore' }).on('exit', () => done()));
   } else {
-    child.kill('SIGKILL');
+    /* The whole group (see the spawn): `child.kill` reached wrangler only, and its workerd kept the relay up -
+       the reason "the relay goes away" and the page-pairing suites failed on Linux CI and passed on Windows. */
+    try {
+      process.kill(-child.pid, 'SIGKILL');
+    } catch {
+      child.kill('SIGKILL');
+    }
+
+    await new Promise<void>((done) => (child.exitCode !== null ? done() : child.once('exit', () => done())));
   }
 }
 

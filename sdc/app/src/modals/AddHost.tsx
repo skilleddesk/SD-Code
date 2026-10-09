@@ -20,6 +20,8 @@ import type { HostView } from '../store/types';
 import { BTN, BTN_PRIMARY, BTN_SECONDARY } from '../panels/ui/button';
 import { toast } from '../store/toast';
 import { Modal } from './Modal';
+import { InstallButton } from '../panels/ui/InstallButton';
+import { installTool, REMOTE_INSTALLABLE } from '../store/tools';
 
 /**
  * `#addHostBd` - Add a host (spec section 9.12), with the trust step 0.7.13 added.
@@ -844,7 +846,11 @@ export function AddHost() {
                   {check.detail}
                 </span>
 
-                {check.fix === undefined ? null : (
+                {/* 0.21.1: Node and the coding CLIs are installed on the server by SDC (into ~/.sdc/tools,
+                    no sudo) - the Install that used to open a terminal there. */}
+                {check.fix === 'Install' && REMOTE_INSTALLABLE.has(check.id) ? (
+                  <InstallButton begin={installTool(check.id, pending.hostId)} label={check.label} compact onDone={() => void runDoctor(pending.hostId)} />
+                ) : check.fix === undefined ? null : (
                   <button
                     type="button"
                     className="shrink-0 rounded-sm border border-border-subtle px-[5px] py-[1px] text-[10.5px] text-text-secondary transition-colors duration-fast ease-ease hover:border-border-default hover:text-text-primary"

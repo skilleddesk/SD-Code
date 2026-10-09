@@ -794,7 +794,8 @@ fn wrap_line(text: &str, root: Option<&str>, pid_file: &str) -> Result<String, E
     /* The run directory is made first: `echo $$ > …` failing on a missing folder would still run the CLI
        (the `;` continues) but would leave *no pid file*, and a process nobody can stop is exactly the bug
        this line exists to prevent. `-p` and a silenced error keep it free when it already exists. */
-    let inner = format!("mkdir -p {}/run 2>/dev/null; echo $$ > {pid_path}; {text}", state_dir());
+    /* 0.21.1: the tools SDC installed on the host (~/.sdc/tools) come first on the command's PATH. */
+    let inner = format!("{}mkdir -p {}/run 2>/dev/null; echo $$ > {pid_path}; {text}", crate::host::tools::REMOTE_PATH, state_dir());
     let quoted = sh_quote(&inner);
     let runner = format!(
         "if command -v setsid >/dev/null 2>&1; then setsid sh -c {quoted}; else sh -c {quoted}; fi"
@@ -1300,6 +1301,7 @@ mod tests {
         assert!(line.contains("mkdir -p "), "the pid file needs its folder to exist: {line}");
         assert!(line.contains("echo $$ >"), "the pid comes from the shell that execs the CLI: {line}");
         assert!(line.contains("run/turn-9.pid"), "{line}");
+        assert!(line.contains("$HOME/.sdc/tools/npm-global/bin"), "the CLIs SDC installed on the host are found (0.21.1): {line}");
         assert!(line.contains("NO_COLOR='\\''1'\\''"), "the value is quoted for the remote shell: {line}");
         assert!(line.contains("'--print'"), "{line}");
 

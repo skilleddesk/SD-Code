@@ -2110,7 +2110,8 @@
         },
         "tool.install": {
           "params": {
-            "id": "string"
+            "id": "string",
+            "hostId": "string?"
           },
           "result": {
             "id": "string",

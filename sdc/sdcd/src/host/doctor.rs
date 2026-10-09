@@ -50,6 +50,12 @@ pub fn checks(store: &Store) -> Vec<Value> {
         })
         .collect();
 
+    /* 0.21.1: the agent's browser - any Chrome, Edge, Chromium or Brave, or the one SDC installs. */
+    rows.push(match crate::agent::browser::find_browser() {
+        Some(path) => json!({ "id": "browser", "label": "Browser for the agent", "state": "ok", "detail": path.display().to_string() }),
+        None => json!({ "id": "browser", "label": "Browser for the agent", "state": "warn", "detail": "none found - the agent cannot look at pages it builds", "fix": "Install" }),
+    });
+
     /* 7 - the busy port the prototype's example complains about. */
     rows.push(match std::net::TcpListener::bind(("127.0.0.1", 3000)) {
         Ok(_) => json!({ "id": "port3000", "label": "Port 3000", "state": "ok", "detail": "free" }),
@@ -281,7 +287,7 @@ pub fn remote_checks(ssh: &crate::ssh::Ssh, root: Option<&str>) -> Vec<Value> {
 /// The programs a turn on that host needs, asked in **one** round trip: `name=version` per line, or
 /// `name=not installed`.
 fn tool_rows(ssh: &crate::ssh::Ssh) -> Vec<Value> {
-    let script = "for p in git claude codex gemini rg node; do printf '%s=' \"$p\"; if command -v \"$p\" >/dev/null 2>&1; then \"$p\" --version 2>/dev/null | head -n 1 || echo present; else echo 'not installed'; fi; done";
+    let script = &format!("{}for p in git claude codex gemini rg node; do printf '%s=' \"$p\"; if command -v \"$p\" >/dev/null 2>&1; then \"$p\" --version 2>/dev/null | head -n 1 || echo present; else echo 'not installed'; fi; done", crate::host::tools::REMOTE_PATH);
     let labels = [
         ("git", "Git"),
         ("claude", "Claude Code CLI"),
@@ -311,12 +317,19 @@ fn tool_rows(ssh: &crate::ssh::Ssh) -> Vec<Value> {
                 .to_string();
             let missing = version.is_empty() || version.eq_ignore_ascii_case("not installed");
 
-            json!({
+            let mut row = json!({
                 "id": id,
                 "label": format!("{label} (on the host)"),
                 "state": if missing { "warn" } else { "ok" },
                 "detail": if missing { "not installed".to_string() } else { version },
-            })
+            });
+
+            /* 0.21.1: what SDC can put on the server itself carries an Install the window carries out. */
+            if missing && crate::host::tools::remote_installable(id) {
+                row["fix"] = json!("Install");
+            }
+
+            row
         })
         .collect()
 }
@@ -326,11 +339,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn reports_exactly_ten_checks_with_the_five_required_fields() {
+    fn reports_exactly_eleven_checks_with_the_five_required_fields() {
         let store = Store::in_memory().unwrap();
         let rows = checks(&store);
 
-        assert_eq!(rows.len(), 10);
+        /* 0.21.1: the agent's browser is the eleventh. */
+        assert_eq!(rows.len(), 11);
 
         for row in &rows {
             assert!(row["id"].is_string(), "every check has an id");

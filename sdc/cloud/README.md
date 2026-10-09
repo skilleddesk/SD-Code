@@ -17,7 +17,7 @@ pnpm --filter @sdc/cloud test        # vitest on workerd; the network is replace
 4. In SDC on the computer: Settings -> SDC Anywhere -> the email address.
 5. Check once: a sign-in mail to a Gmail address, then "Show original": SPF, DKIM and DMARC all PASS (docs/remote/DNS-RECORDS.md section 6).
 
-Local `wrangler dev` reads `.dev.vars` (gitignored; `.dev.vars.example` lists the names). Secrets are never printed by any script here.
+Local `wrangler dev` reads `.dev.vars` (gitignored; `dev.vars.example` lists the names - no leading dot, so the secret scan, which refuses any tracked `.dev.vars*`, stays strict). Secrets are never printed by any script here.
 
 ## What is where
 

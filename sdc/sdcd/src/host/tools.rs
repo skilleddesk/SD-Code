@@ -52,6 +52,9 @@ pub const TOOLS: &[Tool] = &[
     Tool { id: "ollama", label: "Ollama", program: "ollama", size: if cfg!(target_os = "macos") { "~30 MB" } else { "~1.5 GB" } },
     Tool { id: "ripgrep", label: "ripgrep", program: "rg", size: "~2 MB" },
     Tool { id: "git", label: "Git", program: "git", size: if cfg!(windows) { "~60 MB" } else { "system" } },
+    /* 0.21.1: the agent's browser (screenshots, clicking through a page it built) on a machine with no
+       Chrome, Edge or Chromium - many Linux desktops have only Firefox. */
+    Tool { id: "browser", label: "Browser for the agent", program: "chrome-headless-shell", size: "~100 MB" },
 ];
 
 /// The npm package behind each CLI.
@@ -248,8 +251,19 @@ pub fn list() -> Value {
     let rows: Vec<Value> = TOOLS
         .iter()
         .map(|tool| {
-            let found = crate::host::program::resolve(tool.program);
-            let version = found.as_ref().and_then(|_| crate::host::doctor::version_of(tool.program));
+            /* The browser is not asked for `--version` (a headless shell may start instead of answering): it is
+               there when the agent would find one. */
+            let (found, version) = if tool.id == "browser" {
+                let found = crate::agent::browser::find_browser();
+                let version = found.as_ref().map(|path| path.display().to_string());
+
+                (found, version)
+            } else {
+                let found = crate::host::program::resolve(tool.program);
+                let version = found.as_ref().and_then(|_| crate::host::doctor::version_of(tool.program));
+
+                (found, version)
+            };
 
             json!({
                 "id": tool.id,
@@ -277,6 +291,7 @@ fn install_now(tool: &Tool, progress: &Progress) -> Result<String, String> {
         "ollama" => install_ollama(&root, progress),
         "ripgrep" => install_ripgrep(&root, progress),
         "git" => install_git(&root, progress),
+        "browser" => install_browser(&root, progress),
         other => Err(format!("SDC cannot install `{other}`")),
     }
 }
@@ -508,6 +523,132 @@ fn install_git(root: &Path, progress: &Progress) -> Result<String, String> {
     run_logged(command, progress)?;
 
     crate::host::doctor::version_of("git").map(|version| format!("Git installed · {version}")).ok_or_else(|| "the package manager finished, but git does not start".to_string())
+}
+
+/* ------------------------------------------------------------------------------------------------
+ * The same, on a server (0.21.1): Node and the coding CLIs into `~/.sdc/tools` on the host, over SDC's
+ * own SSH connection, without `sudo` - the doctor's Install on a host row used to open a terminal there.
+ * ---------------------------------------------------------------------------------------------- */
+
+/// What every command SDC runs on a host puts first on its `PATH`: the tools SDC installed there. A
+/// folder that does not exist costs nothing.
+pub const REMOTE_PATH: &str = "PATH=\"$HOME/.sdc/tools/npm-global/bin:$HOME/.sdc/tools/node/bin:$PATH\"; export PATH; ";
+
+/// The tools SDC can install on a host.
+pub fn remote_installable(id: &str) -> bool {
+    matches!(id, "node" | "claude" | "codex" | "gemini")
+}
+
+/// The POSIX `sh` script that installs `id` on a host, with Node `version` (`v24.21.0`) when the host has
+/// no `npm`. Linux and macOS hosts, x64 and arm64; `curl` or `wget`; nothing that needs root.
+pub fn remote_install_script(id: &str, version: &str) -> Option<String> {
+    let package = if id == "node" { "" } else { npm_package(id)? };
+
+    Some(format!(
+        r#"set -e
+T="$HOME/.sdc/tools"; mkdir -p "$T"
+{path}
+case "$(uname -m)" in x86_64|amd64) A=x64;; aarch64|arm64) A=arm64;; *) echo "SDC: this CPU ($(uname -m)) has no Node.js build"; exit 3;; esac
+case "$(uname -s)" in Linux) O=linux;; Darwin) O=darwin;; *) echo "SDC: this system ($(uname -s)) has no Node.js build"; exit 3;; esac
+fetch() {{ if command -v curl >/dev/null 2>&1; then curl -fsSL "$1" -o "$2"; elif command -v wget >/dev/null 2>&1; then wget -q "$1" -O "$2"; else echo "SDC: the host has neither curl nor wget"; exit 4; fi; }}
+if ! command -v npm >/dev/null 2>&1 || [ "{id}" = node ]; then
+  F="node-{version}-$O-$A.tar.gz"
+  echo "Downloading Node.js {version}"
+  fetch "https://nodejs.org/dist/{version}/$F" "$T/$F"
+  rm -rf "$T/.node-tmp"; mkdir -p "$T/.node-tmp"; tar -xzf "$T/$F" -C "$T/.node-tmp"
+  rm -rf "$T/node"; mv "$T/.node-tmp/node-{version}-$O-$A" "$T/node"; rm -rf "$T/.node-tmp" "$T/$F"
+fi
+if [ -n "{package}" ]; then
+  echo "Installing {package}"
+  npm install --global --no-fund --no-audit --loglevel=error --prefix "$T/npm-global" "{package}@latest"
+fi
+echo SDC-INSTALLED"#,
+        path = REMOTE_PATH.trim(),
+    ))
+}
+
+/// Installs `id` on the host `ssh` reaches, as a job.
+pub fn install_remote(ssh: crate::ssh::Ssh, host_id: &str, id: &str) -> Result<Job, String> {
+    let tool = tool(id).filter(|tool| remote_installable(tool.id)).ok_or_else(|| format!("SDC cannot install `{id}` on a server"))?;
+    let key = format!("{host_id}:{}", tool.id);
+
+    Ok(spawn_job(&key, tool.label, move |progress| {
+        progress.step("Finding the newest Node.js LTS");
+
+        let index: Value = serde_json::from_str(&get_text("https://nodejs.org/dist/index.json")?).map_err(|error| format!("nodejs.org's release list could not be read: {error}"))?;
+        let version = index
+            .as_array()
+            .and_then(|releases| releases.iter().find(|release| release["lts"].as_str().is_some()))
+            .and_then(|release| release["version"].as_str())
+            .ok_or("nodejs.org lists no LTS release")?
+            .to_string();
+        let script = remote_install_script(tool.id, &version).ok_or("no script for this tool")?;
+
+        progress.step(&format!("Installing {} on the server", tool.label));
+
+        let output = ssh.run(&script, Duration::from_secs(15 * 60)).map_err(|error| error.message)?;
+
+        for line in output.stdout.lines().chain(output.stderr.lines()) {
+            progress.line(line);
+        }
+
+        if !output.stdout.contains("SDC-INSTALLED") {
+            let tail: Vec<&str> = output.stdout.lines().chain(output.stderr.lines()).filter(|line| !line.trim().is_empty()).rev().take(3).collect();
+
+            return Err(if tail.is_empty() { "the install on the server did not finish".to_string() } else { tail.into_iter().rev().collect::<Vec<_>>().join(" · ") });
+        }
+
+        Ok(format!("{} installed on the server", tool.label))
+    }))
+}
+
+/// Where the browser SDC installs lives: `<tools>/browser/chrome-headless-shell[.exe]`.
+pub fn managed_browser() -> PathBuf {
+    root().join("browser").join(if cfg!(windows) { "chrome-headless-shell.exe" } else { "chrome-headless-shell" })
+}
+
+/// Chrome for Testing's name for this machine.
+pub fn chrome_platform() -> &'static str {
+    match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("windows", "x86") => "win32",
+        ("windows", _) => "win64",
+        ("macos", "aarch64") => "mac-arm64",
+        ("macos", _) => "mac-x64",
+        (_, "aarch64") => "linux-arm64",
+        _ => "linux64",
+    }
+}
+
+/// Google's own headless Chromium for automation (Chrome for Testing), into `<tools>/browser`.
+fn install_browser(root: &Path, progress: &Progress) -> Result<String, String> {
+    progress.step("Finding the newest Chrome for Testing");
+
+    let index: Value = serde_json::from_str(&get_text("https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json")?)
+        .map_err(|error| format!("the Chrome for Testing list could not be read: {error}"))?;
+    let stable = &index["channels"]["Stable"];
+    let version = stable["version"].as_str().unwrap_or("stable").to_string();
+    let platform = chrome_platform();
+    let url = stable["downloads"]["chrome-headless-shell"]
+        .as_array()
+        .and_then(|rows| rows.iter().find(|row| row["platform"].as_str() == Some(platform)))
+        .and_then(|row| row["url"].as_str())
+        .ok_or_else(|| format!("Chrome for Testing has no build for {platform}"))?
+        .to_string();
+    let archive = download(&url, &root.join("downloads").join(format!("chrome-headless-shell-{platform}.zip")), progress, &format!("Downloading the browser ({version})"))?;
+    let staging = fresh_dir(&root.join(".staging-browser"))?;
+
+    progress.step("Unpacking the browser");
+    extract(&archive, &staging)?;
+    replace_dir(&single_child(&staging)?, &root.join("browser"))?;
+    let _ = std::fs::remove_dir_all(&staging);
+    let _ = std::fs::remove_file(&archive);
+    make_executable(&managed_browser());
+
+    if !managed_browser().is_file() {
+        return Err("the browser archive did not hold chrome-headless-shell".to_string());
+    }
+
+    Ok(format!("Browser {version} installed"))
 }
 
 /// Waits for a program an outside installer is putting in place.
@@ -1003,6 +1144,40 @@ mod tests {
         extract(&zip_path, &zipped).unwrap();
         assert_eq!(find_file(&zipped, "rg.exe"), Some(zipped.join("rg.exe")));
 
+        /* A .tar.zst - the only shape Ollama ships for Linux: bin/ollama and a library beside it. */
+        let mut tar_bytes = Vec::new();
+        {
+            let mut builder = tar::Builder::new(&mut tar_bytes);
+
+            for (path, body) in [("bin/ollama", &b"#!/bin/sh\necho ollama\n"[..]), ("lib/ollama/libx.so", &b"lib"[..])] {
+                let mut header = tar::Header::new_gnu();
+
+                header.set_size(body.len() as u64);
+                header.set_mode(0o755);
+                header.set_cksum();
+                builder.append_data(&mut header, path, body).unwrap();
+            }
+
+            builder.finish().unwrap();
+        }
+
+        let zst = dir.join("ollama-linux-amd64.tar.zst");
+
+        std::fs::write(&zst, ruzstd::encoding::compress_to_vec(&tar_bytes[..], ruzstd::encoding::CompressionLevel::Fastest)).unwrap();
+
+        let unpacked = dir.join("zst");
+
+        extract(&zst, &unpacked).unwrap();
+        assert!(std::fs::read_to_string(unpacked.join("bin").join("ollama")).unwrap().contains("echo ollama"));
+        assert!(unpacked.join("lib").join("ollama").join("libx.so").is_file());
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            assert_eq!(std::fs::metadata(unpacked.join("bin").join("ollama")).unwrap().permissions().mode() & 0o111, 0o111, "the program stays runnable");
+        }
+
         assert!(extract(&dir.join("c.rar"), &into).is_err());
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1043,11 +1218,56 @@ mod tests {
         }
 
         for id in wanted.split(',') {
+            if id == "browser" {
+                assert!(managed_browser().is_file(), "the browser SDC installed is not there");
+
+                /* And it does what the agent needs: a page opened, read and photographed over DevTools. */
+                std::env::set_var("SDC_BROWSER", managed_browser());
+
+                let page = dir.join("page.html");
+
+                std::fs::write(&page, "<h1>SDC browser check</h1>").unwrap();
+
+                let mut browser = crate::agent::browser::Browser::launch(800, 600).expect("the installed browser starts");
+
+                browser.open(&format!("file:///{}", page.display().to_string().replace('\\', "/"))).expect("a page opens");
+                assert!(browser.read().expect("the page reads").contains("SDC browser check"));
+                assert!(browser.screenshot().expect("a screenshot").len() > 1000);
+                drop(browser);
+                continue;
+            }
+
             let program = tool(id).unwrap().program;
 
             assert!(crate::host::program::resolve(program).is_some_and(|found| found.starts_with(&dir)), "{program} is not the one SDC installed");
         }
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_server_install_script_is_valid_sh_and_installs_into_the_users_home() {
+        assert!(remote_install_script("git", "v24.21.0").is_none(), "git on a server needs root - not offered");
+
+        for id in ["node", "claude", "codex", "gemini"] {
+            let script = remote_install_script(id, "v24.21.0").unwrap();
+
+            assert!(script.contains("$HOME/.sdc/tools"));
+            assert!(!script.contains("sudo"));
+            assert!(script.contains("node-v24.21.0-$O-$A.tar.gz"));
+
+            if id != "node" {
+                assert!(script.contains(&format!("{}@latest", npm_package(id).unwrap())));
+            }
+
+            /* A real `sh` parses it, where one is on this machine (Git Bash on Windows, every Unix). */
+            if let Some(sh) = crate::host::program::resolve("sh") {
+                let output = Command::new(sh).arg("-n").arg("-c").arg(&script).output().unwrap();
+
+                assert!(output.status.success(), "{id}: {}", String::from_utf8_lossy(&output.stderr));
+            }
+        }
+
+        assert!(REMOTE_PATH.starts_with("PATH=\"$HOME/.sdc/tools/npm-global/bin:$HOME/.sdc/tools/node/bin:$PATH\""));
     }
 
     #[test]

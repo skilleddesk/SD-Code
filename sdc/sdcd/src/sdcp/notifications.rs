@@ -298,4 +298,27 @@ mod tests {
         fanout.unsubscribe(1);
         assert_eq!(fanout.listeners(), 1);
     }
+
+    /// The backlog limiter (0.16.1): a connection whose writer has stopped draining it is dropped once
+    /// its queue reaches [`MAX_BACKLOG`], the same counter its writer decrements as it sends each line -
+    /// set here directly rather than by broadcasting 50,000 lines. A connection that is keeping up is
+    /// untouched.
+    #[test]
+    fn a_connection_past_max_backlog_is_dropped_and_others_keep_receiving() {
+        let fanout = Fanout::new();
+        let (slow, mut slow_rx) = unbounded_channel();
+        let (fast, mut fast_rx) = unbounded_channel();
+
+        let (_slow_id, backlog) = fanout.subscribe_counted(slow);
+        fanout.subscribe(fast);
+
+        backlog.store(MAX_BACKLOG, Ordering::SeqCst);
+        assert_eq!(fanout.listeners(), 2);
+
+        fanout.broadcast(r#"{"seq":1,"event":{"type":"TurnStarted"}}"#);
+
+        assert_eq!(fanout.listeners(), 1, "the stalled connection is dropped, not just skipped");
+        assert!(slow_rx.try_recv().is_err(), "nothing more is queued for a connection that is already too far behind");
+        assert!(fast_rx.try_recv().is_ok(), "a connection that is keeping up still receives");
+    }
 }
