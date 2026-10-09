@@ -249,7 +249,8 @@ export const kernelStrings = {
 
   voice: {
     start: 'Speak (voice input)',
-    stop: 'Stop and transcribe',
+    stop: 'Stop listening - your words are written into the box as you speak',
+    listening: 'Listening…',
     heardLocally: (engine: string): string => `Heard on this machine (${engine})`,
     heardOnline: (engine: string): string => `Heard by ${engine} (your recording left this machine)`,
     nothing: 'Nothing was heard in that recording.',

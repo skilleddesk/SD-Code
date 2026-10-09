@@ -144,6 +144,8 @@ impl DaemonState {
         let store = Arc::new(Store::open(&path).with_context(|| format!("opening {}", path.display()))?);
         let events = Arc::new(EventLog::hydrate(store.clone())?);
 
+        close_interrupted_turns(&store, &events);
+
         /* Settings → Research and the local model's context, in force from the first turn (0.16.1). */
         crate::agent::research::configure(&store);
 
@@ -163,6 +165,35 @@ impl DaemonState {
         }))
     }
 
+}
+
+/// Turns a previous daemon left running (1.0): a new daemon runs none yet, so a turn still `running` in the
+/// store was cut off when SDC closed - and it stayed `running` for good. Measured on the owner's machine: a
+/// turn started at 15:00 still said running hours and restarts later, so the sidebar's spinner never stopped.
+/// Each one is closed the way a Stop closes a turn - `Interrupted`, its chat idle - with what it had said kept
+/// as its answer, and the events say so, so every window draws the same.
+fn close_interrupted_turns(store: &Arc<Store>, events: &Arc<EventLog>) {
+    use crate::sdcp::events::event;
+
+    for (turn_id, session_id, _) in store.running_turns().unwrap_or_default() {
+        let said: String = store
+            .turn_events(&turn_id)
+            .unwrap_or_default()
+            .iter()
+            .filter(|entry| entry.event["type"] == "TurnDelta")
+            .filter_map(|entry| entry.event["delta"].as_str())
+            .collect();
+        let summary = "Interrupted · SDC was closed while this turn ran";
+
+        let _ = store.finish_turn(&turn_id, &said, summary, "idle");
+        let _ = store.update_session(&session_id, None, Some("idle"), None, None, None);
+        events.append(event::turn_completed(&turn_id, summary, "", Some(false)), Some(session_id.clone()), Some(turn_id.clone()));
+        events.append(event::session_updated(serde_json::json!({ "sessionId": session_id, "state": "idle" })), Some(session_id), None);
+        events.compact_turn(&turn_id);
+    }
+}
+
+impl DaemonState {
     /// One connection opened. Paired with `client_left`; the counter is what the idle watcher reads.
     pub fn client_joined(&self) {
         self.clients.fetch_add(1, Ordering::SeqCst);

@@ -66,6 +66,14 @@ pub fn status() -> Value {
     })
 }
 
+/// One connection pool for every transcription (1.0): live captions send a request every second or two while
+/// the person speaks, and a fresh agent paid a new TLS handshake for each.
+fn shared_agent() -> ureq::Agent {
+    static AGENT: std::sync::OnceLock<ureq::Agent> = std::sync::OnceLock::new();
+
+    AGENT.get_or_init(|| ureq::AgentBuilder::new().timeout_connect(Duration::from_secs(10)).timeout_read(Duration::from_secs(90)).build()).clone()
+}
+
 /// Transcribes one recording. `language` is a hint (`bn`, `ar`, …) or `None` for automatic.
 pub fn transcribe(audio: &[u8], mime: &str, language: Option<&str>) -> Result<Value, String> {
     if audio.len() < 1000 {
@@ -158,7 +166,7 @@ fn qwen_online(key: &str, audio: &[u8], mime: &str, language: Option<&str>) -> R
     let endpoint = crate::engines::native_api::endpoint_for("qwen3-asr-flash", Some("qwen"));
     let mime = if mime.contains("wav") { "audio/wav" } else if mime.contains("webm") { "audio/webm" } else { "audio/ogg" };
     let data = format!("data:{mime};base64,{}", base64::engine::general_purpose::STANDARD.encode(audio));
-    let agent = ureq::AgentBuilder::new().timeout_connect(Duration::from_secs(10)).timeout_read(Duration::from_secs(90)).build();
+    let agent = shared_agent();
     let post = |url: &str, body: &Value| -> Result<Value, (u16, String)> {
         match agent.post(url).set("authorization", &format!("Bearer {key}")).set("content-type", "application/json").send_string(&body.to_string()) {
             Ok(response) => {
@@ -277,7 +285,7 @@ fn online(url: &str, key: &str, model: &str, audio: &[u8], mime: &str, language:
     body.extend_from_slice(audio);
     body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
 
-    let agent = ureq::AgentBuilder::new().timeout_connect(Duration::from_secs(10)).timeout_read(Duration::from_secs(90)).build();
+    let agent = shared_agent();
     let response = agent
         .post(url)
         .set("authorization", &format!("Bearer {key}"))

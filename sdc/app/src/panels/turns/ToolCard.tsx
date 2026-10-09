@@ -253,7 +253,8 @@ export function ToolBody({ tool }: { tool: ToolCardData }) {
   return (
     <div className="tool-body max-h-[220px] overflow-y-auto border-t border-border-subtle px-[13px] py-[10px] font-mono text-[12px] leading-[1.7] text-text-secondary">
       {tool.output.map((line, index) => (
-        <div key={`${line.level}-${index}`}>
+        /* `pre-line`: a replayed entry can hold several lines (1.0, the daemon joins a finished turn's output). */
+        <div key={`${line.level}-${index}`} className="whitespace-pre-line">
           <span className={RUN_LINE_CLASS[line.level]}>{runLineLabel(line.level)}</span>
           {line.level === 'dim' ? '' : ' '}
           {line.text}

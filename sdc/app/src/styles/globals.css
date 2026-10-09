@@ -100,6 +100,15 @@
     caret-color: var(--accent);
   }
 
+  /* A dropdown's open list is drawn by the OS, not by the page: with no colour of its own, WebView2 and
+     WebKitGTK paint it white and fill it with the theme's light text - white on white (1.0, the owner's report). The
+     list gets the opaque base colour of the theme, so it reads in dark and in light. */
+  select option,
+  select optgroup {
+    background-color: var(--bg-base);
+    color: var(--text-primary);
+  }
+
   input::placeholder,
   textarea::placeholder {
     color: var(--text-muted);

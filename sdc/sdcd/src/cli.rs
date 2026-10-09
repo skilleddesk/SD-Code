@@ -96,7 +96,7 @@ fn has(args: &[String], name: &str) -> bool {
 
 /// The words that are not flags or flag values: the prompt.
 fn prompt_of(args: &[String]) -> String {
-    let valued = ["--root", "--engine", "--model", "--provider", "--session", "--autonomy", "--host", "--port", "--intent", "--max-steps"];
+    let valued = ["--root", "--engine", "--model", "--provider", "--session", "--autonomy", "--host", "--port", "--intent", "--max-steps", "--effort"];
     let mut words = Vec::new();
     let mut skip = false;
 
@@ -172,7 +172,7 @@ fn run(client: &mut Client, args: &[String]) -> i32 {
     let prompt = prompt_of(args);
 
     if prompt.trim().is_empty() {
-        eprintln!("usage: sdcd run [--root DIR] [--host ID] [--engine E --model M --provider P] [--agent] [--autonomy ask|pro|auto] [--json] \"the request\"");
+        eprintln!("usage: sdcd run [--root DIR] [--host ID] [--engine E --model M --provider P] [--agent] [--autonomy ask|pro|auto] [--effort low|medium|high|max] [--json] \"the request\"");
 
         return 3;
     }
@@ -216,7 +216,7 @@ fn run(client: &mut Client, args: &[String]) -> i32 {
         "autonomy": flag(args, "--autonomy").unwrap_or_else(|| "pro".into()),
     });
 
-    for (key, name) in [("model", "--model"), ("provider", "--provider"), ("intentId", "--intent")] {
+    for (key, name) in [("model", "--model"), ("provider", "--provider"), ("intentId", "--intent"), ("effort", "--effort")] {
         if let Some(value) = flag(args, name) {
             params[key] = json!(value);
         }

@@ -2110,7 +2110,7 @@ export async function authorizeSubscription(id: string): Promise<boolean> {
 }
 
 /** Flow 3: the Local (Ollama) flow's two doctor rows. */
-export async function connectLocal(): Promise<{ daemon: boolean; models: string[] } | null> {
+export async function connectLocal(): Promise<{ daemon: boolean; models: string[]; detail?: string } | null> {
   try {
     return await sdcpCall('provider.local.doctor', {});
   } catch (error) {

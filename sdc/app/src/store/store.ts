@@ -103,8 +103,15 @@ if (already !== undefined) {
   already();
 }
 
-(globalThis as { __sdcFoldStop?: () => void }).__sdcFoldStop = eventLog.subscribe((entry) => {
+const stopFold = eventLog.subscribe((entry) => {
   const kind = entry.event.type;
+
+  /* A backlog (1.0): everything waits for the end of it and lands in one state change. */
+  if (eventLog.bulk) {
+    streamed.push(entry);
+
+    return;
+  }
 
   if (kind === 'TurnDelta' || kind === 'ThinkingDelta' || kind === 'ToolCallOutput') {
     streamed.push(entry);
@@ -124,6 +131,12 @@ if (already !== undefined) {
 
   useAppStore.setState((state) => applyEvent(state, entry));
 });
+const stopBulk = eventLog.onBulkEnd(flushStreamed);
+
+(globalThis as { __sdcFoldStop?: () => void }).__sdcFoldStop = () => {
+  stopFold();
+  stopBulk();
+};
 
 /** Same thing without the hook, for stores and intents that are not components. */
 export function dispatch(event: SdcpEvent, payload?: Partial<AppEvent>): AppEvent {

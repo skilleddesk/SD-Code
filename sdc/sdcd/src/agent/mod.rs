@@ -474,11 +474,21 @@ fn ask_model(backend: Backend, target: &Target, system: &str, messages: &[Value]
         body = ollama_native::body(body, num_ctx);
     }
 
-    let plain = body.to_string();
-    /* 0.21: Alibaba's explicit prompt cache - the system prompt and the tools marked once, read back on every
-       later step at a tenth of the price and without being processed again. A model that refuses the mark
-       is asked again without it, and the mark is not sent to that endpoint again. */
-    let marked = (target.dialect == Dialect::OpenAi && dashscope_cache(&target.url)).then(|| dialect::mark_system_cache(&body).to_string());
+    /* 1.0: on Model Studio a request is sent with what makes a step fast, in three levels, and a level the
+       endpoint refuses (a 400) is stepped down from - and not sent to that endpoint and model again:
+         2  the cache marks (system prompt and the newest message) + level 1,
+         1  `parallel_tool_calls` (Model Studio's default is one call per reply: measured on the owner's turns,
+            60% of 1,181 steps carried a single call) and the effort the turn asked for (`reasoning_effort`),
+         0  the plain request.
+       Anywhere else the request is level 0, as it always was. */
+    let levels: Vec<String> = if target.dialect == Dialect::OpenAi && target.local_context.is_none() && model_studio(&target.url) {
+        let fast = fast_body(&body, target);
+        let cap = level_cap(&target.url, &target.model);
+
+        [dialect::mark_cache(&fast).to_string(), fast.to_string(), body.to_string()].into_iter().skip(2 - cap.min(2)).collect()
+    } else {
+        vec![body.to_string()]
+    };
     /* A step the network or the provider dropped - before its first word or halfway through - is asked
        again rather than ending the turn (0.15.4): nothing of it reached the conversation yet, so asking
        again is the same question, and every step before it is kept. */
@@ -495,38 +505,78 @@ fn ask_model(backend: Backend, target: &Target, system: &str, messages: &[Value]
             },
         )
     };
-    let reply = match marked {
-        Some(marked) => match send(&marked, &mut card) {
-            Err(reason) if reason.contains("(400)") || reason.to_lowercase().contains("cache_control") => {
-                let again = send(&plain, &mut card);
+    let mut reply = Err("no request was sent".to_string());
 
-                /* Only when the plain request went through was the mark the problem (a 400 can be anything). */
-                if again.is_ok() {
-                    no_explicit_cache().lock().unwrap_or_else(|poison| poison.into_inner()).insert(target.url.clone());
-                }
+    for (index, request) in levels.iter().enumerate() {
+        reply = send(request, &mut card);
 
-                again
+        let refused = matches!(&reply, Err(reason) if reason.contains("(400)") || reason.to_lowercase().contains("cache_control") || reason.to_lowercase().contains("parallel_tool_calls") || reason.to_lowercase().contains("reasoning_effort"));
+
+        if !refused || index + 1 == levels.len() {
+            /* A lower level went through after a higher one was refused: the higher one was the problem. */
+            if reply.is_ok() && index > 0 {
+                lower_cap(&target.url, &target.model, levels.len() - 1 - index);
             }
-            other => other,
-        },
-        None => send(&plain, &mut card),
-    };
+
+            break;
+        }
+    }
 
     card.close(reply.is_ok());
     reply.map_err(|reason| unreachable(backend, &target.model, &reason))
 }
 
-/// Endpoints that refused an explicit cache mark (0.21) - they are sent plain requests from then on.
-fn no_explicit_cache() -> &'static std::sync::Mutex<HashSet<String>> {
-    static PLAIN: std::sync::OnceLock<std::sync::Mutex<HashSet<String>>> = std::sync::OnceLock::new();
+/// The level-1 body on Model Studio: several tool calls per reply, and the turn's effort for a model that
+/// takes `reasoning_effort` there (DeepSeek V4: `low`, `high` - its default - and `max`).
+fn fast_body(body: &Value, target: &Target) -> Value {
+    let mut fast = body.clone();
 
-    PLAIN.get_or_init(|| std::sync::Mutex::new(HashSet::new()))
+    if fast["tools"].as_array().is_some_and(|tools| !tools.is_empty()) {
+        fast["parallel_tool_calls"] = serde_json::json!(true);
+    }
+
+    if let Some(level) = deepseek_effort(&target.model, target.effort.as_deref()) {
+        fast["reasoning_effort"] = serde_json::json!(level);
+    }
+
+    fast
 }
 
-/// Alibaba Cloud Model Studio (DashScope), which takes Anthropic-style `cache_control` marks on an
-/// OpenAI-compatible request - and has not refused one from this endpoint yet.
-fn dashscope_cache(url: &str) -> bool {
-    url.contains("dashscope") && url.contains("aliyuncs.com") && !no_explicit_cache().lock().unwrap_or_else(|poison| poison.into_inner()).contains(url)
+/// DeepSeek V4's `reasoning_effort` for a turn's effort: `None` keeps the model's own default.
+fn deepseek_effort(model: &str, effort: Option<&str>) -> Option<&'static str> {
+    let bare = model.rsplit('/').next().unwrap_or(model).to_ascii_lowercase();
+
+    if !bare.starts_with("deepseek-v4") {
+        return None;
+    }
+
+    match effort? {
+        "low" | "medium" => Some("low"),
+        "high" => Some("high"),
+        "max" => Some("max"),
+        _ => None,
+    }
+}
+
+/// The highest request level an endpoint and model still take (0.21's "refused the mark", generalised).
+fn level_caps() -> &'static std::sync::Mutex<std::collections::HashMap<String, usize>> {
+    static CAPS: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, usize>>> = std::sync::OnceLock::new();
+
+    CAPS.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+fn level_cap(url: &str, model: &str) -> usize {
+    *level_caps().lock().unwrap_or_else(|poison| poison.into_inner()).get(&format!("{url} {model}")).unwrap_or(&2)
+}
+
+fn lower_cap(url: &str, model: &str, level: usize) {
+    level_caps().lock().unwrap_or_else(|poison| poison.into_inner()).insert(format!("{url} {model}"), level);
+}
+
+/// Alibaba Cloud Model Studio (DashScope), which takes Anthropic-style `cache_control` marks and
+/// `parallel_tool_calls` on an OpenAI-compatible request.
+fn model_studio(url: &str) -> bool {
+    url.contains("aliyuncs.com") && (url.contains("dashscope") || url.contains("maas"))
 }
 
 /// What a re-read of an unchanged file is answered with instead of the file (0.21).
@@ -561,22 +611,65 @@ fn dedupe_reads(seen: &mut std::collections::HashMap<String, u64>, uses: &[diale
     }
 }
 
-/// Keeps a turn's conversation inside the model's window (0.13): older tool output is folded when the
-/// conversation passes 55% of the window, harder past 75%. Answers whether anything was folded.
-fn keep_small(target: &Target, window: u64, messages: &mut [Value]) -> bool {
-    let used = dialect::tokens(messages);
+/// The most a turn's conversation grows to before older tool output is folded, however large the window
+/// (1.0): every token of it is read again on each step, and past this a step is slow even when cached.
+const WORKING_TOKENS: u64 = 160_000;
 
-    if used * 100 < window * 55 {
+/// Keeps a turn's conversation small (0.13; rewritten in 1.0): when it passes its ceiling - 60% of the
+/// window, at most `WORKING_TOKENS` - older tool output is folded **in one go, down to half the ceiling**.
+///
+/// It used to fold past 55% keeping the newest six results, which on a long turn meant folding again on
+/// almost every step (503 of 1,181 steps on the owner's turn). Each fold rewrites the start of the
+/// conversation, and the provider's prompt cache only serves an unchanged start - so the cache missed on
+/// every one of those steps and the whole history was processed again, and every file read before the fold
+/// had to be read again. Folding rarely and deeply keeps the start unchanged for many steps at a time.
+///
+/// `scale` turns SDC's character count into the provider's own tokens (measured on the previous step), and
+/// `fixed` is the system prompt and the tools. Answers whether anything was folded.
+fn keep_small(target: &Target, window: u64, messages: &mut [Value], fixed: u64, scale: f64) -> bool {
+    let ceiling = (window * 60 / 100).clamp(2_000, WORKING_TOKENS);
+    let measure = |messages: &[Value]| ((dialect::tokens(messages) + fixed) as f64 * scale) as u64;
+
+    if measure(messages) < ceiling {
         return false;
     }
 
-    let mut folded = dialect::fold_old_results(target.dialect, messages, 6);
+    let mut folded = 0;
 
-    if dialect::tokens(messages) * 100 >= window * 75 {
-        folded += dialect::fold_old_results(target.dialect, messages, 2);
+    for keep in [24, 12, 6, 3, 1] {
+        folded += dialect::fold_old_results(target.dialect, messages, keep);
+
+        if measure(messages) <= ceiling / 2 {
+            break;
+        }
     }
 
     folded > 0
+}
+
+/// What every request of a turn carries besides the conversation: the system prompt and the tool list.
+fn fixed_tokens(system: &str, specs: &[dialect::ToolSpec]) -> u64 {
+    crate::context::tokens_of(system)
+        + specs.iter().map(|spec| crate::context::tokens_of(spec.description) + crate::context::tokens_of(&spec.schema.to_string()) + 4).sum::<u64>()
+}
+
+/// How many of the provider's tokens one of SDC's counted tokens is, from the last step: what the provider
+/// said the request held, over what SDC counted for it. Kept within reason when a provider says nothing.
+fn token_scale(reported: u64, counted: u64, previous: f64) -> f64 {
+    if reported == 0 || counted < 500 {
+        return previous;
+    }
+
+    (reported as f64 / counted as f64).clamp(0.5, 3.0)
+}
+
+/// Is this failure the request being longer than the model takes?
+fn too_long(reason: &str) -> bool {
+    let lowered = reason.to_lowercase();
+
+    ["maximum context length", "context_length_exceeded", "context length", "range of input length", "prompt is too long", "input is too long", "too many tokens", "reduce the length"]
+        .iter()
+        .any(|needle| lowered.contains(needle))
 }
 
 /// Fast models a provider refused for this key (not on the plan, not in the region) - never asked again.
@@ -656,6 +749,11 @@ fn sub_agent(
         specs.retain(|spec| research::TOOLS.contains(&spec.name));
     }
     let window = target.window(parent.provider.as_deref());
+    /* 1.0: a sub-agent finds and reads; it thinks at the lowest effort its model takes, whatever the turn's. */
+    let explorer = Target { effort: Some("low".to_string()), ..target.clone() };
+    let target = &explorer;
+    let fixed = fixed_tokens(&system, &specs);
+    let mut scale = 1.0;
     /* What the sub-agent does shows as lines on its card; its words and thinking stay its own. */
     let lines = {
         let sink = sink.clone();
@@ -717,6 +815,7 @@ fn sub_agent(
             Err(reason) => return (tools::Outcome::error(format!("The sub-agent failed: {reason}")), input, output),
         };
 
+        scale = token_scale(reply.input_tokens, dialect::tokens(&messages) + fixed, scale);
         input += reply.input_tokens;
         output += reply.output_tokens;
         messages.push(reply.message.clone());
@@ -727,18 +826,36 @@ fn sub_agent(
             return (tools::Outcome::ok(report), input, output);
         }
 
-        let results: Vec<dialect::ToolResult> = reply
-            .tool_uses
-            .iter()
-            .map(|call| {
-                let outcome = tools::execute(&mut context, call);
+        /* 1.0: a sub-agent's reads run side by side, as the main loop's have since 0.15.6 - it ran them one
+           after another, and a sub-agent is nearly all reads. */
+        let all_reads = reply.tool_uses.len() > 1 && reply.tool_uses.iter().all(|call| PARALLEL_READS.contains(&call.name.as_str()));
+        let results: Vec<dialect::ToolResult> = if all_reads {
+            let calls: Vec<(usize, &dialect::ToolUse)> = reply.tool_uses.iter().enumerate().collect();
+            let first = context.calls;
 
-                (call.id.clone(), outcome.content, outcome.is_error, outcome.image)
-            })
-            .collect();
+            context.calls += calls.len();
+
+            let mut outcomes = run_reads(&context, first, &calls);
+
+            outcomes.sort_by_key(|(index, _)| *index);
+            outcomes
+                .into_iter()
+                .map(|(index, outcome)| (reply.tool_uses[index].id.clone(), outcome.content, outcome.is_error, outcome.image))
+                .collect()
+        } else {
+            reply
+                .tool_uses
+                .iter()
+                .map(|call| {
+                    let outcome = tools::execute(&mut context, call);
+
+                    (call.id.clone(), outcome.content, outcome.is_error, outcome.image)
+                })
+                .collect()
+        };
 
         messages.extend(dialect::tool_results(target.dialect, &results));
-        keep_small(target, window, &mut messages);
+        keep_small(target, window, &mut messages, fixed, scale);
     }
 
     /* Out of steps: one last call without tools, for whatever it found. */
@@ -993,6 +1110,18 @@ fn drive(
 ) {
     let turn_id = prompt.turn_id.clone();
     let stopped = || crate::engines::cancel::requested(&turn_id);
+    /* 1.0: effort "auto" on DeepSeek V4 is SDC's choice, not the model's `high`: `low` for everything but a
+       large many-part task. Measured on the same fixed task (5 bugs, 13 tests): `high` 266 s, `low` 159 s, both
+       with every test passing. A person who picks an effort gets exactly that. */
+    let tuned = match (&target.effort, deepseek_effort(&target.model, Some("low"))) {
+        (None, Some(_)) => {
+            let words = prompt.text.rsplit("[The person's message]").next().unwrap_or(&prompt.text);
+
+            Target { effort: (orient::pace_of(words) != orient::Pace::Deep).then(|| "low".to_string()), ..target.clone() }
+        }
+        _ => target.clone(),
+    };
+    let target = &tuned;
     let vision = browser::vision(target.dialect == Dialect::Anthropic, &target.model);
     /* The project's skills (0.13): their names and when to use them; the agent reads one when it applies. */
     let language = person_language(prompt);
@@ -1127,6 +1256,11 @@ fn drive(
     let mut reviewed = false;
     /* Files this turn has read, by the hash of what they held - an unchanged re-read is one line (0.21). */
     let mut seen_reads: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+    /* 1.0: the system prompt and tools in every request, and SDC's count turned into the provider's tokens. */
+    let fixed = fixed_tokens(&system, &specs);
+    let mut scale = 1.0;
+    /* The request was too long for the model once already: folded hard and asked again (1.0). */
+    let mut shrunk = false;
     /* The edit count when the checks last ran: they run again only after the agent changed something. */
     let mut checked_at = usize::MAX;
     /* Words sent while the turn runs join it between steps (0.12.5) - closed when the loop returns. */
@@ -1174,6 +1308,15 @@ fn drive(
                 reply
             }
             Err(reason) if reason == "stopped" => return,
+            /* 1.0: a request the model finds too long is folded hard and asked again, once - it used to end the
+               turn, with all of its work, on a window SDC had guessed. */
+            Err(reason) if too_long(&reason) && !shrunk => {
+                shrunk = true;
+                dialect::fold_old_results(target.dialect, &mut messages, 2);
+                seen_reads.clear();
+
+                continue;
+            }
             /* The provider's own filter blocked the reply (0.15.6). The report's two long turns ended on
                it, each mid-sentence while quoting logs. The reply never reached the conversation, so the
                step is asked again with a note to say it shorter - the work before it is kept. */
@@ -1207,6 +1350,7 @@ fn drive(
             }
         };
 
+        scale = token_scale(reply.input_tokens, dialect::tokens(&messages) + fixed, scale);
         input_tokens += reply.input_tokens;
         output_tokens += reply.output_tokens;
         cached_tokens += reply.cached_tokens;
@@ -1419,7 +1563,7 @@ fn drive(
         messages.extend(dialect::tool_results(target.dialect, &results));
         steer(&mut messages);
 
-        let folded = keep_small(target, window, &mut messages);
+        let folded = keep_small(target, window, &mut messages, fixed, scale);
 
         /* Folded output is gone from the conversation: a file read before it must be sent in full again. */
         if folded {
@@ -1546,6 +1690,114 @@ fn unreachable(backend: Backend, model: &str, reason: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn openai_target() -> Target {
+        Target {
+            url: "https://dashscope-us.aliyuncs.com/compatible-mode/v1/chat/completions".to_string(),
+            headers: Vec::new(),
+            dialect: Dialect::OpenAi,
+            model: "deepseek-v4.1-flash".to_string(),
+            price: None,
+            thinking: false,
+            effort: None,
+            local_context: None,
+            local_window: false,
+        }
+    }
+
+    /// A conversation of `results` tool results of `size` characters each, after one user message.
+    fn conversation(results: usize, size: usize) -> Vec<Value> {
+        let mut messages = vec![dialect::user_message("fix it")];
+
+        for index in 0..results {
+            messages.push(serde_json::json!({ "role": "assistant", "content": "", "tool_calls": [{ "id": format!("c{index}"), "type": "function", "function": { "name": "read_file", "arguments": "{}" } }] }));
+            messages.push(serde_json::json!({ "role": "tool", "tool_call_id": format!("c{index}"), "content": "x".repeat(size) }));
+        }
+
+        messages
+    }
+
+    /// 1.0: folding is rare and deep. Under the ceiling nothing changes (the cached start stays the same);
+    /// past it, the conversation goes down to half the ceiling in one go, so the next steps do not fold again.
+    #[test]
+    fn a_long_turn_folds_rarely_and_deeply_so_the_cached_start_stays_the_same() {
+        let target = openai_target();
+        let window = 393_216;
+        /* 40 results of ~3k tokens: 120k, under the 160k ceiling. */
+        let mut messages = conversation(40, 12_000);
+        let before = messages.clone();
+
+        assert!(!keep_small(&target, window, &mut messages, 5_000, 1.0));
+        assert_eq!(messages, before, "under the ceiling nothing is rewritten");
+
+        /* 60 results: 180k, past it - folded to at most half the ceiling. */
+        let mut messages = conversation(60, 12_000);
+
+        assert!(keep_small(&target, window, &mut messages, 5_000, 1.0));
+        assert!(dialect::tokens(&messages) + 5_000 <= 80_000, "{}", dialect::tokens(&messages));
+
+        /* The next steps add results without folding again until the ceiling is reached once more. */
+        let folded_start = messages[..20].to_vec();
+
+        messages.extend(conversation(10, 12_000).into_iter().skip(1));
+        assert!(!keep_small(&target, window, &mut messages, 5_000, 1.0));
+        assert_eq!(messages[..20], folded_start[..], "the start the provider cached is unchanged");
+    }
+
+    /// 1.0: SDC's count is scaled to the provider's own tokens, so a conversation SDC under-counts still folds.
+    #[test]
+    fn the_providers_own_count_decides_when_to_fold() {
+        let target = openai_target();
+        let mut messages = conversation(40, 12_000);
+
+        assert!(keep_small(&target, 393_216, &mut messages, 5_000, 1.5), "125k counted is 187k for the provider");
+        assert_eq!(token_scale(150_000, 100_000, 1.0), 1.5);
+        assert_eq!(token_scale(0, 100_000, 1.2), 1.2, "no usage reported: the last scale stays");
+        assert_eq!(token_scale(10_000_000, 100_000, 1.0), 3.0, "kept within reason");
+    }
+
+    #[test]
+    fn a_request_too_long_for_the_model_is_recognised() {
+        assert!(too_long("The provider refused the request (400): Range of input length should be [1, 393216]"));
+        assert!(too_long("This model's maximum context length is 131072 tokens"));
+        assert!(!too_long("The provider refused the request (429): rate limit"));
+    }
+
+    /// 1.0: on Model Studio a step asks for several tool calls at once and the turn's effort reaches DeepSeek V4.
+    #[test]
+    fn model_studio_requests_ask_for_parallel_calls_and_the_turns_effort() {
+        let mut target = openai_target();
+        let spec = dialect::ToolSpec { name: "read_file", description: "read", schema: serde_json::json!({ "type": "object" }) };
+        let body = dialect::body(Dialect::OpenAi, &target.model, "sys", &[dialect::user_message("hi")], &[spec], false);
+
+        assert_eq!(fast_body(&body, &target)["parallel_tool_calls"], true);
+        assert!(fast_body(&body, &target).get("reasoning_effort").is_none(), "no effort asked: the model's own default");
+
+        target.effort = Some("medium".to_string());
+        assert_eq!(fast_body(&body, &target)["reasoning_effort"], "low");
+        target.effort = Some("max".to_string());
+        assert_eq!(fast_body(&body, &target)["reasoning_effort"], "max");
+
+        assert_eq!(deepseek_effort("qwen3.6-flash-us", Some("low")), None, "only DeepSeek V4 takes it there");
+        assert!(model_studio(&target.url));
+        assert!(model_studio("https://ws-1.us-east-1.maas.aliyuncs.com/compatible-mode/v1/chat/completions"));
+        assert!(!model_studio("https://api.deepseek.com/v1/chat/completions"));
+
+        let toolless = dialect::body(Dialect::OpenAi, &target.model, "sys", &[dialect::user_message("hi")], &[], false);
+
+        assert!(fast_body(&toolless, &target).get("parallel_tool_calls").is_none(), "no tools, no parallel calls");
+    }
+
+    /// 1.0: a level a Model Studio endpoint refused is not sent to it again.
+    #[test]
+    fn a_refused_request_level_is_remembered_per_endpoint_and_model() {
+        let url = "https://example.aliyuncs.com/levels-test";
+
+        assert_eq!(level_cap(url, "m"), 2);
+        lower_cap(url, "m", 1);
+        assert_eq!(level_cap(url, "m"), 1);
+        assert_eq!(level_cap(url, "other"), 2);
+    }
 
     /// 0.20: where a turn's time went is said after its totals - and nothing is said for a quick turn.
     #[test]

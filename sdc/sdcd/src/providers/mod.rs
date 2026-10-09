@@ -304,10 +304,7 @@ pub fn list(store: &Arc<Store>) -> Vec<Value> {
         .iter()
         .map(|(id, name, kind, logo, initial, detail)| {
             let stored = store.provider(id).ok().flatten();
-            let status = stored
-                .as_ref()
-                .and_then(|row| row["status"].as_str().map(str::to_string))
-                .unwrap_or_else(|| status_without_a_row(id, kind));
+            let status = settle_status(id, kind, stored.as_ref().and_then(|row| row["status"].as_str()));
             let detail_text = stored
                 .as_ref()
                 .and_then(|row| row["detail"].as_str())
@@ -332,6 +329,56 @@ pub fn list(store: &Arc<Store>) -> Vec<Value> {
     /* 0.22: every local model server the person connected (LM Studio, llama.cpp, vLLM, …) is a card of its own. */
     rows.extend(local::provider_rows());
     rows
+}
+
+/// Is this turn failure the provider refusing the key itself (not a rate limit, a region or the network)?
+pub fn refused_key(reason: &str) -> bool {
+    let lowered = reason.to_lowercase();
+
+    lowered.contains("(401)")
+        || ["invalid api key", "invalid_api_key", "incorrect api key", "invalid x-api-key", "invalidapikey", "authentication_error"]
+            .iter()
+            .any(|needle| lowered.contains(needle))
+}
+
+/// Writes `needs-auth` on an API-key provider's row after a refused key. Answers whether it did.
+pub fn mark_refused(store: &Arc<Store>, id: &str, _reason: &str) -> bool {
+    let Some((name, kind)) = CATALOG.iter().find(|row| row.0 == id).map(|row| (row.1, row.2)) else {
+        return false;
+    };
+
+    if kind != "api-key" {
+        return false;
+    }
+
+    /* The row's account, URL and protocol stay; only the status changes. */
+    let row = store.provider(id).ok().flatten().unwrap_or(Value::Null);
+    let text = |field: &str| row[field].as_str().map(str::to_string);
+
+    store
+        .upsert_provider(id, name, kind, "needs-auth", text("account").as_deref(), text("url").as_deref(), text("protocol").as_deref(), Some(&key_ref(id)))
+        .is_ok()
+}
+
+/// A card's status: the stored row, checked against what this machine shows **now** (1.0).
+///
+/// The row used to win outright, and rows go stale. Measured on the owner's machine: an `ollama` row saved as
+/// `available` on 10-03 kept the card "not connected" while Ollama answered on 11434 with seven models, so
+/// Connect "did nothing"; a `deepseek` row said `available` with the key in the keychain. The other way round,
+/// a row that says `connected` for a key that is gone drew a green card whose models all fail. Evidence wins:
+/// a local server is connected exactly when it answers, an API key exactly when the keychain has it. A row
+/// still decides what evidence cannot: `needs-auth` written after the provider refused the key (a bad key is
+/// present but not working), and a subscription's own login result.
+fn settle_status(id: &str, kind: &str, stored: Option<&str>) -> String {
+    let evidence = status_without_a_row(id, kind);
+
+    match (kind, stored) {
+        ("local", _) => evidence,
+        ("api-key", Some("needs-auth")) if evidence == "connected" => "needs-auth".to_string(),
+        ("api-key", _) => evidence,
+        (_, Some("connected")) => "connected".to_string(),
+        (_, _) => evidence,
+    }
 }
 
 /// The status of a provider nobody has done anything about yet - see `list`'s doc comment.
@@ -368,9 +415,20 @@ pub fn signed_in(provider_id: &str) -> bool {
         "openai" => prints("codex", &["login", "status"])
             .map(|output| codex_logged_in(&output))
             .unwrap_or(false),
-        "gemini" => gemini_credentials().map(|path| path.exists()).unwrap_or(false),
+        /* 1.0: signed in is not enough. Google answers a personal account's turns from this CLI with
+           `IneligibleTierError` (measured 0.11.5), and the card said "Connected" over the sentence that says so -
+           the owner's "connected dakhai kaj kore nah". It is connected when the CLI has a route that answers: a
+           Google Cloud project or a Gemini API key in its environment. */
+        "gemini" => gemini_credentials().map(|path| path.exists()).unwrap_or(false) && gemini_has_a_route(),
         _ => false,
     }
+}
+
+/// Whether the Gemini CLI has a way to be served besides a personal Google sign-in.
+fn gemini_has_a_route() -> bool {
+    ["GOOGLE_CLOUD_PROJECT", "GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_GENAI_USE_VERTEXAI"]
+        .iter()
+        .any(|name| std::env::var(name).is_ok_and(|value| !value.trim().is_empty()))
 }
 
 
@@ -791,6 +849,23 @@ pub fn local_doctor() -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 1.0: a stored row no longer outlives the evidence. An API-key card with no key is not connected
+    /// whatever its row says; a subscription's own login result still stands.
+    #[test]
+    fn a_stale_row_does_not_outlive_the_evidence() {
+        assert_eq!(settle_status("no-such-provider-for-tests", "api-key", Some("connected")), "available");
+        assert_eq!(settle_status("no-such-provider-for-tests", "api-key", None), "available");
+        assert_eq!(settle_status("no-such-provider-for-tests", "subscription", Some("connected")), "connected");
+    }
+
+    #[test]
+    fn a_refused_key_is_told_apart_from_other_failures() {
+        assert!(refused_key("The provider refused the request (401): Incorrect API key provided"));
+        assert!(refused_key("invalid x-api-key"));
+        assert!(!refused_key("The provider refused the request (429): rate limited"));
+        assert!(!refused_key("could not reach the provider"));
+    }
 
     #[test]
     fn a_key_good_in_two_regions_is_used_from_the_faster_one() {

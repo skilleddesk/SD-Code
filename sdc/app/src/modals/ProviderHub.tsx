@@ -388,14 +388,18 @@ function Flow({ flow, onDone }: { flow: FlowState; onDone: () => void }) {
   /** Flow 3: the two doctor rows of the local daemon. */
   const local = (): void => {
     setState('busy');
+    setDetail(strings.hub.testing);
 
     void connectLocal().then((result) => {
       const up = result?.daemon === true;
 
       setState(up ? 'ok' : 'fail');
+      /* 1.0: a Connect that failed said nothing at all - the person saw the button do "nothing". */
+      setDetail(up ? strings.hub.testOk(result?.models.length ?? 0) : (result?.detail ?? strings.hub.testEmpty));
+      void runDoctor('local');
 
       if (up) {
-        onDone();
+        window.setTimeout(onDone, 600);
       }
     });
   };
@@ -498,6 +502,8 @@ function Flow({ flow, onDone }: { flow: FlowState; onDone: () => void }) {
               />
             ))
           )}
+
+          <ConnTest state={state} detail={detail} />
 
           <div className="mt-[16px] flex gap-[8px]">
             <button type="button" className={BTN + ' ' + BTN_SECONDARY} onClick={onDone}>

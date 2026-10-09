@@ -181,6 +181,15 @@
   grid-template-columns: 0 1fr 0;
 }
 
+/* 1.0, the owner's request: with the right panel folded the chat takes the room, the way VS Code's chat
+   does - the turns, the live bar and the prompt box grow from the reading column (780px) to the width the
+   window gives, up to 1400px. Unlayered, so it wins over the `max-w-[780px]` utility. */
+.workspace.no-right .pane-inner,
+.workspace.no-right .prompt-inner,
+.workspace.no-right .live-bar {
+  max-width: 1400px;
+}
+
 /* TOPBAR region (spec section 7.1). Its height is the first row of #app. */
 .topbar {
   display: flex;

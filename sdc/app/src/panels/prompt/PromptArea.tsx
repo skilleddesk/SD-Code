@@ -112,6 +112,8 @@ export interface PromptAreaProps {
 
 export function PromptArea({ sessionId }: PromptAreaProps = {}) {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  /* What the box held when dictation started (1.0, live voice): the spoken words are written after it. */
+  const voiceBase = useRef('');
   /* This chat's turn that is still running, if any: while there is one, Send becomes Stop. */
   const running = useAppStore((state) => {
     for (let index = state.turns.length - 1; index >= 0; index -= 1) {
@@ -567,6 +569,21 @@ export function PromptArea({ sessionId }: PromptAreaProps = {}) {
               <IconButton icon={ImageIcon} label={strings.prompt.toolbar.image} iconSize={15} onClick={() => attach('image')} />
               <VoiceButton
                 {...(sessionId === undefined ? {} : { sessionId })}
+                /* 1.0: the words are written into the box while the person speaks - after what was typed before. */
+                onStart={() => {
+                  voiceBase.current = textareaRef.current?.value.trimEnd() ?? '';
+                }}
+                onLive={(spoken) => {
+                  const textarea = textareaRef.current;
+
+                  if (textarea === null) {
+                    return;
+                  }
+
+                  textarea.value = [voiceBase.current, spoken].filter((part) => part !== '').join(' ');
+                  textarea.scrollTop = textarea.scrollHeight;
+                  grow();
+                }}
                 onText={(spoken) => {
                   const textarea = textareaRef.current;
 
@@ -574,9 +591,7 @@ export function PromptArea({ sessionId }: PromptAreaProps = {}) {
                     return;
                   }
 
-                  const present = textarea.value.trimEnd();
-
-                  textarea.value = present === '' ? spoken : `${present} ${spoken}`;
+                  textarea.value = [voiceBase.current, spoken].filter((part) => part !== '').join(' ');
                   textarea.focus();
                   grow();
                 }}

@@ -105,6 +105,15 @@ pub fn window_tokens(engine: &str, provider: Option<&str>, model: &str) -> u64 {
         }
     }
 
+    /* 1.0: a model the catalogue has no size for is not assumed to be 128K when its family is known. The
+       owner's DeepSeek V4.1 Flash (393K on Model Studio) was planned as 128K, so a turn folded its history on
+       503 of 1,181 steps - and every fold rewrote the start of the conversation the provider had cached. */
+    if engine == "native_api" {
+        if let Some(window) = family_window(api_model) {
+            return window;
+        }
+    }
+
     match engine {
         "claude_code" => 200_000,
         "codex" => 272_000,
@@ -112,6 +121,22 @@ pub fn window_tokens(engine: &str, provider: Option<&str>, model: &str) -> u64 {
         "ollama" => 32_000,
         _ => 128_000,
     }
+}
+
+/// The window of a model family whose rows often arrive without a size (a provider's live list), the
+/// smallest any of its providers offers - so the number is never larger than the real one.
+pub fn family_window(model: &str) -> Option<u64> {
+    let bare = model.rsplit('/').next().unwrap_or(model).to_ascii_lowercase();
+
+    if bare.starts_with("deepseek-v4") {
+        return Some(393_216);
+    }
+
+    if bare.starts_with("qwen3-coder") || bare.starts_with("kimi-k2") || bare.starts_with("qwen3-max") {
+        return Some(262_144);
+    }
+
+    None
 }
 
 /// The budget the conversation may use for a model with `window` tokens.

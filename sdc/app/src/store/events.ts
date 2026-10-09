@@ -86,6 +86,40 @@ export class EventLog {
     });
   }
 
+  /**
+   * True while a backlog is being folded in (1.0): the store then folds the whole backlog in one state
+   * change at the end instead of one per event - a start replays tens of thousands of events.
+   */
+  bulk = false;
+
+  private bulkEnded = new Set<() => void>();
+
+  /** Folds a backlog in, oldest first, as one change. */
+  acceptAll(notifications: readonly Notification[]): void {
+    this.bulk = true;
+
+    try {
+      for (const notification of notifications) {
+        this.accept(notification);
+      }
+    } finally {
+      this.bulk = false;
+
+      for (const ended of this.bulkEnded) {
+        ended();
+      }
+    }
+  }
+
+  /** Called after every `acceptAll`. Returns the unsubscribe function. */
+  onBulkEnd(listener: () => void): () => void {
+    this.bulkEnded.add(listener);
+
+    return () => {
+      this.bulkEnded.delete(listener);
+    };
+  }
+
   /** Everything after `since` - what a reconnecting client asks for (spec section 5.6). */
   replay(since = 0): readonly AppEvent[] {
     return this.events.filter((entry) => entry.seq > since);

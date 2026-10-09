@@ -119,7 +119,7 @@ export function getTransport(): SdcpTransport {
   const fold = (notification: Notification): void => {
     /* Live-only (0.14.2): a tool call still being written is not in the daemon's record and carries the
        record's current `seq`, so it is folded as it comes - never counted, never a gap, never replayed. */
-    if (notification.event.type === 'ToolCallDrafting') {
+    if (notification.event.type === 'ToolCallDrafting' || (notification.event.type === 'VoiceTranscribed' && notification.event.interim === true)) {
       if (replayed) {
         eventLog.accept(notification);
       }
@@ -150,6 +150,7 @@ export function getTransport(): SdcpTransport {
 
     try {
       const { events } = await transport!.request('event.list', { since });
+      const backlog: Notification[] = [];
 
       for (const entry of [...events].sort((left, right) => left.seq - right.seq)) {
         if (entry.seq <= daemonSeq) {
@@ -160,9 +161,12 @@ export function getTransport(): SdcpTransport {
 
         /* A replayed toast is history, not news (see the note on the toast filter below). */
         if (entry.event.type !== 'Toast' && entry.event.type !== 'ToastDismissed') {
-          eventLog.accept(entry as Notification);
+          backlog.push(entry as Notification);
         }
       }
+
+      /* 1.0: one state change for the whole backlog - a start used to fold it event by event. */
+      eventLog.acceptAll(backlog);
     } catch {
       /* No daemon yet - a cold start asks before `sdcd` listens. Nothing else asks again unless a live
          event happens to arrive, so every chat read "Nothing here yet" until a reload (0.15). Ask again. */
@@ -177,7 +181,7 @@ export function getTransport(): SdcpTransport {
 
     for (const notification of held.splice(0).sort((left, right) => left.seq - right.seq)) {
       /* A live-only draft held during the catch-up is stale, and its borrowed `seq` must never advance ours. */
-      if (notification.seq > daemonSeq && notification.event.type !== 'ToolCallDrafting') {
+      if (notification.seq > daemonSeq && notification.event.type !== 'ToolCallDrafting' && !(notification.event.type === 'VoiceTranscribed' && notification.event.interim === true)) {
         admit(notification);
       }
     }

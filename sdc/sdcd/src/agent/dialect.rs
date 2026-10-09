@@ -124,6 +124,36 @@ pub fn mark_system_cache(body: &Value) -> Value {
     marked
 }
 
+/// The system mark plus one on the newest message (1.0) - what the Anthropic path has done since 0.20
+/// (`with_tail_cache`). With only the system prompt marked, every step processed the whole conversation
+/// again: measured on the owner's turns, a step's wait grew from 22 s at 10k tokens to 38 s at 70k. With the
+/// newest message marked, the next step reads everything up to it back from the cache. Model Studio allows
+/// four marks and looks 20 blocks back from each; two are used. A text-only content becomes one text part.
+pub fn mark_cache(body: &Value) -> Value {
+    let mut marked = mark_system_cache(body);
+    let Some(last) = marked["messages"].as_array_mut().and_then(|messages| messages.last_mut()) else {
+        return marked;
+    };
+
+    if last["role"] == "system" {
+        return marked;
+    }
+
+    match last["content"].as_str().map(str::to_string) {
+        Some(text) if !text.is_empty() => {
+            last["content"] = json!([{ "type": "text", "text": text, "cache_control": { "type": "ephemeral" } }]);
+        }
+        Some(_) => {}
+        None => {
+            if let Some(part) = last["content"].as_array_mut().and_then(|parts| parts.iter_mut().rev().find(|part| part["type"] == "text")) {
+                part["cache_control"] = json!({ "type": "ephemeral" });
+            }
+        }
+    }
+
+    marked
+}
+
 /// The conversation with a cache breakpoint on its last block (0.20).
 ///
 /// The system prompt and the tools were cached from the start; the conversation was not, so every step of
@@ -764,6 +794,26 @@ mod tests {
         assert_eq!(marked["messages"][0]["content"][0]["cache_control"]["type"], "ephemeral");
         assert_eq!(marked["messages"][1], plain["messages"][1]);
         assert!(plain["messages"][0]["content"].is_string(), "the plain body is untouched");
+    }
+
+    /// 1.0: Model Studio's request carries a second mark on the newest message, as the Anthropic one does.
+    #[test]
+    fn dashscope_caches_the_conversation_up_to_its_newest_message() {
+        let tool = json!({ "role": "tool", "tool_call_id": "c1", "content": "file text" });
+        let plain = body(Dialect::OpenAi, "qwen3.6-flash-us", "You are SDC.", &[user_message("hi"), tool], &[], false);
+        let marked = mark_cache(&plain);
+
+        assert_eq!(marked["messages"][0]["content"][0]["cache_control"]["type"], "ephemeral", "the system prompt");
+        assert_eq!(marked["messages"][2]["content"][0], json!({ "type": "text", "text": "file text", "cache_control": { "type": "ephemeral" } }));
+        assert_eq!(marked["messages"][2]["tool_call_id"], "c1");
+        assert_eq!(marked["messages"][1], plain["messages"][1], "older messages are sent as they were");
+
+        /* Parts: the last text part carries it; an image part does not. */
+        let parts = json!({ "role": "user", "content": [{ "type": "text", "text": "look" }, { "type": "image_url", "image_url": { "url": "data:x" } }] });
+        let marked = mark_cache(&body(Dialect::OpenAi, "m", "s", &[parts], &[], false));
+
+        assert_eq!(marked["messages"][1]["content"][0]["cache_control"]["type"], "ephemeral");
+        assert!(marked["messages"][1]["content"][1].get("cache_control").is_none());
     }
 
     fn body_of(messages: Vec<Value>) -> Value {

@@ -190,7 +190,24 @@ impl Daemon {
             "provider.remove" => self.provider_remove(envelope, &*out),
             "provider.oauth.open" => Ok(providers::oauth_open(&envelope.require_str("id")?)),
             "provider.oauth.callback" => self.provider_oauth_callback(envelope),
-            "provider.local.doctor" => Ok(providers::local_doctor()),
+            "provider.local.doctor" => {
+                let doctor = providers::local_doctor();
+                let running = doctor["daemon"].as_bool() == Some(true);
+
+                /* 1.0: the card follows the answer at once - Connect used to find Ollama running and leave
+                   the card "not connected", because nothing told the window. */
+                out.push(
+                    event::provider_status(json!({
+                        "id": "ollama",
+                        "status": if running { "connected" } else { "needs-auth" },
+                        "detail": if running { format!("{} models installed", doctor["models"].as_array().map_or(0, Vec::len)) } else { doctor["detail"].as_str().unwrap_or_default().to_string() },
+                    })),
+                    None,
+                    None,
+                );
+
+                Ok(doctor)
+            }
             "provider.registry.list" => Ok(json!({ "models": providers::registry(&[]) })),
             "provider.registry.set" => self.provider_registry_set(envelope, &*out),
 
@@ -1472,6 +1489,44 @@ impl Daemon {
         Ok(json!({ "removed": true, "chats": chats }))
     }
 
+    /// The model a turn runs on, given the region the key's endpoint is in (1.0): the same model's regional copy
+    /// is used and said in a toast; a nearby regional model is only suggested, once per model per run.
+    fn region_model(&self, model: String, provider_id: &str, out: &dyn Notifier) -> String {
+        static SUGGESTED: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<String>>> = std::sync::OnceLock::new();
+
+        let bare = crate::engines::native_api::api_model(&model).to_string();
+        let url = crate::engines::native_api::endpoint_for(&model, Some(provider_id)).url;
+        let offered: Vec<String> = self
+            .store()
+            .cached_models(provider_id)
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|row| row["id"].as_str().map(str::to_string))
+            .collect();
+
+        match crate::providers::models::region_twin(&url, &bare, &offered) {
+            Some(crate::providers::models::Twin::Same(twin)) => {
+                out.push(event::toast(&format!("Using {twin}: the same model, served in your key's region - each step starts in about a second instead of 10-20."), None, None), None, None);
+
+                twin
+            }
+            Some(crate::providers::models::Twin::Near(near)) => {
+                let first = SUGGESTED.get_or_init(Default::default).lock().map(|mut seen| seen.insert(bare.clone())).unwrap_or(false);
+
+                if first {
+                    out.push(
+                        event::toast(&format!("{bare} is served outside your key's region, so every step waits 10-20 s before it starts. {near} runs in your region and starts in about a second - pick it in the model menu for speed."), None, Some(15_000)),
+                        None,
+                        None,
+                    );
+                }
+
+                model
+            }
+            None => model,
+        }
+    }
+
     /// `engine.start`: answer now, stream later.
     fn engine_start(&self, envelope: &Envelope, out: Arc<dyn Notifier>) -> Result<Value, ErrorObject> {
         let session_id = envelope.opt_str("sessionId").unwrap_or_else(|| "s1".into());
@@ -1492,6 +1547,11 @@ impl Daemon {
            skipped Ollama (`endpoint_for` never sends a key-less turn there) and failed on `custom`'s
            missing key (0.16.1). It is the local engine's turn. */
         let engine_id = if provider.as_deref() == Some("ollama") { "ollama".to_string() } else { engine_id };
+        /* 1.0: the model's copy served in the key's own region, when the provider has one - see `region_twin`. */
+        let model = match (engine_id.as_str(), provider.as_deref()) {
+            ("native_api", Some(provider_id)) => self.region_model(model, provider_id, &*out),
+            _ => model,
+        };
         let turn_id = self.state.fresh_id("turn-");
         let engine = self.state.engines.get(&engine_id).ok_or_else(|| {
             ErrorObject::not_found(format!(
@@ -3708,6 +3768,19 @@ async fn run_turn(
             }
             crate::engines::EngineEvent::Failed(reason) => {
                 unfinished = Some(reason.clone());
+
+                /* 1.0: a key the provider refused is a card that is NOT connected, whatever the keychain
+                   holds - the Hub said "connected" over models that all failed. Saving a key again clears it. */
+                if let Some(provider) = plan.provider.as_deref().filter(|_| crate::providers::refused_key(&reason)) {
+                    if crate::providers::mark_refused(&state.store, provider, &reason) {
+                        out.push(
+                            event::provider_status(json!({ "id": provider, "status": "needs-auth", "detail": "The provider refused this key - paste it again" })),
+                            None,
+                            None,
+                        );
+                    }
+                }
+
                 /* Every failure goes through the translator, so the card always has a sentence -
                    `ErrorRaised` carries the title and the explanation, never a raw stack. The
                    `event::error_raised` constructor supplies the catalogue's `type` field. */
@@ -3854,6 +3927,9 @@ async fn run_turn(
 
     /* The turn's Trust score, from its own events - recomputed when Verify runs for it. */
     score_turn(&state, &*out, &plan.session_id, &plan.turn_id, plan.first_seq, &plan.policy, plan.project_root.as_deref());
+
+    /* 1.0: the turn's streamed pieces become one event per run, so opening SDC replays a short log. */
+    state.events.compact_turn(&plan.turn_id);
 
     let _ = state.store.update_session(&plan.session_id, None, Some(state_name), None, Some(0), None);
 

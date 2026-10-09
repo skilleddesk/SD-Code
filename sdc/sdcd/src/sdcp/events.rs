@@ -5,6 +5,9 @@
 //! correction is a new event, which is what makes the app's time travel (`applyEvents(empty, log)`)
 //! the same operation as its normal rendering.
 //!
+//! One exception since 1.0, and it changes no fold: a finished turn's streamed pieces are joined into one
+//! event per run (`compaction`), so the replay at every start is not hundreds of thousands of single words.
+//!
 //! Events are carried as `serde_json::Value` built by the constructors in `event` below. Two
 //! reasons, and both are about the wire being the contract:
 //!
@@ -53,6 +56,8 @@ pub struct EventLog {
 impl EventLog {
     /// Hydrates from the store, so a restarted daemon continues the same sequence.
     pub fn hydrate(store: Arc<Store>) -> Result<Self> {
+        compact_completed(&store);
+
         let entries = store.recent_events(0)?;
         let next = entries.last().map(|entry| entry.seq + 1).unwrap_or(1);
 
@@ -142,6 +147,35 @@ impl EventLog {
             .unwrap_or_default()
     }
 
+    /// Folds a finished turn's streamed pieces into one event per run (1.0) - see [`compaction`]. In the
+    /// database and in the projection `event.list` answers from, together.
+    pub fn compact_turn(&self, turn_id: &str) {
+        let Some(store) = &self.store else {
+            return;
+        };
+        let Ok(events) = store.turn_events(turn_id) else {
+            return;
+        };
+        let (updates, deletes) = compaction(&events);
+
+        if deletes.is_empty() || store.apply_compaction(&updates, &deletes).is_err() {
+            return;
+        }
+
+        if let Ok(mut entries) = self.entries.lock() {
+            let gone: std::collections::HashSet<i64> = deletes.iter().copied().collect();
+            let merged: std::collections::HashMap<i64, &Value> = updates.iter().map(|(seq, payload)| (*seq, payload)).collect();
+
+            entries.retain(|entry| !gone.contains(&entry.seq));
+
+            for entry in entries.iter_mut() {
+                if let Some(payload) = merged.get(&entry.seq) {
+                    entry.event = (*payload).clone();
+                }
+            }
+        }
+    }
+
     /// How many events the log holds.
     pub fn len(&self) -> usize {
         self.entries.lock().map(|entries| entries.len()).unwrap_or(0)
@@ -150,6 +184,104 @@ impl EventLog {
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
+}
+
+/// The setting that remembers how far the compaction pass has looked.
+const COMPACTED_THROUGH: &str = "events.compactedThrough";
+
+/// Compacts every turn that completed since the last pass (1.0), and gives the space back once a lot went.
+fn compact_completed(store: &Store) {
+    let through: i64 = store.setting(COMPACTED_THROUGH).ok().flatten().and_then(|value| value.parse().ok()).unwrap_or(0);
+    let Ok(turns) = store.turns_completed_after(through) else {
+        return;
+    };
+    let mut removed = 0;
+
+    for turn in turns {
+        let Ok(events) = store.turn_events(&turn) else {
+            continue;
+        };
+        let (updates, deletes) = compaction(&events);
+
+        if !deletes.is_empty() && store.apply_compaction(&updates, &deletes).is_ok() {
+            removed += deletes.len();
+        }
+    }
+
+    if let Ok(Some(last)) = store.recent_events(0).map(|events| events.last().map(|event| event.seq)) {
+        let _ = store.set_setting(COMPACTED_THROUGH, &last.to_string());
+    }
+
+    if removed > 10_000 {
+        let _ = store.vacuum();
+    }
+}
+
+/// What a finished turn's log becomes (1.0): every run of streamed pieces - `ThinkingDelta`s, `TurnDelta`s,
+/// a tool's `ToolCallOutput` lines of one level - is one event carrying them all, at the run's first `seq`.
+///
+/// The app replays the whole log at every start and folds it event by event. The owner's log held 302,317
+/// events, 207,007 of them one word of thinking each and 64,924 one line of output: opening SDC took a long
+/// time and the sidebar spun meanwhile. The fold of a run is the fold of its joined text - the reducer appends
+/// deltas, and an output entry shows its lines as they were - so the window draws the same turn from a
+/// fraction of the events. A run is broken by any other event of the same turn, so the order of everything
+/// the turn did is kept. Answers the merged payloads by `seq`, and the `seq`s to delete.
+pub fn compaction(events: &[StoredEvent]) -> (Vec<(i64, Value)>, Vec<i64>) {
+    let mut updates: Vec<(i64, Value)> = Vec::new();
+    let mut deletes: Vec<i64> = Vec::new();
+    /* The open run: its first event's seq, its payload, and how many it has absorbed. */
+    let mut open: Option<(i64, Value, usize)> = None;
+    let key = |event: &Value| -> Option<(String, String)> {
+        match event["type"].as_str()? {
+            kind @ ("ThinkingDelta" | "TurnDelta") => Some((kind.to_string(), String::new())),
+            "ToolCallOutput" => Some(("ToolCallOutput".to_string(), format!("{}\u{1}{}", event["callId"].as_str()?, event["level"].as_str()?))),
+            _ => None,
+        }
+    };
+    let close = |open: &mut Option<(i64, Value, usize)>, updates: &mut Vec<(i64, Value)>| {
+        if let Some((seq, payload, absorbed)) = open.take() {
+            if absorbed > 0 {
+                updates.push((seq, payload));
+            }
+        }
+    };
+
+    for entry in events {
+        let this = key(&entry.event);
+        let joins = match (&open, &this) {
+            (Some((_, payload, _)), Some(this)) => key(payload).as_ref() == Some(this),
+            _ => false,
+        };
+
+        if joins {
+            if let Some((_, payload, absorbed)) = open.as_mut() {
+                let (field, separator) = if this.as_ref().is_some_and(|(kind, _)| kind == "ToolCallOutput") { ("text", "\n") } else { ("delta", "") };
+                let joined = format!("{}{separator}{}", payload[field].as_str().unwrap_or_default(), entry.event[field].as_str().unwrap_or_default());
+
+                payload[field] = Value::String(joined);
+                *absorbed += 1;
+            }
+
+            deletes.push(entry.seq);
+            continue;
+        }
+
+        close(&mut open, &mut updates);
+
+        if this.is_some() {
+            open = Some((entry.seq, entry.event.clone(), 0));
+        }
+    }
+
+    close(&mut open, &mut updates);
+
+    /* A `ContextUpdated` replaces the session's gauge whole, so of a finished turn's only the last one counts. */
+    let gauges: Vec<i64> = events.iter().filter(|entry| entry.event["type"] == "ContextUpdated").map(|entry| entry.seq).collect();
+
+    deletes.extend(gauges.iter().take(gauges.len().saturating_sub(1)));
+    deletes.sort_unstable();
+
+    (updates, deletes)
 }
 
 /// The event constructors: one per catalogue entry, so a handler never hand-writes a `type` string
@@ -546,5 +678,74 @@ pub mod event {
     /// Someone approved or declined something that waited for them.
     pub fn approval_recorded(approval: Value) -> Value {
         base("ApprovalRecorded", json!({ "approval": approval }))
+    }
+}
+
+#[cfg(test)]
+mod compaction_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn entry(seq: i64, event: Value) -> StoredEvent {
+        StoredEvent { seq, ts: format!("t{seq}"), session_id: Some("s".into()), turn_id: Some("t".into()), event }
+    }
+
+    /// 1.0: runs of streamed pieces become one event at the run's first seq; anything else breaks a run, so
+    /// the order of what the turn did is kept, and an output run is one tool's lines of one level.
+    #[test]
+    fn a_finished_turns_streamed_pieces_become_one_event_per_run() {
+        let events = vec![
+            entry(1, json!({ "type": "TurnStarted" })),
+            entry(2, json!({ "type": "ThinkingDelta", "delta": "Let " })),
+            entry(3, json!({ "type": "ThinkingDelta", "delta": "me " })),
+            entry(4, json!({ "type": "ThinkingDelta", "delta": "look." })),
+            entry(5, json!({ "type": "TurnDelta", "delta": "Read" })),
+            entry(6, json!({ "type": "TurnDelta", "delta": "ing." })),
+            entry(7, json!({ "type": "ToolCallStarted", "callId": "c1" })),
+            entry(8, json!({ "type": "ToolCallOutput", "callId": "c1", "level": "dim", "text": "a" })),
+            entry(9, json!({ "type": "ToolCallOutput", "callId": "c1", "level": "dim", "text": "b" })),
+            entry(10, json!({ "type": "ToolCallOutput", "callId": "c1", "level": "fail", "text": "exit 1" })),
+            entry(11, json!({ "type": "ToolCallCompleted", "callId": "c1" })),
+            entry(12, json!({ "type": "ThinkingDelta", "delta": "Again" })),
+            entry(13, json!({ "type": "ContextUpdated", "usedTokens": 1 })),
+            entry(14, json!({ "type": "ContextUpdated", "usedTokens": 2 })),
+            entry(15, json!({ "type": "TurnCompleted" })),
+        ];
+        let (updates, deletes) = compaction(&events);
+
+        assert_eq!(deletes, vec![3, 4, 6, 9, 13], "only the last gauge of the turn stays");
+        assert_eq!(updates.len(), 3);
+        assert_eq!(updates[0], (2, json!({ "type": "ThinkingDelta", "delta": "Let me look." })));
+        assert_eq!(updates[1], (5, json!({ "type": "TurnDelta", "delta": "Reading." })));
+        assert_eq!(updates[2], (8, json!({ "type": "ToolCallOutput", "callId": "c1", "level": "dim", "text": "a\nb" })));
+
+        /* Nothing to join: nothing changes. */
+        let (updates, deletes) = compaction(&events[..2]);
+
+        assert!(updates.is_empty() && deletes.is_empty());
+    }
+
+    /// The database and the projection `event.list` answers from agree after a compaction, and a restarted
+    /// log continues after the highest seq.
+    #[test]
+    fn a_compacted_turn_is_the_same_in_the_database_and_in_event_list() {
+        let store = Arc::new(Store::in_memory().unwrap());
+        let log = EventLog::hydrate(store.clone()).unwrap();
+
+        log.append(json!({ "type": "TurnStarted" }), Some("s".into()), Some("t".into()));
+
+        for word in ["a", "b", "c"] {
+            log.append(json!({ "type": "ThinkingDelta", "delta": word }), Some("s".into()), Some("t".into()));
+        }
+
+        log.append(json!({ "type": "TurnCompleted" }), Some("s".into()), Some("t".into()));
+        log.compact_turn("t");
+
+        let listed = log.since(0);
+
+        assert_eq!(listed.len(), 3);
+        assert_eq!(listed[1].event["delta"], "abc");
+        assert_eq!(store.recent_events(0).unwrap().iter().map(|entry| entry.event.clone()).collect::<Vec<_>>(), listed.iter().map(|entry| entry.event.clone()).collect::<Vec<_>>());
+        assert_eq!(EventLog::hydrate(store).unwrap().seq(), 5);
     }
 }

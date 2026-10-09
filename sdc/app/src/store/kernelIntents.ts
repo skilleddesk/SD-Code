@@ -209,10 +209,10 @@ export async function voiceStatus() {
   }
 }
 
-export async function transcribe(audio: string, mime: string, language: string | undefined, sessionId?: string): Promise<string | null> {
+export async function transcribe(audio: string, mime: string, language: string | undefined, sessionId?: string, interim = false): Promise<string | null> {
   return (
     await call(
-      () => sdcpCall('voice.transcribe', { audio, mime, ...(language === undefined ? {} : { language }), ...(sessionId === undefined ? {} : { sessionId }) }),
+      () => sdcpCall('voice.transcribe', { audio, mime, ...(language === undefined ? {} : { language }), ...(sessionId === undefined ? {} : { sessionId }), ...(interim ? { interim } : {}) }),
       strings.kernel.voice.failed,
     )
   )?.requestId ?? null;

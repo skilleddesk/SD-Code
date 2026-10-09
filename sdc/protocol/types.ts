@@ -1429,6 +1429,8 @@ export interface VoiceTranscribedEvent {
   local: boolean;
   detection?: Detection;
   error: string | null;
+  /** 1.0: a live caption while the person is still speaking - shown, never recorded. */
+  interim?: boolean;
 }
 
 export interface DeployUpdatedEvent {
@@ -2238,7 +2240,7 @@ export interface SdcpMethodMap {
   'glossary.list': { params: { sessionId?: string; scope?: string }; result: { scope: string; terms: GlossaryTerm[] } };
   'glossary.set': { params: { sessionId?: string; scope?: string; term: string; meaning?: string }; result: { scope: string; terms: GlossaryTerm[] } };
   'voice.status': { params: Record<string, never>; result: { local: boolean; program: string | null; model: string | null; online: string[]; available: boolean; hint: string | null } };
-  'voice.transcribe': { params: { audio: string; mime?: string; language?: string; sessionId?: string }; result: { requestId: string } };
+  'voice.transcribe': { params: { audio: string; mime?: string; language?: string; sessionId?: string; interim?: boolean }; result: { requestId: string } };
   'site.list': { params: Record<string, never>; result: { sites: SiteRecord[] } };
   'site.detect': { params: { hostId?: string; root: string }; result: { config: Record<string, unknown> } };
   'site.save': { params: { siteId?: string; name: string; hostId?: string; root: string; url?: string; config?: Record<string, unknown> }; result: { siteId: string; site: SiteRecord } };

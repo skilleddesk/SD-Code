@@ -474,6 +474,43 @@ fn decorate(model: &Value, provider_id: &str, source: &str, fetched_at: Option<&
 /// `gpt-5-mini` becomes `GPT-5 Mini`. It is a spelling rule, not a catalogue: the bundle's own `name`
 /// always wins when it has one, and a live row for a model this build has never heard of gets the
 /// rule's answer rather than an invented one.
+/// A model's copy that is served in the region of the key's endpoint (1.0).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Twin {
+    /// The same model with the region's suffix (`qwen3.6-flash` → `qwen3.6-flash-us`): used instead.
+    Same(String),
+    /// The nearest model of the same family that is served there - only suggested, never swapped in.
+    Near(String),
+}
+
+/// Model Studio serves some models in the US region under their own ids (`…-us`); the others answer a US
+/// key from elsewhere. Measured 2026-10-09 on the owner's key, the same task: `deepseek-v4.1-flash` took
+/// 12-20 s to its first token on every step (255 s in all), `deepseek-v4-flash-us` 1.5 s (42 s in all).
+pub fn region_twin(endpoint_url: &str, model: &str, offered: &[String]) -> Option<Twin> {
+    let us = endpoint_url.contains("dashscope-us") || endpoint_url.contains("us-east-1");
+
+    if !us || model.ends_with("-us") {
+        return None;
+    }
+
+    let exact = format!("{model}-us");
+
+    if offered.contains(&exact) {
+        return Some(Twin::Same(exact));
+    }
+
+    let size = |id: &str| ["flash", "plus", "pro", "max", "turbo", "coder"].into_iter().find(|word| id.split(['-', '.']).any(|part| part == *word));
+    let family = |id: &str| id.split(['-', '.']).next().unwrap_or_default().to_string();
+    let common = |a: &str, b: &str| a.chars().zip(b.chars()).take_while(|(x, y)| x == y).count();
+
+    offered
+        .iter()
+        .filter(|id| id.ends_with("-us") && family(id) == family(model) && size(id) == size(model) && size(model).is_some())
+        /* The closest name, and the undated id over a dated snapshot. */
+        .max_by_key(|id| (common(id, model), std::cmp::Reverse(id.chars().filter(char::is_ascii_digit).count())))
+        .map(|id| Twin::Near(id.clone()))
+}
+
 pub fn friendly_name(id: &str) -> String {
     id.split(['/', '-', '_'])
         .filter(|part| !part.is_empty())
@@ -581,6 +618,25 @@ pub fn selected(store: &Store) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 1.0: on a US endpoint the same model's `-us` copy is used; a model with none gets the nearest one of its
+    /// family and size suggested; nothing changes anywhere else.
+    #[test]
+    fn a_us_key_runs_the_regional_copy_of_a_model() {
+        let offered: Vec<String> = ["deepseek-v4.1-flash", "deepseek-v4-flash-us", "deepseek-v4-flash-0731-us", "deepseek-v4-pro-us", "qwen3.6-flash", "qwen3.6-flash-us", "qwen3.7-flash", "qwen-flash-us"]
+            .iter()
+            .map(|id| id.to_string())
+            .collect();
+        let us = "https://dashscope-us.aliyuncs.com/compatible-mode/v1/chat/completions";
+
+        assert_eq!(region_twin(us, "qwen3.6-flash", &offered), Some(Twin::Same("qwen3.6-flash-us".into())));
+        assert_eq!(region_twin(us, "deepseek-v4.1-flash", &offered), Some(Twin::Near("deepseek-v4-flash-us".into())));
+        assert_eq!(region_twin(us, "qwen3.7-flash", &offered), Some(Twin::Near("qwen3.6-flash-us".into())));
+        assert_eq!(region_twin(us, "qwen3.6-flash-us", &offered), None, "already regional");
+        assert_eq!(region_twin(us, "kimi-k2", &offered), None, "nothing of its family");
+        assert_eq!(region_twin("https://dashscope-intl.aliyuncs.com/compatible-mode/v1", "qwen3.6-flash", &offered), None, "not a US key");
+        assert_eq!(region_twin("https://ws.us-east-1.maas.aliyuncs.com/compatible-mode/v1", "qwen3.6-flash", &offered), Some(Twin::Same("qwen3.6-flash-us".into())));
+    }
 
     #[test]
     fn the_bundle_covers_every_provider_the_app_offers() {

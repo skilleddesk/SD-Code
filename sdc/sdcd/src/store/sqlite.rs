@@ -369,6 +369,60 @@ impl Store {
         Ok(files)
     }
 
+    /// One turn's events, oldest first (1.0, compaction).
+    pub fn turn_events(&self, turn_id: &str) -> Result<Vec<StoredEvent>> {
+        let connection = self.connection.lock().unwrap();
+        let mut statement = connection.prepare("SELECT seq, ts, session_id, turn_id, payload FROM events WHERE turn_id = ?1 ORDER BY seq ASC")?;
+        let rows = statement.query_map(params![turn_id], |row| {
+            let payload: String = row.get(4)?;
+
+            Ok(StoredEvent { seq: row.get(0)?, ts: row.get(1)?, session_id: row.get(2)?, turn_id: row.get(3)?, event: serde_json::from_str(&payload).unwrap_or(Value::Null) })
+        })?;
+
+        rows.collect::<std::result::Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    /// The turns that completed after `seq` - the ones a compaction pass has not seen.
+    pub fn turns_completed_after(&self, seq: i64) -> Result<Vec<String>> {
+        let connection = self.connection.lock().unwrap();
+        let mut statement = connection.prepare("SELECT DISTINCT turn_id FROM events WHERE seq > ?1 AND type = 'TurnCompleted' AND turn_id IS NOT NULL")?;
+        let rows = statement.query_map(params![seq], |row| row.get::<_, String>(0))?;
+
+        rows.collect::<std::result::Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    /// Applies a compaction: the first event of each run gets the merged payload, the rest go - in one
+    /// transaction, so a crash halfway leaves the log as it was.
+    pub fn apply_compaction(&self, updates: &[(i64, Value)], deletes: &[i64]) -> Result<()> {
+        let mut connection = self.connection.lock().unwrap();
+        let transaction = connection.transaction()?;
+
+        {
+            let mut update = transaction.prepare("UPDATE events SET payload = ?2 WHERE seq = ?1")?;
+
+            for (seq, payload) in updates {
+                update.execute(params![seq, serde_json::to_string(payload)?])?;
+            }
+
+            let mut delete = transaction.prepare("DELETE FROM events WHERE seq = ?1")?;
+
+            for seq in deletes {
+                delete.execute(params![seq])?;
+            }
+        }
+
+        transaction.commit()?;
+
+        Ok(())
+    }
+
+    /// Gives the space of deleted rows back to the disk.
+    pub fn vacuum(&self) -> Result<()> {
+        self.connection.lock().unwrap().execute_batch("VACUUM")?;
+
+        Ok(())
+    }
+
     /// Everything after `since`, oldest first - what `EventLog::hydrate` and `event.list` read.
     pub fn recent_events(&self, since: i64) -> Result<Vec<StoredEvent>> {
         let connection = self.connection.lock().unwrap();

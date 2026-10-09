@@ -259,6 +259,8 @@ impl Daemon {
         let request = format!("voice-{}", uuid::Uuid::new_v4().simple());
         let id = request.clone();
         let session = envelope.opt_str("sessionId");
+        /* 1.0: a live caption while the person is still speaking - shown now, never part of the record. */
+        let interim = envelope.params.get("interim").and_then(Value::as_bool).unwrap_or(false);
 
         tokio::task::spawn_blocking(move || {
             let result = intent::voice::transcribe(&audio, &mime, language.as_deref());
@@ -271,11 +273,16 @@ impl Daemon {
                     "local": value["local"],
                     "detection": intent::detect(value["text"].as_str().unwrap_or_default()).to_json(),
                     "error": Value::Null,
+                    "interim": interim,
                 }),
-                Err(error) => json!({ "type": "VoiceTranscribed", "requestId": id, "text": "", "engine": Value::Null, "local": false, "error": error }),
+                Err(error) => json!({ "type": "VoiceTranscribed", "requestId": id, "text": "", "engine": Value::Null, "local": false, "error": error, "interim": interim }),
             };
 
-            out.push(payload, session, None);
+            if interim {
+                out.push_live(payload, session, None);
+            } else {
+                out.push(payload, session, None);
+            }
         });
 
         Ok(json!({ "requestId": request }))
