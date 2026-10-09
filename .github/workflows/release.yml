@@ -28,6 +28,10 @@ on:
 # The release has to be created and its assets uploaded, which needs write access to contents.
 permissions:
   contents: write
+  # 0.22: every installer gets a signed build-provenance attestation (Sigstore, keyless, free): proof that it
+  # was built by this workflow from this commit, checkable with `gh attestation verify <file> --repo <repo>`.
+  id-token: write
+  attestations: write
 
 jobs:
   # ------------------------------------------------------------------------------------------------
@@ -210,6 +214,7 @@ jobs:
           pnpm --filter @sdc/app smoke:a11y
 
       - name: Build and upload into the draft
+        id: tauri
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -221,6 +226,14 @@ jobs:
           projectPath: sdc/app
           releaseId: ${{ needs.prepare.outputs.release_id }}
           args: ${{ matrix.target != '' && format('--target {0}', matrix.target) || '' }}
+
+      # 0.22: signed provenance for every installer this runner built - who built it, from which commit, with
+      # which workflow - recorded in GitHub's attestation store and Sigstore's public log. It does not replace
+      # Windows Authenticode or Apple notarisation (those need a paid identity); it proves the file is ours.
+      - name: Attest where these installers came from
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: ${{ join(fromJSON(steps.tauri.outputs.artifactPaths), ',') }}
 
   # Only after EVERY platform built (a `needs` job does not run when one of them failed).
   publish:
@@ -252,6 +265,20 @@ jobs:
           REPO: ${{ github.repository }}
           ID: ${{ needs.prepare.outputs.release_id }}
         run: gh api -X PATCH "repos/$REPO/releases/$ID" -F draft=false -f make_latest=true --jq '.html_url'
+
+      # 0.22: one checksum file for every installer, so a download can be checked by anyone, on any system.
+      # After "Make it public": a draft release cannot be found by its tag.
+      - name: Checksums
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          mkdir -p sums && cd sums
+          gh release download "$TAG" --repo "$REPO" --pattern 'SDC*'
+          sha256sum SDC* > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+          gh release upload "$TAG" SHA256SUMS.txt --repo "$REPO" --clobber
 
       # ----------------------------------------------------------------------------------------------
       # One version, and only one - and only once the new one is public on every platform.

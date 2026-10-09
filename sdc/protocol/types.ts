@@ -269,6 +269,10 @@ export type SdcpMethod =
   | 'host.port.free'
   /** 0.21: opens the provider connection a turn will use while the person is still typing. */
   | 'provider.warm'
+  /** 0.22: any OpenAI-compatible model server on this computer or the network - LM Studio, llama.cpp, vLLM, Jan… */
+  | 'local.discover'
+  | 'local.add'
+  | 'local.remove'
   | 'crash.list'
   | 'crash.clear'
   | 'cli.selfcheck'
@@ -2273,6 +2277,9 @@ export interface SdcpMethodMap {
   'ollama.pull': { params: { model: string }; result: ToolJob };
   'host.port.free': { params: { port: number }; result: { stopped: number } };
   'provider.warm': { params: { model: string; provider?: string }; result: { warming: boolean } };
+  'local.discover': { params: Record<string, never>; result: { servers: LocalServer[] } };
+  'local.add': { params: { url: string; label?: string; key?: string }; result: { id: string; label: string; base: string; models: LocalModel[] } };
+  'local.remove': { params: { id: string }; result: { removed: string } };
   'crash.list': { params: Record<string, never>; result: { reports: CrashReport[] } };
   'crash.clear': { params: Record<string, never>; result: { cleared: number } };
   'cli.selfcheck': { params: Record<string, never>; result: { clis: CliSelfCheck[] } };
@@ -2352,4 +2359,22 @@ export interface ToolJob {
   total: number | null;
   log: string[];
   error: string | null;
+}
+
+/** A model a local server lists, with the context it runs with (0.22). */
+export interface LocalModel {
+  id: string;
+  ctx: number;
+}
+
+/** An OpenAI-compatible model server found on this computer (0.22, `local.discover`). */
+export interface LocalServer {
+  id: string;
+  label: string;
+  base: string;
+  models: LocalModel[];
+  /** Already connected as a provider. */
+  connected: boolean;
+  /** Why it could not be listed (a server started with a key). */
+  note: string | null;
 }

@@ -94,7 +94,8 @@ function viaOf(group: CatalogGroup): 'cli' | 'api' | 'local' {
     return 'cli';
   }
 
-  return group.providerId === 'ollama' ? 'local' : 'api';
+  /* A local model server (0.22: LM Studio, llama.cpp, vLLM…) is local too - it has no key to verify. */
+  return group.providerId === 'ollama' || group.providerId.startsWith('local-') ? 'local' : 'api';
 }
 
 export function ModelDropdown({ sessionId }: { sessionId: string | null }) {

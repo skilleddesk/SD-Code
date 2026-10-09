@@ -85,6 +85,10 @@ impl Daemon {
                 crate::host::tools::status(&id).map(|job| job.to_json()).ok_or_else(|| ErrorObject::not_found(format!("no install job {id}")))
             }
             "ollama.start" => Ok(json!({ "running": crate::host::tools::ensure_ollama() })),
+            /* 0.22: any OpenAI-compatible model server, not only Ollama - found on this computer, or added by address. */
+            "local.discover" => Ok(crate::providers::local::discover()),
+            "local.add" => crate::providers::local::add(&envelope.require_str("url")?, envelope.opt_str("label").as_deref(), envelope.opt_str("key").as_deref()),
+            "local.remove" => crate::providers::local::remove(&envelope.require_str("id")?),
             /* 0.21: the person is typing - open the provider connection the turn will use. */
             "provider.warm" => {
                 let model = envelope.require_str("model")?;

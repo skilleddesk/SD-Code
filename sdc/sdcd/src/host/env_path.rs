@@ -34,6 +34,15 @@ pub fn widen() {
         }
     }
 
+    /* 0.22: on a Mac without Apple's Command Line Tools, /usr/bin/git is a stub that opens Apple's installer -
+       SDC's own Git (conda-forge) goes in front of it. */
+    if cfg!(target_os = "macos") && !super::tools::mac_has_command_line_tools() {
+        let git = super::tools::conda_git_bin(&super::tools::root());
+
+        all.retain(|dir| dir != &git);
+        all.insert(0, git);
+    }
+
     merged = std::env::join_paths(all).unwrap_or(merged);
 
     if merged != current {

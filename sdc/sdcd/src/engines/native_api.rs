@@ -235,7 +235,7 @@ pub fn build_request(
            an Anthropic key could ever have streamed. `provider.test` sent it and this did not, which is
            why a key could test green and still never answer a chat. */
         headers.push(("anthropic-version".to_string(), "2023-06-01".to_string()));
-    } else {
+    } else if !key.is_empty() {
         headers.push(("authorization".to_string(), format!("Bearer {key}")));
     }
 
@@ -955,7 +955,8 @@ impl Engine for NativeApi {
         let endpoint = endpoint_for(&prompt.model, prompt.provider.as_deref());
         let key = crate::auth::keychain::get(&endpoint.key_ref).unwrap_or_default();
 
-        if key.is_empty() {
+        /* A local model server (0.22) has no key unless it was started with one. */
+        if key.is_empty() && !crate::providers::local::is_local(&endpoint.provider) {
             sink.send(EngineEvent::Failed(crate::auth::keychain::missing_key_reason(&endpoint.key_ref, &endpoint.provider)));
 
             return;

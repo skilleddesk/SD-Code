@@ -33,6 +33,7 @@ import { useOverlayStore, type HubTab } from '../store/overlays';
 import { toast } from '../store/toast';
 import { BTN, BTN_PRIMARY, BTN_SECONDARY } from '../panels/ui/button';
 import { Modal } from './Modal';
+import { LocalServers } from './LocalServers';
 import { InstallButton } from '../panels/ui/InstallButton';
 import { sdcpCall } from '../lib/sdcp';
 import { INSTALLABLE, installTool, toolSize } from '../store/tools';
@@ -173,18 +174,22 @@ export function ProviderHub() {
           ) : tab === 'custom' ? (
             <CustomEndpoint onSaved={() => setTab('all')} />
           ) : (
-            <ProviderCards
-              providers={providers.filter((provider) =>
-                tab === 'all'
-                  ? true
-                  : tab === 'subscriptions'
-                    ? provider.kind === 'subscription'
-                    : tab === 'api-keys'
-                      ? provider.kind === 'api-key'
-                      : provider.kind === 'local',
-              )}
-              onConnect={(providerId, kind) => setFlow({ providerId, kind })}
-            />
+            <>
+              <ProviderCards
+                providers={providers.filter((provider) =>
+                  tab === 'all'
+                    ? true
+                    : tab === 'subscriptions'
+                      ? provider.kind === 'subscription'
+                      : tab === 'api-keys'
+                        ? provider.kind === 'api-key'
+                        : provider.kind === 'local',
+                )}
+                onConnect={(providerId, kind) => setFlow({ providerId, kind })}
+              />
+              {/* 0.22: local servers that are not Ollama - LM Studio, llama.cpp, vLLM, Jan… */}
+              {tab === 'local' ? <LocalServers /> : null}
+            </>
           )}
         </div>
       </div>
@@ -219,6 +224,12 @@ function ProviderCards({ providers, onConnect }: ProviderCardsProps) {
         /* A subscription signs in through its CLI, an API provider needs a key and a model: both are
            the Connect modal's job (spec section 9.10). A local provider is the two doctor rows, which
            stay in the card's own inline flow. */
+        /* A local server that is not Ollama (0.22) is managed in the Local tab's own list. */
+        if (provider.id.startsWith('local-')) {
+          useOverlayStore.getState().openHub('local');
+          return;
+        }
+
         if (provider.kind === 'local') {
           onConnect(provider.id, 'local');
           return;

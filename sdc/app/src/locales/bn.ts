@@ -127,6 +127,23 @@ export const bn: StringsPack = {
       analytics: 'হিসাব',
     },
   },
+  hub: {
+    localServers: {
+      title: 'অন্য লোকাল মডেল সার্ভার (Ollama লাগবে না)',
+      help: 'LM Studio, llama.cpp / llamafile, LocalAI, vLLM, SGLang, Jan, KoboldCpp, text-generation-webui, GPT4All, বা আপনার নিজের চালানো মডেল - OpenAI API বোঝে এমন যেকোনো সার্ভার। SDC নিজেই এই কম্পিউটারে খুঁজে নেয়; নেটওয়ার্কের অন্য কম্পিউটার তার ঠিকানা দিয়ে যোগ করা যায়। কোনো key লাগে না।',
+      scan: 'আবার খুঁজুন',
+      scanning: 'এই কম্পিউটারে খোঁজা হচ্ছে…',
+      noneFound: 'এই মুহূর্তে এই কম্পিউটারে অন্য কোনো লোকাল সার্ভার চলছে না। একটা চালু করুন (যেমন LM Studio → Developer → Start server), তারপর আবার খুঁজুন - অথবা নিচে ঠিকানা দিয়ে যোগ করুন।',
+      found: (label: string): string => `পাওয়া গেছে: ${label}`,
+      connect: 'যুক্ত করুন',
+      added: (label: string, models: number): string => `${label} যুক্ত হয়েছে · মডেল মেনুতে ${models}টা মডেল`,
+      remove: (name: string): string => `${name} বিচ্ছিন্ন করুন`,
+      addTitle: 'ঠিকানা দিয়ে সার্ভার যোগ করুন',
+      keyPlaceholder: 'Key (ঐচ্ছিক)',
+      add: 'যোগ করুন',
+      addHelp: 'এই কম্পিউটার (http://127.0.0.1:PORT/v1) বা নেটওয়ার্কের অন্য কম্পিউটার (http://192.168.x.x:PORT/v1)। https:// ঠিকানা যেকোনো জায়গা থেকে চলে।',
+    },
+  },
   tools: {
     install: (label: string): string => `${label} ইনস্টল করুন`,
     retry: 'আবার চেষ্টা করুন',

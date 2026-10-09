@@ -7,6 +7,7 @@
 //! between this bridge, a `VITE_SDCP_URL` websocket and the in-process demo daemon, in that order.
 
 mod sdcp;
+mod selftest;
 
 use std::sync::Arc;
 
@@ -31,7 +32,8 @@ pub fn run() {
             sdcp_connect,
             sdcp_call,
             sdcp_subscribe,
-            sdcp_stop_daemon
+            sdcp_stop_daemon,
+            selftest::selftest_dom
         ])
         .setup(|handle| {
             /* The bridge is built here rather than with `manage()` in the builder chain because it
@@ -40,6 +42,9 @@ pub fn run() {
             let version = handle.package_info().version.to_string();
 
             handle.manage(sdcp::SdcpBridge::new(version));
+
+            /* 0.22: CI checks the frameless window on Linux and macOS this way (SDC_WINDOW_SELFTEST). */
+            selftest::start(handle.handle());
 
             Ok(())
         })

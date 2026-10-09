@@ -51,7 +51,7 @@ pub const TOOLS: &[Tool] = &[
     Tool { id: "gemini", label: "Gemini CLI", program: "gemini", size: "~40 MB" },
     Tool { id: "ollama", label: "Ollama", program: "ollama", size: if cfg!(target_os = "macos") { "~30 MB" } else { "~1.5 GB" } },
     Tool { id: "ripgrep", label: "ripgrep", program: "rg", size: "~2 MB" },
-    Tool { id: "git", label: "Git", program: "git", size: if cfg!(windows) { "~60 MB" } else { "system" } },
+    Tool { id: "git", label: "Git", program: "git", size: if cfg!(windows) { "~60 MB" } else { "~80 MB" } },
     /* 0.21.1: the agent's browser (screenshots, clicking through a page it built) on a machine with no
        Chrome, Edge or Chromium - many Linux desktops have only Firefox. */
     Tool { id: "browser", label: "Browser for the agent", program: "chrome-headless-shell", size: "~100 MB" },
@@ -101,6 +101,7 @@ pub fn path_dirs(root: &Path) -> Vec<PathBuf> {
             root.join("bin"),
             root.join("ollama").join("bin"),
             root.join("ollama"),
+            conda_git_bin(root),
         ]
     }
 }
@@ -494,35 +495,84 @@ fn install_git(root: &Path, progress: &Progress) -> Result<String, String> {
         return Ok(format!("Git {tag} installed"));
     }
 
-    if cfg!(target_os = "macos") {
-        /* Apple ships Git with its Command Line Tools; this opens Apple's own installer window. */
-        progress.step("Opening Apple's installer for the Command Line Tools (Git)");
+    /* macOS and Linux (0.22): Git from conda-forge, through micromamba - one official program, no administrator,
+       no window. Apple's Command Line Tools window and the Linux password prompt are gone: the same silent
+       install as PortableGit on Windows. */
+    install_git_conda(root, progress)
+}
 
-        let _ = Command::new("xcode-select").arg("--install").stdout(Stdio::null()).stderr(Stdio::null()).status();
+/// micromamba's own name for this machine.
+pub fn conda_platform() -> &'static str {
+    match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("macos", "aarch64") => "osx-arm64",
+        ("macos", _) => "osx-64",
+        (_, "aarch64") => "linux-aarch64",
+        _ => "linux-64",
+    }
+}
 
-        return wait_for("git", progress, Duration::from_secs(30 * 60)).map(|version| format!("Git installed · {version}"));
+/// The Git SDC installs on macOS and Linux: `<tools>/git-env/bin/git`.
+pub fn conda_git_bin(root: &Path) -> PathBuf {
+    root.join("git-env").join("bin")
+}
+
+fn install_git_conda(root: &Path, progress: &Progress) -> Result<String, String> {
+    let platform = conda_platform();
+    let micromamba = root.join("micromamba").join("micromamba");
+
+    if !micromamba.is_file() {
+        let url = format!("https://github.com/mamba-org/micromamba-releases/releases/latest/download/micromamba-{platform}");
+
+        download(&url, &micromamba, progress, "Downloading micromamba (the installer for Git)")?;
+        make_executable(&micromamba);
     }
 
-    /* Linux: the distribution's own package, through the desktop's password prompt (polkit). */
-    let manager = [
-        ("apt-get", vec!["install", "-y", "git"]),
-        ("dnf", vec!["install", "-y", "git"]),
-        ("pacman", vec!["-S", "--noconfirm", "git"]),
-        ("zypper", vec!["--non-interactive", "install", "git"]),
-    ]
-    .into_iter()
-    .find(|(program, _)| crate::host::program::resolve(program).is_some())
-    .ok_or("no package manager SDC knows (apt, dnf, pacman, zypper) was found")?;
-    let pkexec = crate::host::program::resolve("pkexec").ok_or("this desktop has no password prompt (pkexec) SDC can use to install Git")?;
+    progress.step("Installing Git from conda-forge");
 
-    progress.step("Asking for your password to install Git");
+    let prefix = root.join("git-env");
+    let mut command = Command::new(&micromamba);
 
-    let mut command = Command::new(pkexec);
-
-    command.arg(manager.0).args(&manager.1);
+    command
+        .args(["create", "--yes", "--quiet", "--prefix"])
+        .arg(&prefix)
+        .args(["--channel", "conda-forge", "--override-channels", "git"])
+        .env("MAMBA_ROOT_PREFIX", root.join("mamba"));
     run_logged(command, progress)?;
 
-    crate::host::doctor::version_of("git").map(|version| format!("Git installed · {version}")).ok_or_else(|| "the package manager finished, but git does not start".to_string())
+    let git = conda_git_bin(root).join("git");
+    let output = Command::new(&git).arg("--version").output().map_err(|error| format!("Git was installed but does not start: {error}"))?;
+    let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+    if !output.status.success() || version.is_empty() {
+        return Err("Git was installed but does not answer --version".to_string());
+    }
+
+    Ok(format!("Git installed · {version}"))
+}
+
+/// Whether this Mac has Apple's Command Line Tools - without running `git`, whose stub would open Apple's installer.
+pub fn mac_has_command_line_tools() -> bool {
+    Command::new("/usr/bin/xcode-select").arg("-p").stdout(Stdio::null()).stderr(Stdio::null()).status().is_ok_and(|status| status.success())
+}
+
+/// Whether this machine has a Git that works, asked without side effects: on a Mac without the Command Line
+/// Tools `/usr/bin/git` is a stub that opens Apple's installer, so it is not counted (and not run).
+pub fn has_working_git() -> bool {
+    let root = root();
+
+    if cfg!(windows) {
+        return crate::host::program::resolve("git").is_some();
+    }
+
+    if conda_git_bin(&root).join("git").is_file() {
+        return true;
+    }
+
+    match crate::host::program::resolve("git") {
+        Some(path) if cfg!(target_os = "macos") && path == Path::new("/usr/bin/git") => mac_has_command_line_tools(),
+        Some(_) => true,
+        None => false,
+    }
 }
 
 /* ------------------------------------------------------------------------------------------------
@@ -651,22 +701,6 @@ fn install_browser(root: &Path, progress: &Progress) -> Result<String, String> {
     Ok(format!("Browser {version} installed"))
 }
 
-/// Waits for a program an outside installer is putting in place.
-fn wait_for(program: &str, progress: &Progress, limit: Duration) -> Result<String, String> {
-    let until = std::time::Instant::now() + limit;
-
-    progress.step("Waiting for the installer to finish");
-
-    while std::time::Instant::now() < until {
-        if let Some(version) = crate::host::doctor::version_of(program) {
-            return Ok(version);
-        }
-
-        std::thread::sleep(Duration::from_secs(3));
-    }
-
-    Err(format!("`{program}` did not appear - the installer may have been cancelled"))
-}
 
 /// Claude Code on Windows runs its commands in Git Bash and looks for it at `CLAUDE_CODE_GIT_BASH_PATH`
 /// when it is not where Git for Windows' installer puts it. With SDC's own PortableGit as the machine's only
@@ -689,12 +723,13 @@ pub fn point_claude_at_bash() {
     }
 }
 
-/// The first background job of a fresh machine: Git on Windows, which checkpoints need, when the machine
-/// has none. Everything else waits for the person to press Install.
+/// The first background job of a fresh machine: Git, which checkpoints need, when the machine has none - on
+/// every platform. Everything else waits for the person to press Install.
 pub fn provision_essentials() {
     point_claude_at_bash();
 
-    if cfg!(windows) && crate::host::program::resolve("git").is_none() {
+    /* 0.22: every platform - Windows (PortableGit), macOS and Linux (conda-forge Git) - silently. */
+    if !has_working_git() {
         let _ = install("git");
     }
 }

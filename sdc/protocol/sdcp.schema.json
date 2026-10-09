@@ -338,6 +338,9 @@
           "ollama.pull",
           "host.port.free",
           "provider.warm",
+          "local.discover",
+          "local.add",
+          "local.remove",
           "crash.list",
           "crash.clear",
           "cli.selfcheck",
@@ -2175,6 +2178,33 @@
           },
           "result": {
             "warming": "boolean"
+          }
+        },
+        "local.discover": {
+          "params": {},
+          "result": {
+            "servers": "array"
+          }
+        },
+        "local.add": {
+          "params": {
+            "url": "string",
+            "label": "string?",
+            "key": "string?"
+          },
+          "result": {
+            "id": "string",
+            "label": "string",
+            "base": "string",
+            "models": "array"
+          }
+        },
+        "local.remove": {
+          "params": {
+            "id": "string"
+          },
+          "result": {
+            "removed": "string"
           }
         },
         "crash.list": {

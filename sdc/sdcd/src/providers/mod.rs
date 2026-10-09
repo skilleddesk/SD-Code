@@ -16,6 +16,7 @@
 //! reports that a token exchange is not wired, and the real path - `auth::cli_login` - drives the CLI's
 //! own login and hands back only the code the user pasted. Nothing here ever sees a token.
 
+pub mod local;
 pub mod models;
 
 use std::sync::Arc;
@@ -299,7 +300,7 @@ pub fn test(id: &str, key: Option<&str>) -> Value {
 ///     *signed in*, so the status stays `needs-auth` and the detail says what would change it - which
 ///     is also the sentence `cli.recipes` prints and `Connect` acts on.
 pub fn list(store: &Arc<Store>) -> Vec<Value> {
-    CATALOG
+    let mut rows: Vec<Value> = CATALOG
         .iter()
         .map(|(id, name, kind, logo, initial, detail)| {
             let stored = store.provider(id).ok().flatten();
@@ -326,7 +327,11 @@ pub fn list(store: &Arc<Store>) -> Vec<Value> {
                 "protocol": stored.as_ref().and_then(|row| row["protocol"].as_str()),
             })
         })
-        .collect()
+        .collect();
+
+    /* 0.22: every local model server the person connected (LM Studio, llama.cpp, vLLM, …) is a card of its own. */
+    rows.extend(local::provider_rows());
+    rows
 }
 
 /// The status of a provider nobody has done anything about yet - see `list`'s doc comment.

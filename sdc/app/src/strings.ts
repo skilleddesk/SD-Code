@@ -1074,6 +1074,22 @@ const english = {
   },
 
   hub: {
+    /** 0.22: local model servers other than Ollama. */
+    localServers: {
+      title: 'Other local model servers (no Ollama needed)',
+      help: 'LM Studio, llama.cpp / llamafile, LocalAI, vLLM, SGLang, Jan, KoboldCpp, text-generation-webui, GPT4All, or a model you serve yourself - anything that speaks the OpenAI API. SDC looks for them on this computer by itself; another computer on your network can be added by its address. No key needed.',
+      scan: 'Look again',
+      scanning: 'Looking on this computer…',
+      noneFound: 'No other local server is running on this computer right now. Start one (for example LM Studio → Developer → Start server), then press Look again - or add its address below.',
+      found: (label: string): string => `Found: ${label}`,
+      connect: 'Connect',
+      added: (label: string, models: number): string => `${label} connected · ${models} model${models === 1 ? '' : 's'} in the model menu`,
+      remove: (name: string): string => `Disconnect ${name}`,
+      addTitle: 'Add a server by its address',
+      keyPlaceholder: 'Key (optional)',
+      add: 'Add',
+      addHelp: 'This computer (http://127.0.0.1:PORT/v1) or another one on your network (http://192.168.x.x:PORT/v1). An https:// address works anywhere.',
+    },
     navTitle: 'Providers',
     navConfigTitle: 'Configuration',
     /** `[id, label, icon]`, in the prototype's order. The icon is a Lucide component name. */
@@ -1081,7 +1097,7 @@ const english = {
       { id: 'all', label: 'All providers', icon: 'grid' },
       { id: 'subscriptions', label: 'Subscriptions', icon: 'crown' },
       { id: 'api-keys', label: 'API keys', icon: 'key' },
-      { id: 'local', label: 'Local (Ollama)', icon: 'hardDrive' },
+      { id: 'local', label: 'Local models', icon: 'hardDrive' },
       { id: 'custom', label: 'Custom endpoint', icon: 'plug' },
       { id: 'registry', label: 'Model registry', icon: 'list' },
       { id: 'doctor', label: 'Environment doctor', icon: 'stethoscope' },

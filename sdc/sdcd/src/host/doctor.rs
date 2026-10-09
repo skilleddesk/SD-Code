@@ -38,7 +38,9 @@ const TOOLS: &[(&str, &str, &str)] = &[
 pub fn checks(store: &Store) -> Vec<Value> {
     let mut rows: Vec<Value> = TOOLS
         .iter()
-        .map(|(id, label, program)| match if *id == "ssh" { ssh_version() } else { version_of(program) } {
+        /* 0.22: Git is asked only when one that works is there - on a Mac without the Command Line Tools,
+           running /usr/bin/git opens Apple's installer window. */
+        .map(|(id, label, program)| match if *id == "ssh" { ssh_version() } else if *id == "git" && !crate::host::tools::has_working_git() { None } else { version_of(program) } {
             Some(version) => json!({ "id": id, "label": label, "state": "ok", "detail": version }),
             None => json!({
                 "id": id,

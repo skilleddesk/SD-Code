@@ -98,7 +98,7 @@ export function useJob(begin: JobStart, onDone?: (job: ToolJob) => void): JobVie
 }
 
 /** The provider cards say whether their CLI is installed: after an install they are asked again. */
-function refreshProviders(): void {
+export function refreshProviders(): void {
   void sdcpCall('provider.list', {}).then(
     ({ providers }) => useAppStore.setState((state) => withProviders(state, providers)),
     () => undefined,

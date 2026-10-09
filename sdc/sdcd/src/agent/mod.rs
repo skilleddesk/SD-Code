@@ -169,6 +169,8 @@ struct Target {
     effort: Option<String>,
     /// A local model's context, sent as `num_ctx` to Ollama's own endpoint - `None` for an API.
     local_context: Option<u64>,
+    /// A local OpenAI-compatible server (0.22): small window, results cut to fit it.
+    local_window: bool,
 }
 
 impl Target {
@@ -193,6 +195,7 @@ fn target(backend: Backend, prompt: &Prompt) -> Result<Target, String> {
                 headers: vec![("content-type".to_string(), "application/json".to_string())],
                 dialect: Dialect::OpenAi,
                 local_context: Some(crate::engines::ollama::context_for(&model)),
+                local_window: true,
                 model,
                 price: None,
                 thinking: false,
@@ -203,10 +206,12 @@ fn target(backend: Backend, prompt: &Prompt) -> Result<Target, String> {
             let endpoint = crate::engines::native_api::endpoint_for(&prompt.model, prompt.provider.as_deref());
             let key = crate::auth::keychain::get(&endpoint.key_ref).unwrap_or_default();
 
-            if key.is_empty() {
+            /* A local model server (0.22) has no key unless it was started with one. */
+            if key.is_empty() && !crate::providers::local::is_local(&endpoint.provider) {
                 return Err(crate::auth::keychain::missing_key_reason(&endpoint.key_ref, &endpoint.provider));
             }
 
+            let local_window = crate::providers::local::is_local(&endpoint.provider);
             let model = crate::engines::native_api::api_model(&prompt.model).to_string();
             let mut headers = vec![
                 ("content-type".to_string(), "application/json".to_string()),
@@ -217,7 +222,10 @@ fn target(backend: Backend, prompt: &Prompt) -> Result<Target, String> {
                 headers.push(("anthropic-version".to_string(), "2023-06-01".to_string()));
                 Dialect::Anthropic
             } else {
-                headers.push(("authorization".to_string(), format!("Bearer {key}")));
+                if !key.is_empty() {
+                    headers.push(("authorization".to_string(), format!("Bearer {key}")));
+                }
+
                 Dialect::OpenAi
             };
 
@@ -229,6 +237,7 @@ fn target(backend: Backend, prompt: &Prompt) -> Result<Target, String> {
                 price: price_of(&endpoint.provider, &model),
                 effort: prompt.effort.clone(),
                 local_context: None,
+                local_window,
                 model,
             })
         }
@@ -678,7 +687,7 @@ fn sub_agent(
         ran_at: None,
         research: research_session,
         local: backend == Backend::Ollama,
-        result_cap: result_cap(backend, window),
+        result_cap: if target.local_window { (window as usize).clamp(2_000, tools::RESULT_CAP) } else { result_cap(backend, window) },
     };
     let mut messages = vec![dialect::user_message(job)];
     let (mut input, mut output) = (0u64, 0u64);
@@ -1084,7 +1093,7 @@ fn drive(
         ran_at: None,
         research: research_session.clone(),
         local: backend == Backend::Ollama,
-        result_cap: result_cap(backend, window),
+        result_cap: if target.local_window { (window as usize).clamp(2_000, tools::RESULT_CAP) } else { result_cap(backend, window) },
     };
     let (mut input_tokens, mut output_tokens) = (0u64, 0u64);
     /* Of the input, what the provider read back from its prompt cache (0.21) - said in the footer. */
@@ -1824,6 +1833,75 @@ mod end_to_end {
             + "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":20}}\n\ndata: [DONE]\n\n"
     }
 
+    /// 0.22, end to end through the real loop: a file read twice, unchanged, reaches the model in full once and as
+    /// one line the second time; after an edit, the next read is the whole new file again.
+    #[test]
+    fn an_unchanged_re_read_reaches_the_model_as_one_line_and_a_read_after_an_edit_in_full() {
+        let root = std::env::temp_dir().join(format!("sdc-agent-reread-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let original = (1..=80).map(|line| format!("line {line}: the quick brown fox jumps over the lazy dog\n")).collect::<String>();
+        std::fs::write(root.join("notes.txt"), &original).unwrap();
+
+        let (url, server) = provider(vec![
+            call("r1", "read_file", serde_json::json!({ "path": "notes.txt" })),
+            call("r2", "read_file", serde_json::json!({ "path": "notes.txt" })),
+            call("e1", "edit_file", serde_json::json!({ "path": "notes.txt", "old_text": "line 42: the quick", "new_text": "line 42: the QUICK" })),
+            call("r3", "read_file", serde_json::json!({ "path": "notes.txt" })),
+            chunk(serde_json::json!({ "content": "Done." })) + "data: [DONE]\n\n",
+        ]);
+        let target = Target {
+            url,
+            headers: vec![("content-type".to_string(), "application/json".to_string())],
+            dialect: Dialect::OpenAi,
+            model: "local-test".to_string(),
+            price: None,
+            thinking: false,
+            effort: None,
+            local_context: None,
+            local_window: false,
+        };
+        let workspace = Workspace::new(root.to_str().unwrap(), None);
+        let prompt = Prompt {
+            session_id: "s1".into(),
+            turn_id: "turn-agent-reread".into(),
+            text: "read notes.txt twice, then change line 42".into(),
+            model: "local-test".into(),
+            provider: None,
+            history: Vec::new(),
+            project_root: Some(root.to_str().unwrap().to_string()),
+            remote: None,
+            autonomy: Default::default(),
+            resume: None,
+            images: Vec::new(),
+            effort: None,
+        };
+        let recorder = crate::engines::Recorder::new();
+
+        drive(Backend::Api, &target, &workspace, Options { autonomy: Autonomy::Auto, max_steps: 8, auto_check: false, research: None }, None, &Default::default(), &prompt, &recorder.sink());
+
+        let bodies = server.join().unwrap();
+        let result = |id: &str| -> String {
+            bodies
+                .last()
+                .unwrap()["messages"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|message| message["role"] == "tool" && message["tool_call_id"] == id)
+                .and_then(|message| message["content"].as_str())
+                .unwrap_or_default()
+                .to_string()
+        };
+
+        assert!(result("r1").contains("line 80: the quick brown fox"), "the first read is the whole file");
+        assert_eq!(result("r2"), UNCHANGED_READ, "the unchanged re-read is one line");
+        assert!(result("r3").contains("line 42: the QUICK"), "after the edit the whole new file comes back");
+        assert!(result("r1").len() > 20 * result("r2").len(), "and the saving is real: {} chars instead of {}", result("r2").len(), result("r1").len());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     /// 0.20: "read a, read b, write c, read c" in one reply - the two reads run together, then the write, then
     /// the read, in the order the model wrote them, so the last read sees what the write made.
     #[test]
@@ -1852,6 +1930,7 @@ mod end_to_end {
             thinking: false,
             effort: None,
             local_context: None,
+            local_window: false,
         };
         let workspace = Workspace::new(root.to_str().unwrap(), None);
         let prompt = Prompt {
@@ -1909,6 +1988,7 @@ mod end_to_end {
                 thinking: false,
                 effort: None,
                 local_context: None,
+                local_window: false,
             };
             let prompt = Prompt {
                 session_id: "s1".into(),
@@ -1965,6 +2045,7 @@ mod end_to_end {
             thinking: false,
             effort: None,
             local_context: None,
+            local_window: false,
         };
         let workspace = Workspace::new(root.to_str().unwrap(), None);
         let prompt = Prompt {
@@ -2048,6 +2129,7 @@ mod end_to_end {
             thinking: false,
             effort: None,
             local_context: None,
+            local_window: false,
         };
         let workspace = Workspace::new(root.to_str().unwrap(), None);
         let prompt = Prompt {
@@ -2097,7 +2179,7 @@ mod end_to_end {
             blocked(),
             ok(chunk(serde_json::json!({ "content": "Done." })) + "data: [DONE]\n\n"),
         ]);
-        let target = Target { url, headers: Vec::new(), dialect: Dialect::OpenAi, model: "local-test".to_string(), price: None, thinking: false, effort: None, local_context: None };
+        let target = Target { url, headers: Vec::new(), dialect: Dialect::OpenAi, model: "local-test".to_string(), price: None, thinking: false, effort: None, local_context: None, local_window: false };
         let workspace = Workspace::new(root.to_str().unwrap(), None);
         let prompt = Prompt {
             session_id: "s1".into(),
@@ -2142,7 +2224,7 @@ mod end_to_end {
         std::fs::create_dir_all(&root).unwrap();
 
         let (url, server) = raw_provider(vec![blocked(); FILTER_RETRIES + 1]);
-        let target = Target { url, headers: Vec::new(), dialect: Dialect::OpenAi, model: "local-test".to_string(), price: None, thinking: false, effort: None, local_context: None };
+        let target = Target { url, headers: Vec::new(), dialect: Dialect::OpenAi, model: "local-test".to_string(), price: None, thinking: false, effort: None, local_context: None, local_window: false };
         let workspace = Workspace::new(root.to_str().unwrap(), None);
         let prompt = Prompt {
             session_id: "s1".into(),
@@ -2197,7 +2279,7 @@ mod end_to_end {
             ] }))
             + "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n";
         let (url, server) = provider(vec![two_reads, chunk(serde_json::json!({ "content": "Done." })) + "data: [DONE]\n\n"]);
-        let target = Target { url, headers: Vec::new(), dialect: Dialect::OpenAi, model: "local-test".to_string(), price: None, thinking: false, effort: None, local_context: None };
+        let target = Target { url, headers: Vec::new(), dialect: Dialect::OpenAi, model: "local-test".to_string(), price: None, thinking: false, effort: None, local_context: None, local_window: false };
         let workspace = Workspace::new(root.to_str().unwrap(), None);
         let prompt = Prompt {
             session_id: "s1".into(),
@@ -2293,6 +2375,7 @@ mod end_to_end {
             thinking: false,
             effort: None,
             local_context: Some(8_192),
+            local_window: false,
         };
         let workspace = Workspace::new(root.to_str().unwrap(), None);
         let prompt = prompt_in(&root, "turn-agent-ollama", "what does hello.txt say?", "qwen3.5:9b");
@@ -2383,6 +2466,7 @@ mod end_to_end {
             thinking: false,
             effort: None,
             local_context: None,
+            local_window: false,
         };
         let workspace = Workspace::new(root.to_str().unwrap(), None);
         let prompt = prompt_in(&root, "turn-agent-research", "what is new in X?", "api-test");

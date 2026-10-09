@@ -22,6 +22,11 @@ use crate::sdcp::envelope::ErrorObject;
 /// the project never grows a `.git` of its own. The user's own repository - if there is one - is
 /// neither read nor written.
 pub fn run(work_tree: &Path, args: &[&str]) -> Result<String, ErrorObject> {
+    /* 0.22: SDC installs Git itself on first start; until it is there, say so rather than run a stub. */
+    if !crate::host::tools::has_working_git() {
+        return Err(ErrorObject::internal("Git is still being installed by SDC (Settings → Environment shows its progress); checkpoints start working the moment it is done."));
+    }
+
     let shadow = ensure_repository(work_tree)?;
     let git_dir = shadow.join(".git");
 

@@ -70,6 +70,8 @@ pub fn blocked() -> Vec<ProviderBlock> {
         }
     }
 
+    /* 0.22: the local model servers the person connected, each with its live list. */
+    blocks.extend(crate::providers::local::blocks());
     blocks
 }
 
@@ -208,6 +210,20 @@ pub fn live(provider: &ProviderBlock) -> Result<Vec<Value>, String> {
     }
 
     let key = crate::auth::keychain::get(&crate::providers::key_ref(&provider.id));
+
+    /* A local server: its own probe (any host name, an optional key, the context it runs with). */
+    if crate::providers::local::is_local(&provider.id) {
+        let base = provider.live.trim_end_matches("/models");
+
+        return Ok(crate::providers::local::probe(base, key.as_deref(), std::time::Duration::from_secs(4))?
+            .into_iter()
+            .map(|mut row| {
+                row["providerId"] = json!(provider.id);
+                row
+            })
+            .collect());
+    }
+
     let body = get_json(&provider.live, &provider.id, key.as_deref())?;
 
     /* Two shapes cover every provider we ship: OpenAI's `{data:[{id}]}` and Ollama's `{models:[{name}]}`. */

@@ -1,0 +1,158 @@
+name: window check
+
+# The frameless window (0.21) on the three platforms, in the real app - added in 0.22 because nobody building SDC
+# has a Mac or a Linux desktop. Each runner builds the app, starts it with SDC_WINDOW_SELFTEST and reads the report
+# the app writes after driving its own window (frame off, the three buttons there, maximise / restore / resize /
+# minimise working). On Linux the title bar is also driven with a real mouse (xdotool under Xvfb with openbox).
+# Screenshots and reports are uploaded as artifacts.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  window:
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [ubuntu-22.04, macos-latest, windows-latest]
+    runs-on: ${{ matrix.platform }}
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: sdc/pnpm-lock.yaml
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            sdc/sdcd
+            sdc/app/src-tauri
+          key: window-check
+
+      - name: Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xvfb openbox xdotool x11-utils imagemagick
+
+      - name: Install the workspace
+        working-directory: sdc
+        run: pnpm install --frozen-lockfile
+
+      - name: Build the page
+        working-directory: sdc/app
+        run: pnpm build
+
+      - name: Build the daemon
+        working-directory: sdc/sdcd
+        run: cargo build
+
+      - name: Build the app (with the page inside)
+        working-directory: sdc/app/src-tauri
+        run: cargo build --features tauri/custom-protocol
+
+      - name: Run it - Linux, real mouse then self-test
+        if: runner.os == 'Linux'
+        env:
+          SDC_SDCD: ${{ github.workspace }}/sdc/sdcd/target/debug/sdcd
+          WEBKIT_DISABLE_DMABUF_RENDERER: '1'
+          WEBKIT_DISABLE_COMPOSITING_MODE: '1'
+        run: |
+          chmod +x sdc/scripts/ci/window-check-linux.sh
+          xvfb-run -a -s "-screen 0 1920x1080x24" sdc/scripts/ci/window-check-linux.sh "$PWD/out" "$PWD/sdc/app/src-tauri/target/debug/sdc"
+          status=$?
+          cat out/real-input.txt || true
+          exit $status
+
+      - name: Run it - macOS, self-test
+        if: runner.os == 'macOS'
+        env:
+          SDC_SDCD: ${{ github.workspace }}/sdc/sdcd/target/debug/sdcd
+        run: |
+          mkdir -p out
+          SDC_WINDOW_SELFTEST="$PWD/out/report.json" sdc/app/src-tauri/target/debug/sdc > out/app.log 2>&1 &
+          app=$!
+          sleep 9
+          screencapture -x out/1-start.png || true
+          sleep 9
+          screencapture -x out/2-during.png || true
+          wait $app || true
+
+      - name: Run it - Windows, self-test
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          SDC_SDCD: ${{ github.workspace }}\sdc\sdcd\target\debug\sdcd.exe
+        run: |
+          New-Item -ItemType Directory -Force out | Out-Null
+          $env:SDC_WINDOW_SELFTEST = "$PWD\out\report.json"
+          $app = Start-Process -FilePath "sdc\app\src-tauri\target\debug\sdc.exe" -PassThru
+          Start-Sleep 9
+          Add-Type -AssemblyName System.Drawing, System.Windows.Forms
+          $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+          $bmp = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
+          [System.Drawing.Graphics]::FromImage($bmp).CopyFromScreen(0, 0, 0, 0, $bmp.Size)
+          $bmp.Save("$PWD\out\1-start.png")
+          $app.WaitForExit(120000) | Out-Null
+
+      - name: The report says every check passed
+        shell: bash
+        run: |
+          cat out/report.json
+          node -e "const r=require('./out/report.json'); for (const c of r.checks) console.log((c.ok?'PASS':'FAIL')+'  '+c.name); process.exit(r.ok?0:1)"
+
+      - name: Upload screenshots and reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: window-${{ matrix.platform }}
+          path: out/
+
+  # 0.22: the one-click installs, for real, where they differ from Windows - Git through conda-forge (no Apple
+  # installer window, no Linux password prompt), ripgrep, Node.js and the agent's browser, each run after install.
+  tools:
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [ubuntu-22.04, macos-latest]
+    runs-on: ${{ matrix.platform }}
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: sdc/sdcd
+          key: tools-live
+
+      - name: Install git, ripgrep, Node.js and the browser into a fresh folder, and run each
+        working-directory: sdc/sdcd
+        env:
+          SDC_LIVE_TOOLS: git,ripgrep,node,browser
+        run: cargo test --lib live_install -- --ignored --nocapture
