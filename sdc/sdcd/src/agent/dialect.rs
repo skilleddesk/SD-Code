@@ -45,6 +45,9 @@ pub struct Reply {
     pub stop: String,
     pub input_tokens: u64,
     pub output_tokens: u64,
+    /// Of `input_tokens`, how many the provider read back from its prompt cache (0.21) - Anthropic's
+    /// `cache_read_input_tokens`, OpenAI's and DashScope's `cached_tokens`, DeepSeek's `prompt_cache_hit_tokens`.
+    pub cached_tokens: u64,
 }
 
 /// A tool as the model is told about it.
@@ -104,6 +107,21 @@ pub fn body(
             })
         }
     }
+}
+
+/// An OpenAI-dialect body with the system message marked for an explicit prompt cache (0.21, DashScope):
+/// `{"role":"system","content":[{"type":"text","text":…,"cache_control":{"type":"ephemeral"}}]}`. The
+/// tools come before it in the prompt, so they are inside the cached prefix too.
+pub fn mark_system_cache(body: &Value) -> Value {
+    let mut marked = body.clone();
+
+    if let Some(first) = marked["messages"].get_mut(0).filter(|message| message["role"] == "system") {
+        if let Some(text) = first["content"].as_str().map(str::to_string) {
+            first["content"] = json!([{ "type": "text", "text": text, "cache_control": { "type": "ephemeral" } }]);
+        }
+    }
+
+    marked
 }
 
 /// The conversation with a cache breakpoint on its last block (0.20).
@@ -404,6 +422,7 @@ struct AnthropicState {
     stop: String,
     input_tokens: u64,
     output_tokens: u64,
+    cached_tokens: u64,
     ended: bool,
     /// How often a tool call still arriving is reported (0.14.2).
     pace: crate::engines::draft::Pace,
@@ -419,6 +438,7 @@ impl AnthropicState {
                     .iter()
                     .map(|key| usage[*key].as_u64().unwrap_or(0))
                     .sum();
+                self.cached_tokens = usage["cache_read_input_tokens"].as_u64().unwrap_or(0);
             }
             "content_block_start" => {
                 let index = value["index"].as_u64().unwrap_or(self.blocks.len() as u64) as usize;
@@ -539,6 +559,7 @@ impl AnthropicState {
             stop: self.stop,
             input_tokens: self.input_tokens,
             output_tokens: self.output_tokens,
+            cached_tokens: self.cached_tokens,
         })
     }
 }
@@ -551,6 +572,7 @@ struct OpenAiState {
     stop: String,
     input_tokens: u64,
     output_tokens: u64,
+    cached_tokens: u64,
     spoke: bool,
     /// How often a tool call still arriving is reported (0.14.2).
     pace: crate::engines::draft::Pace,
@@ -561,6 +583,11 @@ impl OpenAiState {
         if let Some(usage) = value.get("usage").filter(|usage| usage.is_object()) {
             self.input_tokens = usage["prompt_tokens"].as_u64().unwrap_or(self.input_tokens);
             self.output_tokens = usage["completion_tokens"].as_u64().unwrap_or(self.output_tokens);
+            self.cached_tokens = usage
+                .pointer("/prompt_tokens_details/cached_tokens")
+                .or_else(|| usage.get("prompt_cache_hit_tokens"))
+                .and_then(Value::as_u64)
+                .unwrap_or(self.cached_tokens);
         }
 
         let Some(choice) = value.pointer("/choices/0") else {
@@ -687,6 +714,7 @@ impl OpenAiState {
             stop: self.stop,
             input_tokens: self.input_tokens,
             output_tokens: self.output_tokens,
+            cached_tokens: self.cached_tokens,
         })
     }
 }
@@ -725,6 +753,17 @@ mod tests {
         /* Nothing that cannot be cached is marked. */
         assert!(body_of(vec![json!({ "role": "user", "content": [{ "type": "text", "text": "" }] })])["messages"][0]["content"][0].get("cache_control").is_none());
         assert!(body_of(vec![json!({ "role": "user", "content": "" })])["messages"][0]["content"].is_string());
+    }
+
+    #[test]
+    fn dashscope_gets_its_system_prompt_marked_for_the_cache_and_nothing_else_changes() {
+        let plain = body(Dialect::OpenAi, "qwen3-max", "You are SDC.", &[user_message("hi")], &[], false);
+        let marked = mark_system_cache(&plain);
+
+        assert_eq!(marked["messages"][0]["content"][0]["text"], "You are SDC.");
+        assert_eq!(marked["messages"][0]["content"][0]["cache_control"]["type"], "ephemeral");
+        assert_eq!(marked["messages"][1], plain["messages"][1]);
+        assert!(plain["messages"][0]["content"].is_string(), "the plain body is untouched");
     }
 
     fn body_of(messages: Vec<Value>) -> Value {

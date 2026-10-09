@@ -42,6 +42,7 @@ const english = {
     brandInitial: 'S',
     brandText: 'SDC',
     brandTitle: 'About SDC',
+    window: { group: 'Window', minimize: 'Minimize', maximize: 'Maximize', restore: 'Restore down', close: 'Close' },
     activeHostTitle: 'Active host',
     palette: {
       label: 'Search or jump to…',
@@ -950,7 +951,7 @@ const english = {
      */
     recipe: {
       missing: (program: string): string => `\`${program}\` is not installed`,
-      missingBody: 'Install it first - these are the words to run:',
+      missingBody: 'SDC installs it for you - one click, no terminal (Node.js comes with it when this computer has none).',
       present: (program: string): string => `\`${program}\` is installed`,
       copy: 'Copy',
       recheck: 'Check again',
@@ -1018,7 +1019,7 @@ const english = {
     failed: 'The sign-in stopped before it finished.',
     outputTitle: 'The CLI’s own output',
     outputEmpty: 'Nothing yet.',
-    installFirst: 'That CLI is not installed yet. Settings → Environment has the row with the install step.',
+    installFirst: 'That CLI is not installed yet. Its Connect card (or Settings → Environment) installs it in one click.',
     loginFailed: 'Could not start the sign-in',
     codeFailed: 'The CLI did not take that code',
     apiTitle: 'API key and model',
@@ -1059,6 +1060,19 @@ const english = {
    * the model registry and the environment doctor. Every word here is the prototype's, because the
    * prototype is the UI source of truth (spec section 7).
    */
+  /** 0.21: what SDC installs for itself - a button and a progress bar instead of a command to type. */
+  tools: {
+    install: (label: string): string => `Install ${label}`,
+    retry: 'Try again',
+    done: 'Installed',
+    installed: (label: string): string => `${label} is installed and ready`,
+    pullModel: (model: string): string => `Download ${model}`,
+    portFreed: (count: number): string => (count === 0 ? 'Nothing was listening on that port any more' : `Stopped ${count} process${count === 1 ? '' : 'es'} - the port is free`),
+    portFailed: 'The port could not be freed',
+    /** Ollama's own download: about 1.5 GB on Windows and Linux (the GPU libraries), 30 MB on a Mac. */
+    ollamaSize: '~1.5 GB',
+  },
+
   hub: {
     navTitle: 'Providers',
     navConfigTitle: 'Configuration',
@@ -1133,7 +1147,7 @@ const english = {
     daemonRow: 'Ollama daemon',
     installedRow: 'Installed models',
     daemonDetail: 'running · http://localhost:11434',
-    daemonDown: 'not running · start it with `ollama serve`',
+    daemonDown: 'not installed · Settings → Environment installs it in one click',
     /** Shown in the Local flow before any `host.doctor` run: the tab has nothing real to print yet. */
     localEmpty:
       'Nothing has been probed on this machine yet. Run the doctor (Settings → Environment) and the checks it returns appear here.',
@@ -1165,7 +1179,7 @@ const english = {
      */
     doctorFixManual: (fix: string): string =>
       fix === 'Install'
-        ? 'Install it in your own terminal — SDC does not run installers for you'
+        ? 'Install it from Settings → Environment - SDC installs it in one click'
         : fix === 'Kill process'
           ? 'Nothing is holding that port in this daemon; find the process in your own terminal'
           : `${fix}: do it in your own terminal — SDC has no action for that yet`,

@@ -3426,6 +3426,7 @@ async fn run_turn(
      */
     let low_bandwidth = matches!(state.store.setting("net.lowBandwidth").ok().flatten().as_deref(), Some("true" | "on"));
     let mut pending = Pending { window: if low_bandwidth { LOW_BANDWIDTH_WINDOW } else { DELTA_WINDOW }, ..Pending::default() };
+    let mut first_thought = true;
 
     loop {
         let next = match pending.since {
@@ -3467,21 +3468,27 @@ async fn run_turn(
 
         match event {
             crate::engines::EngineEvent::Delta(delta) => {
+                /* 0.21: the first words of the answer go out the moment they land - gathering is for the
+                   flow that follows, not for the wait before anything shows. */
+                let first = answer.is_empty();
+
                 answer.push_str(&delta);
                 pending.answer.push_str(&delta);
                 pending.since.get_or_insert_with(std::time::Instant::now);
 
-                if pending.due() {
+                if first || pending.due() {
                     pending.flush(&*out, &plan.turn_id, &session, &turn);
                 }
             }
             /* A slow link keeps the answer and drops the running commentary. */
             crate::engines::EngineEvent::Thinking(_) if low_bandwidth => {}
             crate::engines::EngineEvent::Thinking(text) => {
+                let first = std::mem::replace(&mut first_thought, false);
+
                 pending.thinking.push_str(&text);
                 pending.since.get_or_insert_with(std::time::Instant::now);
 
-                if pending.due() {
+                if first || pending.due() {
                     pending.flush(&*out, &plan.turn_id, &session, &turn);
                 }
             }
@@ -4843,8 +4850,8 @@ mod tests {
 
         assert_eq!(
             notifier.kinds(),
-            vec!["TurnDelta", "TurnCompleted", "CostUpdated", "TrustScored", "SessionUpdated"],
-            "five deltas that never waited for the window should still land as a single push"
+            vec!["TurnDelta", "TurnDelta", "TurnCompleted", "CostUpdated", "TrustScored", "SessionUpdated"],
+            "the first delta goes out at once (0.21); the four after it, which never waited for the window, land as one push"
         );
         assert_eq!(notifier.streamed_text(), "Hello, world");
     }

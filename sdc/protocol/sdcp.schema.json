@@ -331,6 +331,13 @@
           "settings.get",
           "settings.set",
           "update.check",
+          "tool.list",
+          "tool.install",
+          "tool.status",
+          "ollama.start",
+          "ollama.pull",
+          "host.port.free",
+          "provider.warm",
           "crash.list",
           "crash.clear",
           "cli.selfcheck",
@@ -2092,6 +2099,81 @@
           "result": {
             "current": "string",
             "updateAvailable": "boolean"
+          }
+        },
+        "tool.list": {
+          "params": {},
+          "result": {
+            "tools": "array",
+            "root": "string"
+          }
+        },
+        "tool.install": {
+          "params": {
+            "id": "string"
+          },
+          "result": {
+            "id": "string",
+            "tool": "string",
+            "state": "string",
+            "step": "string",
+            "done": "number",
+            "total": "number?",
+            "log": "array",
+            "error": "string?"
+          }
+        },
+        "tool.status": {
+          "params": {
+            "jobId": "string"
+          },
+          "result": {
+            "id": "string",
+            "tool": "string",
+            "state": "string",
+            "step": "string",
+            "done": "number",
+            "total": "number?",
+            "log": "array",
+            "error": "string?"
+          }
+        },
+        "ollama.start": {
+          "params": {},
+          "result": {
+            "running": "boolean"
+          }
+        },
+        "ollama.pull": {
+          "params": {
+            "model": "string"
+          },
+          "result": {
+            "id": "string",
+            "tool": "string",
+            "state": "string",
+            "step": "string",
+            "done": "number",
+            "total": "number?",
+            "log": "array",
+            "error": "string?"
+          }
+        },
+        "host.port.free": {
+          "params": {
+            "port": "number"
+          },
+          "result": {
+            "stopped": "number"
+          }
+        },
+        "provider.warm": {
+          "params": {
+            "model": "string",
+            "provider": "string?"
+          },
+          "result": {
+            "warming": "boolean"
           }
         },
         "crash.list": {

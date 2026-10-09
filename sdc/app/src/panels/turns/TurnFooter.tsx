@@ -58,7 +58,7 @@ export function TurnFooter({ footer, verify = null }: TurnFooterProps) {
   const totals = [footer.summary, footer.detail].filter((part) => part.trim() !== '');
 
   return (
-    <div className="turn-footer mt-[6px] flex flex-wrap items-center gap-[12px] border-t border-border-subtle py-[11px] text-[12px] text-text-secondary">
+    <div className="turn-footer mt-[8px] flex flex-wrap items-center gap-[10px] border-t border-border-subtle py-[9px] text-[11.5px] tabular-nums text-text-muted">
       <div className="summary min-w-[180px] flex-1">
         {totals.length === 0 ? (
           <span className="text-text-muted">{strings.turns.footer.pending}</span>

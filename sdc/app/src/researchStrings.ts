@@ -24,7 +24,7 @@ export const researchStrings = {
       usd === null ? `final answer by ${model}` : `final answer by ${model} (about $${usd})`,
     context: (tokens: number): string => `context ${tokens.toLocaleString()} tokens`,
     keyMissing: (service: string): string => `${service} has no API key yet - DuckDuckGo will answer instead. Add the key in Settings → Research.`,
-    ollamaDown: 'Ollama is not running - start it with `ollama serve`, or pick another model.',
+    ollamaDown: 'Ollama is not installed on this computer - install it in one click from Settings → Environment, or pick another model.',
     start: 'Start research',
     cancel: 'Cancel',
   },
@@ -71,7 +71,7 @@ export const researchStrings = {
     localContextHint: 'What SDC asks Ollama to load for every local turn. More holds more pages but needs more graphics memory; 16384 suits most 8 GB cards.',
     ollama: (running: boolean, models: number): string =>
       running ? `Ollama is running · ${models} model${models === 1 ? '' : 's'} downloaded` : 'Ollama is not running on this machine',
-    pull: (model: string): string => `Not downloaded: run  ollama pull ${model}`,
+    pull: (model: string): string => `Not downloaded yet: ${model}`,
     saved: 'Saved',
     failed: 'Could not save it',
   },

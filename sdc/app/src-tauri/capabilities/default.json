@@ -1,7 +1,19 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "STEP 1 capability set for the SDC main window: Tauri core defaults, opening external links, native dialogs, and reading/writing clipboard text (the webview's own clipboard is blocked on macOS and Linux). Filesystem access is deliberately not granted yet - it is added together with explicit scopes.",
+  "description": "STEP 1 capability set for the SDC main window: Tauri core defaults, opening external links, native dialogs, and reading/writing clipboard text (the webview's own clipboard is blocked on macOS and Linux). 0.21: the window draws its own title bar on every platform, so the topbar may move, minimise, maximise and close it. Filesystem access is deliberately not granted yet - it is added together with explicit scopes.",
   "windows": ["main"],
-  "permissions": ["core:default", "shell:default", "dialog:default", "notification:default", "clipboard-manager:allow-read-text", "clipboard-manager:allow-write-text"]
+  "permissions": [
+    "core:default",
+    "core:window:allow-start-dragging",
+    "core:window:allow-internal-toggle-maximize",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-close",
+    "shell:default",
+    "dialog:default",
+    "notification:default",
+    "clipboard-manager:allow-read-text",
+    "clipboard-manager:allow-write-text"
+  ]
 }

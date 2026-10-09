@@ -67,7 +67,11 @@ pub fn explain_error(raw: &str, model: &str) -> String {
     let lowered = raw.to_lowercase();
 
     if lowered.contains("not found") && (lowered.contains("pull") || lowered.contains("model")) {
-        return format!("The local model `{model}` is not downloaded yet. Run `ollama pull {model}` in a terminal, then send the prompt again. (Ollama said: {raw})");
+        /* 0.21: the person picked this model and sent a prompt to it - SDC fetches it instead of asking them
+           to type `ollama pull`. */
+        crate::host::tools::pull_model(model);
+
+        return format!("The local model `{model}` was not downloaded yet, so SDC started downloading it (progress: Settings → Environment). Send the prompt again when it is ready. (Ollama said: {raw})");
     }
 
     let memory = ["out of memory", "cudamalloc", "cuda error", "insufficient memory", "requires more system memory", "resource exhausted", "not enough memory", "vram"];
@@ -109,7 +113,8 @@ fn call(path: &str, body: Option<&str>) -> Result<String, String> {
 
 /// True when the daemon answers `GET /api/tags` - the Local flow's first doctor row.
 pub fn daemon_running() -> bool {
-    call("/api/tags", None).is_ok()
+    /* 0.21: an installed Ollama that is not running is started here, so nobody has to type `ollama serve`. */
+    call("/api/tags", None).is_ok() || (crate::host::tools::ensure_ollama() && call("/api/tags", None).is_ok())
 }
 
 /// The sentence the Local flow shows when nothing answers on the port.
@@ -117,7 +122,11 @@ pub fn daemon_running() -> bool {
 /// It used to be printed for *every* failure, which was right about the common case (no daemon) and
 /// wrong about the rest (a port that answered with a 500). It now belongs to the failure it describes.
 fn not_running() -> String {
-    format!("Ollama is not running. Start it with `ollama serve` (expected at http://{ENDPOINT}).")
+    if crate::host::program::resolve("ollama").is_none() {
+        return "Ollama is not installed. Install it in one click: Settings → Environment → Ollama → Install.".to_string();
+    }
+
+    format!("Ollama is installed but would not start (expected at http://{ENDPOINT}). Restart SDC, or reinstall it from Settings → Environment.")
 }
 
 /// `POST /api/chat`, with the NDJSON body pushed line by line as it arrives.

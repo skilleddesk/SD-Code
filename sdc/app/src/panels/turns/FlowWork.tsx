@@ -89,7 +89,8 @@ export function FlowWork({ turn, sessionId, latest = true }: { turn: Turn; sessi
         onClick={() => setChosen(!open)}
       >
         <ChevronRight size={13} aria-hidden="true" className={'shrink-0 text-text-muted transition-transform duration-200 ' + (open ? 'rotate-90' : '')} />
-        <span className={'min-w-0 truncate font-medium ' + (turn.running ? 'shimmer-text' : 'text-text-secondary')}>
+        {turn.running ? null : <span className="flow-star shrink-0" aria-hidden="true">✻</span>}
+        <span className={'min-w-0 truncate font-medium ' + (turn.running ? 'shimmer-text' : 'text-text-muted')}>
           {turn.running ? strings.turns.flow.working(work.length) : strings.turns.flow.worked(strings.turns.thinking.seconds(total), work.length)}
         </span>
         {change.files > 0 ? (
@@ -108,10 +109,14 @@ export function FlowWork({ turn, sessionId, latest = true }: { turn: Turn; sessi
         </span>
       ) : null}
       {tools > 0 ? <span className="hidden shrink-0 font-mono text-[10.5px] text-text-muted md:inline">{strings.turns.stats.tools(tools)}</span> : null}
-      <span className="shrink-0 font-mono text-[10.5px] tabular-nums text-text-muted">{strings.turns.thinking.seconds(total)}</span>
+      {/* 0.21: where the time went is a small gauge on this line (details on hover), not a full-width bar. */}
+      <span className="hidden sm:inline-flex">
+        <TimeRibbon segments={segments} totals={totals} total={total} running={turn.running} onPick={pick} compact />
+      </span>
+      {turn.running ? <span className="shrink-0 font-mono text-[10.5px] tabular-nums text-text-muted">{strings.turns.thinking.seconds(total)}</span> : null}
       <button
         type="button"
-        className="grid h-[22px] w-[22px] shrink-0 place-items-center rounded-sm text-text-muted hover:bg-bg-hover hover:text-text-primary"
+        className="grid h-[22px] w-[22px] shrink-0 place-items-center rounded-sm text-text-muted opacity-60 transition-opacity hover:bg-bg-hover hover:text-text-primary hover:opacity-100 group-hover:opacity-100"
         title={strings.turns.flow.copy}
         aria-label={strings.turns.flow.copy}
         onClick={copy}
@@ -125,7 +130,7 @@ export function FlowWork({ turn, sessionId, latest = true }: { turn: Turn; sessi
     <div className="flow-work mb-[10px]" data-flow>
       {/* While it runs, the summary rides on top - steps so far, pace, clock - so the newest step stays at the
           bottom where the eye already is. */}
-      {turn.running || !open ? <div className="mb-[10px] flex flex-col gap-[6px]">{summaryLine}<TimeRibbon segments={segments} totals={totals} total={total} running={turn.running} onPick={pick} compact /></div> : null}
+      {turn.running || !open ? <div className="mb-[10px]">{summaryLine}</div> : null}
 
       {open && work.length >= 6 ? (
         <div className="mb-[8px] ml-[2px] flex flex-wrap items-center gap-[3px]" role="group" aria-label={strings.turns.flow.filter}>
@@ -170,13 +175,9 @@ export function FlowWork({ turn, sessionId, latest = true }: { turn: Turn; sessi
 
       {answerBlocks}
 
-      {/* Finished and open: where the time went, under everything it measured. */}
-      {!turn.running && open ? (
-        <div className="mt-[6px] flex flex-col gap-[6px] rounded-lg border border-border-subtle bg-bg-raised px-[12px] py-[8px]">
-          {summaryLine}
-          <TimeRibbon segments={segments} totals={totals} total={total} running={false} onPick={pick} />
-        </div>
-      ) : null}
+      {/* Finished and open: one quiet line under everything it measured (0.21 - it was a boxed card with a
+          full-width bar and a legend, which read louder than the answer above it). */}
+      {!turn.running && open ? <div className="flow-done mt-[8px]">{summaryLine}</div> : null}
     </div>
   );
 }

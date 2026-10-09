@@ -222,7 +222,7 @@ pub fn test(id: &str, key: Option<&str>) -> Value {
             } else {
                 String::new()
             },
-            "error": if running { Value::Null } else { json!("Ollama is not running · start it with `ollama serve`") },
+            "error": if running { Value::Null } else if crate::host::program::resolve("ollama").is_some() { json!("Ollama is installed but would not start") } else { json!("Ollama is not installed · Settings → Environment → Ollama → Install") },
         });
     }
 
@@ -461,7 +461,7 @@ fn honest_detail(id: &str, kind: &str, fallback: &str) -> String {
             recipe.program
         ),
         Some(recipe) => format!(
-            "`{}` is not installed or not on PATH · install it, then run the environment doctor",
+            "`{}` is not installed · Connect installs it in one click",
             recipe.program
         ),
         None => fallback.to_string(),
@@ -481,6 +481,22 @@ const ALIBABA: &[(&str, &str)] = &[
     ("qwen", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
     ("qwen-coding", "https://coding.dashscope.aliyuncs.com/v1"),
 ];
+
+/// Which of the places that accepted a key to keep (0.21): a URL the person set on the card always (it is
+/// index 0 when `has_override`); otherwise, on the card of the first acceptance, the region that answered
+/// fastest - a key that works in Singapore and in Virginia is used from the nearer one. `accepted` is
+/// `(index into candidates, time it took)`.
+pub fn fastest_accepted(candidates: &[(String, String)], accepted: &[(usize, std::time::Duration)], has_override: bool) -> Option<usize> {
+    let (first, _) = *accepted.first()?;
+
+    if has_override && first == 0 {
+        return Some(0);
+    }
+
+    let card = &candidates[first].0;
+
+    accepted.iter().filter(|(index, _)| &candidates[*index].0 == card).min_by_key(|(_, took)| *took).map(|(index, _)| *index)
+}
 
 /// Whether a card is one of Alibaba's two, whose keys [`place_key`] sorts between them.
 pub fn is_alibaba(id: &str) -> bool {
@@ -566,27 +582,42 @@ pub fn place_key(id: &str, key: &str, url: Option<&str>) -> Placement {
     let mut unjudged = false;
     /* All asked at once - one after another took 13.6 s measured, most of it Beijing - and the answers
        read in the order above, so the card the key was pasted on still wins a tie. */
-    let answers: Vec<Option<Result<(), String>>> = std::thread::scope(|scope| {
+    let has_override = crate::providers::models::endpoint_overrides().contains_key(id);
+    /* 0.21: each answer is timed - the round trip of a key check is the round trip every turn will pay. */
+    let answers: Vec<(Option<Result<(), String>>, std::time::Duration)> = std::thread::scope(|scope| {
         let asking: Vec<_> = candidates
             .iter()
             .map(|(card, base)| {
                 let ask = &ask;
 
-                scope.spawn(move || ask(card, Some(base)))
+                scope.spawn(move || {
+                    let started = std::time::Instant::now();
+
+                    (ask(card, Some(base)), started.elapsed())
+                })
             })
             .collect();
 
-        asking.into_iter().map(|handle| handle.join().unwrap_or(None)).collect()
+        asking.into_iter().map(|handle| handle.join().unwrap_or((None, std::time::Duration::MAX))).collect()
     });
+    let accepted: Vec<(usize, std::time::Duration)> = answers
+        .iter()
+        .enumerate()
+        .filter(|(_, (answer, _))| matches!(answer, Some(Ok(()))))
+        .map(|(index, (_, took))| (index, *took))
+        .collect();
 
-    for ((card, base), answer) in candidates.into_iter().zip(answers) {
+    if let Some(chosen) = fastest_accepted(&candidates, &accepted, has_override) {
+        let (card, base) = candidates[chosen].clone();
+        let built_in = ALIBABA.iter().find(|(owner, _)| *owner == card).map(|(_, url)| *url);
+        let base = if built_in == Some(base.as_str()) { Base::BuiltIn } else { Base::At(base) };
+
+        return Placement::Home { id: card, base };
+    }
+
+    for answer in answers.into_iter().map(|(answer, _)| answer) {
         match answer {
-            Some(Ok(())) => {
-                let built_in = ALIBABA.iter().find(|(owner, _)| *owner == card).map(|(_, url)| *url);
-                let base = if built_in == Some(base.as_str()) { Base::BuiltIn } else { Base::At(base) };
-
-                return Placement::Home { id: card, base };
-            }
+            Some(Ok(())) => {}
             Some(Err(reason)) => {
                 first_rejection.get_or_insert(reason);
             }
@@ -748,12 +779,32 @@ pub fn local_doctor() -> Value {
         "daemon": running,
         "endpoint": format!("http://{}", crate::engines::ollama::ENDPOINT),
         "models": models,
-        "detail": if running { "running" } else { "not running · start it with `ollama serve`" },
+        "detail": if running { "running" } else if crate::host::program::resolve("ollama").is_some() { "installed · would not start" } else { "not installed · Settings → Environment → Install" },
+        "installed": crate::host::program::resolve("ollama").is_some(),
     })
 }
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_key_good_in_two_regions_is_used_from_the_faster_one() {
+        let ms = std::time::Duration::from_millis;
+        let candidates: Vec<(String, String)> = [
+            ("qwen", "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"),
+            ("qwen-coding", "https://coding-intl.dashscope.aliyuncs.com/v1"),
+            ("qwen", "https://dashscope-us.aliyuncs.com/compatible-mode/v1"),
+        ]
+        .iter()
+        .map(|(card, url)| (card.to_string(), url.to_string()))
+        .collect();
+
+        assert_eq!(fastest_accepted(&candidates, &[(0, ms(900)), (2, ms(300))], false), Some(2), "Virginia answered faster");
+        assert_eq!(fastest_accepted(&candidates, &[(0, ms(200)), (2, ms(300))], false), Some(0));
+        assert_eq!(fastest_accepted(&candidates, &[(0, ms(900)), (1, ms(100))], false), Some(0), "another card's region is not this key's home");
+        assert_eq!(fastest_accepted(&candidates, &[(0, ms(900)), (2, ms(100))], true), Some(0), "the URL the person set wins");
+        assert_eq!(fastest_accepted(&candidates, &[], false), None);
+    }
 
     /// 0.15.8: "Not logged in" is not a sign-in. The clean Mac probe showed Codex as connected.
     #[test]

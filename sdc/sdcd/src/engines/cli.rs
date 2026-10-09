@@ -919,7 +919,7 @@ pub fn explain_failure(
 /// The two-line explanation the error translator uses for a CLI that is not installed.
 pub fn missing_program_message(program: &str, error: &std::io::Error) -> String {
     if error.kind() == std::io::ErrorKind::NotFound {
-        format!("`{program}` is not installed or not on PATH. Install it, then run the environment doctor.")
+        format!("`{program}` is not installed. SDC installs it in one click: Settings → Environment → Install (or the provider's Connect card).")
     } else {
         format!("`{program}` could not be started: {error}")
     }

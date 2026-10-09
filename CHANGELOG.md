@@ -15,6 +15,50 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [0.21.0] — All in one: no terminal, the same window everywhere, a live stream that reads like Claude Code
+
+**Nothing to type in a terminal, on any platform.** SDC now installs what it needs itself, into its own folder
+(`%LOCALAPPDATA%\sdc-tools`, `~/Library/Application Support/sdc-tools`, `~/.local/share/sdc-tools`), without
+administrator rights: Node.js (LTS, from nodejs.org), the Claude Code / Codex / Gemini CLIs (npm, with that Node
+when the machine has none), Ollama (the official release archive), ripgrep and Git (PortableGit on Windows - git,
+bash and ssh; Apple's own Command Line Tools window on a Mac; the package manager behind the desktop's password
+prompt on Linux). One **Install** button with a progress bar in the first-run wizard, Settings → Environment and a
+provider's Connect card, where a command to copy used to be. Git on a Windows machine without it is fetched in the
+background on first start (checkpoints need it). The tool folders are on the daemon's `PATH` from the start, so an
+install is used at once; Claude Code is pointed at SDC's Git Bash when that is the only one.
+- Ollama is started by SDC whenever it is installed and not running (no `ollama serve`), and a model that is not
+  downloaded is fetched by SDC (no `ollama pull`) - the Research settings have a Download button.
+- The doctor's **Kill process** for a busy port 3000 now frees it.
+- Closing the Connect dialog with Esc over the Provider Hub left the CLI's sign-in running - holding Codex's port
+  1455, so the next sign-in failed. Any way of closing it now ends the sign-in.
+- Release notes say what to click on Linux instead of `chmod` / `sudo apt`.
+
+**One window on every platform.** The native title bar (a white strip over a dark app on Windows) is gone on
+Windows, macOS and Linux alike: the topbar is the caption - it drags the window, a double-click maximises - and it
+ends in the same minimise / maximise / close buttons. The duplicated navigation rail is gone too.
+
+**The live stream.** Code in an answer is coloured as it streams (the editor's own Lezer grammars, loaded on first
+use; TypeScript/JavaScript, Python, Rust, CSS, HTML, JSON, Markdown, and shell by hand). Markdown tables render.
+A half-written `**bold` or code span is drawn as it will be, not as raw markers, and the caret sits at the end of the
+last word - in the paragraph, list item or code line being written. "Worked for 13s" is one quiet line with a small
+time gauge (the breakdown on hover) instead of a boxed card with a full-width bar.
+
+**Fewer tokens, sooner answers.**
+- A file read again in the same turn, unchanged, is answered with one line instead of the whole file again.
+- A sub-agent (`task`, read-only exploration) uses the provider's own fast model (Haiku, Flash, mini…) when the
+  turn's model is a slower one, and falls back to the turn's model if the key is not allowed it.
+- Alibaba (DashScope) gets an explicit prompt-cache mark on the system prompt and tools, and the footer says how much
+  of the input any provider served from its cache (`· 12.1k cached`).
+- A key that works in more than one Alibaba region is used from the one that answered fastest.
+- The provider connection is opened while the person types, so the first answer after a pause does not wait for a
+  TCP + TLS handshake; a kept-alive connection the provider closed (`os error 10054`) is re-sent at once on a fresh
+  one instead of a "Reconnect" card and a two-second wait; the first streamed words skip the 50 ms batching.
+
+Verified live on Windows with a "fresh machine" daemon (no Node, CLIs, Ollama, ripgrep or Git on its `PATH`): Git
+arrived by itself, ripgrep, Node, Claude Code and Codex were installed from the wizard and the Connect card, Codex's
+sign-in started on its own, and a real turn with the Claude Code SDC had just installed streamed a table and
+highlighted TypeScript. The title bar's buttons, drag and double-click were driven with real mouse input.
+
 ## [0.20.0] — A faster agent: fewer steps, less waiting
 
 Where an agent turn's time goes is the model's calls (6–10 s each on the route measured) - tools took 1–2 s of a

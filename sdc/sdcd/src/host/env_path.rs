@@ -22,7 +22,19 @@ pub fn widen() {
     let current = std::env::var_os("PATH").unwrap_or_default();
     let home = dirs::home_dir();
     let shell = if cfg!(windows) { None } else { login_shell_path() };
-    let merged = merge(&current, shell.as_deref(), &extra_dirs(home.as_deref()));
+    let mut merged = merge(&current, shell.as_deref(), &extra_dirs(home.as_deref()));
+
+    /* 0.21: the tools SDC installs for itself - listed even before they exist, so an install made while the
+       daemon runs is found without a restart. Last, so a program the person installed themselves wins. */
+    let mut all: Vec<PathBuf> = std::env::split_paths(&merged).collect();
+
+    for dir in super::tools::path_dirs(&super::tools::root()) {
+        if !all.contains(&dir) {
+            all.push(dir);
+        }
+    }
+
+    merged = std::env::join_paths(all).unwrap_or(merged);
 
     if merged != current {
         std::env::set_var("PATH", merged);

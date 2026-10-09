@@ -58,6 +58,7 @@ fn reads(method: &str) -> bool {
             | "site.list" | "deploy.list" | "deploy.get" | "deploy.preview" | "health.history" | "approval.list" | "xray.get" | "proof.export"
             | "intent.detect" | "intent.stats" | "glossary.list" | "team.get" | "trust.score" | "voice.status" | "update.check" | "crash.list"
             | "cli.recipes" | "provider.registry.list" | "provider.local.doctor" | "timeline.branches" | "playbook.list" | "pty.output"
+            | "tool.list" | "tool.status" | "provider.warm"
     )
 }
 

@@ -1,6 +1,6 @@
 [package]
 name = "sdcd"
-version = "0.20.0"
+version = "0.21.0"
 description = "SDC host daemon - session, engine, file, PTY, git and event-log service (spec section 3.1)"
 authors = ["Skilleddesk"]
 edition = "2021"
@@ -44,6 +44,13 @@ getrandom = "0.4.3"
 tokio-tungstenite = { version = "0.30.0", features = ["rustls-tls-webpki-roots"] }
 futures-util = { version = "0.3.34", default-features = false, features = ["sink", "std"] }
 hpke = { version = "0.14.1", default-features = false, features = ["x25519", "aes", "getrandom", "alloc"] }
+# 0.21: SDC installs the tools it needs (Node, the coding CLIs, Ollama, ripgrep, Git) into its own folder, so a
+# fresh machine needs no terminal. The archives are opened here rather than by a system tar, which is missing
+# or too old for .zip / .tar.zst on some machines.
+zip = { version = "2", default-features = false, features = ["deflate"] }
+flate2 = "1"
+tar = "0.4"
+ruzstd = "0.8"
 
 [dev-dependencies]
 tempfile = "3"

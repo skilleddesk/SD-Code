@@ -6,6 +6,8 @@ import { useModelStore } from '../store/model';
 import { researchStatus, setResearchKey, setResearchSetting } from '../store/research';
 import { toast } from '../store/toast';
 import { BTN_SECONDARY, BTN_SM } from '../panels/ui/button';
+import { InstallButton } from '../panels/ui/InstallButton';
+import { installTool, pullModel } from '../store/tools';
 
 /** The local model the plan this tab was built for runs (docs/ANALYSIS-local-model-and-research.md). */
 const SUGGESTED_LOCAL_MODEL = 'qwen3.5:9b';
@@ -26,9 +28,11 @@ export function ResearchSettings() {
   const [key, setKey] = useState('');
   const catalog = useModelStore((state) => state.catalog);
 
-  useEffect(() => {
+  const reload = (): void => {
     void researchStatus().then(setStatus);
-  }, []);
+  };
+
+  useEffect(reload, []);
 
   if (status === null) {
     return (
@@ -213,8 +217,17 @@ export function ResearchSettings() {
       </label>
 
       <p className="mt-[12px] text-[12px] text-text-secondary">{words.ollama(status.ollamaRunning, status.ollamaModels.length)}</p>
+      {/* 0.21: SDC installs Ollama and downloads the model itself - no `ollama serve`, no `ollama pull`. */}
+      {status.ollamaRunning ? null : (
+        <div className="mt-[6px]">
+          <InstallButton begin={installTool('ollama')} label="Ollama" size={strings.tools.ollamaSize} onDone={reload} />
+        </div>
+      )}
       {status.ollamaRunning && !status.ollamaModels.some((name) => name === SUGGESTED_LOCAL_MODEL || name.startsWith(`${SUGGESTED_LOCAL_MODEL}-`)) ? (
-        <p className="mt-[2px] font-mono text-[11.5px] text-text-muted">{words.pull(SUGGESTED_LOCAL_MODEL)}</p>
+        <div className="mt-[4px] flex flex-col items-start gap-[6px]">
+          <p className="font-mono text-[11.5px] text-text-muted">{words.pull(SUGGESTED_LOCAL_MODEL)}</p>
+          <InstallButton begin={pullModel(SUGGESTED_LOCAL_MODEL)} label={SUGGESTED_LOCAL_MODEL} onDone={reload} />
+        </div>
       ) : null}
     </section>
   );

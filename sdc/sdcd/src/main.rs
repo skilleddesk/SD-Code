@@ -50,6 +50,12 @@ fn main() -> Result<()> {
        macOS Dock has only `/usr/bin:/bin:/usr/sbin:/sbin`, and found none of the CLIs (0.15.8). */
     sdcd::host::env_path::widen();
 
+    /* 0.21: Git on a Windows machine that has none, fetched in the background - checkpoints need it. Only
+       for the daemon itself, not for a headless `sdcd run|verify|kill|audit` that leaves in a moment. */
+    if !std::env::args().nth(1).is_some_and(|command| matches!(command.as_str(), "run" | "verify" | "kill" | "audit")) {
+        sdcd::host::tools::provision_essentials();
+    }
+
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()

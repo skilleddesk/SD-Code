@@ -25,12 +25,7 @@ export function Narration({ text, streaming }: { text: string; streaming: boolea
           </div>
         </div>
       )}
-      {rest === '' ? null : <Markdown text={rest} />}
-      {streaming ? (
-        <span className="ml-[1px] animate-pulse text-accent motion-reduce:animate-none" aria-hidden="true">
-          ▍
-        </span>
-      ) : null}
+      {rest === '' && !streaming ? null : <Markdown text={rest} streaming={streaming} />}
     </div>
   );
 }

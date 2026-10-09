@@ -2,10 +2,12 @@ import { Search } from 'lucide-react';
 
 import { KillSwitch } from '../../kernel/KillSwitch';
 
+import { framelessWindow } from '../../lib/frameless';
 import { strings } from '../../strings';
 import { useOverlayStore } from '../../store/overlays';
 import { HostPill } from './HostPill';
 import { ModeSwitch } from './ModeSwitch';
+import { WindowControls } from './WindowControls';
 /**
  * The topbar region - spec section 7.1, eleven elements left to right.
  *
@@ -37,14 +39,16 @@ export function Topbar() {
   const openPalette = useOverlayStore((state) => state.openPalette);
 
   /* 0.19: the navigation moved to the rail (panels/rail/NavRail.tsx); the bar keeps what describes the
-     present - the machine, the mode, the command search and Stop all. */
+     present - the machine, the mode, the command search and Stop all. 0.21: on every platform it is also the
+     window's caption - empty space drags the window, a double-click maximises, and the window buttons
+     close the row. */
   return (
-    <header className="topbar">
-      <span className="brand-text text-[15px] font-semibold tracking-[-0.025em] text-text-primary">{strings.topbar.brandText}</span>
+    <header className={'topbar' + (framelessWindow() ? ' has-win-controls' : '')} data-tauri-drag-region>
+      <span data-tauri-drag-region className="brand-text text-[15px] font-semibold tracking-[-0.025em] text-text-primary">{strings.topbar.brandText}</span>
 
       <HostPill />
 
-      <div className="spacer flex-1 min-w-[4px]" />
+      <div data-tauri-drag-region className="spacer flex-1 min-w-[4px] self-stretch" />
 
       <button
         type="button"
@@ -62,11 +66,13 @@ export function Topbar() {
         </span>
       </button>
 
-      <div className="spacer flex-1 min-w-[4px]" />
+      <div data-tauri-drag-region className="spacer flex-1 min-w-[4px] self-stretch" />
 
       <ModeSwitch />
 
       <KillSwitch />
+
+      <WindowControls />
     </header>
   );
 }

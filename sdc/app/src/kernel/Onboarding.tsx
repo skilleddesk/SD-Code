@@ -10,6 +10,8 @@ import { useOverlayStore } from '../store/overlays';
 import { useAppStore } from '../store/store';
 import { Modal } from '../modals/Modal';
 import { BTN, BTN_LG, BTN_PRIMARY, BTN_SECONDARY } from '../panels/ui/button';
+import { InstallButton } from '../panels/ui/InstallButton';
+import { INSTALLABLE, installTool, toolSize } from '../store/tools';
 
 /**
  * **The first ten minutes** (0.12, the plan's onboarding wizard): a goal, a model, a health check of this
@@ -144,10 +146,16 @@ export function Onboarding() {
               <Stethoscope size={12} aria-hidden="true" />
               {k.runDoctor}
             </button>
-            <ul className="flex flex-col gap-[4px] text-[12px]">
+            <ul className="flex flex-col gap-[6px] text-[12px]">
               {doctor.map((check) => (
-                <li key={check.id} className={check.state === 'ok' ? 'text-text-secondary' : check.state === 'warn' ? 'text-state-waiting' : 'text-state-error'}>
-                  {check.state === 'ok' ? '✓' : check.state === 'warn' ? '!' : '✗'} {check.label} - {check.detail}
+                <li key={check.id} className="flex min-h-[24px] items-center gap-[10px]">
+                  <span className={'min-w-0 flex-1 ' + (check.state === 'ok' ? 'text-text-secondary' : check.state === 'warn' ? 'text-state-waiting' : 'text-state-error')}>
+                    {check.state === 'ok' ? '✓' : check.state === 'warn' ? '!' : '✗'} {check.label} - {check.detail}
+                  </span>
+                  {/* 0.21: what is missing is installed from here, by SDC - the first run needs no terminal. */}
+                  {check.state !== 'ok' && check.fix === 'Install' && INSTALLABLE.has(check.id) ? (
+                    <InstallButton begin={installTool(check.id)} label={check.label} size={toolSize(check.id)} compact onDone={() => void runDoctor('local')} />
+                  ) : null}
                 </li>
               ))}
             </ul>

@@ -561,8 +561,9 @@ fn drain_sse(mut lines: impl std::io::BufRead, sink: &EventSink, stop: &dyn Fn()
 /// pool away every time: each step of an agent turn paid a fresh TCP connect and TLS handshake (two or three
 /// round trips - measured at several hundred milliseconds each from Bangladesh to a US or EU endpoint) on top
 /// of the model's own time, and a 20-step turn paid it 20 times. A shared agent keeps the connection to the
-/// provider alive between steps; a connection the server closed meanwhile is retried on a fresh one by
-/// `ureq` itself, and anything else falls to `with_retries`.
+/// provider alive between steps. A connection the server closed meanwhile is *not* retried by `ureq` for a
+/// POST (it only re-sends idempotent methods), so `post_https` does that itself, at once - see
+/// [`stale_connection`]; anything else falls to `with_retries`.
 fn agent() -> ureq::Agent {
     static SHARED: std::sync::OnceLock<ureq::Agent> = std::sync::OnceLock::new();
 
@@ -581,12 +582,121 @@ fn agent() -> ureq::Agent {
 /// The `https://` path: `ureq` does the TLS, the chunked decoding and the redirects, and its body
 /// reader is a stream - `into_reader` hands the bytes over as they arrive, which is why this path
 /// needs neither `read_head` nor `BodyReader` (the framing is already decoded).
+///
+/// 0.21: a pooled connection the provider had already closed fails the moment it is written to (`os error
+/// 10054`, "forcibly closed by the remote host" - seen on `dashscope-us` after a minute of idling). That cost
+/// a "Reconnect" card and a two-second wait for what is not a network problem at all. Nothing has been
+/// streamed at that point, so the request is sent again at once on a new connection.
 fn post_https(
     url: &str,
     headers: &[(String, String)],
     body: &str,
 ) -> Result<Box<dyn std::io::BufRead + Send>, String> {
-    let mut request = agent().post(url);
+    match post_https_on(&agent(), url, headers, body) {
+        Err(reason) if stale_connection(&reason) => post_https_on(&fresh_agent(), url, headers, body),
+        other => other,
+    }
+}
+
+/// How often [`warm`] will reopen a connection to the same endpoint.
+const WARM_EVERY: std::time::Duration = std::time::Duration::from_secs(20);
+
+fn last_warmed() -> &'static std::sync::Mutex<std::collections::HashMap<String, std::time::Instant>> {
+    static LAST: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, std::time::Instant>>> = std::sync::OnceLock::new();
+
+    LAST.get_or_init(Default::default)
+}
+
+/// The warm limiter: a `base` warmed within [`WARM_EVERY`] is left alone, so a person retyping into the
+/// prompt box does not reopen a connection that is already warm. Records the attempt the moment it is
+/// allowed through, not when it finishes, so two calls racing in from the same instant only let one by.
+fn due_to_warm(base: &str) -> bool {
+    let mut last = last_warmed().lock().unwrap_or_else(|poison| poison.into_inner());
+
+    if last.get(base).is_some_and(|at| at.elapsed() < WARM_EVERY) {
+        return false;
+    }
+
+    last.insert(base.to_string(), std::time::Instant::now());
+
+    true
+}
+
+/// Opens the connection a turn on `model` will use, before the turn (0.21) - called while the person types.
+///
+/// A connection from Bangladesh to a US or EU provider costs a TCP connect and a TLS handshake - two or three
+/// round trips, several hundred milliseconds - and the pool only keeps one alive for about a minute after a
+/// turn. A small authenticated `GET …/models` now leaves a fresh one in the pool, so the first word of the
+/// next answer does not wait for the handshake. Once per [`WARM_EVERY`] per endpoint; answers whether it went out.
+pub fn warm(model: &str, provider: Option<&str>) -> bool {
+    let endpoint = endpoint_for(model, provider);
+    let Some(base) = endpoint.url.strip_suffix(if endpoint.dialect == "anthropic" { "/messages" } else { "/chat/completions" }) else {
+        return false;
+    };
+
+    if !due_to_warm(base) {
+        return false;
+    }
+
+    let key = crate::auth::keychain::get(&endpoint.key_ref).unwrap_or_default();
+
+    if key.is_empty() || !base.starts_with("https://") {
+        return false;
+    }
+
+    let url = format!("{base}/models");
+
+    std::thread::spawn(move || {
+        let mut request = agent().get(&url).timeout(std::time::Duration::from_secs(10));
+
+        request = if endpoint.dialect == "anthropic" {
+            request.set("x-api-key", &key).set("anthropic-version", "2023-06-01")
+        } else {
+            request.set("authorization", &format!("Bearer {key}"))
+        };
+
+        /* The body is read to its end: only then does the connection go back into the pool. */
+        let reader = match request.call() {
+            Ok(response) => Some(response.into_reader()),
+            Err(ureq::Error::Status(_, response)) => Some(response.into_reader()),
+            Err(_) => None,
+        };
+
+        if let Some(reader) = reader {
+            let _ = std::io::copy(&mut reader.take(4_000_000), &mut std::io::sink());
+        }
+    });
+
+    true
+}
+
+/// An agent with no pool: its one request goes out on a connection opened for it.
+fn fresh_agent() -> ureq::Agent {
+    ureq::AgentBuilder::new()
+        .timeout_connect(std::time::Duration::from_secs(8))
+        .timeout_read(std::time::Duration::from_secs(120))
+        .max_idle_connections(0)
+        .build()
+}
+
+/// Whether a request failed because the connection it was sent on had already been closed by the other
+/// side - a kept-alive connection that went stale - rather than because the network or the server is
+/// down. A refused connection, a timeout or a DNS failure is not this, and still goes to `with_retries`.
+pub fn stale_connection(reason: &str) -> bool {
+    let lower = reason.to_lowercase();
+
+    ["os error 10054", "os error 10053", "forcibly closed", "connection reset", "connection aborted", "broken pipe", "unexpected eof", "unexpectedeof"]
+        .iter()
+        .any(|needle| lower.contains(needle))
+}
+
+fn post_https_on(
+    agent: &ureq::Agent,
+    url: &str,
+    headers: &[(String, String)],
+    body: &str,
+) -> Result<Box<dyn std::io::BufRead + Send>, String> {
+    let mut request = agent.post(url);
 
     for (name, value) in headers {
         request = request.set(name, value);
@@ -1229,6 +1339,34 @@ mod tests {
         assert!(!transient("The model `qwen-nope` does not exist (404)"));
         assert!(!transient("Range of input length should be [1, 30720] (400)"));
         assert!(!transient("stopped"));
+    }
+
+    #[test]
+    fn a_stale_kept_alive_connection_is_told_apart_from_a_network_failure() {
+        assert!(stale_connection("https://dashscope-us.aliyuncs.com/compatible-mode/v1/chat/completions: Network Error: Network Error: Error encountered in the status line: An existing connection was forcibly closed by the remote host. (os error 10054)"));
+        assert!(stale_connection("Connection reset by peer (os error 104)"));
+        assert!(stale_connection("Broken pipe (os error 32)"));
+        assert!(!stale_connection("Connection refused (os error 10061)"));
+        assert!(!stale_connection("timed out reading response"));
+        assert!(!stale_connection("Dns Failed: resolve dns name"));
+        assert!(!stale_connection("Incorrect API key (401)"));
+    }
+
+    /// The warm limiter: a base warmed a moment ago is skipped until [`WARM_EVERY`] passes, and a
+    /// stale record falls back to warming again - the same test shape as the other window limiters in
+    /// this codebase, exercised directly rather than through [`warm`] so it needs neither a real key nor
+    /// a real connection.
+    #[test]
+    fn a_recently_warmed_base_is_skipped_until_its_window_passes() {
+        let base = "https://warm-limiter-test.invalid/v1";
+        last_warmed().lock().unwrap().remove(base);
+
+        assert!(due_to_warm(base), "a base with no record yet must not be limited");
+        assert!(!due_to_warm(base), "a base just warmed must be skipped within its window");
+
+        last_warmed().lock().unwrap().insert(base.to_string(), std::time::Instant::now() - WARM_EVERY - std::time::Duration::from_millis(50));
+
+        assert!(due_to_warm(base), "a stale record must fall back to warming again");
     }
 
     #[test]

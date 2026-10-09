@@ -111,7 +111,6 @@ export function App() {
     <>
       <div id="app">
         <NavRail />
-        <NavRail />
         <Topbar />
 
         <div id="workspace" className={workspaceClassName(layout)} style={shellStyle}>

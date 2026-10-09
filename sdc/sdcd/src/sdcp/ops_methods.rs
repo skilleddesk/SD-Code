@@ -64,6 +64,32 @@ impl Daemon {
             }
             "settings.set" => self.settings_set(envelope),
             "update.check" => self.update_check(envelope),
+
+            /* 0.21: SDC installs and runs what it needs itself - no terminal on any platform. */
+            "tool.list" => Ok(crate::host::tools::list()),
+            "tool.install" => {
+                let id = envelope.require_str("id")?;
+
+                Ok(crate::host::tools::install(&id).map_err(ErrorObject::bad_request)?.to_json())
+            }
+            "tool.status" => {
+                let id = envelope.require_str("jobId")?;
+
+                crate::host::tools::status(&id).map(|job| job.to_json()).ok_or_else(|| ErrorObject::not_found(format!("no install job {id}")))
+            }
+            "ollama.start" => Ok(json!({ "running": crate::host::tools::ensure_ollama() })),
+            /* 0.21: the person is typing - open the provider connection the turn will use. */
+            "provider.warm" => {
+                let model = envelope.require_str("model")?;
+
+                Ok(json!({ "warming": crate::engines::native_api::warm(&model, envelope.opt_str("provider").as_deref()) }))
+            }
+            "ollama.pull" => Ok(crate::host::tools::pull_model(&envelope.require_str("model")?).to_json()),
+            "host.port.free" => {
+                let port = envelope.params.get("port").and_then(Value::as_u64).filter(|port| (1..=65535).contains(port)).ok_or_else(|| ErrorObject::bad_request("port must be 1-65535"))?;
+
+                crate::host::tools::free_port(port as u16).map(|stopped| json!({ "stopped": stopped })).map_err(ErrorObject::internal)
+            }
             "crash.list" => Ok(json!({ "reports": crate::crash::list() })),
             "crash.clear" => Ok(json!({ "cleared": crate::crash::clear() })),
             "cli.selfcheck" => Ok(json!({ "clis": crate::crash::cli_selfcheck() })),

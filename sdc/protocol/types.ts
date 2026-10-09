@@ -260,6 +260,15 @@ export type SdcpMethod =
   | 'settings.get'
   | 'settings.set'
   | 'update.check'
+  /** 0.21: SDC installs and runs what it needs itself - Node, the coding CLIs, Ollama, ripgrep, Git - so no platform needs a terminal. */
+  | 'tool.list'
+  | 'tool.install'
+  | 'tool.status'
+  | 'ollama.start'
+  | 'ollama.pull'
+  | 'host.port.free'
+  /** 0.21: opens the provider connection a turn will use while the person is still typing. */
+  | 'provider.warm'
   | 'crash.list'
   | 'crash.clear'
   | 'cli.selfcheck'
@@ -2257,6 +2266,13 @@ export interface SdcpMethodMap {
   'settings.get': { params: { key: string }; result: { key: string; value: string | null } };
   'settings.set': { params: { key: string; value: string | boolean }; result: { key: string; value: string } };
   'update.check': { params: { channel?: 'stable' | 'beta' }; result: UpdateInfo };
+  'tool.list': { params: Record<string, never>; result: { tools: ToolRow[]; root: string } };
+  'tool.install': { params: { id: string }; result: ToolJob };
+  'tool.status': { params: { jobId: string }; result: ToolJob };
+  'ollama.start': { params: Record<string, never>; result: { running: boolean } };
+  'ollama.pull': { params: { model: string }; result: ToolJob };
+  'host.port.free': { params: { port: number }; result: { stopped: number } };
+  'provider.warm': { params: { model: string; provider?: string }; result: { warming: boolean } };
   'crash.list': { params: Record<string, never>; result: { reports: CrashReport[] } };
   'crash.clear': { params: Record<string, never>; result: { cleared: number } };
   'cli.selfcheck': { params: Record<string, never>; result: { clis: CliSelfCheck[] } };
@@ -2311,3 +2327,29 @@ export interface SdcpTransport {
   close(): void;
 }
 
+
+/** One tool SDC can install itself (0.21, `tool.list`). */
+export interface ToolRow {
+  id: string;
+  label: string;
+  installed: boolean;
+  version: string | null;
+  /** SDC put it there (in its own tools folder), rather than the person. */
+  managed: boolean;
+  /** Roughly what the download weighs. */
+  size: string;
+  /** The install running for it now, if any. */
+  running: ToolJob | null;
+}
+
+/** An install (or an Ollama model download) running on the daemon (0.21). */
+export interface ToolJob {
+  id: string;
+  tool: string;
+  state: 'running' | 'done' | 'failed';
+  step: string;
+  done: number;
+  total: number | null;
+  log: string[];
+  error: string | null;
+}

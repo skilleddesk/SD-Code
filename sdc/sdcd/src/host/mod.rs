@@ -4,5 +4,6 @@
 pub mod doctor;
 pub mod env_path;
 pub mod program;
+pub mod tools;
 
 pub use doctor::{checks, remote_checks};

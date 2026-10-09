@@ -35,6 +35,8 @@ import { BTN, BTN_GHOST, BTN_LG, BTN_PRIMARY, BTN_SECONDARY, BTN_SM, BTN_SM_LG }
 import { Field } from '../panels/ui/Field';
 import { Section } from '../panels/ui/Section';
 import { Modal } from './Modal';
+import { InstallButton } from '../panels/ui/InstallButton';
+import { installTool, toolSize } from '../store/tools';
 import { copyText, openOutside } from '../lib/external';
 
 /**
@@ -310,6 +312,16 @@ export function Connect() {
     close();
   };
 
+  /* 0.21: the dialog can also close without `leave` - Esc over the Provider Hub closes every overlay at
+     once. A sign-in left running then held its port (Codex: 1455), and the next one failed with the port
+     in use - nothing in the window could clear it. Whatever closes the dialog now ends its sign-in. */
+  useEffect(() => {
+    if (!open && login !== null && !login.authenticated && login.state !== 'exited') {
+      void cancelCliLogin(login.loginId);
+      setLogin(null);
+    }
+  }, [open, login]);
+
 
   return (
     <Modal open={open} label={`${strings.connect.title} · ${name}`} onClose={leave} center className="connect-dlg w-[min(620px,96vw)]">
@@ -370,19 +382,18 @@ export function Connect() {
                     {recipe.installed ? null : (
                       <>
                         <div className="mt-[2px] text-text-secondary">{strings.connect.recipe.missingBody}</div>
-                        <pre className="mt-[6px] overflow-x-auto rounded-sm border border-border-subtle bg-bg-input px-[8px] py-[6px] font-mono text-[11px] text-text-primary">
-                          {recipe.note}
-                        </pre>
 
-                        <div className="mt-[8px] flex items-center gap-[6px]">
-                          <button
-                            type="button"
-                            id="connectRecipeCopy"
-                            className={BTN_SM + ' ' + BTN_SECONDARY}
-                            onClick={() => copy(recipe.note)}
-                          >
-                            <ClipboardCopy size={11} aria-hidden="true" /> {strings.connect.recipe.copy}
-                          </button>
+                        {/* 0.21: SDC installs it - Node first when the machine has none - instead of
+                            printing the words to type into a terminal. */}
+                        <div className="mt-[8px] flex flex-col items-start gap-[8px]">
+                          <InstallButton
+                            begin={installTool(recipe.program)}
+                            label={recipe.label}
+                            size={toolSize(recipe.program)}
+                            onDone={() => {
+                              void loadCliRecipe(recipe.providerId).then(setRecipe);
+                            }}
+                          />
                           <button
                             type="button"
                             id="connectRecipeRecheck"

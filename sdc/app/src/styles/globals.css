@@ -706,3 +706,66 @@
   .tl-dot[data-state='thinking'], .now-label { animation: none; }
   .now-label { -webkit-text-fill-color: var(--orange); background: none; }
 }
+
+/* 0.21 - the live stream.
+ *
+ * The caret sits at the end of the words being written (Markdown puts it inside the last paragraph, list
+ * item or code line) and breathes rather than blinks, in the brand gradient. */
+.stream-caret {
+  display: inline-block;
+  width: 0.5em;
+  height: 1.05em;
+  margin-left: 2px;
+  vertical-align: -0.17em;
+  border-radius: 2px;
+  background: var(--grad-brand);
+  box-shadow: 0 0 10px -1px var(--accent-glow);
+  animation: sdcCaret 1.05s ease-in-out infinite;
+}
+
+@keyframes sdcCaret {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.25; }
+}
+
+/* Code in an answer, coloured like the file editor (lib/highlight.ts, panels/right/CodeEditor.tsx). */
+.code-block .hl-kw { color: var(--purple); }
+.code-block .hl-str { color: var(--green); }
+.code-block .hl-num { color: var(--orange); }
+.code-block .hl-fn { color: var(--accent); }
+.code-block .hl-type { color: var(--accent-hover); }
+.code-block .hl-cmt { color: var(--text-muted); font-style: italic; }
+.code-block .hl-tag { color: var(--red); }
+.code-block .hl-prop { color: var(--text-secondary); }
+.code-block .hl-head { color: var(--text-primary); font-weight: 600; }
+.code-block .hl-link { color: var(--accent); text-decoration: underline; }
+.code-block .hl-meta { color: var(--orange); }
+.code-block .hl-bad { color: var(--red); }
+
+/* The finished turn's one line: a brand star and quiet type, the Claude Code way. */
+.flow-star {
+  font-size: 12px;
+  line-height: 1;
+  background: var(--grad-brand);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stream-caret { animation: none; }
+}
+
+/* 0.21 - an install whose size is not known yet: a short bar sliding across. */
+.install-indeterminate {
+  animation: sdcInstallSlide 1.2s ease-in-out infinite;
+}
+
+@keyframes sdcInstallSlide {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(300%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .install-indeterminate { animation: none; }
+}

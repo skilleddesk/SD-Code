@@ -33,6 +33,9 @@ import { useOverlayStore, type HubTab } from '../store/overlays';
 import { toast } from '../store/toast';
 import { BTN, BTN_PRIMARY, BTN_SECONDARY } from '../panels/ui/button';
 import { Modal } from './Modal';
+import { InstallButton } from '../panels/ui/InstallButton';
+import { sdcpCall } from '../lib/sdcp';
+import { INSTALLABLE, installTool, toolSize } from '../store/tools';
 
 /**
  * `#providerBd` - the Provider Hub (spec section 9.10).
@@ -479,6 +482,8 @@ function Flow({ flow, onDone }: { flow: FlowState; onDone: () => void }) {
                 label={check.label}
                 detail={check.detail}
                 fix={check.fix}
+                toolId={check.id}
+                onFixed={() => void runDoctor('local')}
               />
             ))
           )}
@@ -656,6 +661,8 @@ function DoctorList({
             label={check.label}
             detail={check.detail}
             fix={check.fix}
+            toolId={check.id}
+            onFixed={onRun}
           />
         ))}
       </div>
@@ -679,11 +686,16 @@ function DoctorRow({
   label,
   detail,
   fix,
+  toolId,
+  onFixed,
 }: {
   state: 'ok' | 'warn' | 'fail';
   label: string;
   detail: string;
   fix: string | null;
+  /** The check's id: on this machine's rows an `Install` is done by SDC itself (0.21). */
+  toolId?: string;
+  onFixed?: () => void;
 }) {
   const colour =
     state === 'ok' ? 'text-state-success' : state === 'warn' ? 'text-state-warning' : 'text-state-error';
@@ -712,7 +724,27 @@ function DoctorRow({
         <span className="mt-[2px] block font-mono text-[11px] text-text-muted">{detail}</span>
       </span>
 
-      {fix === null ? null : (
+      {/* 0.21: on this machine SDC installs the tool itself - no terminal, no command to copy. */}
+      {fix === 'Install' && toolId !== undefined && INSTALLABLE.has(toolId) ? (
+        <InstallButton begin={installTool(toolId)} label={label} size={toolSize(toolId)} compact onDone={onFixed} />
+      ) : fix === 'Kill process' && toolId === 'port3000' ? (
+        <button
+          type="button"
+          className={BTN + ' ' + BTN_SECONDARY}
+          data-fix={fix}
+          onClick={() => {
+            void sdcpCall('host.port.free', { port: 3000 }).then(
+              ({ stopped }) => {
+                toast(strings.tools.portFreed(stopped));
+                onFixed?.();
+              },
+              () => toast(strings.tools.portFailed),
+            );
+          }}
+        >
+          {fix}
+        </button>
+      ) : fix === null ? null : (
         <button
           type="button"
           className={BTN + ' ' + BTN_SECONDARY}

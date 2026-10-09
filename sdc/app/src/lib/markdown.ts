@@ -6,7 +6,7 @@
  * elements, so nothing a model writes is ever interpreted as HTML (a `<script>` in an answer is text).
  *
  * Blocks: fenced code (```lang), headings (#, ##, ###), bullet and numbered lists, block quotes,
- * horizontal rules, paragraphs. Inline: `code`, **bold**, *italic* / _italic_, [text](http…) links.
+ * horizontal rules, tables (0.21), paragraphs. Inline: `code`, **bold**, *italic* / _italic_, [text](http…) links.
  * An unclosed fence - an answer still streaming - is a code block to the end, so a half-written block
  * does not flicker between prose and code.
  */
@@ -24,7 +24,10 @@ export type Block =
   | { kind: 'list'; ordered: boolean; start: number; items: Inline[][] }
   | { kind: 'quote'; children: Inline[] }
   | { kind: 'rule' }
+  | { kind: 'table'; align: Align[]; head: Inline[][]; rows: Inline[][][] }
   | { kind: 'paragraph'; children: Inline[] };
+
+export type Align = 'left' | 'center' | 'right' | '';
 
 const FENCE = /^\s*(```|~~~)\s*([\w+#.-]*)\s*$/;
 const HEADING = /^(#{1,6})\s+(.*)$/;
@@ -32,6 +35,15 @@ const BULLET = /^\s*[-*+]\s+(.*)$/;
 const NUMBERED = /^\s*(\d{1,4})[.)]\s+(.*)$/;
 const RULE = /^\s*([-*_])(\s*\1){2,}\s*$/;
 const QUOTE = /^\s*>\s?(.*)$/;
+/** The line under a table's header: `| --- | :-: | --: |`. */
+const TABLE_RULE = /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/;
+
+/** The cells of one table row: the outer pipes are optional, an escaped `\|` stays in its cell. */
+export function cells(line: string): string[] {
+  const body = line.trim().replace(/^\|/, '').replace(/(?<!\\)\|$/, '');
+
+  return body.split(/(?<!\\)\|/).map((cell) => cell.trim().replace(/\\\|/g, '|'));
+}
 
 export function parseMarkdown(source: string): Block[] {
   const lines = source.replace(/\r\n?/g, '\n').split('\n');
@@ -79,6 +91,30 @@ export function parseMarkdown(source: string): Block[] {
       const level = Math.min(3, (heading[1] ?? '#').length) as 1 | 2 | 3;
 
       blocks.push({ kind: 'heading', level, children: parseInline(heading[2] ?? '') });
+      continue;
+    }
+
+    /* A table: a header row with a pipe, then the rule under it (0.21). */
+    const under = lines[index + 1] ?? '';
+
+    if (line.includes('|') && under.includes('|') && under.includes('-') && TABLE_RULE.test(under)) {
+      flush();
+
+      const head = cells(line);
+      const align: Align[] = cells(under).map((cell) =>
+        cell.startsWith(':') && cell.endsWith(':') ? 'center' : cell.endsWith(':') ? 'right' : cell.startsWith(':') ? 'left' : '',
+      );
+      const rows: Inline[][][] = [];
+
+      index += 2;
+
+      while (index < lines.length && (lines[index] ?? '').includes('|') && (lines[index] ?? '').trim() !== '') {
+        rows.push(cells(lines[index] ?? '').map(parseInline));
+        index += 1;
+      }
+
+      index -= 1;
+      blocks.push({ kind: 'table', align, head: head.map(parseInline), rows });
       continue;
     }
 
@@ -255,4 +291,35 @@ export function paragraphs(text: string): string[] {
   }
 
   return chunks;
+}
+
+/**
+ * Closes what a streaming answer has opened but not yet closed (0.21), so its last line reads as it will
+ * once it is done instead of flashing raw markers: `**bold so fa` is drawn bold and an inline code span
+ * still being typed is drawn as code. Only the last line is looked at, and nothing is added inside an open
+ * fence - the fence already draws as code to the end.
+ */
+export function closeOpenMarks(text: string): string {
+  const fences = text.match(/^\s*(```|~~~)/gm)?.length ?? 0;
+
+  if (fences % 2 === 1) {
+    return text;
+  }
+
+  const line = text.slice(text.lastIndexOf('\n') + 1);
+  const openTick = (line.match(/`/g)?.length ?? 0) % 2 === 1;
+  /* `**` inside a code span is not a mark. */
+  const outside = (openTick ? line.slice(0, line.lastIndexOf('`')) : line).replace(/`[^`]*`/g, '');
+  const openStrong = (outside.match(/\*\*/g)?.length ?? 0) % 2 === 1 && !/\*\*\s*$/.test(outside);
+  let tail = '';
+
+  if (openTick && !/`\s*$/.test(line)) {
+    tail += '`';
+  }
+
+  if (openStrong) {
+    tail += '**';
+  }
+
+  return text + tail;
 }

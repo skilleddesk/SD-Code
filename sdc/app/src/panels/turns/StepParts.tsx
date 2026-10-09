@@ -81,12 +81,16 @@ export function TimeRibbon({
   compact?: boolean;
 }) {
   const phases = (Object.keys(totals) as Phase[]).filter((phase) => totals[phase] >= 50);
+  /* 0.21: the compact ribbon is a small inline gauge on the summary line; what it measures is its tooltip. */
+  const legend = phases
+    .map((phase) => `${strings.turns.phase[phase]} ${strings.turns.thinking.seconds(totals[phase])} (${Math.round((totals[phase] / Math.max(total, 1)) * 100)}%)`)
+    .join(' · ');
 
   return (
-    <div className="time-ribbon" data-time-ribbon>
+    <div className={'time-ribbon ' + (compact ? 'w-[72px] shrink-0' : '')} data-time-ribbon>
       <div
-        className={'relative w-full overflow-hidden rounded-full bg-bg-overlay ' + (compact ? 'h-[5px]' : 'h-[7px]')}
-        title={strings.turns.flow.ribbon}
+        className={'relative w-full overflow-hidden rounded-full bg-bg-overlay ' + (compact ? 'h-[4px]' : 'h-[7px]')}
+        title={compact && legend !== '' ? `${strings.turns.flow.ribbon} - ${legend}` : strings.turns.flow.ribbon}
       >
         {segments.map((segment, index) => (
           <button

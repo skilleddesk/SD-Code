@@ -27,6 +27,7 @@ import { IntentCard } from '../../kernel/IntentCard';
 import { ResearchCard } from './ResearchCard';
 import { VoiceButton } from '../../kernel/VoiceButton';
 import { usePrefsStore } from '../../store/prefs';
+import { warmProvider } from '../../store/warm';
 
 /**
  * `.prompt-area` - the input, and everything around it (spec section 7.6).
@@ -529,6 +530,8 @@ export function PromptArea({ sessionId }: PromptAreaProps = {}) {
             onInput={() => {
               grow();
               updateMenu();
+              /* 0.21: the provider connection opens while the person types. */
+              warmProvider(sessionId);
             }}
             onKeyDown={handleKeyDown}
             onPaste={paste}

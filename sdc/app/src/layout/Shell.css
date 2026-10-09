@@ -194,6 +194,44 @@
   min-width: 0;
 }
 
+/* 0.21: on every platform the topbar is the window's caption, and the window buttons sit flush with the right
+   edge, full height - one look on Windows, macOS and Linux: close turns red, the others take the hover tint. */
+.topbar.has-win-controls {
+  padding-right: 0;
+}
+
+.win-controls {
+  display: flex;
+  align-self: stretch;
+  margin-left: 6px;
+}
+
+.win-btn {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  color: var(--text-secondary);
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.win-btn:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.win-btn:active {
+  background: var(--bg-active);
+}
+
+.win-btn.win-close:hover {
+  color: #fff;
+  background: #c42b1c;
+}
+
+.win-btn.win-close:active {
+  background: #b22a1b;
+}
+
 /* SIDEBAR region (spec section 7.3). */
 .sidebar {
   display: flex;

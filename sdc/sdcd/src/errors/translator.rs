@@ -168,7 +168,7 @@ pub fn translate(tool: &str, output: &str) -> Translation {
     {
         return rule(
             &format!("{tool} could not find a program it needs"),
-            format!("`{first_line}`. The program is not installed or not on PATH; the environment doctor can install it."),
+            format!("`{first_line}`. The program is not installed; Settings → Environment installs it in one click."),
             true,
             "missing-program",
         );
@@ -322,7 +322,7 @@ mod tests {
     fn the_adapters_own_missing_program_message_is_recognised() {
         let translated = translate(
             "claude_code",
-            "`claude` is not installed or not on PATH. Install it, then run the environment doctor.",
+            "`claude` is not installed. SDC installs it in one click: Settings → Environment → Install (or the provider's Connect card).",
         );
 
         assert_eq!(translated.rule, "missing-program");

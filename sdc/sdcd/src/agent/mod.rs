@@ -156,6 +156,7 @@ impl crate::engines::Engine for SdcAgent {
 }
 
 /// The resolved endpoint of a turn: where to POST, with which headers, in which dialect.
+#[derive(Clone)]
 struct Target {
     url: String,
     headers: Vec<(String, String)>,
@@ -431,6 +432,12 @@ pub fn run(
     };
 
     let workspace = Workspace::new(root, prompt.remote.clone());
+
+    /* 0.21: a local model's turn starts Ollama itself when it is installed and stopped. */
+    if backend == Backend::Ollama {
+        crate::host::tools::ensure_ollama();
+    }
+
     let target = match target(backend, prompt) {
         Ok(target) => target,
         Err(reason) => {
@@ -458,24 +465,91 @@ fn ask_model(backend: Backend, target: &Target, system: &str, messages: &[Value]
         body = ollama_native::body(body, num_ctx);
     }
 
-    let body = body.to_string();
+    let plain = body.to_string();
+    /* 0.21: Alibaba's explicit prompt cache - the system prompt and the tools marked once, read back on every
+       later step at a tenth of the price and without being processed again. A model that refuses the mark
+       is asked again without it, and the mark is not sent to that endpoint again. */
+    let marked = (target.dialect == Dialect::OpenAi && dashscope_cache(&target.url)).then(|| dialect::mark_system_cache(&body).to_string());
     /* A step the network or the provider dropped - before its first word or halfway through - is asked
        again rather than ending the turn (0.15.4): nothing of it reached the conversation yet, so asking
        again is the same question, and every step before it is kept. */
     let mut card = crate::engines::native_api::RetryCard::new(sink, "agent", &target.url);
-    let reply = crate::engines::native_api::with_retries(
-        stopped,
-        |retry, wait, reason| card.notice(retry, wait, reason),
-        || {
-            let lines = crate::engines::native_api::open_stream(&target.url, &target.headers, &body)?;
-            let lines = if target.local_context.is_some() { ollama_native::as_sse(lines) } else { lines };
+    let send = |body: &str, card: &mut crate::engines::native_api::RetryCard| {
+        crate::engines::native_api::with_retries(
+            stopped,
+            |retry, wait, reason| card.notice(retry, wait, reason),
+            || {
+                let lines = crate::engines::native_api::open_stream(&target.url, &target.headers, body)?;
+                let lines = if target.local_context.is_some() { ollama_native::as_sse(lines) } else { lines };
 
-            dialect::read_reply(target.dialect, lines, sink, stopped)
+                dialect::read_reply(target.dialect, lines, sink, stopped)
+            },
+        )
+    };
+    let reply = match marked {
+        Some(marked) => match send(&marked, &mut card) {
+            Err(reason) if reason.contains("(400)") || reason.to_lowercase().contains("cache_control") => {
+                let again = send(&plain, &mut card);
+
+                /* Only when the plain request went through was the mark the problem (a 400 can be anything). */
+                if again.is_ok() {
+                    no_explicit_cache().lock().unwrap_or_else(|poison| poison.into_inner()).insert(target.url.clone());
+                }
+
+                again
+            }
+            other => other,
         },
-    );
+        None => send(&plain, &mut card),
+    };
 
     card.close(reply.is_ok());
     reply.map_err(|reason| unreachable(backend, &target.model, &reason))
+}
+
+/// Endpoints that refused an explicit cache mark (0.21) - they are sent plain requests from then on.
+fn no_explicit_cache() -> &'static std::sync::Mutex<HashSet<String>> {
+    static PLAIN: std::sync::OnceLock<std::sync::Mutex<HashSet<String>>> = std::sync::OnceLock::new();
+
+    PLAIN.get_or_init(|| std::sync::Mutex::new(HashSet::new()))
+}
+
+/// Alibaba Cloud Model Studio (DashScope), which takes Anthropic-style `cache_control` marks on an
+/// OpenAI-compatible request - and has not refused one from this endpoint yet.
+fn dashscope_cache(url: &str) -> bool {
+    url.contains("dashscope") && url.contains("aliyuncs.com") && !no_explicit_cache().lock().unwrap_or_else(|poison| poison.into_inner()).contains(url)
+}
+
+/// What a re-read of an unchanged file is answered with instead of the file (0.21).
+const UNCHANGED_READ: &str = "[Unchanged since you read this file earlier in this turn - its content is above. Read it again only after it changes.]";
+
+/// A file read again in the same turn, with nothing changed in it, costs its whole text again on every later
+/// step (0.21): models re-read "to be sure" a lot. The second read is answered with one line instead - the
+/// first one is still in the conversation. Anything that changed the file (an edit, a command, the person)
+/// changes its hash, so a read after a change is always the full text. `seen` maps a path to its text's hash.
+fn dedupe_reads(seen: &mut std::collections::HashMap<String, u64>, uses: &[dialect::ToolUse], results: &mut [dialect::ToolResult]) {
+    use std::hash::{Hash, Hasher};
+
+    for (call, result) in uses.iter().zip(results.iter_mut()) {
+        if call.name != "read_file" || result.2 || result.1.len() < 400 {
+            continue;
+        }
+
+        let Some(path) = call.input["path"].as_str().map(|path| path.trim().replace('\\', "/").trim_start_matches("./").to_string()) else {
+            continue;
+        };
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+
+        result.1.hash(&mut hasher);
+
+        let hash = hasher.finish();
+
+        if seen.get(&path) == Some(&hash) {
+            result.1 = UNCHANGED_READ.to_string();
+        } else {
+            seen.insert(path, hash);
+        }
+    }
 }
 
 /// Keeps a turn's conversation inside the model's window (0.13): older tool output is folded when the
@@ -494,6 +568,57 @@ fn keep_small(target: &Target, window: u64, messages: &mut [Value]) -> bool {
     }
 
     folded > 0
+}
+
+/// Fast models a provider refused for this key (not on the plan, not in the region) - never asked again.
+fn refused_fast() -> &'static std::sync::Mutex<HashSet<String>> {
+    static REFUSED: std::sync::OnceLock<std::sync::Mutex<HashSet<String>>> = std::sync::OnceLock::new();
+
+    REFUSED.get_or_init(|| std::sync::Mutex::new(HashSet::new()))
+}
+
+/// The model a sub-agent explores with (0.21): the newest `fast` model of the **same provider** - same key,
+/// same endpoint - when the turn's own model is a `balanced` or `deep` one. A sub-agent only reads and
+/// reports, which a small model does as well at a fraction of the time and price; the turn's own model still
+/// does all the thinking and every change. `None` keeps the turn's model: a local model (loading a second
+/// one costs memory), a model that is already fast, or one the catalogue cannot place.
+fn fast_target(backend: Backend, target: &Target, provider: Option<&str>) -> Option<Target> {
+    if backend != Backend::Api {
+        return None;
+    }
+
+    let provider = crate::engines::native_api::endpoint_for(&target.model, provider).provider;
+    let blocks = crate::providers::models::blocked();
+    let block = blocks.iter().find(|block| block.id == provider)?;
+    let fast = pick_fast(&block.models, &target.model)?;
+
+    if refused_fast().lock().unwrap_or_else(|poison| poison.into_inner()).contains(&fast) {
+        return None;
+    }
+
+    Some(Target {
+        thinking: target.dialect == Dialect::Anthropic && crate::engines::native_api::adaptive_thinking(&fast),
+        price: price_of(&provider, &fast),
+        effort: None,
+        model: fast,
+        ..target.clone()
+    })
+}
+
+/// From a provider's catalogue rows (newest first): the first `fast` model, when `current` is a known slower one.
+fn pick_fast(models: &[Value], current: &str) -> Option<String> {
+    let tier = models.iter().find(|row| row["id"].as_str() == Some(current))?["tier"].as_str()?;
+
+    if tier == "fast" {
+        return None;
+    }
+
+    models
+        .iter()
+        .filter(|row| row["tier"].as_str() == Some("fast"))
+        .filter_map(|row| row["id"].as_str())
+        .find(|id| *id != current && !id.contains("embed"))
+        .map(str::to_string)
 }
 
 /// A sub-agent (`task`, 0.13): its own conversation and read-only tools, reporting into one card of the
@@ -557,14 +682,29 @@ fn sub_agent(
     };
     let mut messages = vec![dialect::user_message(job)];
     let (mut input, mut output) = (0u64, 0u64);
+    /* 0.21: explore with the provider's fast model; the turn's own model is the fallback. */
+    let fast = fast_target(backend, target, parent.provider.as_deref());
+    let mut on_fast = fast.is_some();
 
     for _ in 0..SUB_STEPS {
         if stopped() {
             return (tools::Outcome::error("The turn was stopped."), input, output);
         }
 
-        let reply = match ask_model(backend, target, &system, &messages, &specs, &EventSink::discarding(), &stopped) {
+        let active = if on_fast { fast.as_ref().unwrap_or(target) } else { target };
+        let reply = match ask_model(backend, active, &system, &messages, &specs, &EventSink::discarding(), &stopped) {
             Ok(reply) => reply,
+            /* The fast model was refused (or failed): this sub-agent - and later ones, when the refusal is the
+               key's - go on with the turn's own model. Only before its first reply: a conversation the fast
+               model has already written is not handed to another one (Anthropic's thinking rules differ). */
+            Err(reason) if on_fast && messages.len() == 1 => {
+                if !crate::engines::native_api::transient(&reason) {
+                    refused_fast().lock().unwrap_or_else(|poison| poison.into_inner()).insert(active.model.clone());
+                }
+
+                on_fast = false;
+                continue;
+            }
             Err(reason) => return (tools::Outcome::error(format!("The sub-agent failed: {reason}")), input, output),
         };
 
@@ -595,7 +735,9 @@ fn sub_agent(
     /* Out of steps: one last call without tools, for whatever it found. */
     dialect::append_user_text(target.dialect, &mut messages, "[SDC: you are out of steps. Write your report now from what you found, without calling tools.]");
 
-    match ask_model(backend, target, &system, &messages, &[], &EventSink::discarding(), &stopped) {
+    let active = if on_fast { fast.as_ref().unwrap_or(target) } else { target };
+
+    match ask_model(backend, active, &system, &messages, &[], &EventSink::discarding(), &stopped) {
         Ok(reply) => {
             input += reply.input_tokens;
             output += reply.output_tokens;
@@ -756,6 +898,15 @@ fn completion_note(context: &ToolContext) -> Option<String> {
 
 /// How long a turn spent waiting for the model and for its tools: ` · model 18s · tools 6.1s` after the
 /// totals (0.20), so where a slow turn went is on the screen and not a guess. Nothing for a quick turn.
+/// ` · 12.1k cached`: how much of the input the provider's prompt cache served (0.21), or nothing.
+fn cached(tokens: u64) -> String {
+    match tokens {
+        0 => String::new(),
+        1..=999 => format!(" · {tokens} cached"),
+        _ => format!(" · {:.1}k cached", tokens as f64 / 1000.0),
+    }
+}
+
 fn timing(model: std::time::Duration, tools: std::time::Duration) -> String {
     let short = |time: std::time::Duration| {
         let seconds = time.as_secs_f64();
@@ -936,6 +1087,8 @@ fn drive(
         result_cap: result_cap(backend, window),
     };
     let (mut input_tokens, mut output_tokens) = (0u64, 0u64);
+    /* Of the input, what the provider read back from its prompt cache (0.21) - said in the footer. */
+    let mut cached_tokens = 0u64;
     /* The research time ran out: one last call, without tools, for the answer. */
     let mut out_of_time = false;
     /* With a final-answer model, this model's words are its notes - shown as thinking, not as the answer. */
@@ -963,6 +1116,8 @@ fn drive(
     let (mut model_time, mut tool_time) = (std::time::Duration::ZERO, std::time::Duration::ZERO);
     /* The change was shown back to the model for one strict re-read (0.20). */
     let mut reviewed = false;
+    /* Files this turn has read, by the hash of what they held - an unchanged re-read is one line (0.21). */
+    let mut seen_reads: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
     /* The edit count when the checks last ran: they run again only after the agent changed something. */
     let mut checked_at = usize::MAX;
     /* Words sent while the turn runs join it between steps (0.12.5) - closed when the loop returns. */
@@ -1045,6 +1200,7 @@ fn drive(
 
         input_tokens += reply.input_tokens;
         output_tokens += reply.output_tokens;
+        cached_tokens += reply.cached_tokens;
 
         /* Totals so far, every step: the cost governor can stop a turn that crosses its budget mid-way. */
         sink.send(EngineEvent::Usage { input_tokens, output_tokens, cost_usd: None });
@@ -1153,7 +1309,7 @@ fn drive(
 
             sink.send(EngineEvent::Done {
                 summary: summary.to_string(),
-                meta: format!("{}{}", meta(step, input_tokens, output_tokens, target.price), timing(model_time, tool_time)),
+                meta: format!("{}{}", meta(step, input_tokens, output_tokens, target.price) + &cached(cached_tokens), timing(model_time, tool_time)),
                 pass: None,
             });
 
@@ -1244,16 +1400,22 @@ fn drive(
 
         tool_time += tools_at.elapsed();
 
-        let results: Vec<dialect::ToolResult> = results
+        let mut results: Vec<dialect::ToolResult> = results
             .into_iter()
             .enumerate()
             .map(|(index, result)| result.unwrap_or_else(|| (reply.tool_uses[index].id.clone(), "The turn was stopped.".to_string(), true, None)))
             .collect();
 
+        dedupe_reads(&mut seen_reads, &reply.tool_uses, &mut results);
         messages.extend(dialect::tool_results(target.dialect, &results));
         steer(&mut messages);
 
         let folded = keep_small(target, window, &mut messages);
+
+        /* Folded output is gone from the conversation: a file read before it must be sent in full again. */
+        if folded {
+            seen_reads.clear();
+        }
 
         sink.send(EngineEvent::Context { used_tokens: dialect::tokens(&messages), window_tokens: window, compacted: folded });
     }
@@ -1271,7 +1433,7 @@ fn drive(
     )));
     sink.send(EngineEvent::Done {
         summary: "Paused at the step limit".to_string(),
-        meta: format!("{}{}", meta(options.max_steps, input_tokens, output_tokens, target.price), timing(model_time, tool_time)),
+        meta: format!("{}{}", meta(options.max_steps, input_tokens, output_tokens, target.price) + &cached(cached_tokens), timing(model_time, tool_time)),
         pass: None,
     });
 }
@@ -1360,7 +1522,12 @@ fn flatten(messages: &[Value]) -> String {
 fn unreachable(backend: Backend, model: &str, reason: &str) -> String {
     match backend {
         Backend::Ollama if reason.contains("refused") || reason.contains("11434") => format!(
-            "Ollama is not answering on this machine ({reason}). Start it with `ollama serve`, then send the prompt again."
+            "Ollama is not answering on this machine ({reason}). {}",
+            if crate::host::program::resolve("ollama").is_some() {
+                "SDC could not start it - restart SDC and send the prompt again."
+            } else {
+                "It is not installed: Settings → Environment → Ollama → Install, then send the prompt again."
+            }
         ),
         Backend::Ollama => crate::engines::ollama::explain_error(reason, model),
         _ => reason.to_string(),
@@ -1463,6 +1630,45 @@ mod tests {
         run(Backend::Ollama, Options { autonomy: Autonomy::Ask, max_steps: 5, auto_check: false, research: None }, None, &Default::default(), &prompt, &recorder.sink());
 
         assert!(matches!(&recorder.events()[..], [EngineEvent::Failed(reason)] if reason.contains("Open a folder")));
+    }
+
+    #[test]
+    fn a_sub_agent_explores_with_the_providers_fast_model_only_when_the_turns_model_is_slower() {
+        let rows = vec![
+            serde_json::json!({ "id": "claude-opus-5-5", "tier": "deep" }),
+            serde_json::json!({ "id": "claude-sonnet-5", "tier": "balanced" }),
+            serde_json::json!({ "id": "claude-haiku-4-5", "tier": "fast" }),
+        ];
+
+        assert_eq!(pick_fast(&rows, "claude-opus-5-5").as_deref(), Some("claude-haiku-4-5"));
+        assert_eq!(pick_fast(&rows, "claude-sonnet-5").as_deref(), Some("claude-haiku-4-5"));
+        assert_eq!(pick_fast(&rows, "claude-haiku-4-5"), None, "already fast");
+        assert_eq!(pick_fast(&rows, "claude-unknown"), None, "a model the catalogue cannot place keeps itself");
+        assert_eq!(pick_fast(&rows[..2], "claude-opus-5-5"), None, "no fast sibling");
+    }
+
+    #[test]
+    fn an_unchanged_re_read_is_one_line_and_a_changed_one_is_whole() {
+        let read = |id: &str, path: &str| dialect::ToolUse { id: id.into(), name: "read_file".into(), input: serde_json::json!({ "path": path }) };
+        let file = "1\tfn main() {}\n".repeat(60);
+        let mut seen = std::collections::HashMap::new();
+
+        let mut first = vec![(String::from("a"), file.clone(), false, None)];
+        dedupe_reads(&mut seen, &[read("a", "src/main.rs")], &mut first);
+        assert_eq!(first[0].1, file, "the first read is the file");
+
+        let mut again = vec![(String::from("b"), file.clone(), false, None)];
+        dedupe_reads(&mut seen, &[read("b", "./src/main.rs")], &mut again);
+        assert_eq!(again[0].1, UNCHANGED_READ, "the same text under the same path is one line");
+
+        let changed = file.replace("main", "start");
+        let mut after = vec![(String::from("c"), changed.clone(), false, None)];
+        dedupe_reads(&mut seen, &[read("c", "src/main.rs")], &mut after);
+        assert_eq!(after[0].1, changed, "after a change the whole file comes back");
+
+        let mut failed = vec![(String::from("d"), changed.clone(), true, None)];
+        dedupe_reads(&mut seen, &[read("d", "src/main.rs")], &mut failed);
+        assert_eq!(failed[0].1, changed, "an error is never replaced");
     }
 
     #[test]

@@ -39,7 +39,7 @@ export function NavRail() {
   };
 
   return (
-    <nav className="navrail" aria-label={strings.rail.label}>
+    <nav className="navrail" data-tauri-drag-region aria-label={strings.rail.label}>
       <button
         type="button"
         className="brand-mark mb-[6px] grid h-[40px] w-[40px] place-items-center rounded-xl transition-transform duration-base ease-spring hover:scale-[1.06]"

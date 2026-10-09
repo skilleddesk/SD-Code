@@ -6,6 +6,7 @@ export const bn: StringsPack = {
   field: { show: 'দেখান', hide: 'লুকান', paste: 'পেস্ট' },
   topbar: {
     brandTitle: 'SDC সম্পর্কে',
+    window: { group: 'জানালা', minimize: 'ছোট করুন', maximize: 'বড় করুন', restore: 'আগের মাপে', close: 'বন্ধ করুন' },
     activeHostTitle: 'সক্রিয় মেশিন',
     palette: { label: 'খুঁজুন বা যান…', title: 'কমান্ড প্যালেট' },
     providers: { title: 'প্রোভাইডার ও মডেল', dotTitle: 'একটা প্রোভাইডারে সাইন-ইন দরকার' },
@@ -125,6 +126,15 @@ export const bn: StringsPack = {
       proof: 'প্রমাণ',
       analytics: 'হিসাব',
     },
+  },
+  tools: {
+    install: (label: string): string => `${label} ইনস্টল করুন`,
+    retry: 'আবার চেষ্টা করুন',
+    done: 'ইনস্টল হয়েছে',
+    installed: (label: string): string => `${label} ইনস্টল হয়েছে, ব্যবহারের জন্য তৈরি`,
+    pullModel: (model: string): string => `${model} ডাউনলোড করুন`,
+    portFreed: (count: number): string => (count === 0 ? 'ওই পোর্টে এখন কিছু চলছে না' : `${count}টা প্রসেস থামানো হয়েছে - পোর্ট খালি`),
+    portFailed: 'পোর্ট খালি করা গেল না',
   },
   connect: {
     baseUrlLabel: 'Base URL (আপনার Model Studio workspace)',
@@ -690,7 +700,7 @@ export const bn: StringsPack = {
         usd === null ? `চূড়ান্ত উত্তর লিখবে ${model}` : `চূড়ান্ত উত্তর লিখবে ${model} (আনুমানিক $${usd})`,
       context: (tokens: number): string => `কনটেক্সট ${tokens.toLocaleString()} টোকেন`,
       keyMissing: (service: string): string => `${service}-এর API key এখনো দেওয়া হয়নি - তাই DuckDuckGo দিয়ে সার্চ হবে। Settings → Research-এ key দিন।`,
-      ollamaDown: 'Ollama চলছে না - `ollama serve` দিয়ে চালু করুন, বা অন্য মডেল বাছুন।',
+      ollamaDown: 'এই কম্পিউটারে Ollama ইনস্টল নেই - Settings → Environment থেকে এক ক্লিকে ইনস্টল করুন, বা অন্য মডেল বাছুন।',
       start: 'রিসার্চ শুরু',
       cancel: 'বাতিল',
     },
@@ -736,7 +746,7 @@ export const bn: StringsPack = {
       localContextHint: 'প্রতিটা লোকাল টার্নে SDC Ollama-কে এতটুকু লোড করতে বলে। বেশি দিলে বেশি পেজ ধরে, কিন্তু গ্রাফিক্স মেমরি বেশি লাগে; বেশিরভাগ 8 GB কার্ডে 16384 ভালো।',
       ollama: (running: boolean, models: number): string =>
         running ? `Ollama চলছে · ${models}টা মডেল নামানো আছে` : 'এই কম্পিউটারে Ollama চলছে না',
-      pull: (model: string): string => `নামানো নেই: চালান  ollama pull ${model}`,
+      pull: (model: string): string => `এখনো নামানো হয়নি: ${model}`,
       saved: 'সেভ হলো',
       failed: 'সেভ করা যায়নি',
     },

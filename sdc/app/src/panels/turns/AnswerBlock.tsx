@@ -64,8 +64,7 @@ export function AnswerBlock({ answer }: AnswerBlockProps) {
       )}
 
       <div className="answer-body" aria-live="polite">
-        <Markdown text={rest} />
-        {answer.streaming ? <span className="answer-caret ml-[1px] animate-pulse text-accent motion-reduce:animate-none">▍</span> : null}
+        <Markdown text={rest} streaming={answer.streaming} />
       </div>
     </div>
   );
