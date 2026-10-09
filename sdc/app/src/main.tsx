@@ -15,9 +15,11 @@ import './styles/globals.css';
 import { App } from './App';
 import { startAlerts } from './lib/alerts';
 import { routeLinksOutside } from './lib/external';
+import { installLinuxCaption } from './lib/caption';
 
 startAlerts();
 routeLinksOutside();
+installLinuxCaption();
 
 const container = document.getElementById('root');
 
