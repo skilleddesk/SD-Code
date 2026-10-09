@@ -92,7 +92,10 @@ export async function startUi(options: { vars?: Record<string, string> } = {}): 
           /* A pairing that never reaches Locked says what the page showed instead (0.21.1). */
           const shown = await page.locator('body').innerText().catch(() => '(no page text)');
 
-          throw new Error(`${error.message}\n--- the page said:\n${shown.slice(0, 800)}\n--- page errors:\n${errors.join('\n')}`);
+          throw new Error(
+            `${error.message}\n--- the page said:\n${shown.slice(0, 800)}\n--- page errors:\n${errors.join('\n')}` +
+              `\n--- daemon log (tail):\n${daemon.log().slice(-2500)}\n--- relay log (tail):\n${relay.log().slice(-2500)}`,
+          );
         });
     },
   };
