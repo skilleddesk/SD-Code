@@ -12,3 +12,8 @@
 # key never reaches the provider. Neither is a credential.
 d534b716752d43a6f8f1c1c0c70c0a90d9f0df41:sdc/cloud/test/totp.test.ts:generic-api-key:6
 46ad7f98cb3015b0c282d2323e98936ede92740c:sdc/sdcd/src/v3/redact.rs:generic-api-key:189
+# 0.18.0 (already public): throwaway Web Push test keys, generated for the tests and used with a made-up host the
+# tests intercept (see the comment in sdc/cloud/vitest.config.ts) - not credentials.
+49d3d90a51df7e14d6b331520ab5bfc6650cf05f:sdc/cloud/test/webpush.test.ts:generic-api-key:12
+49d3d90a51df7e14d6b331520ab5bfc6650cf05f:sdc/cloud/vitest.config.ts:generic-api-key:13
+49d3d90a51df7e14d6b331520ab5bfc6650cf05f:sdc/web/test/push.test.ts:generic-api-key:4
