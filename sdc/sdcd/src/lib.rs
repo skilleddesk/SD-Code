@@ -65,6 +65,7 @@ pub mod reset;
 pub mod pty;
 pub mod rewind;
 pub mod sdcp;
+pub mod search;
 pub mod session_bridge;
 pub mod ssh;
 pub mod status;

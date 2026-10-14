@@ -2,7 +2,7 @@
 
 > এই ফাইল `sdcd bench report` স্ক্রিপ্ট দিয়ে `bench/results/` থেকে তৈরি; হাতে লেখা কোনো সংখ্যা নেই।
 
-- তারিখ: 2026-10-14 · tier: ? · প্রতি task-এ run: null · sdcd: 1.0.0 · commit: `cba420c` · OS: macos aarch64
+- তারিখ: 2026-10-14 · tier: ? · প্রতি task-এ run: null · sdcd: 1.0.0 · commit: `835822b` · OS: macos aarch64
 
 মান = median [bootstrap 95% CI]। billable = uncached_in + 0.1×cached_in + out×(price_out/price_in)।
 
@@ -22,8 +22,9 @@
 
 | ধরন | query | ফল | প্রথম (ms) | p50 (ms) | p95 (ms) |
 |---|---|---|---|---|---|
-| filename | `**/*.rs` | 100 | 273.7 | 242.8 | 244.5 |
-| filename | `**/module_7*/**/*.ts` | 100 | 244.5 | 248.1 | 261.1 |
-| text | `fn compute_total` | 100 | 244.3 | 244.2 | 263.1 |
-| text | `TODO\(perf\)` | 100 | 265.5 | 259.4 | 261.7 |
-| text | `[A-Z][a-z]+Service::new` | 100 | 241.7 | 240.6 | 241.9 |
+| filename | `**/*.rs` | 100 | 536.4 | 228.7 | 230.8 |
+| filename | `**/module_7*/**/*.ts` | 100 | 228.8 | 233.6 | 251.9 |
+| text | `fn compute_total` | 100 | 231.4 | 228.6 | 229.5 |
+| text | `TODO\(perf\)` | 100 | 272.7 | 244.0 | 245.7 |
+| text | `[A-Z][a-z]+Service::new` | 100 | 227.4 | 227.3 | 228.3 |
+| text | `no_such_symbol_anywhere` | 0 | 2814.7 | 1204.1 | 1240.7 |

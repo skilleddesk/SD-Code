@@ -53,7 +53,7 @@ Branch naming: `sdc-v3/<ID>`. Numbers come only from `bench/results/` (never typ
 
 | ID | Item | Status | Branch | Numbers | Next action |
 |---|---|---|---|---|---|
-| W3 | Search module `sdcd/src/search/` | todo | sdc-v3/W3 | — | — |
+| W3 | Search module `sdcd/src/search/` | done | sdc-v3/W3 | 52,501 files, p50: filename 2.5-3.2 ms (v1 229-234), text 2.0-6.6 ms (v1 227-1204 incl. a no-match full scan); first call 150 ms (v1 229-2815); peak RSS 58 MB (`results/2026-10-14-search-v1` vs `-v3`); `ignore` parallel walk + .gitignore, notify-patched index, byte prefilter, trigram Bloom content index; switch `v3.search` (on) | Windows/Linux numbers in CI; `nucleo` fuzzy names + UI debounce; same engine via `sdcd search` on a VPS |
 | W4 | Code intelligence (tree-sitter, symbols, repo map) | todo | sdc-v3/W4 | — | — |
 | W5 | Cache layout + tool pruning | todo | sdc-v3/W5 | — | — |
 | I1 | Context Ledger | todo | sdc-v3/I1 | — | — |

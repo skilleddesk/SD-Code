@@ -19,6 +19,9 @@ use crate::ssh::Ssh;
 /// Folders no search goes into.
 pub const SKIPPED_DIRS: &[&str] = &[".git", "node_modules", "target", "dist", "build", "vendor", ".next", ".nuxt", ".svelte-kit", ".pnpm-store", "__pycache__", ".venv", "venv", ".cache", "coverage", ".turbo"];
 
+/// The most lines one file gives a `grep` (v3 W3): one file full of matches no longer fills the whole answer.
+pub const PER_FILE: usize = 5;
+
 /// A file larger than this is not searched line by line (a bundle, a dump, a lock file).
 const MAX_SEARCHED: u64 = 2 * 1024 * 1024;
 
@@ -124,6 +127,8 @@ fn files_of(root: &str, remote: Option<&Ssh>, cap: usize) -> Result<Vec<String>,
                 .filter(|path| crate::fs::blocked_reason(Path::new(path)).is_none())
                 .collect())
         }
+        /* v3 W3: the indexed, .gitignore-aware engine (switch `v3.search`). */
+        None if crate::v3::on("search") => Ok(crate::search::files(Path::new(root), cap)),
         None => {
             let mut files = Vec::new();
 
@@ -196,6 +201,17 @@ pub fn grep(root: &str, remote: Option<&Ssh>, base: &str, pattern: &str, glob: O
 
                     (crate::fs::blocked_reason(Path::new(&path)).is_none()).then(|| Hit { path, line: number.parse().unwrap_or(0), text: clip(text) })
                 })
+                .collect())
+        }
+        /* v3 W3: parallel reads in index order, at most five lines from one file (switch `v3.search`). */
+        None if crate::v3::on("search") => {
+            let matcher = glob.map(glob_regex).transpose()?;
+            let base = base.to_string();
+
+            Ok(crate::search::grep(Path::new(root), &base, pattern, ignore_case, matcher.as_ref(), limit, PER_FILE)
+                .map_err(|error| ErrorObject::bad_request(format!("`{pattern}` is not a valid regular expression: {error}")))?
+                .into_iter()
+                .map(|hit| Hit { path: hit.path, line: hit.line, text: hit.text })
                 .collect())
         }
         None => {

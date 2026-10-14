@@ -10,8 +10,8 @@ change a status without a link.
 | A-01 | Code facts from the analysis are correct (see A-01 detail below) | partial | 4 true, 3 partial, 2 false — below | Phase 0 |
 | A-02 | Input shares: ~25% system + tools, ~50% tool results | untested | — | W1 ledger |
 | A-03 | Token variance CV ≤ 15% across repeated runs | untested | — | W1 |
-| A-04 | Root cause of slow search identified | partial | `bench/results/2026-10-14-search-v1`: on 52,501 files every query - two globs, three greps - takes 240-260 ms p50 whatever it matches, so the full walk (`agent/search.rs` `files_of`, up to 50k files, newest-first with a stat per file, no index, no `.gitignore`) dominates, not the matching. Profile in W3 to confirm | W1 `bench search`, W3 |
-| A-05 | Search p50 < 50 ms filename / < 200 ms text on 50k files | untested | v1 baseline (warm cache): filename p50 243-248 ms, text p50 241-259 ms - `results/2026-10-14-search-v1` | W3 |
+| A-04 | Root cause of slow search identified | proven | The v1 walk was the cost: every query 227-261 ms whatever it matched, and a no-match scan 1.2 s. Replacing the walk with a watched index alone took matching queries to 2-4 ms; the remaining full-scan cost was file reads (ripgrep needs the same ~0.63 s), removed by a trigram content index → 6.6 ms (`results/2026-10-14-search-v1` vs `-v3`, same 52,501-file tree, macOS arm64, warm cache) | W1 `bench search`, W3 |
+| A-05 | Search p50 < 50 ms filename / < 200 ms text on 50k files | proven (macOS) | v3 p50: filename 2.5-3.2 ms, text 2.0-6.6 ms incl. no-match; v1 229-234 / 227-1204 ms (`results/2026-10-14-search-v3`). Warm OS cache; the first call (index build) is 150 ms. Windows and Linux to be measured in CI | W3 |
 | A-06 | Repo map cuts find-task input ≥ 30% on all models | untested | — | W4 |
 | A-07 | Tool pruning keeps quality (Q3 rule) | untested | — | W5 |
 | A-08 | Cached share ≥ 70% after 3 turns, per provider | untested | — | W5 |

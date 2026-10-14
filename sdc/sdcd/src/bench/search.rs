@@ -1,7 +1,9 @@
 //! `sdcd bench search` (v3 W1, A-04/A-05): the agent's own `glob` and `grep` timed on a folder, first call and
 //! repeats, p50/p95 - and `sdcd bench gen-tree`, the deterministic 50k-file tree the targets are set on.
 //!
-//! "First" is the first call in this process; the operating system's file cache may still be warm from an
+//! "First" is the first call in this process (with the v3 engine: the file index built, the content index still
+//! building in the background); p50/p95 are the repeats after the background indexing finished.
+//! The first call's OS file cache state: the operating system's file cache may still be warm from an
 //! earlier run, so a truly cold number needs the cache dropped first (`sudo purge` on macOS, `echo 3 >
 //! /proc/sys/vm/drop_caches` on Linux). The report says which it was.
 
@@ -22,9 +24,10 @@ pub struct Timing {
     pub p95_ms: f64,
 }
 
-/// The default queries: two filename globs and three content searches of growing cost.
+/// The default queries: two filename globs, three content searches of growing cost, and one that matches nothing
+/// (every file is read - the worst case).
 pub const GLOBS: [&str; 2] = ["**/*.rs", "**/module_7*/**/*.ts"];
-pub const GREPS: [&str; 3] = ["fn compute_total", "TODO\\(perf\\)", "[A-Z][a-z]+Service::new"];
+pub const GREPS: [&str; 4] = ["fn compute_total", "TODO\\(perf\\)", "[A-Z][a-z]+Service::new", "no_such_symbol_anywhere"];
 
 pub fn measure(root: &Path, repeats: usize) -> Result<Vec<Timing>, String> {
     let root_text = root.display().to_string();
@@ -33,11 +36,16 @@ pub fn measure(root: &Path, repeats: usize) -> Result<Vec<Timing>, String> {
         let mut samples = Vec::new();
         let mut results = 0;
 
-        for _ in 0..repeats.max(2) {
+        for round in 0..repeats.max(2) {
             let started = Instant::now();
 
             results = call()?;
             samples.push(started.elapsed().as_secs_f64() * 1_000.0);
+
+            /* The steady state is measured once the engine's background indexing is done (v3 W3). */
+            if round == 0 && crate::v3::on("search") {
+                crate::search::wait_ready(root, std::time::Duration::from_secs(120));
+            }
         }
 
         let (p50, p95) = stats::p50_p95(&samples[1..]).unwrap_or((samples[0], samples[0]));
