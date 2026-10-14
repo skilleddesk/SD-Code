@@ -1,0 +1,11 @@
+# cargo-audit policy for sdcd (v3 X5). An advisory is ignored only when nothing can fix it yet, and the reason is
+# written here so the next person can decide whether it still holds.
+
+[advisories]
+ignore = [
+    # RUSTSEC-2023-0071 "Marvin attack": a timing side channel in `rsa` that can leak a private key to someone who
+    # can time many decryptions. No fixed release exists. `rsa` arrives only through `russh`/`ssh-key`, where SDC
+    # is the SSH *client*: it verifies a server's RSA signature and signs with the person's key, and never answers
+    # unauthenticated RSA decryption requests from the network. Revisit when `rsa` ships a constant-time release.
+    "RUSTSEC-2023-0071",
+]

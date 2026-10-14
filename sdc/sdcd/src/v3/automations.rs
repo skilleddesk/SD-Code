@@ -265,7 +265,9 @@ mod tests {
 
         assert_eq!(items.len(), 3, "a disabled one is still the person's automation");
 
-        let now = 1_760_000_000;
+        /* Local noon, whatever the machine's zone: 09:30 never comes round within the next six hours, so only the
+           gap decides. (A fixed instant fell either side of 09:30 depending on where the tests ran.) */
+        let now = chrono::Local.with_ymd_and_hms(2025, 10, 9, 12, 0, 0).unwrap().timestamp();
         let first = due(&items, &BTreeMap::new(), now);
 
         assert_eq!(first.iter().map(|item| item.name.as_str()).collect::<Vec<_>>(), vec!["nightly", "morning"], "a new one runs the first time SDC looks");

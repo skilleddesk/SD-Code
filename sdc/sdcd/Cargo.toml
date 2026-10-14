@@ -50,7 +50,7 @@ hpke = { version = "0.14.1", default-features = false, features = ["x25519", "ae
 zip = { version = "2", default-features = false, features = ["deflate"] }
 flate2 = "1"
 tar = "0.4"
-ruzstd = "0.8"
+ruzstd = "0.9"
 # v3 W3: the search engine - a parallel, .gitignore-aware walk, and a watcher that keeps the file index fresh.
 ignore = "0.4"
 notify = "8"
