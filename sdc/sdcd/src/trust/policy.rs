@@ -91,6 +91,9 @@ pub struct Policy {
     /// one goes back to the model with the write's answer.
     #[serde(default)]
     pub after_edit: Vec<String>,
+    /// v3 I6: files whose content never goes to any model - not read, not grepped, not embedded (`secret_paths`).
+    #[serde(default)]
+    pub secret_paths: Vec<String>,
     /// Where this policy came from: `default`, or the file's path.
     pub source: String,
     /// The file's own text had a problem; the defaults are in force and this says why.
@@ -109,6 +112,7 @@ impl Default for Policy {
             max_turn_usd: None,
             auto_rollback: false,
             after_edit: Vec::new(),
+            secret_paths: Vec::new(),
             source: "default".to_string(),
             error: None,
         }
@@ -128,6 +132,7 @@ struct PolicyFile {
     max_turn_usd: Option<f64>,
     guardian: Option<GuardianFile>,
     hooks: Option<HooksFile>,
+    secret_paths: Option<Vec<String>>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -190,6 +195,7 @@ impl Policy {
         extend(&mut policy.protected_paths, file.protected_paths, replace);
         extend(&mut policy.always_ask, file.always_ask, replace);
         extend(&mut policy.deny_commands, file.deny_commands, false);
+        extend(&mut policy.secret_paths, file.secret_paths, false);
         policy.max_turn_usd = file.max_turn_usd.filter(|usd| *usd > 0.0);
         policy.auto_rollback = file.guardian.and_then(|guardian| guardian.auto_rollback).unwrap_or(false);
         policy.after_edit = match file.hooks.and_then(|hooks| hooks.after_edit) {
@@ -289,6 +295,13 @@ impl Policy {
         let relative = relative_to(path, root);
 
         self.protected_paths.iter().find(|pattern| glob_match(pattern, &relative)).cloned()
+    }
+
+    /// The `secret_paths` pattern a path matches (v3 I6): its content is never sent to a model.
+    pub fn secret(&self, path: &str, root: Option<&str>) -> Option<String> {
+        let relative = relative_to(path, root);
+
+        self.secret_paths.iter().find(|pattern| glob_match(pattern, &relative)).cloned()
     }
 
     /// The `always_ask` entry a command line contains, when it contains one.

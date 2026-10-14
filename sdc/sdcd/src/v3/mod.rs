@@ -14,6 +14,7 @@ pub mod failover;
 pub mod journal;
 pub mod ledger_diff;
 pub mod outline;
+pub mod privacy;
 pub mod profiles;
 pub mod rate;
 pub mod redact;

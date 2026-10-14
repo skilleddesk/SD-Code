@@ -1891,6 +1891,15 @@ fn drive(
             step_log.push(format!("{} {} → {}", call.name, what.chars().take(80).collect::<String>(), if result.2 { "error" } else { "ok" }));
         }
 
+        /* v3 I6: files marked secret never reach a model; what did is written down (local projects). */
+        if crate::v3::on("privacy") {
+            let sent = crate::v3::privacy::filter(policy, workspace.root(), &reply.tool_uses, &mut results);
+
+            if prompt.remote.is_none() {
+                crate::v3::privacy::audit(workspace.root(), prompt.provider.as_deref().unwrap_or_default(), &target.model, &sent);
+            }
+        }
+
         /* v3 W9: external text marked as data, secrets replaced - before anything reaches the model. */
         crate::v3::guard_results(&prompt.session_id, &reply.tool_uses, &mut results);
 
@@ -2956,6 +2965,55 @@ mod end_to_end {
         assert!(capsule.contains("write_file half.txt → ok"));
         assert!(recorder.events().contains(&EngineEvent::Delta("Finished from the capsule.".into())));
         assert!(!recorder.events().iter().any(|event| matches!(event, EngineEvent::Failed(_))), "no failure reached the person");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// v3 I6 canary: a file marked secret is read, grepped for and printed by a command - its canary never reaches
+    /// the provider, and the audit names only the files that did go.
+    #[test]
+    fn a_file_marked_secret_never_reaches_the_provider() {
+        let root = std::env::temp_dir().join(format!("sdc-privacy-{}", std::process::id()));
+        let canary = "CANARY-7f3a9c-PRIVATE";
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("vault")).unwrap();
+        std::fs::write(root.join("vault/keys.txt"), format!("token = {canary}\n")).unwrap();
+        std::fs::write(root.join("app.txt"), "uses the token from the vault\n").unwrap();
+
+        let (url, server) = provider(vec![
+            calls(vec![
+                ("c1", "read_file", serde_json::json!({ "path": "vault/keys.txt" })),
+                ("c2", "read_file", serde_json::json!({ "path": "app.txt" })),
+                ("c3", "grep", serde_json::json!({ "pattern": "CANARY|token" })),
+            ]),
+            call("c4", "run_command", serde_json::json!({ "command": if cfg!(windows) { "type vault\\keys.txt" } else { "cat vault/keys.txt" } })),
+            chunk(serde_json::json!({ "content": "done" })) + "data: [DONE]\n\n",
+        ]);
+        let target = Target {
+            url,
+            headers: vec![("content-type".to_string(), "application/json".to_string())],
+            dialect: Dialect::OpenAi,
+            model: "local-test".to_string(),
+            price: None,
+            thinking: false,
+            effort: None,
+            local_context: None,
+            local_window: false,
+        };
+        let policy = crate::trust::policy::Policy::parse("secret_paths = [\"vault/**\"]\n", "test");
+        let workspace = Workspace::new(root.to_str().unwrap(), None);
+        let prompt = prompt_in(&root, "turn-privacy", "where is the token used?", "local-test");
+
+        drive(Backend::Api, &target, &workspace, Options { autonomy: Autonomy::Auto, max_steps: 6, auto_check: false, research: None }, None, &policy, &prompt, &crate::engines::Recorder::new().sink());
+
+        let bodies = server.join().unwrap();
+
+        assert!(bodies.iter().all(|body| !body.to_string().contains(canary)), "the canary never left the machine");
+        assert!(bodies[1].to_string().contains("marked secret"));
+
+        let audit = std::fs::read_to_string(root.join(crate::v3::privacy::AUDIT_FILE)).unwrap();
+
+        assert!(audit.contains("app.txt") && !audit.contains("vault/keys.txt"), "{audit}");
 
         let _ = std::fs::remove_dir_all(&root);
     }

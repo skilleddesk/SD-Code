@@ -99,7 +99,7 @@ Branch naming: `sdc-v3/<ID>`. Numbers come only from `bench/results/` (never typ
 | ID | Item | Status | Branch | Numbers | Next action |
 |---|---|---|---|---|---|
 | W8 | `/research` | todo | sdc-v3/W8 | — | — |
-| I6 | Privacy Split Router (cloud-only part) | todo | sdc-v3/I6 | — | — |
+| I6 | Privacy Split Router (cloud-only part) | done (cloud part) | sdc-v3/I6 | `secret_paths` in `.sdc/policy.toml`: reads refused, grep/search lines dropped, commands naming a secret file have output withheld; `.sdc/audit/sent.jsonl` records files sent per provider/model; canary end-to-end test (read + grep + cat) → 0 leaks; switch `v3.privacy` (on) | 100-task canary run on the bench; embeddings (none exist yet); local summariser deferred (D-1) |
 | I7 | Fleet Fan-out | todo | sdc-v3/I7 | — | — |
 | I8 | Interlingua | todo | sdc-v3/I8 | — | — |
 | I11 | Self-Improving Knowledge Core (umbrella over L0–L5) | todo | sdc-v3/I11 | — | — |
