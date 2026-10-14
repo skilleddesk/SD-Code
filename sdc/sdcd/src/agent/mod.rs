@@ -1204,6 +1204,36 @@ fn drive(
         }
         _ => target.clone(),
     };
+    /* v3 L4: with `v3.bandit` the plain rule is replaced by what actually happened for this kind of request. */
+    let routed_request = prompt.text.rsplit("[The person's message]").next().unwrap_or(&prompt.text).to_string();
+    let bandit_kind = crate::v3::bandit::kind_of(&routed_request);
+    let bandit = crate::v3::on("bandit");
+    let tuned = if bandit {
+        /* The arms are the model the person chose and the fast one, when they named one. */
+        let main = tuned.model.clone();
+        let fast = crate::v3::router::fast().map(|(_, model)| model);
+        let mut arms: Vec<&str> = vec![main.as_str()];
+
+        if let Some(fast) = fast.as_deref().filter(|fast| *fast != main) {
+            arms.push(fast);
+        }
+
+        let record = crate::v3::bandit::Record::load(std::path::Path::new(workspace.root()));
+
+        match record.choose(&bandit_kind, &arms) {
+            Some(chosen) if chosen != main => {
+                let mut wanted = prompt.clone();
+
+                wanted.provider = crate::v3::router::fast().map(|(provider, _)| provider);
+                wanted.model = chosen.to_string();
+
+                resolve_target(&wanted).unwrap_or(tuned)
+            }
+            _ => tuned,
+        }
+    } else {
+        tuned
+    };
     /* v3 W6: a plainly light request goes to the fast model the person named; everything else stays here. */
     let tuned = if crate::v3::on("router") {
         crate::v3::router::route(tuned, prompt.text.rsplit("[The person's message]").next().unwrap_or(&prompt.text), &|provider, model| {
@@ -1906,6 +1936,19 @@ fn drive(
                 {
                     crate::v3::recipes::save(std::path::Path::new(workspace.root()), &done);
                 }
+            }
+
+            /* v3 L4: what this turn taught the bandit - it got there, and what it cost to get there. */
+            if bandit {
+                let cost = crate::v3::router::estimate(&routed_request, target.price, fixed + crate::context::tokens_of(&text));
+                let budget = budget.as_ref().and_then(|budget| match budget {
+                    crate::v3::budget::Budget::Dollars(limit) => Some(*limit),
+                    crate::v3::budget::Budget::Tokens(_) => None,
+                });
+                let mut record = crate::v3::bandit::Record::load(std::path::Path::new(workspace.root()));
+
+                record.observe(&bandit_kind, &target.model, crate::v3::bandit::reward(summary == "Done", cost, budget));
+                record.save(std::path::Path::new(workspace.root()));
             }
 
             let estimate = crate::v3::on("router").then(|| crate::v3::router::estimate(&request_text, target.price, fixed + crate::context::tokens_of(&text))).flatten().map(|cost| format!(" · estimated ${cost:.3}"));

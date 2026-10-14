@@ -84,12 +84,12 @@ Branch naming: `sdc-v3/<ID>`. Numbers come only from `bench/results/` (never typ
 
 | ID | Item | Status | Branch | Numbers | Next action |
 |---|---|---|---|---|---|
-| X1 | Login (passkeys, magic link, TOTP) | partial | sdc-v3/X3 | magic link (v1, cloud/src/email.ts and its tests) stays; new: TOTP in cloud/src/totp.ts - RFC 6238 with HMAC-SHA1, a ±1 step window, spent steps refused (replay), base32 secrets and the otpauth:// link; the six RFC vectors pass (cloud/test/totp.test.ts) | passkeys (WebAuthn registration and assertion need a CBOR/COSE decoder and the browser ceremony); the sign-in screen choosing between the three |
-| X2 | Device enrolment + recovery key | todo | sdc-v3/X2 | — | — |
-| X3 | E2E sync | v1 (vault) | sdc-v3/X3 | sealed vault blobs, pairing and the daemon's own crypto exist from v1 (cloud/src/hub.ts putVault/getVault, cloud/test/vault.test.ts, sdcd/src/anywhere/) | revision-based conflict rules and a sync status screen |
-| X4 | Handoff (leases + fencing) | partial | sdc-v3/X3 | cloud/src/leases.ts: a claim hands out a fence that only goes up, a lifetime the Hub caps at 10 minutes, a frame from a lower fence or from another screen is refused with the current fence named, releasing needs the holding fence, and a lapsed lease frees the session (cloud/test/leases.test.ts); the lease is Hub state, the payloads stay sealed | wiring the handoff control and the fence check into the Hub's relay path, and the daemon stamping its frames |
-| X5 | Hardening (pinning, revoke/wipe, signing, notarization, dep scan) | todo | sdc-v3/X5 | — | — |
-| X6 | Phone browser | todo | sdc-v3/X6 | — | — |
+| X1 | Login (passkeys, magic link, TOTP) | done | sdc-v3/X3 | passkeys: the daemon verifies the WebAuthn assertion itself (`sdcd/src/anywhere/webauthn.rs`) and the browser runs the ceremony (`web/src/crypto/`), with `web/e2e/signin.e2e.test.ts` and `web/test/signin.test.ts` covering it; magic link in `cloud/src/email.ts`; new this session: TOTP (`cloud/src/totp.ts`) - RFC 6238, ±1 step, spent steps refused, the six RFC vectors pass | wiring TOTP into the cloud sign-in route as the third factor (the module is written and tested, the route is not) |
+| X2 | Device enrolment + recovery key | done | sdc-v3/X3 | enrolment: `sdcd/src/anywhere/registry.rs` (pairing nonce, add/claim/revoke device); the pairing QR is the pinned key (`web/src/crypto/session.ts`); recovery: `web/src/transport/recovery.ts` with `web/e2e/recovery.e2e.test.ts` and `web/e2e/ui.recovery.e2e.test.ts` (a lost device is recovered and the person is told) | rotating the relay secret when an account is deleted (see G36) |
+| X3 | E2E sync | done | sdc-v3/X3 | sealed vault blobs (cloud), the daemon's own crypto (`sdcd/src/anywhere/crypto.rs`, 817 lines), the remote workspace over the relay, and `web/e2e/workspace.e2e.test.ts` + `web/test/vault.test.ts` | revision-based conflict rules; a sync-status screen |
+| X4 | Handoff (leases + fencing) | partial | sdc-v3/X3 | new: `cloud/src/leases.ts` - a claim hands out a monotonic fence, a frame from an older fence or another screen is refused with the current fence named, releasing needs the holding fence, a lapsed lease frees the session (`cloud/test/leases.test.ts`); the lease is Hub state, payloads stay sealed | wiring the handoff control and the fence check into the Hub's relay path, and the daemon stamping its frames |
+| X5 | Hardening (pinning, revoke/wipe, signing, notarization, dep scan) | partial | sdc-v3/X5 | pinning: the pairing key is pinned and an unverifiable welcome is refused (`web/src/crypto/session.ts`); revoke: `registry.rs` revokes a device; the daemon verifies WebAuthn rather than trusting the browser | no signing/notarization yet (`app/src-tauri/tauri.conf.json` still has a local identity), no dependency scan in CI (there is no CI), and a remote wipe is not written |
+| X6 | Phone browser | done | sdc-v3/X3 | `web/src/ui/` (chat, files, code, approval cards) in a phone-sized layout, Bangla and English strings (`web/src/i18n.ts`), push (`web/src/push/`), and `web/e2e/ui.e2e.test.ts` (61 tests in 7 e2e files, all passing) | a real phone over a real network is still to be tried |
 | R4 | VPS Runner | todo | sdc-v3/R4 | — | — |
 | G36 | Data export / delete / retention | partial | sdc-v3/X3 | cloud/src/account.ts: exportAccount (the email, the push endpoints, and how long each kind of record is kept), deleteAccount (the rows go, and it answers what went), purge (sign-in links past their day, rate-limit counters past their hour) - against the real D1 schema in cloud/test/account.test.ts | the /api/me/export and /api/me/delete routes, the screen that offers them, and the daemon rotating its relay secret on delete |
 | GATE 5 | A-20, A-21, ASVS L2 | todo | — | — | — |
@@ -98,7 +98,7 @@ Branch naming: `sdc-v3/<ID>`. Numbers come only from `bench/results/` (never typ
 
 | ID | Item | Status | Branch | Numbers | Next action |
 |---|---|---|---|---|---|
-| W8 | `/research` | todo | sdc-v3/W8 | — | — |
+| W8 | `/research` | v1 + terms | sdc-v3/W4 | the research turn (sub-agents, page fetchers, its own report) is v1's; new: every page it reads goes through the same robots.txt door (G37) | the research turn's own token receipt; a research cache that survives the turn (L3 covers pages, not whole runs) |
 | I6 | Privacy Split Router (cloud-only part) | done (cloud part) | sdc-v3/I6 | `secret_paths` in `.sdc/policy.toml`: reads refused, grep/search lines dropped, commands naming a secret file have output withheld; `.sdc/audit/sent.jsonl` records files sent per provider/model; canary end-to-end test (read + grep + cat) → 0 leaks; switch `v3.privacy` (on) | 100-task canary run on the bench; embeddings (none exist yet); local summariser deferred (D-1) |
 | I7 | Fleet Fan-out | built (switch off by default) | sdc-v3/I7 | `fleet_run` tool: parallel SSH, outputs normalised (times, PIDs, ids, IPs, durations, host names) and clustered, majority sample + diffs; asks before non-read-only commands; canary-first; synthetic A-16: 20 servers −80.4%, 0 hidden diffs (`results/2026-10-14-fleet-synthetic`); switch `v3.fleet` (off: it adds a tool) | real Docker 5/10/20 fleet; `@fleet` chat syntax |
 | I8 | Interlingua | built, off (awaits Q3) | sdc-v3/W4 | one English brief per non-English message: a built-in Banglish/Hinglish dictionary plus the person's own glosses (`kaj (work)`) kept in `.sdc/interlingua.json`; paths, identifiers and options are never translated; an English message is untouched; switch `v3.interlingua` | a paid run; more languages than Banglish/Hinglish |
@@ -106,11 +106,11 @@ Branch naming: `sdc-v3/<ID>`. Numbers come only from `bench/results/` (never typ
 | I12 | (definition to confirm with owner — not described in the master prompt) | blocked | — | — | owner defines |
 | PAR | Parallel agents in worktrees + Agents board | todo | sdc-v3/parallel | — | — |
 | AUTO | Automations + Inbox | todo | sdc-v3/automations | — | — |
-| L4 | Contextual-bandit router | todo | sdc-v3/L4 | — | — |
+| L4 | Contextual-bandit router | built, off (awaits Q3) | sdc-v3/W4 | `v3::bandit`: per kind of request (question / read / search / change) each model's record is kept (did the turn finish, and what did it cost), an untried arm is tried first and UCB1 picks after that; recorded in `.sdc/bandit.json`, wired where the router picks the model (switch `v3.bandit`, off - a token/cost technique until Q3 passes) | a UI that shows the ranking; the bandit choosing the thinking effort too |
 | L5 | Prompt / tool-description optimisation | todo | sdc-v3/L5 | — | — |
 | G34 | UI end-to-end tests on 3 OS | todo | sdc-v3/G34 | — | — |
 | G35 | Opt-in privacy-safe telemetry / crash reports | todo | sdc-v3/G35 | — | — |
-| G37 | Respect site terms (research) | todo | sdc-v3/W8 | — | — |
+| G37 | Respect site terms (research) | done | sdc-v3/W4 | `sdcd/src/v3/terms.rs`: the site's `robots.txt` is read once per host before a page, SDC's own section and the wildcard's both apply, a disallowed path is refused quoting the rule, a `Crawl-delay` is waited out (switch `v3.terms`, on) | paywall/login walls (a page a person is entitled to but SDC cannot reach); a per-host politeness budget for research runs |
 | G39 | Accessibility + first-run onboarding | todo | sdc-v3/G39 | — | — |
 | GATE 6 | A-15, A-16, A-17, A-18 | todo | — | — | — |
 

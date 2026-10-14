@@ -82,6 +82,22 @@ pub fn fetch_page(url: &str, cap: usize) -> Result<Page, String> {
     let response = loop {
         allowed(&current)?;
 
+        /* v3 G37/W8: the site's own robots.txt decides before a page is read (switch `v3.terms`). */
+        if crate::v3::on("terms") {
+            let read = |robots_url: &str| match agent().get(robots_url).call() {
+                Ok(response) => response.into_string().map_err(|error| error.to_string()),
+                Err(ureq::Error::Status(404, _)) => Err("no robots.txt".to_string()),
+                Err(ureq::Error::Status(code, _)) => Err(format!("HTTP {code}")),
+                Err(ureq::Error::Transport(transport)) => Err(format!("{transport}")),
+            };
+
+            crate::v3::terms::allows(&current, &read)?;
+
+            if let Some(delay) = crate::v3::terms::delay_for(&crate::v3::terms::origin_of(&current), &read) {
+                std::thread::sleep(delay.min(std::time::Duration::from_secs(10)));
+            }
+        }
+
         let response = match agent().get(&current).set("accept", "text/html,application/xhtml+xml,application/json,text/plain;q=0.9,*/*;q=0.5").call() {
             Ok(response) => response,
             Err(ureq::Error::Status(code, response)) => {

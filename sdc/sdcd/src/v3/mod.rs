@@ -9,6 +9,7 @@
 //! (`protocol/model-profiles.json`, Q2). Reliability, speed and safety features that do not change what a
 //! model is told start on.
 
+pub mod bandit;
 pub mod budget;
 pub mod cas;
 pub mod cascade;
@@ -30,6 +31,7 @@ pub mod profiles;
 pub mod recipes;
 pub mod rate;
 pub mod redact;
+pub mod terms;
 pub mod tools;
 
 use std::collections::HashMap;
@@ -73,6 +75,8 @@ pub const FEATURES: &[Feature] = &[
     Feature { name: "router", default_on: true, token_technique: false, what: "W6: a plainly light request goes to the fast model named in router.fast; everything else stays on the main model" },
     Feature { name: "effort", default_on: true, token_technique: false, what: "Q5: a small model is given room to think and one instruction to lean on the tools" },
     Feature { name: "cascade", default_on: true, token_technique: false, what: "I3: when the draft model is stuck, cascade.strong takes the task over from a capsule of its state" },
+    Feature { name: "terms", default_on: true, token_technique: false, what: "G37: a site's robots.txt decides before SDC reads a page, and a crawl delay is given" },
+    Feature { name: "bandit", default_on: false, token_technique: false, what: "L4: which model wins for which kind of task is learned from the turns themselves" },
 ];
 
 #[derive(Debug, Default, Clone)]
