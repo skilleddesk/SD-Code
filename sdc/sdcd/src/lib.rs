@@ -71,6 +71,7 @@ pub mod status;
 pub mod store;
 pub mod trust;
 pub mod understand;
+pub mod v3;
 pub mod verify;
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -149,6 +150,9 @@ impl DaemonState {
 
         /* Settings → Research and the local model's context, in force from the first turn (0.16.1). */
         crate::agent::research::configure(&store);
+        /* v3: the feature switches, and the journal that lets a lost turn be continued (R1/R2). */
+        crate::v3::configure(&store);
+        crate::v3::journal::install(store.clone());
 
         let pty = Arc::new(PtyManager::new());
 

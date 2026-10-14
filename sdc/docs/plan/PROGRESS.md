@@ -41,10 +41,10 @@ Branch naming: `sdc-v3/<ID>`. Numbers come only from `bench/results/` (never typ
 
 | ID | Item | Status | Branch | Numbers | Next action |
 |---|---|---|---|---|---|
-| R1 | Journal (`job_events` intent/result, SQLite WAL) | todo | sdc-v3/R1 | — | — |
-| R2 | Resume on start | todo | sdc-v3/R2 | — | — |
+| R1 | Journal (`job_events` intent/result, SQLite WAL) | done | sdc-v3/R1 | `v3/journal.rs`; start/model/intent/result/messages/end, idempotency key, output hash; switch `v3.journal` (on) | remote (VPS) turns are not journaled yet |
+| R2 | Resume on start | done (local) | sdc-v3/R1 | A-19 local: 100 SIGKILLs → 100/100 correct, 85 resumed from the journal, 0 damaged files, 0 duplicated commands (`bench/results/2026-10-14-resume`); reads re-run, writes reconciled with the folder, commands reported as outcome-unknown | remote-command check on a VPS (with R4) |
 | R3 | Offline queue (backoff + jitter) | todo | sdc-v3/R3 | — | — |
-| R5 | Graceful shutdown on sleep/shutdown | todo | sdc-v3/R5 | — | — |
+| R5 | Graceful shutdown on sleep/shutdown | partial | sdc-v3/R1 | SIGTERM/SIGHUP/Ctrl-C: children stopped, WAL checkpointed, running turns resume next start | OS sleep notifications (Windows/macOS power events) |
 | W7a | Checkpoints (hidden git refs / CAS blobs, undo turn, timeline, VPS) | todo | sdc-v3/W7 | — | — |
 | W9 | Security basics (OS key storage + migration, rate limiter, untrusted tagging, secret redaction, SQLite integrity + backup) | todo | sdc-v3/W9 | — | — |
 | GATE 2 | A-19 local part | todo | — | — | — |

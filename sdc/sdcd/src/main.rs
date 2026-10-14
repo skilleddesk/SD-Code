@@ -147,7 +147,21 @@ async fn run() -> Result<()> {
     if default_database {
         let store = state.store.clone();
 
+        let events = state.events.clone();
+
         std::thread::spawn(move || {
+            /* v3 W9: the file is checked before it is copied - a damaged database is said, not copied over
+               the good copies of earlier days. */
+            if let Some(problem) = store.integrity_problem() {
+                eprintln!("sdcd: the database failed its integrity check: {problem}");
+                events.append(
+                    sdcd::sdcp::events::event::toast(&format!("SDC's database failed its integrity check ({problem}). Earlier daily copies are kept in the backup folder."), None, Some(30_000)),
+                    None,
+                    None,
+                );
+                return;
+            }
+
             let today = chrono::Local::now().format("%Y-%m-%d").to_string();
 
             match sdcd::paths::backup_dir().and_then(|dir| sdcd::paths::backup_daily(&store, &dir, &today)) {
@@ -172,6 +186,16 @@ async fn run() -> Result<()> {
     for sentence in sdcd::rewind::recover(&state.store) {
         println!("  journal    {sentence}");
         state.events.append(sdcd::sdcp::events::event::toast(&sentence, None, Some(12_000)), None, None);
+    }
+
+    /* v3 R2: turns the last daemon lost (a crash, a power cut, a kill) continue where their journal stopped. */
+    {
+        let resume_state = state.clone();
+        let notifier: Arc<dyn Notifier> = Arc::new(ChannelNotifier::new(state.events.clone(), state.fanout.clone()));
+
+        for sentence in tokio::task::spawn_blocking(move || sdcd::v3::journal::resume_lost_turns(&resume_state, notifier)).await.unwrap_or_default() {
+            println!("  resume     {sentence}");
+        }
     }
 
     /* Health Watch and the Night Guardian (0.12): every site on its own interval. */
@@ -288,12 +312,19 @@ async fn run() -> Result<()> {
        daemon that is not the version it needs), or nobody has talked to us for the time the app asked
        for. Both end here rather than in the accept loop, so the stopping is orderly: the children the
        daemon started are killed first (spec section 3.1). */
-    match sdcd::watch(&state, idle_exit).await {
-        sdcd::StopReason::Idle(seconds) => println!("sdcd: no client for {seconds}s, exiting"),
-        sdcd::StopReason::Requested => println!("sdcd: stopping on request"),
+    /* v3 R5: the operating system's stop (shutdown, logout, `kill`, Ctrl-C) is an orderly stop too. A turn
+       still running keeps its journal open, so the next start continues it (R2); the database is
+       checkpointed so nothing waits in the WAL file. */
+    tokio::select! {
+        reason = sdcd::watch(&state, idle_exit) => match reason {
+            sdcd::StopReason::Idle(seconds) => println!("sdcd: no client for {seconds}s, exiting"),
+            sdcd::StopReason::Requested => println!("sdcd: stopping on request"),
+        },
+        signal = stop_signal() => println!("sdcd: {signal} - stopping; running turns resume on the next start"),
     }
 
     state.shutdown();
+    state.store.checkpoint_wal();
 
     /* Leave now. Returning from `main` drops the runtime, and a runtime drop **waits** for every
        `spawn_blocking` task still running - since 0.9.0 that includes the catalogue refresh, an HTTP
@@ -402,4 +433,27 @@ where
     Ok(())
 }
 
+/// The operating system asks the daemon to stop: Ctrl-C everywhere, SIGTERM and SIGHUP on unix.
+async fn stop_signal() -> &'static str {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
 
+        let (Ok(mut term), Ok(mut hangup)) = (signal(SignalKind::terminate()), signal(SignalKind::hangup())) else {
+            let _ = tokio::signal::ctrl_c().await;
+            return "interrupted";
+        };
+
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => "interrupted",
+            _ = term.recv() => "terminated",
+            _ = hangup.recv() => "hung up",
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+        "interrupted"
+    }
+}

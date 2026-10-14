@@ -614,7 +614,7 @@ impl Daemon {
             "research.maxMinutes", "research.localWebOnly", "research.synthesisModel", "research.synthesisProvider",
         ];
 
-        if !allowed.contains(&key.as_str()) {
+        if !allowed.contains(&key.as_str()) && !crate::v3::is_setting(&key) {
             return Err(ErrorObject::bad_request(format!("`{key}` is not a setting this method writes")));
         }
 
@@ -624,6 +624,10 @@ impl Daemon {
 
         if key.starts_with("research.") || key.starts_with("ollama.") {
             crate::agent::research::configure(self.store());
+        }
+
+        if crate::v3::is_setting(&key) {
+            crate::v3::configure(self.store());
         }
 
         Ok(json!({ "key": key, "value": value }))

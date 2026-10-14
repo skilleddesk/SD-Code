@@ -184,6 +184,19 @@ CREATE TABLE IF NOT EXISTS anywhere_pairings (
   guest INTEGER NOT NULL DEFAULT 0, used_at INTEGER);
 "#,
     ),
+    /* v3 R1: the job journal - every agent step written ahead (intent before a tool runs, result after), so a
+       turn the daemon lost to a crash or a power cut can be continued exactly where it stopped (R2). */
+    (
+        "0200-v3-journal",
+        r#"
+CREATE TABLE IF NOT EXISTS job_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, turn_id TEXT NOT NULL, session_id TEXT NOT NULL,
+  step INTEGER NOT NULL, kind TEXT NOT NULL, call_id TEXT, tool TEXT, idem TEXT, hash TEXT,
+  payload TEXT NOT NULL, created_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS job_events_turn ON job_events(turn_id, id);
+CREATE INDEX IF NOT EXISTS job_events_kind ON job_events(kind, turn_id);
+"#,
+    ),
 ];
 
 /// The daemon's database handle.
@@ -287,6 +300,21 @@ impl Store {
         connection.execute("VACUUM INTO ?1", [target.to_string_lossy().to_string()])?;
 
         Ok(())
+    }
+
+    /// Moves everything in the WAL file into the database (v3 R5, on an orderly stop).
+    pub fn checkpoint_wal(&self) {
+        if let Ok(connection) = self.connection.lock() {
+            let _ = connection.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)");
+        }
+    }
+
+    /// `PRAGMA quick_check` (v3 W9): `None` when the file is sound, the first problem otherwise.
+    pub fn integrity_problem(&self) -> Option<String> {
+        let connection = self.connection.lock().ok()?;
+        let answer: String = connection.query_row("PRAGMA quick_check", [], |row| row.get(0)).unwrap_or_else(|error| error.to_string());
+
+        (answer != "ok").then_some(answer)
     }
 
     fn migrate(&self) -> Result<()> {

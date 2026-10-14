@@ -25,7 +25,7 @@ change a status without a link.
 | A-16 | Fleet clustering −80% at 20 servers, 0 hidden diffs | untested | — | I7 |
 | A-17 | Self-learning causes no lasting regression over 4 weeks | untested | — | I11 / L |
 | A-18 | Knowledge gate blocks ≥ 98% of 50 poisoned items, rest rolled back | untested | — | I11 |
-| A-19 | ≥ 95% correct resume after forced kill, 0 data loss | untested | — | R1–R2 (local), R4 (remote) |
+| A-19 | ≥ 95% correct resume after forced kill, 0 data loss | partial (local proven) | local: 100 SIGKILLs at random moments → 100/100 correct, 0 damaged files, 0 duplicated commands, scripted provider (`bench/results/2026-10-14-resume`, `sdcd bench resume`). Remote (VPS) part waits for R4 | R1–R2 (local), R4 (remote) |
 | A-20 | Sync server holds no plaintext | untested | — | X3 canary scan |
 | A-21 | Identical behaviour on 3 OS | untested | — | CI + X4 handoff |
 | A-22 | v3 cloud bill ≥ 40% below Claude Code / Codex on the same model | untested | — | Phase 7 |

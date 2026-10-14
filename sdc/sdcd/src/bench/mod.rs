@@ -10,6 +10,7 @@
 //! sdcd bench search      --root DIR [--repeats 10] [--label NAME] [--cold]
 //! sdcd bench gen-tree    --out DIR [--files 50000]
 //! sdcd bench validate    [--tier all]                     # every task fails untouched and passes its reference
+//! sdcd bench resume      [--kills 100] [--label NAME]     # A-19: kill -9 mid-turn, restart, check the work
 //! sdcd bench report      LABEL [--baseline LABEL]         # writes bench/results/LABEL/report-bn.md
 //! sdcd bench compare     BASELINE CANDIDATE [--report-bn]  # the Q3 rule per model
 //! ```
@@ -22,6 +23,7 @@ pub mod competitors;
 pub mod lang;
 pub mod ledger;
 pub mod report;
+pub mod resume;
 pub mod runner;
 pub mod search;
 pub mod stats;
@@ -128,9 +130,10 @@ pub fn main(args: &[String]) -> i32 {
         "gen-tree" => gen_tree(rest),
         "report" => report_cmd(rest),
         "validate" => validate(rest),
+        "resume" => resume_cmd(rest),
         "compare" => compare_cmd(rest),
         _ => {
-            println!("{}", include_str!("mod.rs").lines().skip(2).take(15).map(|line| line.trim_start_matches("//! ")).collect::<Vec<_>>().join("\n"));
+            println!("{}", include_str!("mod.rs").lines().skip(2).take(16).map(|line| line.trim_start_matches("//! ")).collect::<Vec<_>>().join("\n"));
             Ok(())
         }
     };
@@ -227,6 +230,46 @@ fn validate(args: &[String]) -> Result<(), String> {
     } else {
         Err(format!("{} task(s) invalid: {}", wrong.len(), wrong.join(", ")))
     }
+}
+
+/// `sdcd bench resume`: A-19's local part, with a scripted provider (no key, no cost).
+fn resume_cmd(args: &[String]) -> Result<(), String> {
+    let kills = flag(args, "--kills").and_then(|value| value.parse().ok()).unwrap_or(100);
+    let binary = match flag(args, "--binary") {
+        Some(path) => PathBuf::from(path),
+        None => std::env::current_exe().map_err(|error| error.to_string())?,
+    };
+    let scratch = std::env::temp_dir().join("sdc-bench").join(format!("resume-{}", std::process::id()));
+    let trials = resume::trials(&binary, kills, &scratch)?;
+    let summary = resume::summarise(&trials);
+
+    if std::env::var_os("SDC_BENCH_KEEP").is_none() {
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    println!(
+        "{} kills: {} before the turn began, {} resumed; correct {}/{} ({:.1}%), damaged files {}, duplicated commands {}",
+        summary.kills,
+        summary.not_started,
+        summary.resumed,
+        summary.correct,
+        summary.kills - summary.not_started,
+        summary.correct_rate * 100.0,
+        summary.damaged,
+        summary.duplicated_commands
+    );
+
+    if let Some(label) = flag(args, "--label") {
+        let bench = bench_dir(args)?;
+        let out = results_dir(&bench, &label);
+
+        std::fs::create_dir_all(&out).map_err(|error| error.to_string())?;
+        std::fs::write(out.join("resume.json"), serde_json::to_string_pretty(&json!({ "summary": summary, "trials": trials })).unwrap_or_default()).map_err(|error| error.to_string())?;
+        write_meta_if_missing(&out, &label, "resume", &bench)?;
+        println!("written {}", out.join("resume.json").display());
+    }
+
+    Ok(())
 }
 
 fn list(args: &[String]) -> Result<(), String> {

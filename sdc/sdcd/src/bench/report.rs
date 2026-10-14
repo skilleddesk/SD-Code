@@ -31,7 +31,7 @@ pub fn load(dir: &Path) -> Result<Results, String> {
         .collect::<Result<Vec<_>, _>>()?;
     let mut extra = BTreeMap::new();
 
-    for name in ["search", "lang"] {
+    for name in ["search", "lang", "resume"] {
         if let Some(value) = std::fs::read_to_string(dir.join(format!("{name}.json"))).ok().and_then(|text| serde_json::from_str(&text).ok()) {
             extra.insert(name.to_string(), value);
         }
@@ -323,6 +323,13 @@ pub fn markdown_bn(results: &Results, baseline: Option<&Results>) -> String {
                 timing["p95_ms"].as_f64().unwrap_or(0.0)
             ));
         }
+    }
+
+    if let Some(resume) = results.extra.get("resume").map(|value| &value["summary"]) {
+        out.push_str(&format!(
+            "\n## হঠাৎ বন্ধ হওয়ার পর resume (A-19, local)\n\n| kill | turn শুরুর আগেই | resume হয়েছে | সঠিক | হার | ফাইল নষ্ট | command দুবার চলেছে |\n|---|---|---|---|---|---|---|\n| {} | {} | {} | {} | {:.1}% | {} | {} |\n",
+            resume["kills"], resume["not_started"], resume["resumed"], resume["correct"], resume["correct_rate"].as_f64().unwrap_or(0.0) * 100.0, resume["damaged"], resume["duplicated_commands"]
+        ));
     }
 
     if let Some(baseline) = baseline {

@@ -36,7 +36,7 @@ pub mod tools;
 pub mod web;
 pub mod workspace;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use async_trait::async_trait;
 use serde_json::Value;
@@ -1285,6 +1285,54 @@ fn drive(
         local: backend == Backend::Ollama,
         result_cap: if target.local_window { (window as usize).clamp(2_000, tools::RESULT_CAP) } else { result_cap(backend, window) },
     };
+    /* v3 R2: a turn the daemon lost continues here - its conversation rebuilt from the journal, the reads that
+       never answered run again, and a change that never answered is reported as unknown rather than redone. */
+    let resumed = if research_session.is_none() && prompt.remote.is_none() { crate::v3::journal::take(&prompt.session_id) } else { None };
+
+    if let Some(resume) = &resumed {
+        messages = resume.messages.clone();
+
+        let (rerun, known) = crate::v3::journal::settle(resume, Some(std::path::Path::new(workspace.root())));
+        let mut answers: HashMap<String, dialect::ToolResult> = known.into_iter().map(|(id, content, is_error)| (id.clone(), (id, content, is_error, None))).collect();
+
+        for call in &rerun {
+            let outcome = tools::execute(&mut context, call);
+
+            answers.insert(call.id.clone(), (call.id.clone(), outcome.content, outcome.is_error, outcome.image));
+        }
+
+        let results: Vec<dialect::ToolResult> = resume.calls.iter().filter_map(|call| answers.remove(&call.id)).collect();
+
+        if !results.is_empty() {
+            messages.extend(dialect::tool_results(target.dialect, &results));
+        }
+
+        sink.send(EngineEvent::Thinking(format!(
+            "Resumed from the journal of the interrupted turn: {} step(s) kept, {} call(s) run again.\n",
+            resume.messages.iter().filter(|message| message["role"] == "assistant").count(),
+            rerun.len()
+        )));
+    }
+
+    /* v3 R1: the journal - written ahead, step by step, for a local agent turn on an API model. */
+    let journal = (backend == Backend::Api && prompt.remote.is_none() && research_session.is_none())
+        .then(|| {
+            crate::v3::journal::Writer::open(
+                &turn_id,
+                &prompt.session_id,
+                serde_json::json!({
+                    "messages": messages,
+                    "model": prompt.model,
+                    "provider": prompt.provider,
+                    "root": prompt.project_root,
+                    "autonomy": format!("{:?}", options.autonomy).to_lowercase(),
+                    "effort": prompt.effort,
+                    "resumeDepth": resumed.as_ref().map(|resume| resume.depth + 1).unwrap_or(0),
+                }),
+            )
+        })
+        .flatten();
+    let mut journaled = messages.len();
     let (mut input_tokens, mut output_tokens) = (0u64, 0u64);
     /* Of the input, what the provider read back from its prompt cache (0.21) - said in the footer. */
     let mut cached_tokens = 0u64;
@@ -1346,6 +1394,12 @@ fn drive(
         if stopped() {
             return;
         }
+
+        if let Some(journal) = &journal {
+            journal.messages(step, &messages[journaled.min(messages.len())..]);
+        }
+
+        journaled = messages.len();
 
         if let Some(session) = research_session.as_ref().filter(|session| session.expired() && !out_of_time) {
             out_of_time = true;
@@ -1434,6 +1488,16 @@ fn drive(
         }
 
         messages.push(reply.message.clone());
+
+        if let Some(journal) = &journal {
+            journal.model(step, &reply.message, &reply.tool_uses);
+
+            for call in &reply.tool_uses {
+                journal.intent(step, call);
+            }
+        }
+
+        journaled = messages.len();
 
         /* About to finish, but the person said something meanwhile: that is the next thing to do. */
         if reply.tool_uses.is_empty() && steer(&mut messages) {
@@ -1589,6 +1653,10 @@ fn drive(
                     context.calls += run.len();
 
                     for (position, outcome) in run_reads(&context, first, &run) {
+                        if let Some(journal) = &journal {
+                            journal.result(step, &reply.tool_uses[position].id, &reply.tool_uses[position].name, &outcome.content, outcome.is_error);
+                        }
+
                         results[position] = Some((reply.tool_uses[position].id.clone(), outcome.content, outcome.is_error, outcome.image));
                     }
 
@@ -1603,6 +1671,10 @@ fn drive(
                 _ => tools::execute(&mut context, call),
             };
 
+            if let Some(journal) = &journal {
+                journal.result(step, &call.id, &call.name, &outcome.content, outcome.is_error);
+            }
+
             results[index] = Some((call.id.clone(), outcome.content, outcome.is_error, outcome.image));
             index += 1;
         }
@@ -1611,6 +1683,11 @@ fn drive(
             for (index, outcome, input, output) in run_tasks(backend, target, workspace, policy, prompt, vision, &tasks, sink, research_session.clone()) {
                 input_tokens += input;
                 output_tokens += output;
+
+                if let Some(journal) = &journal {
+                    journal.result(step, &reply.tool_uses[index].id, "task", &outcome.content, outcome.is_error);
+                }
+
                 results[index] = Some((reply.tool_uses[index].id.clone(), outcome.content, outcome.is_error, outcome.image));
             }
 
