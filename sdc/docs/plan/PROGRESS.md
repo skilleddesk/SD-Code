@@ -84,14 +84,14 @@ Branch naming: `sdc-v3/<ID>`. Numbers come only from `bench/results/` (never typ
 
 | ID | Item | Status | Branch | Numbers | Next action |
 |---|---|---|---|---|---|
-| X1 | Login (passkeys, magic link, TOTP) | todo | sdc-v3/X1 | — | — |
+| X1 | Login (passkeys, magic link, TOTP) | partial | sdc-v3/X3 | magic link (v1, cloud/src/email.ts and its tests) stays; new: TOTP in cloud/src/totp.ts - RFC 6238 with HMAC-SHA1, a ±1 step window, spent steps refused (replay), base32 secrets and the otpauth:// link; the six RFC vectors pass (cloud/test/totp.test.ts) | passkeys (WebAuthn registration and assertion need a CBOR/COSE decoder and the browser ceremony); the sign-in screen choosing between the three |
 | X2 | Device enrolment + recovery key | todo | sdc-v3/X2 | — | — |
-| X3 | E2E sync | todo | sdc-v3/X3 | — | — |
-| X4 | Handoff (leases + fencing) | todo | sdc-v3/X4 | — | — |
+| X3 | E2E sync | v1 (vault) | sdc-v3/X3 | sealed vault blobs, pairing and the daemon's own crypto exist from v1 (cloud/src/hub.ts putVault/getVault, cloud/test/vault.test.ts, sdcd/src/anywhere/) | revision-based conflict rules and a sync status screen |
+| X4 | Handoff (leases + fencing) | partial | sdc-v3/X3 | cloud/src/leases.ts: a claim hands out a fence that only goes up, a lifetime the Hub caps at 10 minutes, a frame from a lower fence or from another screen is refused with the current fence named, releasing needs the holding fence, and a lapsed lease frees the session (cloud/test/leases.test.ts); the lease is Hub state, the payloads stay sealed | wiring the handoff control and the fence check into the Hub's relay path, and the daemon stamping its frames |
 | X5 | Hardening (pinning, revoke/wipe, signing, notarization, dep scan) | todo | sdc-v3/X5 | — | — |
 | X6 | Phone browser | todo | sdc-v3/X6 | — | — |
 | R4 | VPS Runner | todo | sdc-v3/R4 | — | — |
-| G36 | Data export / delete / retention | todo | sdc-v3/G36 | — | — |
+| G36 | Data export / delete / retention | partial | sdc-v3/X3 | cloud/src/account.ts: exportAccount (the email, the push endpoints, and how long each kind of record is kept), deleteAccount (the rows go, and it answers what went), purge (sign-in links past their day, rate-limit counters past their hour) - against the real D1 schema in cloud/test/account.test.ts | the /api/me/export and /api/me/delete routes, the screen that offers them, and the daemon rotating its relay secret on delete |
 | GATE 5 | A-20, A-21, ASVS L2 | todo | — | — | — |
 
 ## Phase 6 — New capabilities

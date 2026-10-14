@@ -20,5 +20,6 @@ export default defineConfig({
       },
     }),
   ],
-  test: { include: ['test/**/*.test.ts'] },
+  // `._*` files are what a macOS copy onto a memory card leaves behind - not tests, and not transformable.
+  test: { include: ['test/**/*.test.ts'], exclude: ['**/node_modules/**', '**/._*'] },
 });
