@@ -4,13 +4,14 @@
 //! sdcd bench list        [--tier smoke|medium|full]
 //! sdcd bench run         --models deepseek:deepseek-chat,anthropic-api:claude-sonnet-5-5 [--tier smoke] [--runs N]
 //!                        [--label NAME] [--binary bench/bin/v1/sdcd] [--ablate FEATURE] [--max-usd 2] [--tasks a,b]
-//!                        [--data-dir DIR] [--keep] [--dry-run]
+//!                        [--enable FEATURE,...] [--data-dir DIR] [--keep] [--dry-run]
 //! sdcd bench competitors --models claude-code:claude-sonnet-5-5,codex:gpt-5.1-codex [--tier smoke] [...same]
 //! sdcd bench lang        --models deepseek:deepseek-chat [--label NAME]
 //! sdcd bench search      --root DIR [--repeats 10] [--label NAME] [--cold]
 //! sdcd bench gen-tree    --out DIR [--files 50000]
 //! sdcd bench validate    [--tier all]                     # every task fails untouched and passes its reference
 //! sdcd bench resume      [--kills 100] [--label NAME]     # A-19: kill -9 mid-turn, restart, check the work
+//! sdcd bench profiles    --baseline L --candidate feature=L2 [...]  # Q2: model-profiles.json from Q3 verdicts
 //! sdcd bench report      LABEL [--baseline LABEL]         # writes bench/results/LABEL/report-bn.md
 //! sdcd bench compare     BASELINE CANDIDATE [--report-bn]  # the Q3 rule per model
 //! ```
@@ -131,9 +132,10 @@ pub fn main(args: &[String]) -> i32 {
         "report" => report_cmd(rest),
         "validate" => validate(rest),
         "resume" => resume_cmd(rest),
+        "profiles" => profiles_cmd(rest),
         "compare" => compare_cmd(rest),
         _ => {
-            println!("{}", include_str!("mod.rs").lines().skip(2).take(16).map(|line| line.trim_start_matches("//! ")).collect::<Vec<_>>().join("\n"));
+            println!("{}", include_str!("mod.rs").lines().skip(2).take(17).map(|line| line.trim_start_matches("//! ")).collect::<Vec<_>>().join("\n"));
             Ok(())
         }
     };
@@ -272,6 +274,61 @@ fn resume_cmd(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// `sdcd bench profiles` (Q2): for each `--candidate feature=label` compared with `--baseline`, the models on which
+/// the technique passed the Q3 rule get it in `protocol/model-profiles.json` (or `--out`).
+fn profiles_cmd(args: &[String]) -> Result<(), String> {
+    let bench = bench_dir(args)?;
+    let baseline_label = flag(args, "--baseline").ok_or("--baseline LABEL is required")?;
+    let baseline = report::load(&results_dir(&bench, &baseline_label))?;
+    let candidates: Vec<(String, String)> = args
+        .windows(2)
+        .filter(|pair| pair[0] == "--candidate")
+        .filter_map(|pair| pair[1].split_once('=').map(|(feature, label)| (feature.trim().to_string(), label.trim().to_string())))
+        .collect();
+
+    if candidates.is_empty() {
+        return Err("give at least one --candidate feature=label (a run made with --enable feature)".into());
+    }
+
+    let mut profiles = crate::v3::profiles::Profiles { generated: chrono::Local::now().format("%Y-%m-%d").to_string(), ..Default::default() };
+
+    for (feature, label) in &candidates {
+        if !crate::v3::FEATURES.iter().any(|spec| spec.name == feature && spec.token_technique) {
+            return Err(format!("`{feature}` is not a v3 token technique"));
+        }
+
+        let results = report::load(&results_dir(&bench, label))?;
+
+        for comparison in report::compare(&baseline.runs, &results.runs) {
+            let verdict = &comparison.verdict;
+            let evidence = format!(
+                "{feature}: {label} vs {baseline_label} - {} pairs, pass {:+.1} pt, McNemar p {:.3}, billable saving {} → {}",
+                comparison.pairs,
+                verdict.pass_delta_points,
+                verdict.p_value,
+                comparison.billable_saving.map(|(median, (low, high))| format!("{:.1}% [{:.1}-{:.1}]", median * 100.0, low * 100.0, high * 100.0)).unwrap_or_else(|| "-".into()),
+                if verdict.accepted { "accepted".to_string() } else { format!("rejected ({})", verdict.reasons.join("; ")) }
+            );
+            let profile = profiles.models.entry(comparison.model.clone()).or_default();
+
+            println!("{:<40} {evidence}", comparison.model);
+
+            if verdict.accepted {
+                profile.techniques.push(feature.clone());
+            }
+
+            profile.evidence.push(evidence);
+        }
+    }
+
+    let out = flag(args, "--out").map(PathBuf::from).unwrap_or_else(|| bench.join("..").join("protocol").join("model-profiles.json"));
+
+    std::fs::write(&out, serde_json::to_string_pretty(&profiles).unwrap_or_default() + "\n").map_err(|error| format!("{}: {error}", out.display()))?;
+    println!("written {}", out.display());
+
+    Ok(())
+}
+
 fn list(args: &[String]) -> Result<(), String> {
     let bench = bench_dir(args)?;
     let (tasks, tier) = selected(args, &bench)?;
@@ -349,6 +406,8 @@ fn run(args: &[String], mode: &str) -> Result<(), String> {
         "models": models.iter().map(Model::label).collect::<Vec<_>>(),
         "tasks": tasks.iter().map(|task| task.id.clone()).collect::<Vec<_>>(),
         "ablate": ablate,
+        "enable": flag(args, "--enable"),
+        "v3": crate::v3::status(),
         "max_usd": max_usd,
         "binary": binary.display().to_string(),
         "sdcd_version": binary_version,
@@ -361,7 +420,7 @@ fn run(args: &[String], mode: &str) -> Result<(), String> {
 
     let scratch = std::env::temp_dir().join("sdc-bench").join(format!("{label}-daemon"));
     let mut daemon = if mode == "sdc" {
-        Some(runner::Daemon::start(&binary, &scratch, ablate.as_deref(), flag(args, "--data-dir").as_deref().map(Path::new))?)
+        Some(runner::Daemon::start_with(&binary, &scratch, ablate.as_deref(), flag(args, "--enable").as_deref(), flag(args, "--data-dir").as_deref().map(Path::new))?)
     } else {
         None
     };

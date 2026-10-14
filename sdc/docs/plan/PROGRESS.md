@@ -55,11 +55,11 @@ Branch naming: `sdc-v3/<ID>`. Numbers come only from `bench/results/` (never typ
 |---|---|---|---|---|---|
 | W3 | Search module `sdcd/src/search/` | done | sdc-v3/W3 | 52,501 files, p50: filename 2.5-3.2 ms (v1 229-234), text 2.0-6.6 ms (v1 227-1204 incl. a no-match full scan); first call 150 ms (v1 229-2815); peak RSS 58 MB (`results/2026-10-14-search-v1` vs `-v3`); `ignore` parallel walk + .gitignore, notify-patched index, byte prefilter, trigram Bloom content index; switch `v3.search` (on) | Windows/Linux numbers in CI; `nucleo` fuzzy names + UI debounce; same engine via `sdcd search` on a VPS |
 | W4 | Code intelligence (tree-sitter, symbols, repo map) | todo | sdc-v3/W4 | — | — |
-| W5 | Cache layout + tool pruning | todo | sdc-v3/W5 | — | — |
-| I1 | Context Ledger | todo | sdc-v3/I1 | — | — |
-| I2 | Skeleton-first reads | todo | sdc-v3/I2 | — | — |
-| I10 | Token Receipt | todo | sdc-v3/I10 | — | — |
-| Q2 | Model profiles (generated) | todo | sdc-v3/Q2 | — | — |
+| W5 | Cache layout + tool pruning | built, off (awaits Q3) | sdc-v3/W5 | `stable_prefix`: the date leaves the system prompt for the turn's message; `tool_pruning`: intent tool sets (core + web/browser/process/remember by the request's words), a called tool joins the list; test proves both change only what they say | paid bench comparison per model (Q3); Gemini context caching; Anthropic 4-breakpoint layout |
+| I1 | Context Ledger | built, off (awaits Q3) | sdc-v3/W5 | `ledger_diff`: a changed whole-file re-read goes back as a unified diff (≤60% of the file), cleared on fold; v1's unchanged-read stub kept | `recall(Lk)` tool; refs on stubs |
+| I2 | Skeleton-first reads | built, off (awaits Q3) | sdc-v3/W5 | `skeleton`: files >200 lines read whole answer an outline (imports summed, declarations with line numbers; 12 language families) when it saves ≥40% | tree-sitter symbols (W4); expand by symbol |
+| I10 | Token Receipt | done (footer) | sdc-v3/W5 | every agent turn's footer: input by part (apportioned to the provider's count) and tokens saved per technique (unchanged re-reads, diffs, tool pruning); switch `v3.receipt` (on) | monthly "saved $X"; dev-only shadow baseline; a UI card |
+| Q2 | Model profiles (generated) | done (mechanism) | sdc-v3/W5 | `protocol/model-profiles.json` written only by `sdcd bench profiles` from Q3 verdicts; per-turn switches settle setting → profile → default; unknown models: no token technique | first real profile needs the paid comparisons; best edit format per model |
 | L0 | Memory | todo | sdc-v3/L0 | — | — |
 | L1 | Lessons | todo | sdc-v3/L1 | — | — |
 | GATE 3 | A-04–A-08, A-11; input −35% vs v1; Q3 on 5 models | todo | — | — | — |

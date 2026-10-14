@@ -55,6 +55,8 @@ ruzstd = "0.8"
 ignore = "0.4"
 notify = "8"
 regex-syntax = "0.8"
+# v3 I1: a changed file read again goes back as a diff.
+similar = "2"
 
 [dev-dependencies]
 tempfile = "3"

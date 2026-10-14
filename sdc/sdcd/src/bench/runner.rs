@@ -174,6 +174,11 @@ pub struct Daemon {
 
 impl Daemon {
     pub fn start(binary: &Path, scratch: &Path, ablate: Option<&str>, data_dir: Option<&Path>) -> Result<Self, String> {
+        Self::start_with(binary, scratch, ablate, None, data_dir)
+    }
+
+    /// Like [`Daemon::start`], with v3 features switched on for the run (`--enable a,b`, `SDC_V3_ENABLE`).
+    pub fn start_with(binary: &Path, scratch: &Path, ablate: Option<&str>, enable: Option<&str>, data_dir: Option<&Path>) -> Result<Self, String> {
         std::fs::create_dir_all(scratch).map_err(|error| error.to_string())?;
 
         let port = std::net::TcpListener::bind("127.0.0.1:0").and_then(|listener| listener.local_addr()).map_err(|error| error.to_string())?.port();
@@ -189,6 +194,10 @@ impl Daemon {
 
         if let Some(feature) = ablate {
             command.env(super::ABLATE_ENV, feature);
+        }
+
+        if let Some(features) = enable {
+            command.env("SDC_V3_ENABLE", features);
         }
 
         if let Some(dir) = data_dir {

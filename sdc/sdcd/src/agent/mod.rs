@@ -336,7 +336,10 @@ fn person_language(prompt: &Prompt) -> crate::understand::Reading {
         .unwrap_or(reading)
 }
 
-fn system_prompt(workspace: &Workspace, vision: bool, language: &crate::understand::Reading) -> String {
+fn system_prompt(workspace: &Workspace, vision: bool, language: &crate::understand::Reading, stable_prefix: bool) -> String {
+    /* v3 W5: with `stable_prefix` the date leaves the cached prefix and travels in the turn's own message. */
+    let today = if stable_prefix { String::new() } else { format!("Today: {}\n", chrono::Local::now().format("%Y-%m-%d")) };
+
     let look = if vision {
         "\n- For a web page or UI you built, start its dev server with start_process and try it in the browser tool as a user would: open it, read it, click the buttons, fill the forms, and take a screenshot to check it looks right - on a phone width (390) too. Fix what does not work."
     } else {
@@ -346,8 +349,7 @@ fn system_prompt(workspace: &Workspace, vision: bool, language: &crate::understa
     format!(
         "You are SDC Agent, a coding agent working inside a person's project through the tools you are given.\n\
          \n\
-         Today: {today}\n\
-         Project folder: {root}\n\
+         {today}Project folder: {root}\n\
          Machine: {place}\n\
          Shell for run_command: {shell}\n\
          \n\
@@ -386,7 +388,6 @@ fn system_prompt(workspace: &Workspace, vision: bool, language: &crate::understa
         root = workspace.root(),
         place = workspace.place(),
         shell = workspace.shell(),
-        today = chrono::Local::now().format("%Y-%m-%d"),
     )
 }
 
@@ -1182,6 +1183,9 @@ fn drive(
         _ => target.clone(),
     };
     let target = &tuned;
+    /* v3 Q2: this turn's token techniques, settled once for its model (profile, setting, default). */
+    let _switches = crate::v3::TurnSwitches::begin(&turn_id, prompt.provider.as_deref().unwrap_or_default(), &target.model);
+    let technique = |feature: &str| crate::v3::turn_on(&turn_id, feature);
     let vision = browser::vision(target.dialect == Dialect::Anthropic, &target.model);
     /* The project's skills (0.13): their names and when to use them; the agent reads one when it applies. */
     let language = person_language(prompt);
@@ -1191,7 +1195,7 @@ fn drive(
     let research_config = research::config();
     let system = match &research_session {
         Some(session) => research::system_prompt(&language, &session.limits, research_config.provider.label(), window < 32_000),
-        None => system_prompt(workspace, vision, &language) + &skills::brief(&skills::find(workspace)),
+        None => system_prompt(workspace, vision, &language, technique("stable_prefix")) + &skills::brief(&skills::find(workspace)),
     };
     /* A model that writes the final answer from what this one gathered (Settings → Research), opt-in. */
     let synthesis = research_session.as_ref().and(research_config.synthesis.clone());
@@ -1223,6 +1227,15 @@ fn drive(
     if let Some(servers) = &mcp {
         specs.extend(servers.specs().iter().cloned());
     }
+
+    /* v3 W5: only the tools the request needs; a call to another one adds it for the rest of the turn. */
+    let all_specs = specs.clone();
+    let pruning = technique("tool_pruning") && research_session.is_none();
+
+    if pruning {
+        specs = crate::v3::tools::select(&all_specs, prompt.text.rsplit("[The person's message]").next().unwrap_or(&prompt.text));
+    }
+
     let mut messages: Vec<Value> = prompt
         .history
         .iter()
@@ -1263,8 +1276,21 @@ fn drive(
             None => text,
         }
     };
+    /* v3 W5: the date the system prompt no longer carries (stable_prefix) opens the turn's message instead. */
+    let text = if technique("stable_prefix") && research_session.is_none() {
+        let today = chrono::Local::now().format("%Y-%m-%d");
+
+        map_chars += format!("[Today: {today}]\n").len();
+        format!("[Today: {today}]\n{text}")
+    } else {
+        text
+    };
     /* v3 W1: the context ledger, beside the request and only when the bench (or a test) listens. */
     let ledger_on = crate::bench::ledger::enabled(&turn_id);
+    /* v3 I10: the turn's token receipt (switch `v3.receipt`) - the input by part and what each technique saved. */
+    let receipt_on = crate::v3::on("receipt");
+    let mut receipt_parts = [0u64; 6];
+    let all_specs_tokens = fixed_tokens("", &all_specs);
     let history_len = prompt.history.len();
 
     /* v3 W9: what the person pasted, and earlier turns, pass the same secret filter as tool output. */
@@ -1388,8 +1414,12 @@ fn drive(
     let mut reviewed = false;
     /* Files this turn has read, by the hash of what they held - an unchanged re-read is one line (0.21). */
     let mut seen_reads: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+    /* v3 I1: the turn's whole-file reads, for sending a changed re-read as a diff (switch `v3.ledger_diff`). */
+    let mut prior_reads: HashMap<String, String> = HashMap::new();
+    /* v3 I10: tokens each technique saved this turn (SDC's count), for the receipt. */
+    let mut saved: std::collections::BTreeMap<&'static str, u64> = std::collections::BTreeMap::new();
     /* 1.0: the system prompt and tools in every request, and SDC's count turned into the provider's tokens. */
-    let fixed = fixed_tokens(&system, &specs);
+    let mut fixed = fixed_tokens(&system, &specs);
     let mut scale = 1.0;
     /* The request was too long for the model once already: folded hard and asked again (1.0). */
     let mut shrunk = false;
@@ -1434,14 +1464,24 @@ fn drive(
         }
 
         let step_specs: &[dialect::ToolSpec] = if out_of_time { &[] } else { &specs };
-        let shape = ledger_on.then(|| crate::bench::ledger::shape(&system, step_specs, &messages, history_len, map_chars));
+        let shape = (ledger_on || receipt_on).then(|| crate::bench::ledger::shape(&system, step_specs, &messages, history_len, map_chars));
         let asked_at = std::time::Instant::now();
         let asked = ask_model(backend, target, &system, &messages, step_specs, &notes_sink(said_something), &stopped);
 
         model_time += asked_at.elapsed();
 
         if let (Some(shape), Ok(reply)) = (shape, &asked) {
-            crate::bench::ledger::record(&turn_id, "main", step, &target.model, shape, reply, asked_at.elapsed().as_millis() as u64);
+            if ledger_on {
+                crate::bench::ledger::record(&turn_id, "main", step, &target.model, shape, reply, asked_at.elapsed().as_millis() as u64);
+            }
+
+            for (sum, part) in receipt_parts.iter_mut().zip(crate::bench::ledger::apportion(reply.input_tokens, &shape.counted)) {
+                *sum += part;
+            }
+
+            if pruning {
+                *saved.entry("tool pruning").or_default() += all_specs_tokens.saturating_sub(fixed_tokens("", step_specs));
+            }
         }
 
         let mut reply: Reply = match asked {
@@ -1457,6 +1497,7 @@ fn drive(
                 shrunk = true;
                 dialect::fold_old_results(target.dialect, &mut messages, 2);
                 seen_reads.clear();
+                prior_reads.clear();
 
                 continue;
             }
@@ -1530,6 +1571,19 @@ fn drive(
         }
 
         journaled = messages.len();
+
+        /* v3 W5: a tool the turn was not offered but the model asked for joins the list from now on. */
+        if pruning {
+            let mut added = false;
+
+            for call in &reply.tool_uses {
+                added |= crate::v3::tools::add_missing(&mut specs, &all_specs, &call.name);
+            }
+
+            if added {
+                fixed = fixed_tokens(&system, &specs);
+            }
+        }
 
         /* About to finish, but the person said something meanwhile: that is the next thing to do. */
         if reply.tool_uses.is_empty() && steer(&mut messages) {
@@ -1624,7 +1678,7 @@ fn drive(
 
             sink.send(EngineEvent::Done {
                 summary: summary.to_string(),
-                meta: format!("{}{}", meta(step, input_tokens, output_tokens, target.price) + &cached(cached_tokens), timing(model_time, tool_time)),
+                meta: format!("{}{}{}", meta(step, input_tokens, output_tokens, target.price) + &cached(cached_tokens), timing(model_time, tool_time), if receipt_on { crate::v3::receipt(&receipt_parts, &saved) } else { String::new() }),
                 pass: None,
             });
 
@@ -1738,7 +1792,15 @@ fn drive(
 
         /* v3 W9: external text marked as data, secrets replaced - before anything reaches the model. */
         crate::v3::guard_results(&prompt.session_id, &reply.tool_uses, &mut results);
+
+        let before_dedupe: u64 = results.iter().map(|result| crate::context::tokens_of(&result.1)).sum();
+
         dedupe_reads(&mut seen_reads, &reply.tool_uses, &mut results);
+        *saved.entry("unchanged re-reads").or_default() += before_dedupe.saturating_sub(results.iter().map(|result| crate::context::tokens_of(&result.1)).sum());
+
+        if technique("ledger_diff") {
+            *saved.entry("diffs").or_default() += crate::v3::ledger_diff::apply(&mut prior_reads, &reply.tool_uses, &mut results);
+        }
 
         if ledger_on {
             crate::bench::ledger::record_reads(&turn_id, "main", step, read_entries(&earlier, &reply.tool_uses, &results));
@@ -1752,6 +1814,7 @@ fn drive(
         /* Folded output is gone from the conversation: a file read before it must be sent in full again. */
         if folded {
             seen_reads.clear();
+            prior_reads.clear();
         }
 
         sink.send(EngineEvent::Context { used_tokens: dialect::tokens(&messages), window_tokens: window, compacted: folded });
@@ -1770,7 +1833,7 @@ fn drive(
     )));
     sink.send(EngineEvent::Done {
         summary: "Paused at the step limit".to_string(),
-        meta: format!("{}{}", meta(options.max_steps, input_tokens, output_tokens, target.price) + &cached(cached_tokens), timing(model_time, tool_time)),
+        meta: format!("{}{}{}", meta(options.max_steps, input_tokens, output_tokens, target.price) + &cached(cached_tokens), timing(model_time, tool_time), if receipt_on { crate::v3::receipt(&receipt_parts, &saved) } else { String::new() }),
         pass: None,
     });
 }
@@ -2652,6 +2715,51 @@ mod end_to_end {
         assert!(std::fs::read_to_string(root.join("copy.txt")).unwrap().contains(&format!("OPENAI_API_KEY={key}")), "the command got the real key");
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// v3 W5: with `stable_prefix` the system prompt has no date (the message has it); with `tool_pruning` a plain
+    /// change is offered fewer tools, and a tool the model asks for anyway joins the list.
+    #[test]
+    fn a_stable_prefix_and_pruned_tools_change_only_what_they_say() {
+        let run = |turn: &str, features: &[&str]| {
+            let root = std::env::temp_dir().join(format!("sdc-w5-{turn}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&root);
+            std::fs::create_dir_all(&root).unwrap();
+
+            let (url, server) = provider(vec![
+                call("c1", "web_fetch", serde_json::json!({ "url": "http://127.0.0.1:9/nothing" })),
+                chunk(serde_json::json!({ "content": "ok" })) + "data: [DONE]\n\n",
+            ]);
+            let target = Target {
+                url,
+                headers: vec![("content-type".to_string(), "application/json".to_string())],
+                dialect: Dialect::OpenAi,
+                model: "local-test".to_string(),
+                price: None,
+                thinking: false,
+                effort: None,
+                local_context: None,
+                local_window: false,
+            };
+            let workspace = Workspace::new(root.to_str().unwrap(), None);
+            let prompt = prompt_in(&root, turn, "rename the variable total to sum in main.rs and check the build", "local-test");
+
+            crate::v3::forcing(features, || {
+                drive(Backend::Api, &target, &workspace, Options { autonomy: Autonomy::Auto, max_steps: 4, auto_check: false, research: None }, None, &Default::default(), &prompt, &crate::engines::Recorder::new().sink())
+            });
+
+            let _ = std::fs::remove_dir_all(&root);
+            server.join().unwrap()
+        };
+        let plain = run("w5-off", &[]);
+        let tuned = run("w5-on", &["stable_prefix", "tool_pruning"]);
+        let system = |bodies: &[Value]| bodies[0]["messages"][0]["content"].as_str().unwrap_or_default().to_string();
+        let names = |body: &Value| body["tools"].as_array().unwrap().iter().map(|tool| tool["function"]["name"].as_str().unwrap_or_default().to_string()).collect::<Vec<_>>();
+
+        assert!(system(&plain).contains("Today: ") && !system(&tuned).contains("Today: "));
+        assert!(tuned[0]["messages"].to_string().contains("[Today: "), "the date moved into the message");
+        assert!(names(&tuned[0]).len() < names(&plain[0]).len());
+        assert!(!names(&tuned[0]).contains(&"web_fetch".to_string()) && names(&tuned[1]).contains(&"web_fetch".to_string()), "asked for, then offered");
     }
 
     #[test]

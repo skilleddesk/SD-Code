@@ -699,6 +699,15 @@ fn read_file(context: &mut ToolContext, call_id: &str, path: &str) -> Outcome {
         Ok((text, truncated)) => {
             let lines = text.lines().count();
 
+            /* v3 I2: a long file's outline first (switch `v3.skeleton`); the agent reads the part it needs. */
+            if crate::v3::turn_on(context.turn_id, "skeleton") && !truncated {
+                if let Some(outline) = crate::v3::outline::outline(path, &text) {
+                    completed(context, call_id, true, &format!("outline · {lines} ln"), None);
+
+                    return Outcome::ok(outline);
+                }
+            }
+
             completed(context, call_id, true, &format!("done · {lines} ln{}", if truncated { " · cut" } else { "" }), None);
 
             let mut content = numbered(&text);

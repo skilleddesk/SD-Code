@@ -1,0 +1,4 @@
+{
+  "generated": "none yet - written by `sdcd bench profiles` from comparisons that pass the Q3 rule; until then every model has the conservative profile (no v3 token technique on)",
+  "models": {}
+}
