@@ -7,6 +7,9 @@ import { ago, stateOf, whenOf } from './opsView';
  * that never happened (0 is a real epoch second), `stateOf` on a state a newer daemon might invent, and
  * `whenOf` on an automation written with one of its two clocks and not the other.
  */
+import { bn } from '../locales/bn';
+import { kernelStrings } from '../kernelStrings';
+
 describe('the Workbench readings', () => {
   const now = 1_700_000_000;
 
@@ -39,5 +42,45 @@ describe('the Workbench readings', () => {
     expect(whenOf({ every: '6h', at: null })).toBe('Every 6h');
     expect(whenOf({ every: null, at: '09:30' })).toBe('Every day at 09:30');
     expect(whenOf({ every: null, at: null })).toBe('Only when you run it');
+  });
+});
+
+/**
+ * The Workbench in Bengali. A group that is missing from a pack falls back to English word by word (locales/index.ts),
+ * so the person who reads Bengali would see half a window in the other language. This is the check that the pack has
+ * the whole group, with the same keys the English has.
+ */
+describe('the Workbench in Bengali', () => {
+  it('has the whole group, key for key', () => {
+    const english = kernelStrings.ops as unknown as Record<string, unknown>;
+    const bengali = bn.kernel?.ops as unknown as Record<string, unknown> | undefined;
+
+    expect(bengali).toBeTruthy();
+    expect(Object.keys(bengali!).sort()).toEqual(Object.keys(english).sort());
+  });
+
+  it('translates the three tabs and the tab bodies, not just the title', () => {
+    const english = kernelStrings.ops as unknown as Record<string, unknown>;
+    const bengali = bn.kernel?.ops as unknown as Record<string, unknown>;
+
+    for (const group of ['title', 'loading', 'failed']) {
+      expect(bengali[group]).toBeTruthy();
+      expect(bengali[group]).not.toBe(english[group]);
+    }
+
+    for (const group of ['runners', 'agents', 'inbox']) {
+      const keys = Object.keys(english[group] as object).sort();
+
+      expect(Object.keys(bengali[group] as object).sort()).toEqual(keys);
+    }
+  });
+
+  it('writes the numbers into the same sentences, so a value is never left out', () => {
+    const english = kernelStrings.ops.agents.started('a1');
+    const bengali = (bn.kernel?.ops as typeof kernelStrings.ops).agents.started('a1');
+
+    expect(english).toContain('a1');
+    expect(bengali).toContain('a1');
+    expect((bn.kernel?.ops as typeof kernelStrings.ops).inbox.ran('nightly')).toContain('nightly');
   });
 });

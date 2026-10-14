@@ -50,6 +50,30 @@ export function wireOf(answer: Answer): string {
 
 const allows = (answer: Answer): boolean => answer.kind === 'allow_once' || answer.kind === 'allow_scoped';
 
+/** How long a screen keeps the driver's role before it has to ask again. */
+export const HANDOFF_TTL = 15 * 60_000;
+
+/** One frame as it goes on the wire, with the lease it belongs to when a screen holds the session (X4).
+ *
+ * The relay refuses a frame whose fence is behind the session's, and a frame with no fence at all while another screen is
+ * driving, so the stamp is what keeps two of the person's screens from both being right about the session.
+ */
+export function frameOn(n: number, ct: string, fence: number): { t: string; n: number; ct: string; fence?: number } {
+  return fence > 0 ? { t: 'f', n, ct, fence } : { t: 'f', n, ct };
+}
+
+/** Where a session's handoff stands, as the computer reports it (X4). `mine` is what this screen shows the person. */
+export interface HandoffState {
+  held: boolean;
+  fence: number;
+  mine: boolean;
+  holder?: string;
+  session?: string;
+  seconds_left?: number;
+  /** Set when the relay would not carry this screen's frame: why the session is not this screen's to drive. */
+  why?: string;
+}
+
 export interface LinkEvents {
   state(state: LinkState): void;
   /** A card that needs an answer. */
@@ -59,6 +83,10 @@ export interface LinkEvents {
   /** How many requests are waiting while this session is still locked (no content). */
   pending(count: number): void;
   event(seq: number, event: Record<string, unknown>, meta: { sessionId: string | null; turnId: string | null }): void;
+  /** Where the session's handoff stands: this screen is driving, or another of the person's screens is (X4). */
+  handoff(state: HandoffState): void;
+  /** The relay would not carry this screen's frame: another screen is driving the session (X4). */
+  refused(why: string): void;
 }
 
 export interface SocketLike {
@@ -105,6 +133,8 @@ export class Link {
   private session: Established | null = null;
   private rx = new Reassembler();
   private nextMessage = 1;
+  /** The fence the relay gave this screen: stamped on every frame it sends while a screen holds the session (X4). */
+  private fence = 0;
   /** What has been opened since the last acknowledgement; the daemon holds bulk back until it hears one. */
   private unacked = { frames: 0, bytes: 0 };
   private ackTimer: ReturnType<typeof setTimeout> | null = null;
@@ -248,7 +278,20 @@ export class Link {
             return;
           }
 
+          // The relay refused a frame of ours because another of the person's screens is driving the session (X4). It
+          // names the fence that is current, so this screen is up to date even when its own frames are not being carried.
+          if (message.t === 'handoff.refused') {
+            if (typeof message.fence === 'number') this.fence = message.fence;
+
+            this.options.events.refused?.(String(message.why ?? 'another screen is driving this session'));
+
+            return;
+          }
+
           if (message.t === 'f' && this.session) {
+            // The fence is stamped on by the relay: it is how this screen knows which lease its frames belong to.
+            if (typeof message.fence === 'number') this.fence = message.fence;
+
             const plain = await this.session.recv.open(message.n, fromB64u(message.ct));
             const whole = this.rx.push(plain);
 
@@ -341,6 +384,11 @@ export class Link {
     if (session) void this.post('ack', { n: session.recv.received });
   }
 
+  /** One frame on the wire: what it is sealed with, and the lease it belongs to, when a screen holds the session (X4). */
+  private frameOn(n: number, ct: string): string {
+    return JSON.stringify(frameOn(n, ct, this.fence));
+  }
+
   /** A message that expects no answer. */
   private async post(type: string, body: unknown): Promise<void> {
     const session = this.session;
@@ -352,7 +400,7 @@ export class Link {
       for (const piece of pieces(plain, this.nextMessage++)) {
         const sealed = await session.send.seal(piece);
 
-        this.socket?.send(JSON.stringify({ t: 'f', n: sealed.n, ct: b64u(sealed.ct) }));
+        this.socket?.send(JSON.stringify(this.frameOn(sealed.n, b64u(sealed.ct))));
       }
     });
 
@@ -396,6 +444,16 @@ export class Link {
         this.applyLevel(body.level, body.operate_until);
         if (body.level !== 'locked') void this.afterWelcome();
         break;
+      case 'handoff.state': {
+        // Where the session's handoff stands, as the computer reports it (X4). The fence comes from the relay, so this
+        // screen keeps sending frames the relay will carry.
+        const state = body as HandoffState;
+
+        if (typeof state.fence === 'number' && state.fence > this.fence) this.fence = state.fence;
+
+        this.options.events.handoff?.(state);
+        break;
+      }
       case 'approval.requested': {
         const card = body as Card;
 
@@ -444,7 +502,7 @@ export class Link {
       for (const piece of pieces(plain, this.nextMessage++)) {
         const sealed = await session.send.seal(piece);
 
-        this.socket?.send(JSON.stringify({ t: 'f', n: sealed.n, ct: b64u(sealed.ct) }));
+        this.socket?.send(JSON.stringify(this.frameOn(sealed.n, b64u(sealed.ct))));
       }
     });
 
@@ -481,6 +539,19 @@ export class Link {
   /** The kill switch. Needs no unlock. */
   async kill(): Promise<unknown> {
     return this.request('control.kill');
+  }
+
+  /**
+   * Asks the computer to let this screen drive the session (X4). The computer asks the relay for a fence, and every screen
+   * is told where the session stands - this one is driving, or another one is.
+   */
+  async drive(ttl = HANDOFF_TTL): Promise<unknown> {
+    return this.request('handoff.claim', { ttl });
+  }
+
+  /** Gives the session back to the person's other screens. Only the screen that is driving can. */
+  async giveBack(): Promise<unknown> {
+    return this.request('handoff.release');
   }
 
   /** A call to the daemon: a tunnelled SDCP method or one of the file gateway's (`hosts.list`, `fs.list`, ...). */

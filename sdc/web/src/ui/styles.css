@@ -146,6 +146,7 @@ label.check input { width: 22px; height: 22px; }
 .banner { margin: 0; padding: 0.6rem 16px; background: var(--orange-subtle); border-bottom: 1px solid var(--orange); }
 .banner.error { background: var(--red-subtle); border-color: var(--red); }
 .banner.ok { background: var(--green-subtle); border-color: var(--green); }
+.banner button { margin-left: 0.5rem; padding: 0.15rem 0.6rem; font: inherit; color: inherit; background: none; border: 1px solid currentColor; border-radius: 999px; }
 
 .panel { background: var(--bg-panel); border: 1px solid var(--border-subtle); border-radius: var(--r-xl, 16px); padding: 1rem; margin-bottom: 1rem; box-shadow: var(--shadow-panel); }
 

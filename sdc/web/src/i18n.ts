@@ -43,6 +43,10 @@ const en = {
   rollback: 'Can be undone',
   yes: 'Yes',
   no: 'No',
+  drivingElsewhere: 'Another screen is driving this session.',
+  driveHere: 'Drive from here',
+  drivingHere: 'This screen is driving the session.',
+  giveBack: 'Give it back',
   decided: 'Answered on {who}.',
   cardTampered: 'This card does not match its hash. It was not signed.',
   liveEmpty: 'Nothing has happened yet.',
@@ -303,6 +307,10 @@ const bn: Partial<Record<Key, string>> = {
   moreNotSaved: 'Passkey-র জন্য সংরক্ষিত নেই: browser data মুছলে এই pairing হারাবে। ঠিক করতে এই device ভুলে গিয়ে আবার pair করুন।',
   pushFailed: 'Notification বদলানো যায়নি: {why}',
   pushHelp: 'Notification শুধু জানায় যে কিছু একটা আপনাকে দরকার, কী সেটা কখনোই নয়। এক মিনিটে কেউ সাড়া না দিলে email-ও যায় (কম্পিউটারে ঠিকানা দিলে)।',
+  drivingElsewhere: 'এই session-টা এখন আপনার আরেকটা screen চালাচ্ছে।',
+  driveHere: 'এই screen থেকেই চালান',
+  drivingHere: 'এই screen-টাই session চালাচ্ছে।',
+  giveBack: 'ফিরিয়ে দিন',
 };
 
 const dictionaries: Record<Lang, Partial<Record<Key, string>>> = { en, bn };

@@ -3,13 +3,14 @@
 import { env, exports } from 'cloudflare:workers';
 import init from '../migrations/0001_init.sql?raw';
 import lookup from '../migrations/0002_lookup_indexes.sql?raw';
+import mfa from '../migrations/0003_owner_mfa.sql?raw';
 import { b64uEncode, daemonIdOf, deviceAuthMessage, hubAuthMessage } from '../src/util';
 
 export const ORIGIN = 'https://sdc.skilleddesk.com';
 
 /** Applies the D1 migrations to the test database, the way `wrangler d1 migrations apply` does for the real one. */
 export async function migrate(): Promise<void> {
-  for (const sql of [init, lookup]) {
+  for (const sql of [init, lookup, mfa]) {
     const statements = sql
       .replace(/--.*$/gm, '')
       .split(';')

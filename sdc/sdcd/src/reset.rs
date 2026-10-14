@@ -98,6 +98,14 @@ pub fn erase_if_marked(data_dir: &Path) -> bool {
     true
 }
 
+/// Leaves the marker that erases everything on the next start (X5: a wipe asked for from the person's own account).
+///
+/// The database cannot be deleted while this daemon has it open, so the marker is what the next start acts on
+/// (`reset::erase_if_marked`, called before the store opens). Answers whether the marker is now there.
+pub fn mark_for_erase(data_dir: &Path) -> bool {
+    std::fs::create_dir_all(data_dir).is_ok() && std::fs::write(data_dir.join(MARKER), b"asked for from the person's account\n").is_ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -116,6 +124,23 @@ mod tests {
 
         assert!(erase_if_marked(&dir));
         assert!(!dir.join("sdc.db").exists() && !dir.join("attachments").exists() && !dir.join(MARKER).exists());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_wipe_asked_for_from_the_persons_account_marks_the_folder() {
+        let dir = std::env::temp_dir().join(format!("sdc-wipe-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert!(mark_for_erase(&dir), "the marker is written even in a folder that is not there yet");
+        assert!(dir.join(MARKER).exists());
+
+        /* And it is a marker the next start acts on, which is the whole point of writing it rather than erasing here. */
+        std::fs::write(dir.join("sdc.db"), "x").unwrap();
+
+        assert!(erase_if_marked(&dir));
+        assert!(!dir.join("sdc.db").exists());
 
         let _ = std::fs::remove_dir_all(&dir);
     }

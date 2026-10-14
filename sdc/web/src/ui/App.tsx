@@ -292,6 +292,23 @@ function Banner() {
     return <p className="banner" role="status" onClick={() => model.clearNotice()}>{t('decided', { who: snap.notice.slice(8) })}</p>;
   }
 
+  // Where the session's handoff stands (X4): the person's other screen may be the one driving it.
+  if (snap.handoff && !snap.handoff.mine) {
+    return (
+      <p className="banner" role="status">
+        {snap.handoff.why ?? t('drivingElsewhere')} <button onClick={() => void model.drive()}>{t('driveHere')}</button>
+      </p>
+    );
+  }
+
+  if (snap.handoff?.mine) {
+    return (
+      <p className="banner ok" role="status">
+        {t('drivingHere')} <button onClick={() => void model.giveBack()}>{t('giveBack')}</button>
+      </p>
+    );
+  }
+
   if (snap.error) return <p className="banner error" role="alert">{t('failed', { why: snap.error })}</p>;
 
   return null;

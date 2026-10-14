@@ -70,6 +70,8 @@ pub struct Resume {
     pub depth: u64,
     /// The chat's secret placeholders at the newest step (W9), so `‹secret:N›` keeps its meaning.
     pub vault: Vec<(usize, String)>,
+    /// The machine the interrupted turn ran on, when it was not this one (R4). A turn with this set is reported, not continued.
+    pub remote: Option<String>,
 }
 
 fn pending() -> &'static Mutex<HashMap<String, Resume>> {
@@ -86,6 +88,19 @@ pub fn offer(session_id: &str, resume: Resume) {
 /// The conversation a chat's new turn continues from, if a resume was offered for it.
 pub fn take(session_id: &str) -> Option<Resume> {
     pending().lock().unwrap_or_else(|poison| poison.into_inner()).remove(session_id)
+}
+
+/// The host a chat's lost turn ran on, when that turn's tools ran on another machine (R4).
+///
+/// Such a turn is not continued here: this daemon's journal knows what the turn asked for, but not what became of the work
+/// on the other machine. The turn is spent - the journal is taken - so it is reported once, and the next turn starts clean.
+pub fn lost_remote(session_id: &str) -> Option<String> {
+    let mut offered = pending().lock().unwrap_or_else(|poison| poison.into_inner());
+
+    /* A turn that ran here is left where it is: this is only about turns whose tools ran somewhere else. */
+    offered.get(session_id)?.remote.as_ref()?;
+
+    offered.remove(session_id)?.remote
 }
 
 /// One turn's journal. Writing never fails a turn: a journal that cannot be written is a lost resume, not a
@@ -278,8 +293,10 @@ pub fn rebuild(store: &Store, turn_id: &str) -> Option<(Value, Resume)> {
     }
 
     let depth = start["resumeDepth"].as_u64().unwrap_or(0);
+    /* R4: a turn that ran on a runner says which machine. Such a turn is reported, never continued here. */
+    let remote = start["remote"].as_str().map(str::to_string);
 
-    Some((start, Resume { from_turn: turn_id.to_string(), messages, calls, answered, depth, vault }))
+    Some((start, Resume { from_turn: turn_id.to_string(), messages, calls, answered, depth, vault, remote }))
 }
 
 /// What an interrupted write found on disk.
@@ -473,6 +490,7 @@ mod tests {
             answered: HashMap::new(),
             depth: 0,
             vault: vec![],
+            remote: None,
         };
         let (rerun, known) = settle(&resume, Some(&root));
 
@@ -497,10 +515,33 @@ mod tests {
 
     #[test]
     fn an_offered_resume_is_taken_once() {
-        let resume = Resume { from_turn: "t".into(), messages: vec![], calls: vec![], answered: HashMap::new(), depth: 1, vault: vec![] };
+        let resume = Resume { from_turn: "t".into(), messages: vec![], calls: vec![], answered: HashMap::new(), depth: 1, vault: vec![], remote: None };
 
         offer("chat-x", resume.clone());
         assert_eq!(take("chat-x"), Some(resume));
         assert_eq!(take("chat-x"), None);
+    }
+
+    #[test]
+    fn a_lost_turn_that_ran_elsewhere_is_reported_and_not_continued() {
+        let remote = Resume { from_turn: "t".into(), messages: vec![], calls: vec![], answered: HashMap::new(), depth: 0, vault: vec![], remote: Some("vps.example".into()) };
+
+        offer("chat-r", remote);
+
+        /* The machine is named once... */
+        assert_eq!(lost_remote("chat-r"), Some("vps.example".into()));
+        /* ...and the journal is spent with it: nothing is left for a local resume to pick up. */
+        assert_eq!(lost_remote("chat-r"), None);
+        assert_eq!(take("chat-r"), None);
+    }
+
+    #[test]
+    fn a_local_lost_turn_is_left_for_a_resume() {
+        let local = Resume { from_turn: "t".into(), messages: vec![], calls: vec![], answered: HashMap::new(), depth: 0, vault: vec![], remote: None };
+
+        offer("chat-l", local);
+
+        assert_eq!(lost_remote("chat-l"), None, "a local turn is continued, not merely reported");
+        assert!(take("chat-l").is_some(), "and its journal is still there to continue from");
     }
 }

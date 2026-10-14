@@ -77,6 +77,17 @@ person chose.
   magic link, and TOTP (RFC 6238, a +-1 step window and spent steps refused). Handing a session to another
   screen needs a lease with a fence that only goes up, and an older fence is refused. The server can export
   everything it holds about you, delete it and say what it deleted, and its retention is enforced (X1, X4, G36).
+- **A computer can be wiped from your account.** `/api/me/wipe` (and the delete that follows it) asks the daemon over
+  its own socket; the daemon writes the erase marker and erases everything - keys, sessions, history - at its next
+  start, because the database cannot go while it is open. The account record and the second factor go with it.
+- **A turn that runs on a VPS checks the machine first.** If `.sdc/runner` names a host that is asleep, off the
+  network, or no longer accepts the key, the turn stays on this machine and says why, instead of failing in the middle
+  of a tool call. Such a turn is journaled with the machine it ran on, and a turn lost there is reported rather than
+  started again here: its tools ran over there (R4).
+- **The prompt and the tool block have a budget.** The bytes every step of every turn pays for are pinned by tests -
+  the whole tool block, the largest single tool, and the system prompt - so a paragraph that grows is caught at once.
+- **The Workbench speaks Bengali, and looks like the rest of the window.** Its tabs, rows and buttons use the same
+  button classes, tokens and dialog measurements as the other kernel dialogs.
 - **The plan itself is honest.** `docs/plan/PROGRESS.md` carries one row per plan item with what is built and
   what is still missing, and `docs/plan/ASSUMPTIONS.md` records which assumptions were measured rather than
   believed.

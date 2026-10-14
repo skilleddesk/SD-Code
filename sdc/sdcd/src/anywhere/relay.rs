@@ -213,6 +213,10 @@ async fn session(
         let _ = write_tx.send(json!({ "ctl": "email.set", "address": address }).to_string()).await;
     }
 
+    /* Where does the session's handoff stand? The fence lives in the relay and outlives this connection: a daemon that
+       restarted must take back the fence it stamps frames with, or the relay refuses them as stale (X4). */
+    let _ = write_tx.send(json!({ "ctl": "handoff.state" }).to_string()).await;
+
     let mut tick = tokio::time::interval(Duration::from_secs(1));
     let mut heartbeat = tokio::time::interval(HEARTBEAT);
     let mut last_heard = tokio::time::Instant::now();
@@ -299,11 +303,35 @@ async fn session(
     outcome
 }
 
+/// A wipe the person asked for from their own account (X5).
+///
+/// The wipe cannot be carried out while this process has the database open, so the marker goes down, the relay is told that
+/// it is set, and the next start erases everything with it (`reset::erase_if_marked`, before the store opens).
+fn answer_wipe(write_tx: &mpsc::Sender<String>, value: &Value) -> Vec<Out> {
+    let ok = crate::paths::data_dir().is_ok_and(|dir| crate::reset::mark_for_erase(&dir));
+
+    let _ = write_tx.try_send(json!({ "ctl": "wipe.done", "ok": ok, "asked": value.get("by").and_then(Value::as_str).unwrap_or("the person's account") }).to_string());
+
+    Vec::new()
+}
+
 /// Turns one relay message into core input.
 fn from_relay(shared: &Arc<Shared>, write_tx: &mpsc::Sender<String>, value: &Value) -> Vec<Out> {
     /* A sign-in link was spent: the relay wants a pairing offer for whoever holds it. */
     if value["t"] == "magic" {
         return answer_magic(shared, value["ticket"].as_str().unwrap_or_default());
+    }
+
+    /* The person wiped this computer from their own account (X5). Nothing else can ask for this. */
+    if value["t"] == "wipe" {
+        return answer_wipe(write_tx, value);
+    }
+
+    /* The relay's word on who is driving the session (X4): what every screen is told, and what frames are stamped with. */
+    if value["t"].as_str().is_some_and(|kind| kind.starts_with("handoff.")) {
+        let Ok(mut core) = shared.core.lock() else { return Vec::new() };
+
+        return core.on_handoff(value);
     }
 
     let Some(conn) = value["conn"].as_str() else { return Vec::new() };
@@ -353,11 +381,12 @@ pub fn answer_magic(shared: &Arc<Shared>, ticket: &str) -> Vec<Out> {
 /// and queued frame 8: the browser would see 8 first and end the session ("frame out of order"). So the two happen together.
 fn emit(write_tx: &mpsc::Sender<String>, core: &mut Core, outs: Vec<Out>) -> Vec<Out> {
     let mut rest = Vec::new();
+    let stamp = core.handoff_stamp();
 
     for out in outs {
         match out {
             Out::Send { conn, msg } => {
-                if write_tx.try_send(json!({ "conn": conn, "msg": msg }).to_string()).is_err() {
+                if write_tx.try_send(frame_line(&conn, &msg, stamp.as_ref())).is_err() {
                     /* The relay link cannot take more: this browser is cut loose rather than buffered without bound. */
                     core.closed(&conn);
                     let _ = write_tx.try_send(json!({ "conn": conn, "close": true }).to_string());
@@ -374,12 +403,27 @@ fn emit(write_tx: &mpsc::Sender<String>, core: &mut Core, outs: Vec<Out>) -> Vec
     rest
 }
 
+/// One frame for the relay, stamped with the session's fence while a screen holds the session (X4). The relay reads the
+/// stamp, never the sealed payload: it is what tells it whose turn it is when two of the person's screens are open.
+fn frame_line(conn: &str, msg: &Value, stamp: Option<&Value>) -> String {
+    let mut line = json!({ "conn": conn, "msg": msg });
+
+    if let (Some(stamp), Some(object)) = (stamp, line.as_object_mut()) {
+        object.insert("session".to_string(), stamp["session"].clone());
+        object.insert("fence".to_string(), stamp["fence"].clone());
+    }
+
+    line.to_string()
+}
+
 /// Carries out what the core asked for.
 pub async fn dispatch(state: &Arc<DaemonState>, shared: &Arc<Shared>, write_tx: &mpsc::Sender<String>, outs: Vec<Out>) {
+    let stamp = shared.core.lock().map(|core| core.handoff_stamp()).ok().flatten();
+
     for out in outs {
         match out {
             Out::Send { conn, msg } => {
-                let line = json!({ "conn": conn, "msg": msg }).to_string();
+                let line = frame_line(&conn, &msg, stamp.as_ref());
 
                 /* A full queue means this browser cannot keep up. Cut it rather than buffer without end. */
                 if write_tx.try_send(line).is_err() {

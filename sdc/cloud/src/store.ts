@@ -116,3 +116,30 @@ export async function withinLimit(db: D1Database, bucket: string, limit: number,
 
   return (row?.count ?? limit + 1) <= limit;
 }
+
+/** The owner's second factor, if one is set. `null` means the sign-in route asks for the address alone. */
+export async function mfaSecret(db: D1Database, daemon: string): Promise<string | null> {
+  const row = await db.prepare('SELECT totp_secret FROM daemons WHERE id = ?').bind(daemon).first<{ totp_secret: string | null }>();
+
+  return row?.totp_secret ?? null;
+}
+
+/** Sets or clears the owner's second factor. */
+export async function setMfaSecret(db: D1Database, daemon: string, secret: string | null, now = Date.now()): Promise<void> {
+  await db.prepare('UPDATE daemons SET totp_secret = ?, mfa_enrolled_at = ? WHERE id = ?').bind(secret, secret ? now : null, daemon).run();
+}
+
+/**
+ * Spends one code's 30-second step, once. Two requests carrying the same code land here together and exactly one of them
+ * finds a row to insert, so a code that has been used is refused even inside its window.
+ */
+export async function spendTotpStep(db: D1Database, daemon: string, step: number, now = Date.now()): Promise<boolean> {
+  const result = await db.prepare('INSERT OR IGNORE INTO totp_steps (daemon_id, step, used_at) VALUES (?, ?, ?)').bind(daemon, step, now).run();
+
+  return (result.meta?.changes ?? 0) > 0;
+}
+
+/** Drops the spent codes of a daemon whose account is being deleted. */
+export async function purgeTotpSteps(db: D1Database, daemon: string): Promise<void> {
+  await db.prepare('DELETE FROM totp_steps WHERE daemon_id = ?').bind(daemon).run();
+}

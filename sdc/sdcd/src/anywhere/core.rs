@@ -88,6 +88,14 @@ fn stream_frame(event: &StreamEvent) -> Value {
     json!({ "type": "stream.event", "body": { "seq": event.seq, "event": event.event, "session_id": event.session_id, "turn_id": event.turn_id } })
 }
 
+/// One session's lease as a screen is shown it (X4). `mine` is what the screen shows the person: "this screen is driving".
+fn handoff_frame(held: Option<&Handoff>, device: &str, now: i64) -> Value {
+    match held {
+        Some(held) => json!({ "held": true, "session": held.session, "holder": held.holder, "fence": held.fence, "mine": held.holder == device, "seconds_left": ((held.expires_at - now) / 1000).max(0) }),
+        None => json!({ "held": false, "mine": true, "fence": 0, "seconds_left": 0 }),
+    }
+}
+
 /// Who answered a request, and what they did, for the ledger.
 #[derive(Debug, Clone)]
 pub struct DecisionBy {
@@ -267,6 +275,27 @@ pub struct Core {
     id: String,
     /// When the last pairing offer for a sign-in link was made.
     last_link_offer: Option<i64>,
+    /// Which screen is driving the session, as the relay's fence records it (X4). `None` until a screen claims it.
+    handoff: Option<Handoff>,
+}
+
+/// Who is driving a session, and the fence the relay handed out for it (X4).
+///
+/// The relay is what hands out the fence, so it is the one place that can order two screens of the same person. The daemon
+/// keeps what it was given: every frame it sends to the screens is stamped with the fence, and a frame sealed by a screen
+/// whose fence is behind is dropped here rather than answered.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Handoff {
+    pub session: String,
+    pub holder: String,
+    pub fence: i64,
+    pub expires_at: i64,
+}
+
+impl Handoff {
+    pub fn live(&self, now: i64) -> bool {
+        self.expires_at > now
+    }
 }
 
 #[derive(Deserialize)]
@@ -308,7 +337,7 @@ impl Core {
         let id = identity.id();
         let router = Router::new(settings.approval_timeout_ms);
 
-        Self { resumable: HashMap::new(), identity, registry, backend, settings, clock, conns: HashMap::new(), router, id, last_link_offer: None }
+        Self { resumable: HashMap::new(), identity, registry, backend, settings, clock, conns: HashMap::new(), router, id, last_link_offer: None, handoff: None }
     }
 
     pub fn daemon_id(&self) -> &str {
@@ -343,11 +372,130 @@ impl Core {
     }
 
     /// The relay connection dropped: every browser connection went with it. Open requests stay, because
-    /// the daemon, not the relay, is where they live.
+    /// the daemon, not the relay, is where they live. The handoff stays too: its fence lives in the relay, and a screen
+    /// that was driving keeps driving across a blip.
     pub fn reset_connections(&mut self) {
         for (_, state) in std::mem::take(&mut self.conns) {
             if let Conn::Linked(link) = state {
                 self.remember(link);
+            }
+        }
+    }
+
+    /// What every frame to a screen is stamped with while a screen holds the session (X4): the session's name and its
+    /// fence. `None` when no screen is driving, and then no frame is stamped at all.
+    pub fn handoff_stamp(&self) -> Option<Value> {
+        self.handoff
+            .as_ref()
+            .filter(|held| held.live(self.now()))
+            .map(|held| json!({ "session": held.session, "fence": held.fence }))
+    }
+
+    /// The relay's answer about a session's lease: what the screens are told, and what the daemon stamps frames with.
+    pub fn on_handoff(&mut self, value: &Value) -> Vec<Out> {
+        let now = self.now();
+        let kind = value.get("t").and_then(Value::as_str).unwrap_or_default();
+
+        /* A release the relay refused leaves the session exactly as it was: the fence it names is still held. */
+        if kind == "handoff.refused" {
+            self.backend.note("handoff.refused", value.clone());
+
+            return Vec::new();
+        }
+
+        let held = match kind {
+            "handoff.released" => false,
+            "handoff.claimed" => true,
+            _ => value.get("held").and_then(Value::as_bool).unwrap_or(false),
+        };
+
+        if held {
+            let expires_at = value
+                .get("expires_at")
+                .and_then(Value::as_i64)
+                .unwrap_or_else(|| now + value.get("seconds_left").and_then(Value::as_i64).unwrap_or(0) * 1000);
+
+            self.handoff = Some(Handoff {
+                session: value.get("session").and_then(Value::as_str).unwrap_or("session").to_string(),
+                holder: value.get("holder").and_then(Value::as_str).unwrap_or_default().to_string(),
+                fence: value.get("fence").and_then(Value::as_i64).unwrap_or(0),
+                expires_at,
+            });
+        } else {
+            self.handoff = None;
+        }
+
+        /* Every screen is told, so the one that was taken over stops showing itself as the driver. */
+        let mut notices: Vec<(String, Value)> = Vec::new();
+
+        for (conn, state) in &self.conns {
+            if let Conn::Linked(link) = state {
+                notices.push((conn.clone(), json!({ "type": "handoff.state", "body": handoff_frame(self.handoff.as_ref().filter(|held| held.live(now)), &link.device.id, now) })));
+            }
+        }
+
+        for (conn, notice) in notices {
+            if let Some(Conn::Linked(link)) = self.conns.get_mut(&conn) {
+                enqueue(link, "control", notice.clone());
+            }
+        }
+
+        Vec::new()
+    }
+
+    /// The lease as one screen is shown it: who is driving, and whether it is this screen.
+    fn handoff_body(&self, link: &Link) -> Value {
+        let now = self.now();
+
+        handoff_frame(self.handoff.as_ref().filter(|held| held.live(now)), &link.device.id, now)
+    }
+
+    /// A screen asking to drive, to stop driving, or to be told where the session stands. The relay is what hands out the
+    /// fence, so a claim is passed on and the answer comes back to every screen as `handoff.state`.
+    fn on_handoff_request(&mut self, link: &mut Link, id: &str, kind: &str, body: &Value, level: Level, out: &mut Vec<Out>) {
+        if level < Level::View {
+            self.reply(link, id, err_body(id, "locked", "unlock the session first"));
+
+            return;
+        }
+
+        let now = self.now();
+        let live = self.handoff.clone().filter(|held| held.live(now));
+
+        match kind {
+            "handoff.claim" => {
+                /* Already driving: say so instead of asking the relay again, which would only raise the fence. */
+                if live.is_some_and(|held| held.holder == link.device.id) {
+                    let state = json!({ "type": "handoff.state", "body": self.handoff_body(link) });
+
+                    enqueue(link, "control", state);
+                    self.reply(link, id, ok_body(id, json!({ "asked": false })));
+
+                    return;
+                }
+
+                let session = body.get("session").and_then(Value::as_str).unwrap_or("session").to_string();
+                let ttl = body.get("ttl").and_then(Value::as_i64).unwrap_or(0);
+
+                self.backend.note("handoff.claim", json!({ "device": link.device.id }));
+
+                out.push(Out::Ctl(json!({ "ctl": "handoff.claim", "session": session, "holder": link.device.id, "ttl": ttl })));
+                self.reply(link, id, ok_body(id, json!({ "asked": true })));
+            }
+            "handoff.release" => match live {
+                /* Nothing is being driven: nothing to give back. */
+                None => self.reply(link, id, ok_body(id, json!({ "held": false }))),
+                Some(held) if held.holder != link.device.id => self.reply(link, id, err_body(id, "forbidden", "another screen is driving this session")),
+                Some(held) => {
+                    out.push(Out::Ctl(json!({ "ctl": "handoff.release", "session": held.session, "holder": held.holder, "fence": held.fence })));
+                    self.reply(link, id, ok_body(id, json!({ "asked": true })));
+                }
+            },
+            _ => {
+                let state = json!({ "type": "handoff.state", "body": self.handoff_body(link) });
+
+                enqueue(link, "control", state);
+                self.reply(link, id, ok_body(id, json!({ "asked": false })));
             }
         }
     }
@@ -706,6 +854,22 @@ impl Core {
 
     fn on_frame(&mut self, conn: &str, msg: &Value, out: &mut Vec<Out>) {
         let now = self.now();
+
+        /* A frame stamped with a fence behind the session's was sealed for a lease that has ended: another screen has taken
+           over since, so it is dropped here rather than answered (X4). */
+        let current = self.handoff.as_ref().filter(|held| held.live(now)).map(|held| held.fence);
+
+        if let Some(fence) = current {
+            match msg.get("fence").and_then(Value::as_i64) {
+                Some(carried) if carried >= fence => {}
+                _ => {
+                    self.backend.note("handoff.behind", json!({ "conn": conn, "fence": fence }));
+
+                    return;
+                }
+            }
+        }
+
         let Some(Conn::Linked(mut link)) = self.conns.remove(conn) else { return };
         let number = msg.get("n").and_then(Value::as_u64);
         let ct = msg.get("ct").and_then(Value::as_str).and_then(|text| from_b64u(text).ok());
@@ -811,6 +975,8 @@ impl Core {
                 self.reply(link, id, ok_body(id, json!({})));
             }
             "approval.decision" => self.on_decision(conn, link, id, body, level, now, out),
+            /* X4: the driver's role moves between the person's screens; the relay is what hands out the fence. */
+            "handoff.claim" | "handoff.release" | "handoff.state" => self.on_handoff_request(link, id, kind, body, level, out),
             "control.kill" => {
                 /* No step-up, no unlock: stopping is always easy (plan 5.8). It is still logged. */
                 self.backend.note("kill", json!({ "device": link.device.id }));

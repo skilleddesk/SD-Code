@@ -1804,3 +1804,113 @@ fn too_many_waiting_calls_are_told_the_daemon_is_busy() {
 
     assert!(busy);
 }
+
+#[test]
+fn a_claim_goes_to_the_relay_and_every_screen_is_told_who_is_driving() {
+    let (mut rig, mut browser, mut session, _) = linked();
+
+    session.unlock(&mut browser, &mut rig, "view");
+
+    let out = session.call(&mut rig, "handoff.claim", "h1", json!({ "ttl": 60_000 }));
+    let asked = out
+        .iter()
+        .find_map(|item| match item {
+            Out::Ctl(value) if value["ctl"] == "handoff.claim" => Some(value.clone()),
+            _ => None,
+        })
+        .expect("the claim reaches the relay, which is what hands out the fence");
+
+    assert_eq!(asked["holder"], "dev1");
+    assert_eq!(asked["ttl"], 60_000);
+    assert_eq!(rig.backend.noted("handoff.claim"), 1);
+
+    /* The relay answers with a fence: the screen is told it is driving, and every frame is stamped with it from then on. */
+    let mut out = rig.core.on_handoff(&json!({ "t": "handoff.claimed", "session": "session", "holder": "dev1", "fence": 3, "expires_at": rig.now() + 60_000 }));
+    out.extend(rig.core.pump());
+
+    let frames = session.frames(&out);
+    let state = Session::find(&frames, "handoff.state").expect("the screen is told where the session stands");
+
+    assert_eq!(state["body"]["held"], true);
+    assert_eq!(state["body"]["mine"], true);
+    assert_eq!(state["body"]["fence"], 3);
+    assert_eq!(rig.core.handoff_stamp().unwrap()["fence"], 3);
+}
+
+#[test]
+fn a_frame_from_behind_the_fence_is_dropped_rather_than_answered() {
+    let (mut rig, mut browser, mut session, _) = linked();
+
+    session.unlock(&mut browser, &mut rig, "view");
+
+    let mut out = rig.core.on_handoff(&json!({ "t": "handoff.claimed", "session": "session", "holder": "dev1", "fence": 4, "expires_at": rig.now() + 60_000 }));
+    out.extend(rig.core.pump());
+    session.frames(&out);
+
+    /* Sealed while this screen was driving, but it arrives after another screen took over: it belongs to a lease that ended. */
+    let mut behind = session.frame("control", "handoff.state", "h1", json!({}));
+
+    behind["fence"] = json!(4);
+
+    let out = rig.core.on_message(&session.conn, &behind);
+
+    assert!(session.frames(&out).iter().any(|frame| frame["type"] == "res"), "the frame at the fence is answered");
+
+    let mut stale = session.frame("control", "handoff.state", "h2", json!({}));
+
+    stale["fence"] = json!(3);
+
+    let out = rig.core.on_message(&session.conn, &stale);
+
+    assert!(out.is_empty(), "a frame from behind the fence never reaches the daemon");
+    assert_eq!(rig.backend.noted("handoff.behind"), 1);
+}
+
+#[test]
+fn the_session_is_released_only_by_the_screen_that_holds_it() {
+    let (mut rig, mut browser, mut session, _) = linked();
+    let mut other = Browser::new("dev2");
+
+    other.register(&rig);
+
+    let (mut second, _) = other.connect(&mut rig, "c2", 0);
+
+    session.unlock(&mut browser, &mut rig, "view");
+    second.unlock(&mut other, &mut rig, "view");
+
+    session.call(&mut rig, "handoff.claim", "h1", json!({}));
+
+    let mut out = rig.core.on_handoff(&json!({ "t": "handoff.claimed", "session": "session", "holder": "dev1", "fence": 1, "expires_at": rig.now() + 60_000 }));
+    out.extend(rig.core.pump());
+
+    let seen = Session::find(&second.frames(&out), "handoff.state").expect("the other screen is told too");
+
+    assert_eq!(seen["body"]["mine"], false, "the other screen knows it is not driving");
+
+    /* The screen that is not driving cannot give the session away. Its frames carry the fence the relay gave it. */
+    let mut asked_back = second.frame("control", "handoff.release", "h2", json!({}));
+
+    asked_back["fence"] = json!(1);
+
+    let out = rig.core.on_message(&second.conn, &asked_back);
+
+    assert_eq!(reply(&second.frames(&out))["error"]["code"], "forbidden");
+    assert!(!out.iter().any(|item| matches!(item, Out::Ctl(_))), "nothing reaches the relay");
+
+    /* The screen that is driving releases from the fence it holds. */
+    let mut release = session.frame("control", "handoff.release", "h3", json!({}));
+
+    release["fence"] = json!(1);
+
+    let out = rig.core.on_message(&session.conn, &release);
+    let asked = out
+        .iter()
+        .find_map(|item| match item {
+            Out::Ctl(value) if value["ctl"] == "handoff.release" => Some(value.clone()),
+            _ => None,
+        })
+        .expect("the release reaches the relay");
+
+    assert_eq!(asked["holder"], "dev1");
+    assert_eq!(asked["fence"], 1);
+}

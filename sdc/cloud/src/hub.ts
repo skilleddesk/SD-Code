@@ -11,6 +11,7 @@
 
 import { DurableObject } from 'cloudflare:workers';
 import { approvalMail, sendMail, validAddress, type EmailEnv } from './email';
+import { DEFAULT_TTL, MAX_TTL, allow, claim, leaseState, release, type Lease } from './leases';
 import { dropEmail, dropPush, emailOf, ensureDaemon, listPush, saveEmail, savePush, withinLimit } from './store';
 import { DEVICE_ID, b64uDecode, b64uEncode, daemonIdOf, deviceAuthMessage, hubAuthMessage, randomToken, verifySignature } from './util';
 import { approvalPayload, parseSubscription, send as sendPush, type Vapid } from './webpush';
@@ -81,6 +82,24 @@ export const OFFER_WAIT_MS = 8_000;
 /** A request id as the daemon makes it (`apr_` + permission id). It goes into a link, so it is restricted to safe characters. */
 const REQUEST_ID = /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$/;
 
+/** A handoff session's name (X4), given by the daemon. A frame that carries none belongs to the session every computer has. */
+export const DEFAULT_SESSION = 'session';
+const SESSION_ID = /^[A-Za-z0-9_-]{1,64}$/;
+
+/** A frame's session: the one it names, or the computer's only session when it names none. */
+function sessionOf(message: any): string {
+  const named = message?.session;
+
+  return typeof named === 'string' && SESSION_ID.test(named) ? named : DEFAULT_SESSION;
+}
+
+/** A frame's fence: a whole number the device was given, or `undefined` when it carries none (a single screen never did). */
+function fenceOf(message: any): number | undefined {
+  const fence = message?.fence;
+
+  return typeof fence === 'number' && Number.isInteger(fence) && fence >= 0 ? fence : undefined;
+}
+
 export const CLOSE = {
   replaced: 4000,
   denied: 4001,
@@ -115,7 +134,57 @@ export class Hub extends DurableObject<Env> {
       const columns = sql.exec(`PRAGMA table_info(pending)`).toArray() as Array<{ name: string }>;
 
       if (!columns.some((column) => column.name === 'escalate_at')) sql.exec(`ALTER TABLE pending ADD COLUMN escalate_at INTEGER`);
+
+      // Who is driving a session (X4). One row per session; a lapsed row is left where it is, so the fence a later claim
+      // gets is always higher than the one before it.
+      sql.exec(`CREATE TABLE IF NOT EXISTS leases (session TEXT PRIMARY KEY, holder TEXT NOT NULL, fence INTEGER NOT NULL, expires INTEGER NOT NULL)`);
     });
+  }
+
+  /** The lease a session holds, live or lapsed. */
+  private lease(session: string): Lease | undefined {
+    const row = this.ctx.storage.sql.exec(`SELECT session, holder, fence, expires FROM leases WHERE session = ?`, session).toArray()[0] as Lease | undefined;
+
+    return row;
+  }
+
+  /** Hands a screen the driver's role and tells the daemon the fence it must stamp its frames with. */
+  private handoffClaim(message: any): void {
+    const session = sessionOf(message);
+    const holder = typeof message.holder === 'string' && SESSION_ID.test(message.holder) ? message.holder : '';
+    const ttl = Number(message.ttl);
+    const lease = claim(session, holder, this.lease(session), Date.now(), Number.isFinite(ttl) ? ttl : DEFAULT_TTL);
+
+    this.ctx.storage.sql.exec(`INSERT OR REPLACE INTO leases (session, holder, fence, expires) VALUES (?, ?, ?, ?)`, lease.session, lease.holder, lease.fence, lease.expires);
+    this.reply({ t: 'handoff.claimed', session, holder, fence: lease.fence, expires_at: lease.expires });
+  }
+
+  /** Gives the session back, but only from the fence that holds it. */
+  private handoffRelease(message: any): void {
+    const session = sessionOf(message);
+    const holder = typeof message.holder === 'string' ? message.holder : '';
+    const fence = Number(message.fence);
+
+    if (!release(this.lease(session), holder, fence)) {
+      this.reply({ t: 'handoff.refused', session, why: 'only the fence that holds the session may release it' });
+
+      return;
+    }
+
+    this.ctx.storage.sql.exec(`DELETE FROM leases WHERE session = ?`, session);
+    this.reply({ t: 'handoff.released', session, fence });
+  }
+
+  /** What a screen is told about a session's lease. */
+  private handoffState(message: any): void {
+    const session = sessionOf(message);
+
+    this.reply({ t: 'handoff.state', session, ttl_max: MAX_TTL, ...leaseState(this.lease(session), Date.now()) });
+  }
+
+  /** An answer to the daemon alone (a control message, not a frame a browser ever sees). */
+  private reply(value: unknown): void {
+    this.toDaemon(value);
   }
 
   // --- entry --------------------------------------------------------------------------------------
@@ -316,7 +385,21 @@ export class Hub extends DurableObject<Env> {
 
     if (message.close) return void target.close(1000, 'closed by the computer');
 
-    if (message.msg !== undefined) target.send(JSON.stringify(message.msg));
+    if (message.msg !== undefined) {
+      // A frame the daemon stamped with a fence older than the session's is an answer to a screen that has been taken
+      // over: it is dropped here, so the screen driving now never sees work from the lease before it (X4).
+      const fence = fenceOf(message);
+
+      if (fence !== undefined) {
+        const lease = this.lease(sessionOf(message));
+
+        if (lease && lease.expires > Date.now() && fence < lease.fence) return;
+      }
+
+      const stamped = fence !== undefined && typeof message.msg === 'object' && message.msg !== null ? { ...message.msg, fence } : message.msg;
+
+      target.send(JSON.stringify(stamped));
+    }
   }
 
   private async control(message: any): Promise<void> {
@@ -361,6 +444,13 @@ export class Hub extends DurableObject<Env> {
         return this.setEmail(message.address);
       case 'offer':
         return this.offered(message);
+      // X4: the driver's role moves between the person's screens, and the Hub is what hands out the fence.
+      case 'handoff.claim':
+        return this.handoffClaim(message);
+      case 'handoff.release':
+        return this.handoffRelease(message);
+      case 'handoff.state':
+        return this.handoffState(message);
     }
   }
 
@@ -478,6 +568,17 @@ export class Hub extends DurableObject<Env> {
    * Called by the Worker once a sign-in link has been spent. Asks the daemon for a pairing offer. The browser then pairs the normal
    * way and the person still has to approve it on the computer, so the link by itself grants nothing.
    */
+  /**
+   * Asks the computer to wipe itself (X5). Asked for only from the person's own account - a sign-in link and, when they
+   * have one, a code from their authenticator.
+   *
+   * It does not wait for an answer: the person's laptop may be asleep, and a delete must not hang on that. The computer
+   * writes the marker and erases everything at its next start; whether it is connected right now is all this reports.
+   */
+  askWipe(by: string): Promise<{ asked: boolean }> {
+    return Promise.resolve({ asked: this.toDaemon({ t: 'wipe', by }) });
+  }
+
   async offer(): Promise<Offer> {
     const ticket = randomToken(12);
 
@@ -563,6 +664,21 @@ export class Hub extends DurableObject<Env> {
 
     // Otherwise only the two kinds of end-to-end message pass; the Hub does not interpret them.
     if (message.t !== 'hello' && message.t !== 'f') return;
+
+    // A frame names the fence its screen was given; one from behind the current fence, or from a screen that is not
+    // driving, is refused here rather than relayed - so two screens can never both be right about the session (X4).
+    if (message.t === 'f') {
+      const session = sessionOf(message);
+      const lease = this.lease(session);
+      const verdict = allow(lease, attachment.device ?? attachment.conn ?? '', fenceOf(message), Date.now());
+
+      if (!verdict.ok) {
+        ws.send(JSON.stringify({ t: 'handoff.refused', session, fence: lease?.fence ?? 0, why: verdict.reason }));
+
+        return;
+      }
+    }
+
     if (!this.toDaemon({ conn: attachment.conn, msg: message })) this.refuse(ws, 'offline');
   }
 

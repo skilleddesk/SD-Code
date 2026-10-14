@@ -488,16 +488,30 @@ pub fn run(
         return;
     };
 
-    /* v3 R4: when the person names a VPS for this project, this turn's tools run there instead of here. */
+    /* v3 R4: when the person names a VPS for this project, this turn's tools run there instead of here.
+       The machine is asked whether it is there first: a turn that starts against a host that is off, or a key that no
+       longer fits, would otherwise fail later and somewhere less useful - in the middle of a tool call. */
     let prompt = if prompt.remote.is_none() && crate::v3::on("runner") {
         match crate::v3::runner::remote_for(std::path::Path::new(root), crate::v3::runner::default_name().as_deref()) {
-            Ok(Some(ssh)) => {
-                let mut owned = prompt.clone();
+            Ok(Some(ssh)) => match crate::v3::runner::reachable(&ssh) {
+                Ok(None) => {
+                    let mut owned = prompt.clone();
 
-                sink.send(EngineEvent::Thinking(format!("This turn runs on {}, as `.sdc/runner` asks.\n", ssh.target.user_host)));
-                owned.remote = Some(ssh);
-                owned
-            }
+                    sink.send(EngineEvent::Thinking(format!("This turn runs on {}, as `.sdc/runner` asks.\n", ssh.target.user_host)));
+                    owned.remote = Some(ssh);
+                    owned
+                }
+                Ok(Some(why)) => {
+                    sink.send(EngineEvent::Thinking(format!("{} cannot be reached ({why}) - this turn stays on this machine.\n", ssh.target.user_host)));
+
+                    prompt.clone()
+                }
+                Err(problem) => {
+                    sink.send(EngineEvent::Thinking(format!("{problem} - this turn stays on this machine.\n")));
+
+                    prompt.clone()
+                }
+            },
             Ok(None) => prompt.clone(),
             Err(problem) => {
                 sink.send(EngineEvent::Thinking(format!("{problem} - this turn stays on this machine.\n")));
@@ -1503,8 +1517,23 @@ fn drive(
         result_cap: if target.local_window { (window as usize).clamp(2_000, tools::RESULT_CAP) } else { result_cap(backend, window) },
     };
     /* v3 R2: a turn the daemon lost continues here - its conversation rebuilt from the journal, the reads that
-       never answered run again, and a change that never answered is reported as unknown rather than redone. */
-    let resumed = if research_session.is_none() && prompt.remote.is_none() { crate::v3::journal::take(&prompt.session_id) } else { None };
+       never answered run again, and a change that never answered is reported as unknown rather than redone.
+       v3 R4: a lost turn whose tools ran on another machine is not continued here at all: its tools ran over there, where
+       this daemon's journal says nothing about what became of them, so it is reported as unknown and left alone. */
+    let remote_lost = if prompt.remote.is_none() { crate::v3::journal::lost_remote(&prompt.session_id) } else { None };
+
+    if let Some(host) = &remote_lost {
+        sink.send(EngineEvent::Thinking(format!(
+            "The turn before this one ran on {host} and never finished here. What it managed to do there is unknown, so it is not started again; ask me again and this turn goes on from what is on disk.\n"
+        )));
+    }
+
+    let resumed = if research_session.is_none() && prompt.remote.is_none() && remote_lost.is_none() {
+        crate::v3::journal::take(&prompt.session_id)
+    } else {
+        /* A lost remote turn's journal is spent by `lost_remote`, so there is nothing left to take. */
+        None
+    };
 
     if let Some(resume) = &resumed {
         messages = resume.messages.clone();
@@ -1535,8 +1564,10 @@ fn drive(
         )));
     }
 
-    /* v3 R1: the journal - written ahead, step by step, for a local agent turn on an API model. */
-    let journal = (backend == Backend::Api && prompt.remote.is_none() && research_session.is_none())
+    /* v3 R1: the journal - written ahead, step by step, for a local agent turn on an API model.
+       v3 R4: a turn that runs on a runner is journaled the same way, with the machine it ran on recorded, so an interrupted
+       turn is never silently redone: its tools ran over there, and replaying them here would be a different turn. */
+    let journal = (backend == Backend::Api && research_session.is_none())
         .then(|| {
             crate::v3::journal::Writer::open(
                 &turn_id,
@@ -1549,6 +1580,9 @@ fn drive(
                     "autonomy": format!("{:?}", options.autonomy).to_lowercase(),
                     "effort": prompt.effort,
                     "resumeDepth": resumed.as_ref().map(|resume| resume.depth + 1).unwrap_or(0),
+                    /* R4: the machine this turn's tools run on, when it is not this one. A resumed turn is never replayed
+                       here when this is set: the work happened over there. */
+                    "remote": prompt.remote.as_ref().map(|ssh| ssh.target.user_host.clone()),
                 }),
             )
         })
@@ -3785,5 +3819,68 @@ mod end_to_end {
         assert!(matches!(events.last(), Some(EngineEvent::Done { meta, .. }) if meta.contains("1 searches")));
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+}
+
+/// L5: the tool block is what every single step of every turn pays for, so its size is pinned here. A tool that grows past
+/// its budget has to lose words somewhere else, and this says so at once rather than after a release.
+#[cfg(test)]
+mod l5_budget {
+    use super::*;
+
+    /// The whole block the model is told about the tools, in characters: descriptions and schemas together.
+    const TOOL_BLOCK: usize = 9_300;
+
+    /// One tool: the `browser` tool is the largest, and it is the one to watch.
+    const ONE_TOOL: usize = 1_150;
+
+    fn weights() -> Vec<(usize, String)> {
+        let mut sizes: Vec<(usize, String)> = tools::specs()
+            .iter()
+            .map(|tool| (tool.description.len() + serde_json::to_string(&tool.schema).unwrap().len(), tool.name.to_string()))
+            .collect();
+
+        sizes.sort_by_key(|entry| std::cmp::Reverse(entry.0));
+
+        sizes
+    }
+
+    #[test]
+    fn the_tool_block_stays_within_its_budget() {
+        let total: usize = weights().iter().map(|(size, _)| size).sum();
+
+        assert!(total <= TOOL_BLOCK, "the tool block is {total} characters, over its budget of {TOOL_BLOCK}: trim a description somewhere");
+    }
+
+    #[test]
+    fn no_single_tool_outgrows_the_block() {
+        let (size, name) = weights().remove(0);
+
+        assert!(size <= ONE_TOOL, "`{name}` alone is {size} characters, over its budget of {ONE_TOOL}");
+    }
+
+    #[test]
+    fn no_tool_is_left_without_a_description() {
+        for tool in tools::specs() {
+            /* Short is fine - `stop_process` says all it needs to - but a tool nobody explained is not. */
+            assert!(tool.description.len() >= 20, "`{}` says too little to be used: {:?}", tool.name, tool.description);
+            assert!(tool.description.len() <= ONE_TOOL, "`{}` describes itself at length: {}", tool.name, tool.description.len());
+        }
+    }
+
+    /// The brief on its own, before the workspace and the language are written into it.
+    const SYSTEM_PROMPT: usize = 6_200;
+
+    #[test]
+    fn the_system_prompt_stays_within_its_budget() {
+        let workspace = Workspace::new("/tmp/project", None);
+        let prompt = system_prompt(&workspace, false, &crate::understand::Reading::BANGLISH, true);
+        let vision = system_prompt(&workspace, true, &crate::understand::Reading::BANGLISH, true);
+
+        assert!(prompt.len() <= SYSTEM_PROMPT, "the system prompt is {} characters, over its budget of {SYSTEM_PROMPT}: trim a paragraph", prompt.len());
+        /* Vision is a paragraph more: it must not be a document more. */
+        assert!(vision.len() - prompt.len() < 900, "the vision paragraph alone is {} characters", vision.len() - prompt.len());
+        assert!(prompt.contains("/tmp/project"), "the folder the turn runs in is in the brief");
+        assert!(prompt.contains("Banglish"), "so is the language the person writes in");
     }
 }

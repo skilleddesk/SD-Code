@@ -6,7 +6,7 @@ import { IndexedDbStore, MemoryStore, type PairedRecord, type Store } from '../c
 import { BrowserPasskey, type Passkey } from '../crypto/passkey';
 import { fingerprint } from '../crypto/session';
 import { browserPushEnv, PushControl, type PushEnv, type PushState } from '../push/push';
-import { Link, RequestFailed, type Answer, type LinkState } from '../transport/link';
+import { Link, RequestFailed, type Answer, type HandoffState, type LinkState } from '../transport/link';
 import { recover, RecoveryFailed } from '../transport/recovery';
 import { pair, parseOffer, type Offer, type Progress } from '../transport/pairing';
 import { Chat, emptyChat, type ChatState } from './chat';
@@ -52,6 +52,8 @@ export interface Snapshot {
   push: PushState;
   /** Counts up when a notification was tapped while the page was open: the page then shows the Inbox. */
   inboxTick: number;
+  /** Where this screen stands in the session's handoff: driving, or another screen is (X4). */
+  handoff: HandoffState | null;
 }
 
 const MAX_LIVE = 300;
@@ -85,6 +87,7 @@ export class Model {
     mailLink: 'idle',
     push: { kind: 'checking' },
     inboxTick: 0,
+    handoff: null,
   };
   private listeners = new Set<() => void>();
   private pushSynced = false;
@@ -177,6 +180,8 @@ export class Model {
             notice: how === 'resolved' && by ? `decided:${by}` : null,
           }),
         event: (_seq, event, meta) => this.addLive(event, meta),
+        handoff: (state) => this.update({ handoff: state.held ? state : null }),
+        refused: (why) => this.update({ handoff: { held: true, mine: false, fence: 0, why } }),
       },
     });
     this.link.start();
@@ -352,6 +357,20 @@ export class Model {
     return this.run(async () => {
       await this.link!.kill();
       this.update({ notice: 'killed' });
+    });
+  }
+
+  /** Asks the computer to let this screen drive the session (X4). Every screen is told where the session ends up. */
+  async drive(): Promise<boolean> {
+    return this.run(async () => {
+      await this.link!.drive();
+    });
+  }
+
+  /** Gives the session back to the person's other screens. */
+  async giveBack(): Promise<boolean> {
+    return this.run(async () => {
+      await this.link!.giveBack();
     });
   }
 

@@ -95,7 +95,7 @@ pub fn specs_for(caps: Caps) -> Vec<ToolSpec> {
 pub fn browser_spec() -> ToolSpec {
     ToolSpec {
         name: "browser",
-        description: "Use a real web browser (headless, on the person's machine) to try a page the way a user would: open it, read it, click, type into fields, press keys, and - for a model that can see - take a screenshot. read answers the page's text and a numbered list of what can be clicked or filled; click and type take that number, a CSS selector, or the words on the element. The browser stays open between calls in this chat. Use it to test the site or app you built (a dev server started with start_process, a file:/// page, or a public URL).",
+        description: "Use a real web browser (headless, on the person's machine) to try a page the way a user would: open, read, click, type, press keys, and - for a model that can see - screenshot. The browser stays open between calls in this chat. Use it to test the page you built (a dev server from start_process, a file:/// page, or a public URL), not as a general web fetch.",
         schema: json!({
             "type": "object",
             "properties": {

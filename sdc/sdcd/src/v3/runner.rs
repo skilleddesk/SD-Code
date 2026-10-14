@@ -119,6 +119,19 @@ pub fn probe(runner: &Runner) -> Result<String, String> {
     ssh.run(&script, Duration::from_secs(20)).map(|output| output.stdout.trim().to_string()).map_err(|error| format!("{}: {}", runner.host, error.message))
 }
 
+/// Whether the machine is there **now**, before a turn starts against it (R4).
+///
+/// `Ok(None)` means it is up and this key fits. `Ok(Some(why))` is a machine that plainly cannot take a turn this minute -
+/// asleep, off the network, or a key that no longer fits - and the turn is better off on this machine, with the person told
+/// why. `Err` is only for a runner whose connection cannot be described at all (a bad target, or a missing key file).
+pub fn reachable(ssh: &crate::ssh::Ssh) -> Result<Option<String>, String> {
+    match ssh.run("true", Duration::from_secs(10)) {
+        Ok(output) if output.ok() => Ok(None),
+        Ok(output) => Ok(Some(format!("it answered {:?}", output.stderr.trim().chars().take(120).collect::<String>()))),
+        Err(error) => Ok(Some(error.message)),
+    }
+}
+
 /// A path for a shell: single-quoted, so a space or a quote in it cannot become a second command.
 fn quote(text: &str) -> String {
     format!("'{}'", text.replace('\'', r"'\''"))

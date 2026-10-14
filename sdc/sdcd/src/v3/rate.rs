@@ -73,4 +73,78 @@ mod tests {
         assert_eq!(reserve("bucket-test.example", 60.0, 3.0, now + Duration::from_secs(10)), Duration::ZERO);
         assert_eq!(host("https://api.deepseek.com/v1/chat/completions"), "api.deepseek.com");
     }
+
+    #[test]
+    fn each_host_has_its_own_bucket() {
+        let now = Instant::now();
+
+        assert_eq!(reserve("bucket-a.example", 60.0, 1.0, now), Duration::ZERO);
+        assert_eq!(reserve("bucket-a.example", 60.0, 1.0, now), Duration::from_secs(1));
+        assert_eq!(reserve("bucket-b.example", 60.0, 1.0, now), Duration::ZERO, "a busy host does not slow another");
+    }
+
+    #[test]
+    fn the_bucket_refills_with_time_and_a_debt_is_paid_off() {
+        let now = Instant::now();
+
+        assert_eq!(reserve("bucket-refill.example", 60.0, 1.0, now), Duration::ZERO);
+        assert_eq!(reserve("bucket-refill.example", 60.0, 1.0, now), Duration::from_secs(1));
+
+        /* Half a second on, the bucket is still 0.5 tokens in debt: one more request waits 1.5s in all. */
+        assert_eq!(reserve("bucket-refill.example", 60.0, 1.0, now + Duration::from_millis(500)), Duration::from_millis(1500));
+
+        /* A clock that runs backwards neither refills nor panics. */
+        assert!(reserve("bucket-refill.example", 60.0, 1.0, now) > Duration::ZERO);
+    }
+
+    #[test]
+    fn acquire_lets_the_default_burst_through_without_sleeping_then_the_next_request_waits() {
+        let url = "https://acquire-test.example/v1/chat";
+        let started = Instant::now();
+
+        for _ in 0..BURST as usize {
+            acquire(url);
+        }
+
+        assert!(started.elapsed() < Duration::from_millis(250), "the burst must not sleep");
+
+        /* The bucket is drained: the next request owes about one token's time (60s / 120 = 0.5s). */
+        let wait = reserve(&host(url), PER_MINUTE, BURST, Instant::now());
+
+        assert!(wait > Duration::ZERO && wait <= Duration::from_millis(500), "waited {wait:?}");
+    }
+
+    #[test]
+    fn parallel_requests_to_one_host_each_take_a_distinct_slot() {
+        let now = Instant::now();
+        let threads: Vec<_> = (0..8).map(|_| std::thread::spawn(move || reserve("bucket-parallel.example", 60.0, 2.0, now))).collect();
+        let mut waits: Vec<Duration> = threads.into_iter().map(|thread| thread.join().unwrap()).collect();
+
+        waits.sort();
+
+        /* Two ride the burst; the other six queue one second apart, none handed the same slot twice. */
+        let expected: Vec<Duration> = [0, 0, 1, 2, 3, 4, 5, 6].iter().map(|secs| Duration::from_secs(*secs)).collect();
+
+        assert_eq!(waits, expected);
+    }
+
+    #[test]
+    fn a_long_idle_banks_no_more_than_the_burst() {
+        let now = Instant::now();
+        let later = now + Duration::from_secs(3600);
+
+        assert_eq!(reserve("bucket-idle.example", 60.0, 2.0, now), Duration::ZERO);
+
+        /* An hour of quiet refills to the burst and no further: two go at once, the third waits a full second. */
+        assert_eq!(reserve("bucket-idle.example", 60.0, 2.0, later), Duration::ZERO);
+        assert_eq!(reserve("bucket-idle.example", 60.0, 2.0, later), Duration::ZERO);
+        assert_eq!(reserve("bucket-idle.example", 60.0, 2.0, later), Duration::from_secs(1));
+    }
+
+    #[test]
+    fn the_host_is_lowercased_and_stripped_of_scheme_and_path() {
+        assert_eq!(host("HTTPS://API.Example.COM/v1"), "api.example.com");
+        assert_eq!(host("localhost:8080/v1/chat"), "localhost:8080");
+        assert_eq!(host("api.example.com"), "api.example.com");
+    }
 }

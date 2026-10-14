@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 
 import { Modal } from '../modals/Modal';
 import { Badge } from '../panels/ui/Badge';
-import { BTN, BTN_PRIMARY, BTN_SECONDARY } from '../panels/ui/button';
+import { BTN, BTN_PRIMARY, BTN_SECONDARY, BTN_SM } from '../panels/ui/button';
 import { strings } from '../strings';
 import {
   agentsBoard,
@@ -56,8 +56,8 @@ export function Ops() {
   const openTab = useKernelUi((state) => state.openOps);
   const close = useKernelUi((state) => state.closeOps);
   return (
-    <Modal open={open} label={k.title} onClose={close} center className="flex h-[86vh] w-[min(960px,96vw)] overflow-hidden">
-      <nav className="flex w-[180px] shrink-0 flex-col gap-[2px] border-r border-border-subtle bg-bg-raised p-[10px] max-700:w-[60px]" aria-label={k.title}>
+    <Modal open={open} label={k.title} onClose={close} center className="flex h-[88vh] w-[min(1040px,96vw)] overflow-hidden">
+      <nav className="flex w-[190px] shrink-0 flex-col gap-[2px] border-r border-border-subtle bg-bg-raised p-[10px] max-700:w-[60px]" aria-label={k.title}>
         <div className="mb-[8px] px-[8px] text-[13px] font-semibold text-text-primary max-700:hidden">{k.title}</div>
         {TABS.map((item) => {
           const Icon = item.icon;
@@ -67,20 +67,21 @@ export function Ops() {
               key={item.id}
               type="button"
               aria-current={item.id === tab}
-              className={`flex items-center gap-[10px] rounded-md px-[10px] py-[8px] text-left text-[12.5px] transition-colors duration-fast ${
-                item.id === tab ? 'bg-bg-active text-text-primary' : 'text-text-secondary hover:bg-bg-hover hover:text-text-primary'
-              }`}
+              className={
+                'flex items-center gap-[10px] rounded-md px-[10px] py-[8px] text-left text-[12.5px] transition-colors duration-fast ' +
+                (item.id === tab ? 'bg-accent-subtle text-accent' : 'text-text-secondary hover:bg-bg-hover hover:text-text-primary')
+              }
               onClick={() => openTab(item.id)}
             >
-              <Icon size={14} />
+              <Icon size={14} aria-hidden="true" />
               <span className="max-700:hidden">{k.tabs[item.id]}</span>
             </button>
           );
         })}
       </nav>
 
-      <div className="flex min-w-0 flex-1 flex-col gap-[10px] overflow-y-auto p-[14px]">
-        <h2 className="text-[14px] font-semibold text-text-primary">{k.tabs[tab]}</h2>
+      <div className="min-w-0 flex-1 overflow-y-auto px-[22px] py-[18px]">
+        <h2 className="mb-[12px] text-[15px] font-semibold text-text-primary">{k.tabs[tab]}</h2>
         {tab === 'runners' ? <RunnersTab /> : null}
         {tab === 'agents' ? <AgentsTab /> : null}
         {tab === 'inbox' ? <InboxTab /> : null}
@@ -124,7 +125,7 @@ function RunnersTab() {
 
   return (
     <div className="flex flex-col gap-[8px]">
-      {failed ? <p className="text-[12px] text-text-danger">{failed}</p> : null}
+      {failed ? <p className="text-[12px] text-state-error">{failed}</p> : null}
       <p className="text-[12px] text-text-secondary">{chosen ? k.runners.chosen(chosen) : k.runners.here}</p>
       {runners.length === 0 ? <p className={`${CARD} text-[12px] text-text-secondary`}>{k.runners.empty}</p> : null}
 
@@ -224,13 +225,13 @@ function AgentsTab() {
             if (event.key === 'Enter') void start();
           }}
         />
-        <button type="button" className={BTN_PRIMARY} disabled={busy || !request.trim()} onClick={() => void start()}>
+        <button type="button" className={BTN + ' ' + BTN_PRIMARY} disabled={busy || !request.trim()} onClick={() => void start()}>
           <Plus size={13} /> {k.agents.start}
         </button>
       </div>
       <p className="text-[11px] text-text-secondary">{k.agents.needs}</p>
       {said ? <p className="text-[12px] text-text-primary">{said}</p> : null}
-      {failed ? <p className="text-[12px] text-text-danger">{failed}</p> : null}
+      {failed ? <p className="text-[12px] text-state-error">{failed}</p> : null}
 
       {agents === null ? <p className="text-[12px] text-text-muted">{k.loading}</p> : null}
       {agents?.length === 0 ? <p className={`${CARD} text-[12px] text-text-secondary`}>{k.agents.empty}</p> : null}
@@ -251,7 +252,7 @@ function AgentsTab() {
               <div className="flex shrink-0 items-center gap-[6px]">
                 <Badge tone={state.tone}>{state.label}</Badge>
                 {agent.state === 'running' ? (
-                  <button type="button" className={BTN_SECONDARY} disabled={busy} onClick={() => void stop(agent.id)}>
+                  <button type="button" className={BTN + ' ' + BTN_SECONDARY} disabled={busy} onClick={() => void stop(agent.id)}>
                     <Square size={12} /> {k.agents.stop}
                   </button>
                 ) : null}
@@ -317,7 +318,7 @@ function InboxTab() {
 
   return (
     <div className="flex flex-col gap-[8px]">
-      {failed ? <p className="text-[12px] text-text-danger">{failed}</p> : null}
+      {failed ? <p className="text-[12px] text-state-error">{failed}</p> : null}
       {automations.length === 0 ? <p className={`${CARD} text-[12px] text-text-secondary`}>{k.inbox.empty}</p> : null}
 
       {automations.map((automation) => (
@@ -334,7 +335,7 @@ function InboxTab() {
           </div>
           <button
             type="button"
-            className={`${BTN} shrink-0`}
+            className={BTN_SM + ' ' + BTN_SECONDARY + ' shrink-0'}
             disabled={busy === automation.name || !automation.enabled}
             onClick={() => void run(automation.name)}
           >

@@ -5,7 +5,9 @@
 
 import { magicMail, sendMail, validAddress } from './email';
 import { Hub, type Env } from './hub';
-import { MAGIC_PER_DAEMON_PER_HOUR, createMagic, daemonsForEmail, purgeMagic, releaseMagic, spendMagic, withinLimit } from './store';
+import { ownerRoute } from './owner';
+import { MAGIC_PER_DAEMON_PER_HOUR, createMagic, daemonsForEmail, mfaSecret, purgeMagic, releaseMagic, spendMagic, spendTotpStep, withinLimit } from './store';
+import { verify } from './totp';
 import { DAEMON_ID } from './util';
 
 export { Hub };
@@ -90,6 +92,21 @@ async function magicRedeem(request: Request, env: Env): Promise<Response> {
     return Response.json({ error: 'link_invalid' }, { status: 400, headers: JSON_HEADERS });
   }
 
+  // The second factor, when the person has set one up (X1): the address is one thing, the authenticator is the other.
+  const secret = await mfaSecret(env.DB, daemon);
+
+  if (secret) {
+    const code = typeof body?.code === 'string' ? body.code : '';
+    const step = /^[0-9]{6}$/.test(code) ? await verify(secret, code, Date.now()) : null;
+
+    if (step === null || !(await spendTotpStep(env.DB, daemon, step))) {
+      // A wrong or spent code gives the link back: it is the link that is spent once, on the sign-in that succeeds.
+      await releaseMagic(env.DB, daemon, token);
+
+      return Response.json({ error: 'code_needed' }, { status: 401, headers: JSON_HEADERS });
+    }
+  }
+
   const offer = await env.HUB.get(env.HUB.idFromName(daemon)).offer();
 
   if (!offer.ok) {
@@ -149,6 +166,9 @@ export default {
 
       return url.pathname.endsWith('/request') ? magicRequest(request, env, ctx) : magicRedeem(request, env);
     }
+
+    // The person's own actions (X1, G36): the second factor, and the account record itself.
+    if (url.pathname.startsWith('/api/mfa/') || url.pathname.startsWith('/api/me/')) return ownerRoute(request, env, url.pathname);
 
     if (role) {
       const daemon = parts[1] ?? '';
