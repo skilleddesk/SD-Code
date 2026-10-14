@@ -17,6 +17,7 @@ pub mod ledger_diff;
 pub mod outline;
 pub mod privacy;
 pub mod profiles;
+pub mod recipes;
 pub mod rate;
 pub mod redact;
 pub mod tools;
@@ -50,6 +51,7 @@ pub const FEATURES: &[Feature] = &[
     Feature { name: "tool_pruning", default_on: false, token_technique: true, what: "W5: only the tools the task's intent needs" },
     Feature { name: "ledger_diff", default_on: false, token_technique: true, what: "I1: a re-read of a changed file is sent as a diff" },
     Feature { name: "skeleton", default_on: false, token_technique: true, what: "I2: files over 200 lines are read as an outline first" },
+    Feature { name: "recipes", default_on: false, token_technique: true, what: "I4/L2: a recipe from a similar verified task in .sdc/recipes is sent with the request" },
     Feature { name: "interlingua", default_on: false, token_technique: true, what: "I8: one English task brief per message, answer in the person's language" },
 ];
 

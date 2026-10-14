@@ -71,12 +71,12 @@ Branch naming: `sdc-v3/<ID>`. Numbers come only from `bench/results/` (never typ
 | W6 | Router (main + fast model, estimateCost wiring) | todo | sdc-v3/W6 | — | — |
 | W7b | Verify loop + `/plan` | todo | sdc-v3/W7 | — | — |
 | I3 | Draft–Verify cascade | todo | sdc-v3/I3 | — | — |
-| I4 | Recipe Memory (= L2) | todo | sdc-v3/I4 | — | — |
+| I4 | Recipe Memory (= L2) | built, off (awaits Q3/A-13) | sdc-v3/I4 | after a turn whose change was followed by a passing command, a ≤300-token recipe (task, changed files, proving commands, route) in `.sdc/recipes/*.md`; a request sharing ≥3 keywords (and ≥¼ of its own) gets it as data; switch `v3.recipes` | A-13 needs the paid `--tier repeat` run; embeddings ranking |
 | I5 | Budget Contract | done | sdc-v3/I5 | `@budget 40k` / `@budget $0.10`: opening note, converge at 80%, stop at 100% with the work kept (end-to-end test); switch `v3.budget` (on) | a live gauge in the UI |
 | I9 | State Capsule failover | done | sdc-v3/I5 | `v3.failoverOrder` (`provider:model, …`): a provider that fails for good hands the task to the next, as a ≤6,000-char capsule (goal, open plan steps, changed files, last 12 steps, last words); fault-injection test (401 → next model finishes) | periodic capsules every few steps (today built at the failure); cross-provider journal resume |
 | Q4 | Runtime quality guard (SPRT) | todo | sdc-v3/Q4 | — | — |
 | Q5 | Lift weak models | todo | sdc-v3/Q5 | — | — |
-| L2 | Recipes (see I4) | todo | sdc-v3/I4 | — | — |
+| L2 | Recipes (see I4) | built, off | sdc-v3/I4 | see I4 | see I4 |
 | L3 | External knowledge | todo | sdc-v3/L3 | — | — |
 | GATE 4 | A-12, A-13; Q3 on all models | todo | — | — | — |
 

@@ -1306,6 +1306,17 @@ fn drive(
     } else {
         text
     };
+    /* v3 I4: a recipe from a similar verified task in this project, as data (switch `v3.recipes`). */
+    let recipes_on = technique("recipes") && research_session.is_none() && prompt.remote.is_none();
+    let text = match recipes_on.then(|| crate::v3::recipes::find(std::path::Path::new(workspace.root()), prompt.text.rsplit("[The person's message]").next().unwrap_or(&prompt.text))).flatten() {
+        Some((_, recipe)) => {
+            let note = crate::v3::recipes::as_note(&recipe);
+
+            map_chars += note.len() + 2;
+            format!("{note}\n\n{text}")
+        }
+        None => text,
+    };
     /* v3 I5: `@budget 40k` / `@budget $0.10` in the person's words - told to the model, watched every step. */
     let budget = if crate::v3::on("budget") { crate::v3::budget::parse(prompt.text.rsplit("[The person's message]").next().unwrap_or(&prompt.text)) } else { None };
     let text = match &budget {
@@ -1316,6 +1327,7 @@ fn drive(
     let mut pending_note: Option<String> = None;
     /* v3 I9: what the capsule tells the next model - the steps taken and the last words said. */
     let mut step_log: Vec<String> = Vec::new();
+    let mut passed_checks: Vec<String> = Vec::new();
     let mut last_words = String::new();
     /* v3 W1: the context ledger, beside the request and only when the bench (or a test) listens. */
     let ledger_on = crate::bench::ledger::enabled(&turn_id);
@@ -1776,6 +1788,17 @@ fn drive(
                 return;
             }
 
+            if recipes_on && summary == "Done" {
+                let done = crate::v3::recipes::Done {
+                    request: prompt.text.rsplit("[The person's message]").next().unwrap_or(&prompt.text),
+                    changed: context.changed.iter().cloned().collect(),
+                    passed_checks: passed_checks.clone(),
+                    tools: step_log.iter().map(|step| step.split(" → ").next().unwrap_or(step).to_string()).collect(),
+                };
+
+                crate::v3::recipes::save(std::path::Path::new(workspace.root()), &done);
+            }
+
             sink.send(EngineEvent::Done {
                 summary: summary.to_string(),
                 meta: format!("{}{}{}", meta(step, input_tokens, output_tokens, target.price) + &cached(cached_tokens), timing(model_time, tool_time), if receipt_on { crate::v3::receipt(&receipt_parts, &saved) } else { String::new() }),
@@ -1892,6 +1915,11 @@ fn drive(
 
         for (call, result) in reply.tool_uses.iter().zip(&results) {
             let what = ["path", "command", "pattern", "url", "query"].iter().find_map(|key| call.input[*key].as_str()).unwrap_or_default();
+
+            /* v3 I4: a command that passed after the turn changed something is what proves a recipe. */
+            if call.name == "run_command" && !result.2 && result.1.starts_with("exit code: 0") && !context.changed.is_empty() {
+                passed_checks.push(what.to_string());
+            }
 
             step_log.push(format!("{} {} → {}", call.name, what.chars().take(80).collect::<String>(), if result.2 { "error" } else { "ok" }));
         }
