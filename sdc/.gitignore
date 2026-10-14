@@ -20,6 +20,9 @@ app/src-tauri/binaries/
 # Tauri-generated ACL schemas (rewritten on every build)
 app/src-tauri/gen/schemas/
 
+# Benchmark binaries (built from tags, e.g. bench/bin/v1/) - reproducible from the tag
+bench/bin/
+
 # Coverage output
 coverage/
 
@@ -70,3 +73,6 @@ id_ed25519.*
 
 # macOS metadata
 .DS_Store
+
+# macOS AppleDouble files written on non-HFS volumes (exFAT external drives)
+._*
