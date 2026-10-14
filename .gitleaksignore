@@ -8,3 +8,7 @@
 # The same two lines after the history scrub rewrote that commit.
 99e60552ffc765cc4415d8fd7c0c1752b514f0de:sdc/sdcd/src/trust/scan.rs:aws-access-token:308
 99e60552ffc765cc4415d8fd7c0c1752b514f0de:sdc/sdcd/src/trust/scan.rs:aws-access-token:336
+# v3: the public RFC 6238 test secret in the TOTP test, and a made-up token in the redaction test that proves a
+# key never reaches the provider. Neither is a credential.
+d534b716752d43a6f8f1c1c0c70c0a90d9f0df41:sdc/cloud/test/totp.test.ts:generic-api-key:6
+46ad7f98cb3015b0c282d2323e98936ede92740c:sdc/sdcd/src/v3/redact.rs:generic-api-key:189
