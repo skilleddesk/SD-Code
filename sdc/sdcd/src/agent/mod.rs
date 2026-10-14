@@ -246,6 +246,22 @@ fn target(backend: Backend, prompt: &Prompt) -> Result<Target, String> {
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Failover targets a test points at its own fake providers, by provider id.
+    static FAILOVER_TARGETS: std::cell::RefCell<HashMap<String, Target>> = std::cell::RefCell::new(HashMap::new());
+}
+
+/// The target a failover continues on (I9): the provider's own endpoint and key - or, in a test, its fake.
+fn failover_target(prompt: &Prompt) -> Result<Target, String> {
+    #[cfg(test)]
+    if let Some(fake) = FAILOVER_TARGETS.with(|targets| targets.borrow().get(prompt.provider.as_deref().unwrap_or_default()).cloned()) {
+        return Ok(fake);
+    }
+
+    target(Backend::Api, prompt)
+}
+
 /// v3 W1 (A-14): the provider's own input-token count for one short message - no tools, a one-line system
 /// prompt. The bench subtracts a one-character message's count to get the text's own tokens.
 pub(crate) fn probe_input_tokens(provider: &str, model: &str, text: &str) -> Result<u64, String> {
@@ -1285,6 +1301,17 @@ fn drive(
     } else {
         text
     };
+    /* v3 I5: `@budget 40k` / `@budget $0.10` in the person's words - told to the model, watched every step. */
+    let budget = if crate::v3::on("budget") { crate::v3::budget::parse(prompt.text.rsplit("[The person's message]").next().unwrap_or(&prompt.text)) } else { None };
+    let text = match &budget {
+        Some(budget) => format!("{text}\n\n{}", budget.opening()),
+        None => text,
+    };
+    let mut converged = false;
+    let mut pending_note: Option<String> = None;
+    /* v3 I9: what the capsule tells the next model - the steps taken and the last words said. */
+    let mut step_log: Vec<String> = Vec::new();
+    let mut last_words = String::new();
     /* v3 W1: the context ledger, beside the request and only when the bench (or a test) listens. */
     let ledger_on = crate::bench::ledger::enabled(&turn_id);
     /* v3 I10: the turn's token receipt (switch `v3.receipt`) - the input by part and what each technique saved. */
@@ -1528,6 +1555,48 @@ fn drive(
                 continue;
             }
             Err(reason) => {
+                /* v3 I9: the provider failed for good - the task continues on the next model of `v3.failoverOrder`,
+                   from a capsule of its state rather than this provider's conversation. */
+                if backend == Backend::Api && research_session.is_none() {
+                    let mut tried = crate::v3::failover::tried(&turn_id);
+                    let outermost = tried.is_empty();
+
+                    if outermost {
+                        tried.push((prompt.provider.clone().unwrap_or_default(), prompt.model.clone()));
+                    }
+
+                    while let Some((provider, model)) = crate::v3::failover::next(&tried) {
+                        tried.push((provider.clone(), model.clone()));
+                        crate::v3::failover::set_tried(&turn_id, &tried);
+
+                        let capsule = crate::v3::failover::capsule(&crate::v3::failover::State {
+                            goal: prompt.text.rsplit("[The person's message]").next().unwrap_or(&prompt.text),
+                            failed: format!("{}:{}", prompt.provider.as_deref().unwrap_or("?"), target.model),
+                            reason: &reason,
+                            plan: context.open_plan_steps(),
+                            changed: context.changed.iter().cloned().collect(),
+                            steps: &step_log,
+                            last_words: &last_words,
+                        });
+                        let next_prompt = Prompt { provider: Some(provider.clone()), model: model.clone(), text: capsule, history: Vec::new(), images: Vec::new(), ..prompt.clone() };
+
+                        if let Ok(next_target) = failover_target(&next_prompt) {
+                            sink.send(EngineEvent::Thinking(format!("{} failed ({reason}); continuing on {provider}:{model} from a state capsule.\n", target.model)));
+                            drive(backend, &next_target, workspace, options, None, policy, &next_prompt, sink);
+
+                            if outermost {
+                                crate::v3::failover::forget(&turn_id);
+                            }
+
+                            return;
+                        }
+                    }
+
+                    if outermost {
+                        crate::v3::failover::forget(&turn_id);
+                    }
+                }
+
                 sink.send(EngineEvent::Failed(reason));
 
                 return;
@@ -1541,7 +1610,33 @@ fn drive(
 
         /* Totals so far, every step: the cost governor can stop a turn that crosses its budget mid-way. */
         sink.send(EngineEvent::Usage { input_tokens, output_tokens, cost_usd: None });
+
+        /* v3 I5: at 100% of the person's budget the turn stops here, its work kept; at 80% it is asked to converge. */
+        if let Some(used) = budget.as_ref().and_then(|budget| budget.used(input_tokens, output_tokens, target.price)) {
+            if used >= 1.0 {
+                sink.send(EngineEvent::Delta(format!(
+                    "\n\nI stopped at the budget you set ({}). The work so far is kept - send \"continue\" (with a new @budget if you like) to go on.",
+                    budget.as_ref().map(|budget| budget.label()).unwrap_or_default()
+                )));
+                sink.send(EngineEvent::Done {
+                    summary: "Paused at the budget".to_string(),
+                    meta: format!("{}{} · budget {:.0}% used", meta(step, input_tokens, output_tokens, target.price) + &cached(cached_tokens), timing(model_time, tool_time), used * 100.0),
+                    pass: None,
+                });
+
+                return;
+            }
+
+            if used >= 0.8 && !converged {
+                converged = true;
+                pending_note = Some(crate::v3::budget::Budget::CONVERGE.to_string());
+            }
+        }
         said_something = said_something || !reply.text.trim().is_empty();
+
+        if !reply.text.trim().is_empty() {
+            last_words = reply.text.clone();
+        }
 
         if reply.stop == "refusal" {
             sink.send(EngineEvent::Failed(
@@ -1790,6 +1885,12 @@ fn drive(
 
         let earlier: HashSet<String> = if ledger_on { seen_reads.keys().cloned().collect() } else { HashSet::new() };
 
+        for (call, result) in reply.tool_uses.iter().zip(&results) {
+            let what = ["path", "command", "pattern", "url", "query"].iter().find_map(|key| call.input[*key].as_str()).unwrap_or_default();
+
+            step_log.push(format!("{} {} → {}", call.name, what.chars().take(80).collect::<String>(), if result.2 { "error" } else { "ok" }));
+        }
+
         /* v3 W9: external text marked as data, secrets replaced - before anything reaches the model. */
         crate::v3::guard_results(&prompt.session_id, &reply.tool_uses, &mut results);
 
@@ -1807,6 +1908,11 @@ fn drive(
         }
 
         messages.extend(dialect::tool_results(target.dialect, &results));
+
+        if let Some(note) = pending_note.take() {
+            dialect::append_user_text(target.dialect, &mut messages, &note);
+        }
+
         steer(&mut messages);
 
         let folded = keep_small(target, window, &mut messages, fixed, scale);
@@ -2760,6 +2866,98 @@ mod end_to_end {
         assert!(tuned[0]["messages"].to_string().contains("[Today: "), "the date moved into the message");
         assert!(names(&tuned[0]).len() < names(&plain[0]).len());
         assert!(!names(&tuned[0]).contains(&"web_fetch".to_string()) && names(&tuned[1]).contains(&"web_fetch".to_string()), "asked for, then offered");
+    }
+
+    /// v3 I5: `@budget 300` - told at the start, asked to converge at 80%, stopped at 100% with the work kept.
+    #[test]
+    fn a_budget_is_told_converged_at_eighty_percent_and_stopped_at_full() {
+        let root = std::env::temp_dir().join(format!("sdc-budget-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a.txt"), "a\n").unwrap();
+
+        /* Each reply reports 100 in + 20 out: 120, 240 (80%), 360 (over). */
+        let (url, server) = provider(vec![
+            call("c1", "read_file", serde_json::json!({ "path": "a.txt" })),
+            call("c2", "read_file", serde_json::json!({ "path": "a.txt" })),
+            call("c3", "read_file", serde_json::json!({ "path": "a.txt" })),
+        ]);
+        let target = Target {
+            url,
+            headers: vec![("content-type".to_string(), "application/json".to_string())],
+            dialect: Dialect::OpenAi,
+            model: "local-test".to_string(),
+            price: None,
+            thinking: false,
+            effort: None,
+            local_context: None,
+            local_window: false,
+        };
+        let workspace = Workspace::new(root.to_str().unwrap(), None);
+        let prompt = prompt_in(&root, "turn-budget", "look at a.txt @budget 300", "local-test");
+        let recorder = crate::engines::Recorder::new();
+
+        drive(Backend::Api, &target, &workspace, Options { autonomy: Autonomy::Auto, max_steps: 10, auto_check: false, research: None }, None, &Default::default(), &prompt, &recorder.sink());
+
+        let bodies = server.join().unwrap();
+
+        assert_eq!(bodies.len(), 3, "no fourth request past the budget");
+        assert!(bodies[0].to_string().contains("budget of 300 tokens"));
+        assert!(bodies[2].to_string().contains("80% of the budget is used"));
+        assert!(recorder.events().iter().any(|event| matches!(event, EngineEvent::Done { summary, .. } if summary == "Paused at the budget")));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// v3 I9 (fault injection): the first provider refuses outright; the turn continues on the next model of the
+    /// failover order, from a capsule of the state - and finishes.
+    #[test]
+    fn a_failed_provider_hands_the_task_to_the_next_model_in_a_capsule() {
+        let root = std::env::temp_dir().join(format!("sdc-failover-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        let refused = {
+            let body = serde_json::json!({ "error": { "message": "Incorrect API key provided" } }).to_string();
+
+            format!("HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len())
+        };
+        let (first_url, first) = raw_provider(vec![ok(call("c1", "write_file", serde_json::json!({ "path": "half.txt", "content": "started\n" }))), refused]);
+        let (second_url, second) = provider(vec![chunk(serde_json::json!({ "content": "Finished from the capsule." })) + "data: [DONE]\n\n"]);
+        let fake = |url: String| Target {
+            url,
+            headers: vec![("content-type".to_string(), "application/json".to_string())],
+            dialect: Dialect::OpenAi,
+            model: "local-test".to_string(),
+            price: None,
+            thinking: false,
+            effort: None,
+            local_context: None,
+            local_window: false,
+        };
+
+        FAILOVER_TARGETS.with(|targets| targets.borrow_mut().insert("backup".to_string(), fake(second_url)));
+        crate::v3::failover::set_order_for_test(vec![("backup".to_string(), "backup-model".to_string())]);
+
+        let workspace = Workspace::new(root.to_str().unwrap(), None);
+        let mut prompt = prompt_in(&root, "turn-failover", "make half.txt and finish the job", "local-test");
+
+        prompt.provider = Some("primary".into());
+
+        let recorder = crate::engines::Recorder::new();
+
+        drive(Backend::Api, &fake(first_url), &workspace, Options { autonomy: Autonomy::Auto, max_steps: 6, auto_check: false, research: None }, None, &Default::default(), &prompt, &recorder.sink());
+        crate::v3::failover::set_order_for_test(Vec::new());
+
+        let (_, handed) = (first.join().unwrap(), second.join().unwrap());
+        let capsule = handed[0]["messages"].to_string();
+
+        assert!(capsule.contains("SDC failover") && capsule.contains("make half.txt") && capsule.contains("half.txt"), "the capsule carries the goal and the changed file: {capsule}");
+        assert!(capsule.contains("write_file half.txt → ok"));
+        assert!(recorder.events().contains(&EngineEvent::Delta("Finished from the capsule.".into())));
+        assert!(!recorder.events().iter().any(|event| matches!(event, EngineEvent::Failed(_))), "no failure reached the person");
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

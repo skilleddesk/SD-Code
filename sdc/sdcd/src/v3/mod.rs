@@ -9,6 +9,8 @@
 //! (`protocol/model-profiles.json`, Q2). Reliability, speed and safety features that do not change what a
 //! model is told start on.
 
+pub mod budget;
+pub mod failover;
 pub mod journal;
 pub mod ledger_diff;
 pub mod outline;
@@ -68,6 +70,8 @@ pub fn key(feature: &str) -> String {
 /// Reads the switches from the store - at start, and after a `v3.*` setting changes.
 pub fn configure(store: &crate::store::sqlite::Store) {
     let config = read(store);
+
+    failover::configure(store);
 
     if let Ok(mut slot) = slot().lock() {
         *slot = config;
@@ -271,7 +275,7 @@ pub fn status() -> serde_json::Value {
 
 /// Whether a settings key belongs here (the settings method accepts these).
 pub fn is_setting(key: &str) -> bool {
-    key == "v3.maxQuality" || key.strip_prefix("v3.").is_some_and(|name| FEATURES.iter().any(|feature| feature.name == name))
+    key == "v3.maxQuality" || key == failover::SETTING || key.strip_prefix("v3.").is_some_and(|name| FEATURES.iter().any(|feature| feature.name == name))
 }
 
 #[cfg(test)]
