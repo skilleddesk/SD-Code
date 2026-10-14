@@ -115,6 +115,26 @@ mod tests {
     }
 
     #[test]
+    fn acquire_sleeps_out_the_wait_once_the_bucket_is_drained() {
+        let url = "https://acquire-sleep.example/v1/chat";
+
+        crate::v3::forcing(&["rate_limit"], || {
+            for _ in 0..BURST as usize {
+                reserve(&host(url), PER_MINUTE, BURST, Instant::now());
+            }
+
+            let started = Instant::now();
+
+            acquire(url);
+
+            /* One token's time is 60s / 120 = 0.5s; allow a little for the refill between the calls. */
+            let slept = started.elapsed();
+
+            assert!(slept >= Duration::from_millis(400) && slept < Duration::from_millis(1500), "slept {slept:?}");
+        });
+    }
+
+    #[test]
     fn parallel_requests_to_one_host_each_take_a_distinct_slot() {
         let now = Instant::now();
         let threads: Vec<_> = (0..8).map(|_| std::thread::spawn(move || reserve("bucket-parallel.example", 60.0, 2.0, now))).collect();
