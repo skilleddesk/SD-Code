@@ -767,6 +767,25 @@ pub fn transient(reason: &str) -> bool {
     .any(|needle| lower.contains(needle))
 }
 
+/// A failure that is this machine being offline: no HTTP status at all, and a transient network reason
+/// (refused, unreachable, DNS, timed out). A provider's 5xx or 429 is the provider, not the network.
+pub fn offline(reason: &str) -> bool {
+    let has_status = reason.trim_end().rsplit_once('(').and_then(|(_, tail)| tail.strip_suffix(')')).and_then(|code| code.parse::<u16>().ok()).is_some_and(|code| (400..600).contains(&code))
+        || reason.starts_with("HTTP ");
+
+    !has_status && transient(reason)
+}
+
+/// The wait before the `n`th offline retry: doubling from 30 s to 5 minutes, with ±20% jitter so many waiting
+/// steps (sub-agents, several turns) do not all knock at the same second when the network returns.
+pub fn offline_wait(n: usize) -> u64 {
+    let base = (30u64 << n.min(4)).min(300);
+    let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|time| time.subsec_nanos()).unwrap_or(0) as u64;
+    let jitter = (nanos % 41) as i64 - 20;
+
+    (base as i64 + base as i64 * jitter / 100).max(1) as u64
+}
+
 /// Runs `attempt` again, after each of [`RETRY_WAITS`], for as long as it fails in a [`transient`] way.
 /// `notice` hears of each retry before its wait (`retry number, seconds, reason`), so the person sees the
 /// turn waiting rather than frozen. `stop` cuts a wait short with `Err("stopped")`.
@@ -783,12 +802,18 @@ pub fn with_retries<T>(
             Err(reason) if reason == "stopped" || !transient(&reason) => return Err(reason),
             Err(reason) => reason,
         };
-        let Some(&wait) = RETRY_WAITS.get(retries) else {
-            return Err(format!(
-                "{reason} · asked {} times over about {} s without an answer; send \"continue\" to pick up from here",
-                retries + 1,
-                RETRY_WAITS.iter().sum::<u64>()
-            ));
+        let wait = match RETRY_WAITS.get(retries) {
+            Some(&wait) => wait,
+            /* v3 R3: this machine is offline (no answer at all, not an error from the provider) - the step waits for
+               the network, as long as it takes, instead of failing the turn. The person can still stop it. */
+            None if offline(&reason) && crate::v3::on("offline") => offline_wait(retries - RETRY_WAITS.len()),
+            None => {
+                return Err(format!(
+                    "{reason} · asked {} times over about {} s without an answer; send \"continue\" to pick up from here",
+                    retries + 1,
+                    RETRY_WAITS.iter().sum::<u64>()
+                ))
+            }
         };
 
         retries += 1;
@@ -843,7 +868,11 @@ impl RetryCard {
         self.sink.send(EngineEvent::ToolOutput {
             call_id: self.call_id.clone(),
             level: "dim".to_string(),
-            text: format!("{reason}\nretry {retry} of {} in {wait} s · the work so far is kept", RETRY_WAITS.len()),
+            text: if retry > RETRY_WAITS.len() {
+                format!("{reason}\nthis computer looks offline - waiting for the network, next try in {wait} s · the work so far is kept")
+            } else {
+                format!("{reason}\nretry {retry} of {} in {wait} s · the work so far is kept", RETRY_WAITS.len())
+            },
         });
     }
 
@@ -1368,6 +1397,22 @@ mod tests {
         last_warmed().lock().unwrap().insert(base.to_string(), std::time::Instant::now() - WARM_EVERY - std::time::Duration::from_millis(50));
 
         assert!(due_to_warm(base), "a stale record must fall back to warming again");
+    }
+
+    /// v3 R3: only "no answer at all" is offline; a provider's own error is not waited out for ever.
+    #[test]
+    fn offline_is_no_answer_at_all_and_its_waits_grow_to_five_minutes() {
+        assert!(offline("Network Error: os error 10060"));
+        assert!(offline("dns error: failed to lookup address information"));
+        assert!(!offline("Service Unavailable (503)"), "the provider answered");
+        assert!(!offline("Too Many Requests (429)"));
+        assert!(!offline("Incorrect API key (401)"));
+
+        for (n, base) in [(0, 30), (1, 60), (2, 120), (3, 240), (4, 300), (9, 300)] {
+            let wait = offline_wait(n);
+
+            assert!(wait >= base * 80 / 100 && wait <= base * 120 / 100, "try {n}: {wait} s around {base} s");
+        }
     }
 
     #[test]

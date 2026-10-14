@@ -532,6 +532,9 @@ fn ask_model(backend: Backend, target: &Target, system: &str, messages: &[Value]
     };
     let mut reply = Err("no request was sent".to_string());
 
+    /* v3 W9: requests to one provider are paced (a token bucket), instead of setting off its rate limit. */
+    crate::v3::rate::acquire(&target.url);
+
     for (index, request) in levels.iter().enumerate() {
         reply = send(request, &mut card);
 
@@ -923,6 +926,9 @@ fn sub_agent(
                 .collect()
         };
 
+        let mut results = results;
+
+        crate::v3::guard_results(&parent.session_id, &reply.tool_uses, &mut results);
         messages.extend(dialect::tool_results(target.dialect, &results));
         keep_small(target, window, &mut messages, fixed, scale);
     }
@@ -1261,6 +1267,19 @@ fn drive(
     let ledger_on = crate::bench::ledger::enabled(&turn_id);
     let history_len = prompt.history.len();
 
+    /* v3 W9: what the person pasted, and earlier turns, pass the same secret filter as tool output. */
+    let text = if crate::v3::on("redact") {
+        for message in messages.iter_mut() {
+            if let Some(earlier) = message["content"].as_str().map(str::to_string) {
+                message["content"] = Value::String(crate::v3::redact::scrub(&prompt.session_id, &earlier).0);
+            }
+        }
+
+        crate::v3::redact::scrub(&prompt.session_id, &text).0
+    } else {
+        text
+    };
+
     messages.push(dialect::user_message_with_images(target.dialect, &text, &images));
 
     let mut context = ToolContext {
@@ -1291,6 +1310,7 @@ fn drive(
 
     if let Some(resume) = &resumed {
         messages = resume.messages.clone();
+        crate::v3::redact::import(&prompt.session_id, &resume.vault);
 
         let (rerun, known) = crate::v3::journal::settle(resume, Some(std::path::Path::new(workspace.root())));
         let mut answers: HashMap<String, dialect::ToolResult> = known.into_iter().map(|(id, content, is_error)| (id.clone(), (id, content, is_error, None))).collect();
@@ -1301,7 +1321,10 @@ fn drive(
             answers.insert(call.id.clone(), (call.id.clone(), outcome.content, outcome.is_error, outcome.image));
         }
 
-        let results: Vec<dialect::ToolResult> = resume.calls.iter().filter_map(|call| answers.remove(&call.id)).collect();
+        let mut results: Vec<dialect::ToolResult> = resume.calls.iter().filter_map(|call| answers.remove(&call.id)).collect();
+        let answered_calls: Vec<dialect::ToolUse> = resume.calls.iter().filter(|call| results.iter().any(|result| result.0 == call.id)).cloned().collect();
+
+        crate::v3::guard_results(&prompt.session_id, &answered_calls, &mut results);
 
         if !results.is_empty() {
             messages.extend(dialect::tool_results(target.dialect, &results));
@@ -1421,7 +1444,7 @@ fn drive(
             crate::bench::ledger::record(&turn_id, "main", step, &target.model, shape, reply, asked_at.elapsed().as_millis() as u64);
         }
 
-        let reply: Reply = match asked {
+        let mut reply: Reply = match asked {
             Ok(reply) => {
                 filtered = 0;
 
@@ -1489,7 +1512,16 @@ fn drive(
 
         messages.push(reply.message.clone());
 
+        /* v3 W9: the model wrote `‹secret:N›`; the tools get the real value - and so does the journal, whose
+           intents must still mean the same thing after a restart has emptied the vault. */
+        if crate::v3::on("redact") {
+            for call in &mut reply.tool_uses {
+                call.input = crate::v3::redact::restore(&prompt.session_id, &call.input);
+            }
+        }
+
         if let Some(journal) = &journal {
+            journal.vault(step, &crate::v3::redact::export(&prompt.session_id));
             journal.model(step, &reply.message, &reply.tool_uses);
 
             for call in &reply.tool_uses {
@@ -1704,6 +1736,8 @@ fn drive(
 
         let earlier: HashSet<String> = if ledger_on { seen_reads.keys().cloned().collect() } else { HashSet::new() };
 
+        /* v3 W9: external text marked as data, secrets replaced - before anything reaches the model. */
+        crate::v3::guard_results(&prompt.session_id, &reply.tool_uses, &mut results);
         dedupe_reads(&mut seen_reads, &reply.tool_uses, &mut results);
 
         if ledger_on {
@@ -2576,6 +2610,48 @@ mod end_to_end {
         let same = |bodies: &[Value], turn: &str| bodies.iter().map(|body| body.to_string().replace(&format!("sdc-ledger-{turn}-"), "sdc-ledger-X-")).collect::<Vec<_>>();
 
         assert_eq!(same(&with_ledger, "ledger-on"), same(&without, "ledger-off"), "the ledger does not change a request");
+    }
+
+    /// v3 W9: a key the agent reads never reaches the provider, and a command the model writes with the placeholder
+    /// gets the real key.
+    #[test]
+    fn a_secret_the_agent_reads_never_reaches_the_provider_but_is_written_back() {
+        let root = std::env::temp_dir().join(format!("sdc-redact-e2e-{}", std::process::id()));
+        let key = "sk-proj-FAKEfakeFAKEfake0123456789abcdefABCDEF";
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("config.txt"), format!("model = small\nOPENAI_API_KEY={key}\n")).unwrap();
+
+        let (url, server) = provider(vec![
+            call("c1", "read_file", serde_json::json!({ "path": "config.txt" })),
+            /* Through a command: a `write_file` with a key asks the person first (`tools::guard_write`), which a test cannot answer. */
+            call("c2", "run_command", serde_json::json!({ "command": if cfg!(windows) { "echo OPENAI_API_KEY=‹secret:1›> copy.txt" } else { "printf 'OPENAI_API_KEY=%s\\n' ‹secret:1› > copy.txt" } })),
+            chunk(serde_json::json!({ "content": "Copied." })) + "data: [DONE]\n\n",
+        ]);
+        let target = Target {
+            url,
+            headers: vec![("content-type".to_string(), "application/json".to_string())],
+            dialect: Dialect::OpenAi,
+            model: "local-test".to_string(),
+            price: None,
+            thinking: false,
+            effort: None,
+            local_context: None,
+            local_window: false,
+        };
+        let workspace = Workspace::new(root.to_str().unwrap(), None);
+        let mut prompt = prompt_in(&root, "turn-redact-e2e", "copy the key line of config.txt into copy.txt", "local-test");
+
+        prompt.session_id = "chat-redact-e2e".into();
+        drive(Backend::Api, &target, &workspace, Options { autonomy: Autonomy::Auto, max_steps: 6, auto_check: false, research: None }, None, &Default::default(), &prompt, &crate::engines::Recorder::new().sink());
+
+        let bodies = server.join().unwrap();
+
+        assert!(bodies.iter().all(|body| !body.to_string().contains(key)), "the key never left the machine");
+        assert!(bodies[1].to_string().contains("‹secret:1›"), "the model saw the placeholder");
+        assert!(std::fs::read_to_string(root.join("copy.txt")).unwrap().contains(&format!("OPENAI_API_KEY={key}")), "the command got the real key");
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

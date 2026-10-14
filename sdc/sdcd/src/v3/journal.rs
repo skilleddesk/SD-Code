@@ -63,6 +63,8 @@ pub struct Resume {
     pub calls: Vec<ToolUse>,
     pub answered: HashMap<String, (String, bool)>,
     pub depth: u64,
+    /// The chat's secret placeholders at the newest step (W9), so `‹secret:N›` keeps its meaning.
+    pub vault: Vec<(usize, String)>,
 }
 
 fn pending() -> &'static Mutex<HashMap<String, Resume>> {
@@ -124,6 +126,13 @@ impl Writer {
         let calls: Vec<Value> = calls.iter().map(|call| json!({ "id": call.id, "name": call.name, "input": call.input })).collect();
 
         self.write(step, "model", None, None, None, None, &json!({ "message": message, "calls": calls }));
+    }
+
+    /// The chat's secret placeholders (W9), after a step that may have added some.
+    pub fn vault(&self, step: usize, pairs: &[(usize, String)]) {
+        if !pairs.is_empty() {
+            self.write(step, "vault", None, None, None, None, &serde_json::to_value(pairs).unwrap_or(Value::Null));
+        }
     }
 
     /// Before a call runs. The idempotency key names the call, so a resume can tell it apart from a repeat.
@@ -217,6 +226,7 @@ pub fn rebuild(store: &Store, turn_id: &str) -> Option<(Value, Resume)> {
     let mut messages: Vec<Value> = Vec::new();
     let mut calls: Vec<ToolUse> = Vec::new();
     let mut answered: HashMap<String, (String, bool)> = HashMap::new();
+    let mut vault: Vec<(usize, String)> = Vec::new();
 
     for (kind, call_id, _tool, payload) in rows {
         let payload: Value = serde_json::from_str(&payload).unwrap_or(Value::Null);
@@ -236,6 +246,7 @@ pub fn rebuild(store: &Store, turn_id: &str) -> Option<(Value, Resume)> {
                     .collect();
                 answered.clear();
             }
+            "vault" => vault = serde_json::from_value(payload).unwrap_or_default(),
             "result" => {
                 if let Some(id) = call_id {
                     answered.insert(id, (payload["content"].as_str().unwrap_or_default().to_string(), payload["isError"] == true));
@@ -263,7 +274,7 @@ pub fn rebuild(store: &Store, turn_id: &str) -> Option<(Value, Resume)> {
 
     let depth = start["resumeDepth"].as_u64().unwrap_or(0);
 
-    Some((start, Resume { from_turn: turn_id.to_string(), messages, calls, answered, depth }))
+    Some((start, Resume { from_turn: turn_id.to_string(), messages, calls, answered, depth, vault }))
 }
 
 /// What an interrupted write found on disk.
@@ -456,6 +467,7 @@ mod tests {
             calls: vec![write("w1", "done.txt"), write("w2", "missing.txt"), edit("e1", "edit.txt"), edit("e2", "edited.txt"), call("r1", "run_command")],
             answered: HashMap::new(),
             depth: 0,
+            vault: vec![],
         };
         let (rerun, known) = settle(&resume, Some(&root));
 
@@ -480,7 +492,7 @@ mod tests {
 
     #[test]
     fn an_offered_resume_is_taken_once() {
-        let resume = Resume { from_turn: "t".into(), messages: vec![], calls: vec![], answered: HashMap::new(), depth: 1 };
+        let resume = Resume { from_turn: "t".into(), messages: vec![], calls: vec![], answered: HashMap::new(), depth: 1, vault: vec![] };
 
         offer("chat-x", resume.clone());
         assert_eq!(take("chat-x"), Some(resume));

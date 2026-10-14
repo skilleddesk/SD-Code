@@ -43,10 +43,10 @@ Branch naming: `sdc-v3/<ID>`. Numbers come only from `bench/results/` (never typ
 |---|---|---|---|---|---|
 | R1 | Journal (`job_events` intent/result, SQLite WAL) | done | sdc-v3/R1 | `v3/journal.rs`; start/model/intent/result/messages/end, idempotency key, output hash; switch `v3.journal` (on) | remote (VPS) turns are not journaled yet |
 | R2 | Resume on start | done (local) | sdc-v3/R1 | A-19 local: 100 SIGKILLs → 100/100 correct, 85 resumed from the journal, 0 damaged files, 0 duplicated commands (`bench/results/2026-10-14-resume`); reads re-run, writes reconciled with the folder, commands reported as outcome-unknown | remote-command check on a VPS (with R4) |
-| R3 | Offline queue (backoff + jitter) | todo | sdc-v3/R3 | — | — |
+| R3 | Offline queue (backoff + jitter) | done | sdc-v3/W9 | after the 8 normal retries, a step with no network waits indefinitely (30 s doubling to 5 min, ±20% jitter), still stoppable; provider errors (5xx/429/4xx) are not waited out; switch `v3.offline` (on). Search, index, git and local commands never needed the network | an end-to-end offline→online test needs injectable waits |
 | R5 | Graceful shutdown on sleep/shutdown | partial | sdc-v3/R1 | SIGTERM/SIGHUP/Ctrl-C: children stopped, WAL checkpointed, running turns resume next start | OS sleep notifications (Windows/macOS power events) |
 | W7a | Checkpoints (hidden git refs / CAS blobs, undo turn, timeline, VPS) | todo | sdc-v3/W7 | — | — |
-| W9 | Security basics (OS key storage + migration, rate limiter, untrusted tagging, secret redaction, SQLite integrity + backup) | todo | sdc-v3/W9 | — | — |
+| W9 | Security basics (OS key storage + migration, rate limiter, untrusted tagging, secret redaction, SQLite integrity + backup) | partial | sdc-v3/W9 | secret redaction (token shapes + named high-entropy assignments → ‹secret:N›, restored on run/write, vault kept in the journal for resume) - test: a fake key never reaches the provider; untrusted marking of web/browser/MCP text; per-host token bucket (120/min, burst 20); quick_check before the daily copy (daily backup already existed); switches `v3.redact`/`v3.untrusted`/`v3.rate_limit` (on) | Linux Secret Service key storage (keys are 0600 files there today); Windows DPAPI/macOS Keychain already used by the packaged app |
 | GATE 2 | A-19 local part | todo | — | — | — |
 
 ## Phase 3 — Speed and intelligence
