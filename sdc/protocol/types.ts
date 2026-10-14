@@ -184,7 +184,10 @@ export type SdcpMethod =
   | 'checkpoint.list'
   | 'runner.list'
   | 'agents.board'
+  | 'agents.start'
+  | 'agents.stop'
   | 'inbox.list'
+  | 'automation.run'
   | 'checkpoint.restore'
   | 'rewind.apply'
   | 'rewind.redo'
@@ -2178,11 +2181,19 @@ export interface SdcpMethodMap {
 
   'runner.list': {
     params: { sessionId: string };
-    result: { runners: { name: string; host: string; dir: string }[]; chosen: string | null };
+    result: { runners: { name: string; host: string; dir: string }[]; chosen: string | null; /** The `runner.default` setting, which is what a project without a `.sdc/runner` falls back to. */ setting?: string | null };
   };
   'agents.board': {
     params: { sessionId: string };
-    result: { agents: { id: string; request: string; worktree: string; state: string; note: string; startedAt: number }[] };
+    result: { agents: { id: string; request: string; worktree: string; state: string; note: string; startedAt: number; /** The chat its turn runs in - what `agents.stop` stops. */ sessionId?: string | null }[] };
+  };
+  'agents.start': {
+    params: { sessionId: string; request: string; /** The engine/model the turn runs on; the person's own chat defaults when they are left out. */ engine?: string; model?: string; provider?: string };
+    result: { agent: { id: string; request: string; worktree: string; state: string; note: string; startedAt: number; sessionId?: string | null }; sessionId: string };
+  };
+  'agents.stop': {
+    params: { sessionId: string; id: string };
+    result: { stopped: boolean; state: string; note: string };
   };
   'inbox.list': {
     params: { sessionId: string };
@@ -2190,6 +2201,10 @@ export interface SdcpMethodMap {
       automations: { name: string; request: string; every: string | null; at: string | null; enabled: boolean; lastRun?: number | null }[];
       notes: { name: string; at: number; request: string; summary: string; file: string }[];
     };
+  };
+  'automation.run': {
+    params: { sessionId: string; name: string };
+    result: { name: string; sessionId: string; turnId: string; at: number };
   };
 
   'rewind.apply': {

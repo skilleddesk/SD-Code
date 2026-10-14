@@ -96,6 +96,19 @@ jobs:
           pnpm --filter @sdc/app lint
           pnpm --filter @sdc/app test
 
+      # G34: the app's own checks stop at a typecheck and a unit test, and neither of them opens the window. The
+      # smoke runs build the real bundle and drive it in Chrome - the surfaces, the keyboard, the first-run
+      # screen - which until 2.0 only happened inside a release job, so a break was found at release time rather
+      # than on the push that caused it. Chrome is already on the runner.
+      - name: 'The bundle runs in a real browser (G34)'
+        working-directory: sdc
+        env:
+          CHROME_PATH: /usr/bin/google-chrome
+        run: |
+          pnpm --filter @sdc/app build
+          pnpm --filter @sdc/app smoke
+          pnpm --filter @sdc/app smoke:a11y
+
   anywhere:
     name: SDC Anywhere (relay, browser, end to end)
     runs-on: ubuntu-latest
@@ -147,3 +160,38 @@ jobs:
         env:
           CHROME_PATH: /usr/bin/google-chrome
         run: pnpm e2e
+
+  dependencies:
+    name: dependency scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: sdc/package.json
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: sdc/pnpm-lock.yaml
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install
+        working-directory: sdc
+        run: pnpm install --frozen-lockfile
+
+      - name: 'JavaScript: no high-severity advisory in what ships (X5)'
+        working-directory: sdc
+        run: pnpm audit --audit-level high --prod
+
+      - name: "Rust: no advisory in the daemon's tree (X5)"
+        working-directory: sdc/sdcd
+        run: |
+          cargo install cargo-audit --locked
+          cargo audit

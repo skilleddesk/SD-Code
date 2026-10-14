@@ -15,6 +15,72 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [2.0.0] — SDC-v3: the trust kernel
+
+SDC now checks its own work, keeps what it learns, and can run a turn somewhere else. Every part below sits
+behind its own switch (Settings ▸ v3), each one explained in a line, so a project keeps the behaviour its
+person chose.
+
+- **A turn you can take back.** Before a write or an edit, the file's old content is kept by its own SHA-256
+  under `.sdc/objects/`, filed under the turn, so `undo turn` restores a project that has no git at all.
+- **`/plan`.** A turn that starts with `/plan` answers with the plan and refuses every tool that would change
+  something - the refusal names the tool and the file stays untouched.
+- **The step that failed becomes a lesson.** A step that failed and the step that worked after it are written
+  to `.sdc/lessons.md`; a later request that matches gets the one that worked as data, and a lesson that warns
+  about a step which fails again while it is being sent is taken back (L1).
+- **It remembers, and it refuses to believe itself.** A learned fact needs two sightings from separate turns,
+  must not be instruction-shaped, must not contradict what is already admitted, and must be the right size.
+  What is admitted is kept with its evidence and what is refused with its reason, and a rollback takes back
+  what proves wrong. The test puts 50 poisoned proposals at the door: 50 are refused (I11, L0).
+- **What it read on the web is kept.** Every fetched page is kept with its address, title, date and an
+  excerpt; a later request sharing three or more words gets that excerpt with its address and its age, and a
+  page older than 30 days says so (L3).
+- **It respects the site.** `robots.txt` is read once per host before a page, the wildcard's rules and SDC's
+  own section both apply, a disallowed path is refused quoting the rule, and a `Crawl-delay` is waited out
+  (G37, and the same door for `/research`).
+- **It answers in your words.** One English brief per non-English message, from a built-in Banglish/Hinglish
+  dictionary plus the person's own glosses; paths, identifiers and option names are never translated and an
+  English message is left alone (I8).
+- **It knows the code.** Declarations in ten language families with their name, kind and line; `find_symbol`,
+  `symbols`, and a repo map that ranks the changed, the named and the biggest files inside a token budget (W4).
+- **The right model for the turn.** A plainly light request goes to the fast model you name (`router.fast`,
+  set as `provider:model`); a small model is given room to think and one instruction to lean on the tools
+  instead of being replaced (Q5); and a draft that keeps failing hands the task to a stronger model from a
+  capsule of the state rather than its whole conversation (I3). Every turn's footer carries an estimate from
+  the model's price and the turn's size (W6).
+- **It can run somewhere else.** Name your hosts in `.sdc/runners.toml` and pick one with `.sdc/runner`: every
+  tool of that project's turns then runs on that VPS over ssh (R4). Several agents can work at once, each in
+  its own checkout of your repository, on a board that says what each was asked, where it works and how it
+  ended (PAR). And a request can be put on a clock in `.sdc/automations.toml` (`every = 6h`, `at = 09:30`):
+  what it produces waits in the Inbox instead of interrupting you (AUTO).
+- **Statistics instead of vibes.** The bench decides as its pairs arrive - better, not better, or take more -
+  and `sdcd bench drift --labels A,B,C` raises the alarm when a model's pass rate slips away from the rate it
+  was chosen for (Q4).
+- **The three surfaces have a window on them.** Rail ▸ **Workbench** holds them: *Servers* says which host
+  this project's turns go to and which one is in force, *Agents* is the board - Start puts an agent in its own
+  worktree and runs the request there, Stop ends its turn and its card - and *Inbox* lists the automations with
+  Run now, and what each run left behind. Three agents at once by default, because each one is a whole
+  conversation: `parallel.max` moves it.
+- **The Inbox fills by itself.** The daemon’s own clock starts whatever is due, once a minute, through the same
+  path as the Run button - an Inbox that only fills when someone presses a button is an empty page. A run that
+  cannot start (an engine that is not connected) is written down as tried, not asked again every minute.
+- **The About tab stops pretending.** Settings ▸ About no longer offers a telemetry switch SDC could not keep:
+  it states that nothing leaves this machine on its own. *Create bundle* gathers the versions, the doctor’s
+  reading and the audit verdict onto the clipboard, and *Check updates* asks the daemon instead of saying it did.
+- **Two doors in the contract were wrong.** `runner.list`, `agents.board` and `inbox.list` declare `sessionId`
+  in the schema and the daemon read only `root`, so a window sending exactly what the contract asks for was
+  answered "needs a project whose folder I can see"; and the four R4/PAR/AUTO rows named a shape `$defs` never
+  had. `protocol/check.mjs` now resolves every named row, so the next one cannot be written unnoticed.
+- **A release can be signed.** The macOS job imports an Apple Developer ID from the repository secrets when they
+  are set and notarizes the build; without them the installers stay unsigned and the notes say so (X5).
+- **Sign-in, and your own account.** Passkeys, verified by the daemon itself rather than trusting the browser,
+  magic link, and TOTP (RFC 6238, a +-1 step window and spent steps refused). Handing a session to another
+  screen needs a lease with a fence that only goes up, and an older fence is refused. The server can export
+  everything it holds about you, delete it and say what it deleted, and its retention is enforced (X1, X4, G36).
+- **The plan itself is honest.** `docs/plan/PROGRESS.md` carries one row per plan item with what is built and
+  what is still missing, and `docs/plan/ASSUMPTIONS.md` records which assumptions were measured rather than
+  believed.
+
 ## [0.22.0] — Any local model, voice through your Alibaba key, Git everywhere, the window proven on every OS
 
 - **Any local model server, not only Ollama.** Settings → Providers → Local models looks on this computer for

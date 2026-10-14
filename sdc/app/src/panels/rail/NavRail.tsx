@@ -1,4 +1,4 @@
-import { Building2, Moon, PanelLeft, PanelRight, Plug, Search, Settings, SquarePen, Sun } from 'lucide-react';
+import { Building2, Moon, Network, PanelLeft, PanelRight, Plug, Search, Settings, SquarePen, Sun } from 'lucide-react';
 
 import { setTheme as applyTheme, type Theme } from '../../lib/theme';
 import { strings } from '../../strings';
@@ -79,6 +79,8 @@ export function NavRail() {
         onClick={() => openHub()}
       />
       <IconButton id="openAgency" icon={Building2} label={strings.kernel.agency.title} size={40} iconSize={18} className="rail-btn" onClick={() => useKernelUi.getState().openAgency()} />
+      {/* 2.0's three: the servers a project's turns can go to, the agents on the board, and the Inbox. */}
+      <IconButton id="openOps" icon={Network} label={strings.kernel.ops.title} size={40} iconSize={18} className="rail-btn" onClick={() => useKernelUi.getState().openOps()} />
 
       <span className="flex-1" />
 

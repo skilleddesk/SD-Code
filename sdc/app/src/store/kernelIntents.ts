@@ -324,6 +324,39 @@ export async function runPlaybook(playbookId: string, siteIds: string[]) {
   return call(() => sdcpCall('playbook.run', { playbookId, siteIds }), strings.kernel.agency.failed);
 }
 
+/* ---- R4/PAR/AUTO (2.0): the servers, the board and the Inbox -------------------------------------------- */
+
+export type OpsRunner = { name: string; host: string; dir: string };
+export type OpsAgent = { id: string; request: string; worktree: string; state: string; note: string; startedAt: number; sessionId?: string | null };
+export type OpsAutomation = { name: string; request: string; every: string | null; at: string | null; enabled: boolean; lastRun?: number | null };
+export type OpsNote = { name: string; at: number; request: string; summary: string; file: string };
+
+export async function listRunners(sessionId: string): Promise<{ runners: OpsRunner[]; chosen: string | null } | null> {
+  return call(() => sdcpCall('runner.list', { sessionId }), strings.kernel.ops.failed);
+}
+
+export async function agentsBoard(sessionId: string): Promise<OpsAgent[] | null> {
+  return (await call(() => sdcpCall('agents.board', { sessionId }), strings.kernel.ops.failed))?.agents ?? null;
+}
+
+/** Put an agent on the board: its own worktree of this project, and a turn running the request in it. */
+export async function startAgent(sessionId: string, request: string): Promise<{ agent: OpsAgent; sessionId: string } | null> {
+  return call(() => sdcpCall('agents.start', { sessionId, request }), strings.kernel.ops.failed);
+}
+
+export async function stopAgent(sessionId: string, id: string): Promise<{ stopped: boolean; state: string; note: string } | null> {
+  return call(() => sdcpCall('agents.stop', { sessionId, id }), strings.kernel.ops.failed);
+}
+
+export async function inbox(sessionId: string): Promise<{ automations: OpsAutomation[]; notes: OpsNote[] } | null> {
+  return call(() => sdcpCall('inbox.list', { sessionId }), strings.kernel.ops.failed);
+}
+
+/** Run one automation now, the same way the daemon's own clock runs it when it is due. */
+export async function runAutomation(sessionId: string, name: string): Promise<{ name: string; sessionId: string; turnId: string; at: number } | null> {
+  return call(() => sdcpCall('automation.run', { sessionId, name }), strings.kernel.ops.failed);
+}
+
 /* ---- Team, settings, release safety --------------------------------------------------------------------- */
 
 export async function loadTeam(): Promise<TeamState | null> {

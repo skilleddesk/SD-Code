@@ -1674,11 +1674,18 @@ const english = {
       runDoctor: 'Run doctor',
       createBundle: 'Create bundle',
       checkUpdates: 'Check updates',
-      bundleToast: 'Diagnostic bundle created',
+      bundleToast: 'Diagnostic bundle copied - paste it into whatever you are sending us',
+      bundleEmpty: 'There was nothing to gather: the daemon did not answer',
       updatesToast: 'Checking for updates…',
+      updatesCurrent: (version: string): string => `You are on the latest release (${version}).`,
+      updatesNewer: (version: string): string => `Version ${version} is out - open Updates to install it.`,
+      updatesUnknown: 'I could not reach GitHub to ask',
+      /** G35: there is no telemetry in SDC, and a switch for something that does not exist is a promise the
+       * app cannot keep - so this row states the fact instead of offering a control. */
       telemetry: 'Telemetry',
-      telemetryLabel: 'Send anonymous usage data',
-      telemetryHelp: 'No prompts, no code, no file paths. Default off.',
+      telemetryNothing: 'SDC sends nothing on its own.',
+      telemetryHelp:
+        'No usage data, no prompts, no code, no file paths - and no crash report either, until you choose to send one from Updates. Everything the app knows stays on this machine.',
     },
     /** The Keymap tab's Editor group - the only group that is not read from the registry. */
     keymapEditor: {

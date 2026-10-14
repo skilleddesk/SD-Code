@@ -36,7 +36,8 @@ import { ResearchSettings } from '../kernel/ResearchSettings';
 import { AnywhereSettings } from '../kernel/AnywhereSettings';
 import { playCue } from '../lib/alerts';
 import { BrandLogo } from '../panels/ui/BrandLogo';
-import { platformHint } from '../lib/external';
+import { copyText, platformHint } from '../lib/external';
+import { sdcpCall } from '../lib/sdcp';
 
 /**
  * `#settingsBd` - Settings, seven tabs (spec section 9.11).
@@ -176,6 +177,51 @@ export function Settings() {
             onDoctor={() => {
               close();
               openHub('doctor');
+            }}
+            onBundle={async () => {
+              /* 2.0: this used to say "Diagnostic bundle created" and create nothing. What it gathers is what a
+                 report needs and what the daemon can answer without guessing: this build's versions, the
+                 doctor's reading of the machine, and the audit ledger's verdict. */
+              const doctor = await sdcpCall('host.doctor', {}).catch(() => null);
+              const audit = await sdcpCall('audit.verify', {}).catch(() => null);
+
+              if (doctor === null && audit === null) {
+                toast(strings.settings.about.bundleEmpty);
+
+                return;
+              }
+
+              const bundle = [
+                '# SDC diagnostics',
+                '',
+                `app        v${APP_VERSION}`,
+                `daemon     ${host?.sdcd ? `v${host.sdcd}` : 'not reported'}`,
+                `protocol   ${SDCP_VERSION}`,
+                `host       ${host === null ? 'not reported' : `${host.name} · ${host.platform}`}`,
+                '',
+                '## host.doctor',
+                JSON.stringify(doctor, null, 2),
+                '',
+                '## audit.verify',
+                JSON.stringify(audit, null, 2),
+              ].join('\n');
+
+              toast((await copyText(bundle)) ? strings.settings.about.bundleToast : strings.settings.about.bundleEmpty);
+            }}
+            onUpdates={async () => {
+              const answer = await sdcpCall('update.check', {}).catch(() => null);
+
+              if (answer === null) {
+                toast(strings.settings.about.updatesUnknown);
+
+                return;
+              }
+
+              toast(
+                answer.updateAvailable
+                  ? strings.settings.about.updatesNewer(answer.latest?.tag ?? '')
+                  : strings.settings.about.updatesCurrent(answer.current),
+              );
             }}
           />
         ) : null}
@@ -436,10 +482,14 @@ function AboutTab({
   host,
   daemon,
   onDoctor,
+  onBundle,
+  onUpdates,
 }: {
   host: string;
   daemon: string;
   onDoctor: () => void;
+  onBundle: () => Promise<void>;
+  onUpdates: () => Promise<void>;
 }) {
   const about = strings.settings.about;
   const versions: Record<string, string> = {
@@ -480,27 +530,29 @@ function AboutTab({
           <button
             type="button"
             className={BTN + ' ' + BTN_SECONDARY}
-            onClick={() => toast(about.bundleToast)}
+            onClick={() => void onBundle()}
           >
             {about.createBundle}
           </button>
           <button
             type="button"
             className={BTN + ' ' + BTN_SECONDARY}
-            onClick={() => toast(about.updatesToast)}
+            onClick={() => void onUpdates()}
           >
             {about.checkUpdates}
           </button>
         </div>
       </div>
 
+      {/* G35: no switch, because there is nothing to switch. SDC has never sent anything anywhere on its own,
+          and a toggle that cannot change anything is worse than no toggle: it promises the person a choice
+          that does not exist. What leaves this machine leaves because they pressed something. */}
       <div className="mb-[22px]">
         <h3 className="mb-[6px] text-[10.5px] font-bold uppercase tracking-[0.09em] text-text-muted">
           {about.telemetry}
         </h3>
-        <Row label={about.telemetryLabel} help={about.telemetryHelp}>
-          <span className="toggle" aria-hidden="true" />
-        </Row>
+        <p className="text-[12.5px] text-text-primary">{about.telemetryNothing}</p>
+        <p className="mt-[4px] text-[11.5px] text-text-muted">{about.telemetryHelp}</p>
       </div>
     </>
   );

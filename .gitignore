@@ -170,3 +170,4 @@ NOTES.md
 # Release artefacts built on this machine (installers, portable zip). They are
 # products of the source tree, not part of it.
 release/
+._*   # macOS resource forks, which the Rust and vitest pickers cannot read

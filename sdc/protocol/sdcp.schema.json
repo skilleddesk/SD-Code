@@ -256,9 +256,12 @@
           "checkpoint.create",
           "checkpoint.list",
           "checkpoint.restore",
-    "runner.list",
-    "agents.board",
-    "inbox.list",
+          "runner.list",
+          "agents.board",
+          "agents.start",
+          "agents.stop",
+          "inbox.list",
+          "automation.run",
           "rewind.apply",
           "rewind.redo",
           "duel.start",
@@ -537,6 +540,135 @@
             "integer",
             "null"
           ]
+        }
+      }
+    },
+    "runner": {
+      "description": "A host this project's turns can run on (R4), from `.sdc/runners.toml`.",
+      "type": "object",
+      "required": [
+        "name",
+        "host",
+        "dir"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "host": {
+          "type": "string"
+        },
+        "dir": {
+          "type": "string"
+        }
+      }
+    },
+    "agent": {
+      "description": "One agent on the board (PAR): its own checkout of the project's own repository.",
+      "type": "object",
+      "required": [
+        "id",
+        "request",
+        "worktree",
+        "state",
+        "note",
+        "startedAt"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "request": {
+          "type": "string"
+        },
+        "worktree": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "running",
+            "done",
+            "failed",
+            "stopped"
+          ]
+        },
+        "note": {
+          "type": "string"
+        },
+        "startedAt": {
+          "type": "integer"
+        }
+      }
+    },
+    "automation": {
+      "description": "One automation from `.sdc/automations.toml` (AUTO), and when it last ran.",
+      "type": "object",
+      "required": [
+        "name",
+        "request",
+        "every",
+        "at",
+        "enabled"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "request": {
+          "type": "string"
+        },
+        "every": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "A span such as `6h`; null when the automation is set to a time of day instead."
+        },
+        "at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "A local time such as `09:30`; null when the automation is set to a span instead."
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "lastRun": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Epoch milliseconds; null until it has run."
+        }
+      }
+    },
+    "note": {
+      "description": "What an automation produced, waiting in the Inbox (AUTO).",
+      "type": "object",
+      "required": [
+        "name",
+        "at",
+        "request",
+        "summary",
+        "file"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "at": {
+          "type": "integer"
+        },
+        "request": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "file": {
+          "type": "string"
         }
       }
     },
@@ -1405,7 +1537,8 @@
             "runners": [
               "runner"
             ],
-            "chosen": "string"
+            "chosen": "string",
+            "setting": "string"
           }
         },
         "agents.board": {
@@ -1416,6 +1549,42 @@
             "agents": [
               "agent"
             ]
+          }
+        },
+        "agents.start": {
+          "params": {
+            "sessionId": "string",
+            "request": "string",
+            "engine": "string?",
+            "model": "string?",
+            "provider": "string?"
+          },
+          "result": {
+            "agent": "agent",
+            "sessionId": "string"
+          }
+        },
+        "agents.stop": {
+          "params": {
+            "sessionId": "string",
+            "id": "string"
+          },
+          "result": {
+            "stopped": "boolean",
+            "state": "string",
+            "note": "string"
+          }
+        },
+        "automation.run": {
+          "params": {
+            "sessionId": "string",
+            "name": "string"
+          },
+          "result": {
+            "name": "string",
+            "sessionId": "string",
+            "turnId": "string",
+            "at": "integer"
           }
         },
         "inbox.list": {

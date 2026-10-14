@@ -10,6 +10,10 @@ import type { TurnSeed } from './intents';
 
 export type AgencyTab = 'sites' | 'deploys' | 'approvals' | 'playbooks' | 'xray' | 'guardian';
 
+/** The three R4/PAR/AUTO surfaces of 2.0: the servers a project's turns can go to, the agents on the board,
+ * and the Inbox the automations leave their notes in. */
+export type OpsTab = 'runners' | 'agents' | 'inbox';
+
 export interface PendingIntent {
   intentId: string;
   /** What the person typed, exactly. */
@@ -21,6 +25,8 @@ export interface PendingIntent {
 interface KernelUiState {
   agencyOpen: boolean;
   agencyTab: AgencyTab;
+  opsOpen: boolean;
+  opsTab: OpsTab;
   costOpen: boolean;
   policyOpen: boolean;
   onboardingOpen: boolean;
@@ -28,6 +34,8 @@ interface KernelUiState {
   pending: Record<string, PendingIntent>;
   openAgency: (tab?: AgencyTab) => void;
   closeAgency: () => void;
+  openOps: (tab?: OpsTab) => void;
+  closeOps: () => void;
   openCost: () => void;
   closeCost: () => void;
   openPolicy: () => void;
@@ -41,12 +49,16 @@ interface KernelUiState {
 export const useKernelUi = create<KernelUiState>()((set) => ({
   agencyOpen: false,
   agencyTab: 'sites',
+  opsOpen: false,
+  opsTab: 'runners',
   costOpen: false,
   policyOpen: false,
   onboardingOpen: false,
   pending: {},
   openAgency: (tab = 'sites') => set({ agencyOpen: true, agencyTab: tab }),
   closeAgency: () => set({ agencyOpen: false }),
+  openOps: (tab = 'runners') => set({ opsOpen: true, opsTab: tab }),
+  closeOps: () => set({ opsOpen: false }),
   openCost: () => set({ costOpen: true }),
   closeCost: () => set({ costOpen: false }),
   openPolicy: () => set({ policyOpen: true }),

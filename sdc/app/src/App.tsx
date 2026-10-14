@@ -18,6 +18,7 @@ import { Palette } from './overlays/Palette';
 import { SearchOverlay } from './overlays/SearchOverlay';
 import { Toast } from './overlays/Toast';
 import { Agency } from './kernel/Agency';
+import { Ops } from './kernel/Ops';
 import { CostCenter } from './kernel/CostCenter';
 import { Onboarding } from './kernel/Onboarding';
 import { PolicyEditor } from './kernel/PolicyEditor';
@@ -136,6 +137,7 @@ export function App() {
       <NewProject />
       <Connect />
       <Agency />
+      <Ops />
       <CostCenter />
       <PolicyEditor />
       <MemoryDialog />

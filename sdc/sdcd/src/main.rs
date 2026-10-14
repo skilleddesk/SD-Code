@@ -204,6 +204,11 @@ async fn run() -> Result<()> {
         Arc::new(ChannelNotifier::new(state.events.clone(), state.fanout.clone())),
     );
 
+    /* AUTO (2.0): the clock the Inbox waits on. Every minute it starts whatever automation is due, the same
+       way the Inbox's Run button does - an Inbox that only fills when a button is pressed is an empty page,
+       which is what `automation.run` alone would have left it. */
+    sdcd::v3::run::spawn(state.clone());
+
     /* The phone's read-only status page, when the person turned it on. */
     if state.store.setting("status.share").ok().flatten().as_deref() == Some("on") {
         let answer = sdcd::status::configure(state.clone(), true, None);

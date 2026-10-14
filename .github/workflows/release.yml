@@ -76,7 +76,7 @@ jobs:
           | Linux | `*.rpm` | Fedora / openSUSE: double-click it, then **Install** in the Software window. |
           | Linux | `*.AppImage` | Other distributions: right-click → Properties → Permissions → **Allow executing as program**, then double-click. (On Ubuntu and Debian use the `.deb` instead.) |
 
-          The installers are unsigned, so Windows SmartScreen and macOS Gatekeeper will both ask once: Windows needs **More info → Run anyway**, macOS needs System Settings → Privacy & Security → **Open Anyway**.
+          The installers are unsigned, so Windows SmartScreen and macOS Gatekeeper will both ask once: Windows needs **More info → Run anyway**, macOS needs System Settings → Privacy & Security → **Open Anyway**. A macOS build is signed and notarized instead once the project holds an Apple Developer ID and its secrets are set (see the signing step in this workflow).
 
           Everything else is inside the app - no terminal on any platform: the daemon is bundled and starts itself, and Node.js, the Claude Code / Codex / Gemini CLIs, Ollama (and its models), ripgrep and Git are installed from the app with one click (Settings → Environment, or a provider's Connect card), into SDC's own folder and without administrator rights.
           BODY
@@ -107,6 +107,20 @@ jobs:
             label: macos-arm64
 
     runs-on: ${{ matrix.platform }}
+
+    # X5: a signed, notarized macOS build needs an Apple Developer ID - a certificate and a notarization
+    # account, paid for once a year and held by the project's owner. The workflow takes them from the repository
+    # secrets when they are there (Settings → Secrets → Actions) and stays out of the way when they are not: the
+    # installers are then unsigned, which is what the release notes below tell the person downloading them.
+    #
+    # They are read here, at job level, because a step's `if` cannot see `secrets` - only `env`.
+    env:
+      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
 
     steps:
       - name: Checkout
@@ -149,6 +163,27 @@ jobs:
       - name: Install the workspace
         working-directory: sdc
         run: pnpm install --frozen-lockfile
+
+      # The certificate is a .p12 in base64; `security` is what puts it in the keychain the build will look in.
+      # Without this step a macOS build still succeeds - it is signed ad-hoc, which runs on this machine and
+      # trips Gatekeeper on someone else's, which is the difference the secrets make.
+      - name: macOS signing identity (X5)
+        if: matrix.platform == 'macos-latest' && env.APPLE_CERTIFICATE != ''
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/sdc-signing.keychain-db"
+
+          security create-keychain -p "$APPLE_CERTIFICATE_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 3600 "$KEYCHAIN"
+          security unlock-keychain -p "$APPLE_CERTIFICATE_PASSWORD" "$KEYCHAIN"
+
+          echo "$APPLE_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/identity.p12"
+          security import "$RUNNER_TEMP/identity.p12" -k "$KEYCHAIN" \
+            -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$APPLE_CERTIFICATE_PASSWORD" "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+
+          rm -f "$RUNNER_TEMP/identity.p12"
+          echo "a signing identity is in the keychain; this build will be signed and notarized"
 
       - name: Checks (typecheck)
         working-directory: sdc

@@ -130,6 +130,27 @@ for (const name of schemaMethods) {
   }
 }
 
+/* An array written as a single name (`"runners": ["runner"]`) has to be a shape in `$defs`: a name nothing
+   defines resolves to nothing, so a caller reading the schema learns nothing about the row. The four R4/PAR/
+   AUTO rows were written this way and had no `$defs` entry - `provider`, `checkpoint` and `notification` are
+   what a resolved one looks like. Nothing caught it: the checks above read *names*, and a name nobody has a
+   shape for is not a name. */
+const defined = new Set(Object.keys(schema.$defs));
+/* A row may of course be a bare type (`["string"]`, `["object"]`), so those count as resolved. */
+const primitives = new Set(["string", "integer", "number", "boolean", "object", "array", "null"]);
+
+for (const [method, shape] of Object.entries(schema.$defs.methods.properties ?? {})) {
+  for (const [place, part] of [
+    ["params", shape.params],
+    ["result", shape.result],
+  ]) {
+    for (const [field, type] of Object.entries(part ?? {})) {
+      if (Array.isArray(type) && type.length === 1 && typeof type[0] === "string" && !defined.has(type[0]) && !primitives.has(type[0])) {
+        problems.push(`${method}'s ${place}.${field} says its rows are \`${type[0]}\`, and $defs has no such shape`);
+      }
+    }
+  }
+}
 console.log(
   `protocol: ${schemaMethods.size} methods named, ${schemaMethodSchemas.size} with a shape, ` +
     `${typeMethods.size} in types.ts, ${mapKeys.size} with params/result, ${dispatched.size} answered by the ` +

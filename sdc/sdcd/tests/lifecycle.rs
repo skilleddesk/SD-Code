@@ -504,6 +504,45 @@ fn a_folder_opened_on_a_chat_is_where_its_tools_look() {
         "the guard hid `.env` and the answer must say so: {listed_dir}"
     );
 
+    /* The three R4/PAR/AUTO surfaces the window opens (2.0). They declare `sessionId` in the schema, so a
+       window that sends exactly that must be answered - `project_root` reads only `root`, and reading it
+       there meant the app's own contract got "needs a project whose folder I can see". */
+    std::fs::create_dir_all(project.join(".sdc")).expect("a .sdc directory");
+    std::fs::write(
+        project.join(".sdc/runners.toml"),
+        "[[runner]]\nname = \"web-1\"\nhost = \"deploy@10.0.0.9\"\ndir = \"/srv/app\"\n",
+    )
+    .expect("a runners file");
+    std::fs::write(project.join(".sdc/runner"), "web-1\n").expect("a chosen runner");
+
+    let (runners, _) = request_collect(port, "ran-1", "runner.list", serde_json::json!({ "sessionId": session_id }));
+
+    assert_eq!(
+        runners.pointer("/result/runners/0/name").and_then(serde_json::Value::as_str),
+        Some("web-1"),
+        "runner.list with nothing but a session id must read that chat's folder: {runners}"
+    );
+    assert_eq!(
+        runners.pointer("/result/chosen").and_then(serde_json::Value::as_str),
+        Some("web-1"),
+        "and say which runner is in force: {runners}"
+    );
+
+    let (board, _) = request_collect(port, "board-1", "agents.board", serde_json::json!({ "sessionId": session_id }));
+
+    assert!(
+        board.pointer("/result/agents").and_then(serde_json::Value::as_array).is_some_and(Vec::is_empty),
+        "agents.board on a project with no agents answers an empty board, not an error: {board}"
+    );
+
+    let (inbox, _) = request_collect(port, "inbox-1", "inbox.list", serde_json::json!({ "sessionId": session_id }));
+
+    assert!(
+        inbox.pointer("/result/automations").and_then(serde_json::Value::as_array).is_some_and(Vec::is_empty)
+            && inbox.pointer("/result/notes").and_then(serde_json::Value::as_array).is_some_and(Vec::is_empty),
+        "inbox.list on a project with no automations answers an empty Inbox, not an error: {inbox}"
+    );
+
     let empty = Vec::new();
     let entries = listed_dir
         .pointer("/result/entries")

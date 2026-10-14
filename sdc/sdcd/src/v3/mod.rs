@@ -34,6 +34,7 @@ pub mod profiles;
 pub mod recipes;
 pub mod rate;
 pub mod redact;
+pub mod run;
 pub mod terms;
 pub mod tools;
 

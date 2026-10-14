@@ -41,6 +41,12 @@ pub struct Agent {
     /// The last thing worth saying about it.
     #[serde(default)]
     pub note: String,
+    /// The chat the agent's turn runs in, and that turn - what `agents.stop` stops. Absent on a card written
+    /// before 2.0, which is why both are optional.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_id: Option<String>,
 }
 
 /// Where the cards live.
@@ -98,7 +104,7 @@ pub fn start(root: &Path, request: &str, id: &str, now: i64) -> Result<Agent, St
         return Err(format!("git could not make a worktree for `{id}`: {}", String::from_utf8_lossy(&added.stderr).trim()));
     }
 
-    let agent = Agent { id: id.to_string(), request: request.to_string(), worktree: text, started_at: now, state: State::Running, note: String::new() };
+    let agent = Agent { id: id.to_string(), request: request.to_string(), worktree: text, started_at: now, state: State::Running, note: String::new(), session_id: None, turn_id: None };
 
     save(root, &agent)?;
 

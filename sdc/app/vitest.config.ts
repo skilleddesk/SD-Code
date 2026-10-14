@@ -12,6 +12,11 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['src/**/*.test.ts', 'tests/**/*.test.ts'],
+    /* macOS writes a `._name` sidecar next to a file on a volume with no room for its metadata (an exFAT
+       stick, a network share). That sidecar is the file's resource fork, not a test - `._Ops.test.ts`
+       parses as binary and takes the whole run down with it, which is exactly what happened the first time
+       this suite ran from the external drive. */
+    exclude: ['**/node_modules/**', '**/dist/**', '**/._*'],
     reporters: ['default'],
   },
 });

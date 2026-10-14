@@ -25,7 +25,10 @@ const BLANK_TARGET = { selector: "JSXAttribute[name.name='target'][value.value='
 
 export default tseslint.config(
   {
-    ignores: ['dist', 'node_modules', 'src-tauri/target', 'src-tauri/gen'],
+    /* macOS writes a `._name` sidecar next to a file on a volume with no room for its metadata (this project
+       lives on an exFAT drive, so it happens on every write). It is a resource fork, not TypeScript, and the
+       linter reads it as source: `._strings.ts` failed the run with a parse error for a file git ignores. */
+    ignores: ['dist', 'node_modules', 'src-tauri/target', 'src-tauri/gen', '**/._*'],
   },
   {
     files: ['**/*.{ts,tsx}'],
