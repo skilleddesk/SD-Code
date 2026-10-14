@@ -2,7 +2,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { frameOn } from '../src/transport/link';
+import { frameOn, wireFrame } from '../src/transport/link';
 
 describe('a frame on the wire', () => {
   it('carries no fence until a screen holds the session', () => {
@@ -19,5 +19,16 @@ describe('a frame on the wire', () => {
 
     expect(one.ct).toBe(two.ct);
     expect(one.n).toBe(two.n);
+  });
+});
+
+describe('the text on the socket', () => {
+  it('is one JSON object, which is all the relay accepts', () => {
+    for (const fence of [0, 4]) {
+      const parsed = JSON.parse(wireFrame(3, 'QUJD', fence));
+
+      expect(typeof parsed).toBe('object');
+      expect(parsed).toMatchObject({ t: 'f', n: 3, ct: 'QUJD' });
+    }
   });
 });

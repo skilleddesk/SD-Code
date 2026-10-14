@@ -62,6 +62,12 @@ export function frameOn(n: number, ct: string, fence: number): { t: string; n: n
   return fence > 0 ? { t: 'f', n, ct, fence } : { t: 'f', n, ct };
 }
 
+/** The frame as the text that goes on the socket: one JSON object, never a JSON string holding one (the relay closes a
+ *  socket whose message is not an object). */
+export function wireFrame(n: number, ct: string, fence: number): string {
+  return JSON.stringify(frameOn(n, ct, fence));
+}
+
 /** Where a session's handoff stands, as the computer reports it (X4). `mine` is what this screen shows the person. */
 export interface HandoffState {
   held: boolean;
@@ -386,7 +392,7 @@ export class Link {
 
   /** One frame on the wire: what it is sealed with, and the lease it belongs to, when a screen holds the session (X4). */
   private frameOn(n: number, ct: string): string {
-    return JSON.stringify(frameOn(n, ct, this.fence));
+    return wireFrame(n, ct, this.fence);
   }
 
   /** A message that expects no answer. */
@@ -400,7 +406,7 @@ export class Link {
       for (const piece of pieces(plain, this.nextMessage++)) {
         const sealed = await session.send.seal(piece);
 
-        this.socket?.send(JSON.stringify(this.frameOn(sealed.n, b64u(sealed.ct))));
+        this.socket?.send(this.frameOn(sealed.n, b64u(sealed.ct)));
       }
     });
 
@@ -502,7 +508,7 @@ export class Link {
       for (const piece of pieces(plain, this.nextMessage++)) {
         const sealed = await session.send.seal(piece);
 
-        this.socket?.send(JSON.stringify(this.frameOn(sealed.n, b64u(sealed.ct))));
+        this.socket?.send(this.frameOn(sealed.n, b64u(sealed.ct)));
       }
     });
 
