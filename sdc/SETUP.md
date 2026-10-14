@@ -455,6 +455,29 @@ clang --version          # Apple clang version ...
 
 If you installed full Xcode instead, launch it once so it can finish its first-run setup.
 
+### Building from an external (non-native) volume
+
+macOS writes an AppleDouble sidecar - a file called `._name` next to `name` - for every file it copies onto a volume it
+does not treat as native (exFAT, most external drives). They are not source, but they are files, and they break builds:
+the Tauri build script reads every file in its generated permissions folder as UTF-8 and stops on one, and Vite's
+dependency scanner trips over them too.
+
+Two things handle it, and both are already in the build:
+
+```sh
+pnpm --filter @sdc/app strip:appledouble   # removes the `._` files that are already there
+pnpm --filter @sdc/app tauri:build         # runs that first, then sets COPYFILE_DISABLE=1 for the build itself
+```
+
+If a build still stops on a `._` file, the cargo build tree is the usual place, and it wants to be somewhere else:
+
+```sh
+CARGO_TARGET_DIR="$HOME/.cargo/sdc-app-target" pnpm --filter @sdc/app tauri:build
+```
+
+That keeps the Rust build output - and the sidecars it drags along - on the system disk. Builds are quicker there too.
+
+
 ---
 
 ## 7. Editor configuration

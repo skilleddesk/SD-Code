@@ -18,7 +18,8 @@
     "daemon:package": "node scripts/package-daemon.mjs",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
-    "tauri:build": "pnpm daemon:package && tauri build"
+    "strip:appledouble": "node scripts/strip-appledouble.mjs",
+    "tauri:build": "node scripts/strip-appledouble.mjs && pnpm daemon:package && COPYFILE_DISABLE=1 tauri build"
   },
   "dependencies": {
     "@codemirror/commands": "^6.11.1",
