@@ -13,6 +13,7 @@
 //! sdcd bench resume      [--kills 100] [--label NAME]     # A-19: kill -9 mid-turn, restart, check the work
 //! sdcd bench profiles    --baseline L --candidate feature=L2 [...]  # Q2: model-profiles.json from Q3 verdicts
 //! sdcd bench fleet       [--label NAME]                   # A-16 on synthetic 5/10/20-server fleets
+//! sdcd bench drift       --labels A,B,C [--target 0.8]   # Q4: a model's pass rate slipping away from where it was
 //! sdcd bench report      LABEL [--baseline LABEL]         # writes bench/results/LABEL/report-bn.md
 //! sdcd bench compare     BASELINE CANDIDATE [--report-bn]  # the Q3 rule per model
 //! ```
@@ -25,6 +26,7 @@ pub mod competitors;
 pub mod lang;
 pub mod ledger;
 pub mod report;
+pub mod sprt;
 pub mod resume;
 pub mod runner;
 pub mod search;
@@ -135,9 +137,10 @@ pub fn main(args: &[String]) -> i32 {
         "resume" => resume_cmd(rest),
         "profiles" => profiles_cmd(rest),
         "fleet" => fleet_cmd(rest),
+        "drift" => drift_cmd(rest),
         "compare" => compare_cmd(rest),
         _ => {
-            println!("{}", include_str!("mod.rs").lines().skip(2).take(18).map(|line| line.trim_start_matches("//! ")).collect::<Vec<_>>().join("\n"));
+            println!("{}", include_str!("mod.rs").lines().skip(2).take(19).map(|line| line.trim_start_matches("//! ")).collect::<Vec<_>>().join("\n"));
             Ok(())
         }
     };
@@ -313,7 +316,11 @@ fn profiles_cmd(args: &[String]) -> Result<(), String> {
             );
             let profile = profiles.models.entry(comparison.model.clone()).or_default();
 
-            println!("{:<40} {evidence}", comparison.model);
+            println!("{:<40} [{}] {evidence}", comparison.model, match &comparison.sprt {
+                crate::bench::sprt::Decision::Accept { log_likelihood } => format!("SPRT: better ({log_likelihood:+.2})"),
+                crate::bench::sprt::Decision::Reject { log_likelihood } => format!("SPRT: not better ({log_likelihood:+.2})"),
+                crate::bench::sprt::Decision::KeepSampling { log_likelihood } => format!("SPRT: take more pairs ({log_likelihood:+.2})"),
+            });
 
             if verdict.accepted {
                 profile.techniques.push(feature.clone());
@@ -358,6 +365,36 @@ fn fleet_cmd(args: &[String]) -> Result<(), String> {
         std::fs::write(out.join("fleet.json"), serde_json::to_string_pretty(&json!({ "synthetic": true, "rows": rows })).unwrap_or_default()).map_err(|error| error.to_string())?;
         write_meta_if_missing(&out, &label, "fleet", &bench)?;
         println!("written {}", out.join("fleet.json").display());
+    }
+
+    Ok(())
+}
+
+/// `sdcd bench drift` (Q4): several labelled result sets in order - a model whose pass rate has slipped away from
+/// the rate it was chosen for raises the alarm, and its profile wants another look.
+fn drift_cmd(args: &[String]) -> Result<(), String> {
+    let bench = bench_dir(args)?;
+    let labels = flag(args, "--labels").ok_or("--labels A,B,C is required (the order is the order in time)")?;
+    let target = flag(args, "--target").and_then(|value| value.parse::<f64>().ok()).unwrap_or(0.8);
+    let slack = flag(args, "--slack").and_then(|value| value.parse::<f64>().ok()).unwrap_or(0.1);
+    let alarm = flag(args, "--alarm").and_then(|value| value.parse::<f64>().ok()).unwrap_or(0.5);
+    let mut by_model: std::collections::BTreeMap<String, Vec<f64>> = std::collections::BTreeMap::new();
+
+    for label in labels.split(',').map(str::trim).filter(|label| !label.is_empty()) {
+        let results = report::load(&results_dir(&bench, label))?;
+
+        for summary in report::summarise(&results.runs) {
+            by_model.entry(summary.model).or_default().push(summary.pass_rate);
+        }
+    }
+
+    for (model, rates) in by_model {
+        let reading: Vec<String> = rates.iter().map(|rate| format!("{:.2}", rate)).collect();
+
+        match crate::bench::sprt::drift(&rates, target, slack, alarm) {
+            Some(index) => println!("{model:<40} drifted at run {} of [{}]", index + 1, reading.join(", ")),
+            None => println!("{model:<40} steady [{}]", reading.join(", ")),
+        }
     }
 
     Ok(())

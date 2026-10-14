@@ -10,6 +10,9 @@
 //! model is told start on.
 
 pub mod budget;
+pub mod cas;
+pub mod cascade;
+pub mod effort;
 pub mod failover;
 pub mod fleet;
 pub mod interlingua;
@@ -20,6 +23,8 @@ pub mod lessons;
 pub mod memory;
 pub mod ledger_diff;
 pub mod outline;
+pub mod plan;
+pub mod router;
 pub mod privacy;
 pub mod profiles;
 pub mod recipes;
@@ -64,6 +69,10 @@ pub const FEATURES: &[Feature] = &[
     Feature { name: "lessons", default_on: false, token_technique: true, what: "L1: a lesson from a step that failed in this project, and what worked instead" },
     Feature { name: "knowledge", default_on: false, token_technique: true, what: "L3: a page an earlier turn fetched is sent again as a short excerpt with its address and date" },
     Feature { name: "knowledge_core", default_on: true, token_technique: false, what: "I11: learned knowledge needs two sightings, must not contradict what is known, and is taken back when it proves wrong" },
+    Feature { name: "cas", default_on: true, token_technique: false, what: "W7a: a file's old content is kept by its own hash before SDC changes it, so a turn can be taken back without git" },
+    Feature { name: "router", default_on: true, token_technique: false, what: "W6: a plainly light request goes to the fast model named in router.fast; everything else stays on the main model" },
+    Feature { name: "effort", default_on: true, token_technique: false, what: "Q5: a small model is given room to think and one instruction to lean on the tools" },
+    Feature { name: "cascade", default_on: true, token_technique: false, what: "I3: when the draft model is stuck, cascade.strong takes the task over from a capsule of its state" },
 ];
 
 #[derive(Debug, Default, Clone)]
@@ -88,6 +97,8 @@ pub fn configure(store: &crate::store::sqlite::Store) {
     let config = read(store);
 
     failover::configure(store);
+    router::configure(store);
+    cascade::configure(store);
 
     if let Ok(mut slot) = slot().lock() {
         *slot = config;
@@ -291,7 +302,7 @@ pub fn status() -> serde_json::Value {
 
 /// Whether a settings key belongs here (the settings method accepts these).
 pub fn is_setting(key: &str) -> bool {
-    key == "v3.maxQuality" || key == failover::SETTING || key.strip_prefix("v3.").is_some_and(|name| FEATURES.iter().any(|feature| feature.name == name))
+    key == "v3.maxQuality" || key == failover::SETTING || key == router::SETTING || crate::v3::cascade::is_setting(key) || key.strip_prefix("v3.").is_some_and(|name| FEATURES.iter().any(|feature| feature.name == name))
 }
 
 #[cfg(test)]

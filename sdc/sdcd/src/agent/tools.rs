@@ -632,6 +632,14 @@ fn execute_call(context: &mut ToolContext, call: &ToolUse) -> Outcome {
         ));
     }
 
+    /* v3 W7b: in plan mode the turn may read anything and change nothing. */
+    if crate::v3::plan::active() && crate::v3::plan::changes_something(&call.name) {
+        started(context, &call_id, "read", "Plan mode", &call.name);
+        completed(context, &call_id, true, "not run · plan mode", None);
+
+        return Outcome::ok(crate::v3::plan::refusal(&call.name));
+    }
+
     let number = |key: &str| call.input[key].as_u64();
 
     match call.name.as_str() {
@@ -871,6 +879,18 @@ fn file_symbols(context: &mut ToolContext, call_id: &str, path: &str) -> Outcome
     Outcome::ok(symbols.iter().map(|symbol| format!("{}: {} {}", symbol.line, symbol.kind, symbol.name)).collect::<Vec<_>>().join("\n"))
 }
 
+/// v3 W7a: before a file is changed, its old content goes into the content-addressed store, filed under this turn -
+/// so the turn can be taken back in a project with no git at all (switch `v3.cas`).
+fn keep_pre_image(context: &ToolContext, path: &str, before: Option<&[u8]>) {
+    if !crate::v3::on("cas") {
+        return;
+    }
+
+    let root = std::path::Path::new(context.workspace.root());
+
+    crate::v3::cas::record(root, context.turn_id, path, before);
+}
+
 fn list_dir(context: &mut ToolContext, call_id: &str, path: &str) -> Outcome {
     let shown = if path.trim().is_empty() { "." } else { path };
 
@@ -978,6 +998,8 @@ fn write_file(context: &mut ToolContext, call_id: &str, path: &str, content: &st
 
     let existed = context.workspace.exists(path);
     let before = if existed { context.workspace.read(path).map(|(text, _)| text).unwrap_or_default() } else { String::new() };
+
+    keep_pre_image(context, path, existed.then_some(before.as_bytes()));
     let diff = diff_lines(&before, content);
     let (added, removed) = counts(&diff);
 
@@ -1039,6 +1061,8 @@ fn edit_file(context: &mut ToolContext, call_id: &str, path: &str, old: &str, ne
         Err(error) => return Outcome::error(error.message),
     };
     let found = before.matches(old).count();
+
+    keep_pre_image(context, path, Some(before.as_bytes()));
 
     if found == 0 {
         return Outcome::error(format!(

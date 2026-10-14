@@ -248,18 +248,24 @@ fn target(backend: Backend, prompt: &Prompt) -> Result<Target, String> {
 
 #[cfg(test)]
 thread_local! {
-    /// Failover targets a test points at its own fake providers, by provider id.
-    static FAILOVER_TARGETS: std::cell::RefCell<HashMap<String, Target>> = std::cell::RefCell::new(HashMap::new());
+    /// Fake targets a test points at its own providers, by provider id (the failover, the router and the cascade).
+    static FAKE_TARGETS: std::cell::RefCell<HashMap<String, Target>> = std::cell::RefCell::new(HashMap::new());
 }
 
-/// The target a failover continues on (I9): the provider's own endpoint and key - or, in a test, its fake.
-fn failover_target(prompt: &Prompt) -> Result<Target, String> {
+/// The endpoint and key of a provider/model, resolved from the person's settings (used by the router, the cascade
+/// and the failover - all of which run inside `drive`, where `target` is already the turn's own Target).
+fn resolve_target(prompt: &Prompt) -> Result<Target, String> {
     #[cfg(test)]
-    if let Some(fake) = FAILOVER_TARGETS.with(|targets| targets.borrow().get(prompt.provider.as_deref().unwrap_or_default()).cloned()) {
+    if let Some(fake) = FAKE_TARGETS.with(|targets| targets.borrow().get(prompt.provider.as_deref().unwrap_or_default()).cloned()) {
         return Ok(fake);
     }
 
     target(Backend::Api, prompt)
+}
+
+/// The target a failover continues on (I9): the provider's own endpoint and key - or, in a test, its fake.
+fn failover_target(prompt: &Prompt) -> Result<Target, String> {
+    resolve_target(prompt)
 }
 
 /// v3 W1 (A-14): the provider's own input-token count for one short message - no tools, a one-line system
@@ -1198,6 +1204,26 @@ fn drive(
         }
         _ => target.clone(),
     };
+    /* v3 W6: a plainly light request goes to the fast model the person named; everything else stays here. */
+    let tuned = if crate::v3::on("router") {
+        crate::v3::router::route(tuned, prompt.text.rsplit("[The person's message]").next().unwrap_or(&prompt.text), &|provider, model| {
+            let mut fast = prompt.clone();
+
+            fast.provider = Some(provider.to_string());
+            fast.model = model.to_string();
+            resolve_target(&fast).ok()
+        })
+    } else {
+        tuned
+    };
+    /* v3 Q5: a small model is given room to think instead of being replaced. */
+    let (tuned, lifted) = if crate::v3::on("effort") && crate::v3::effort::is_weak(&tuned.model, tuned.price) {
+        let (thinking, effort) = crate::v3::effort::thinking_for(&tuned.model);
+
+        (Target { thinking: tuned.thinking || thinking, effort: tuned.effort.clone().or(effort), ..tuned }, true)
+    } else {
+        (tuned, false)
+    };
     let target = &tuned;
     /* v3 Q2: this turn's token techniques, settled once for its model (profile, setting, default). */
     let _switches = crate::v3::TurnSwitches::begin(&turn_id, prompt.provider.as_deref().unwrap_or_default(), &target.model);
@@ -1308,6 +1334,9 @@ fn drive(
     };
     /* The person's own words, the part of the request SDC is answering (used by every note below). */
     let request_text = prompt.text.rsplit("[The person's message]").next().unwrap_or(&prompt.text).to_string();
+    /* v3 W7b: `/plan` - this turn answers with the plan and changes nothing. */
+    let plan_mode = crate::v3::plan::is_plan(&request_text);
+    let _plan = crate::v3::plan::PlanMode::begin(plan_mode);
     /* v3 I4: a recipe from a similar verified task in this project, as data (switch `v3.recipes`). */
     let recipes_on = technique("recipes") && research_session.is_none() && prompt.remote.is_none();
     let text = match recipes_on.then(|| crate::v3::recipes::find(std::path::Path::new(workspace.root()), prompt.text.rsplit("[The person's message]").next().unwrap_or(&prompt.text))).flatten() {
@@ -1350,7 +1379,17 @@ fn drive(
     let text = {
         let mut notes = String::new();
 
-        for note in [lesson_note.as_deref(), knowledge_note.as_deref(), (!map.is_empty()).then_some(map.as_str()), brief.as_deref()].into_iter().flatten() {
+        for note in [
+            plan_mode.then_some(crate::v3::plan::instruction()),
+            lifted.then_some(crate::v3::effort::instruction()),
+            lesson_note.as_deref(),
+            knowledge_note.as_deref(),
+            (!map.is_empty()).then_some(map.as_str()),
+            brief.as_deref(),
+        ]
+        .into_iter()
+        .flatten()
+        {
             map_chars += note.len() + 2;
             notes.push_str(note);
             notes.push_str("\n\n");
@@ -1869,9 +1908,11 @@ fn drive(
                 }
             }
 
+            let estimate = crate::v3::on("router").then(|| crate::v3::router::estimate(&request_text, target.price, fixed + crate::context::tokens_of(&text))).flatten().map(|cost| format!(" · estimated ${cost:.3}"));
+
             sink.send(EngineEvent::Done {
                 summary: summary.to_string(),
-                meta: format!("{}{}{}", meta(step, input_tokens, output_tokens, target.price) + &cached(cached_tokens), timing(model_time, tool_time), if receipt_on { crate::v3::receipt(&receipt_parts, &saved) } else { String::new() }),
+                meta: format!("{}{}{}{}", meta(step, input_tokens, output_tokens, target.price) + &cached(cached_tokens), timing(model_time, tool_time), estimate.unwrap_or_default(), if receipt_on { crate::v3::receipt(&receipt_parts, &saved) } else { String::new() }),
                 pass: None,
             });
 
@@ -2040,6 +2081,33 @@ fn drive(
 
         if let Some(note) = pending_note.take() {
             dialect::append_user_text(target.dialect, &mut messages, &note);
+        }
+
+        /* v3 I3: the draft model is stuck - the strong one takes the task over from a capsule of the state. */
+        if crate::v3::on("cascade") && research_session.is_none() && crate::v3::cascade::stuck(&steps) {
+            if let Some((provider, model)) = crate::v3::cascade::strong().filter(|(provider, _)| prompt.provider.as_deref() != Some(provider.as_str())) {
+                let failed = steps.iter().rev().find(|step| !step.ok).map(|step| format!("`{}` failed: {}", step.target, step.note)).unwrap_or_else(|| "it kept failing".to_string());
+                let text = crate::v3::cascade::handover(
+                    &crate::v3::failover::State {
+                        goal: &request_text,
+                        failed: target.model.clone(),
+                        reason: &failed,
+                        plan: context.open_plan_steps(),
+                        changed: context.changed.iter().cloned().collect(),
+                        steps: &step_log,
+                        last_words: &last_words,
+                    },
+                    &failed,
+                );
+                let strong = Prompt { provider: Some(provider.clone()), model: model.clone(), text, history: Vec::new(), images: Vec::new(), ..prompt.clone() };
+
+                if let Ok(strong_target) = resolve_target(&strong) {
+                    sink.send(EngineEvent::Thinking(format!("{model} is taking over: the model before it did not get past {failed}.\n")));
+                    drive(backend, &strong_target, workspace, options, None, policy, &strong, sink);
+
+                    return;
+                }
+            }
         }
 
         steer(&mut messages);
@@ -3065,7 +3133,7 @@ mod end_to_end {
             local_window: false,
         };
 
-        FAILOVER_TARGETS.with(|targets| targets.borrow_mut().insert("backup".to_string(), fake(second_url)));
+        FAKE_TARGETS.with(|targets| targets.borrow_mut().insert("backup".to_string(), fake(second_url)));
         crate::v3::failover::set_order_for_test(vec![("backup".to_string(), "backup-model".to_string())]);
 
         let workspace = Workspace::new(root.to_str().unwrap(), None);
@@ -3180,6 +3248,84 @@ mod end_to_end {
         assert!(asked(&on).contains("English brief of the person's message"), "on: one English brief: {}", asked(&on));
         assert!(asked(&on).contains("SDC code map"), "and the project's declarations");
         assert!(tools(&on[0]).contains(&"find_symbol".to_string()) && tools(&on[0]).contains(&"symbols".to_string()));
+    }
+
+    /// v3 I3/W7a/W7b: `/plan` changes nothing, the old content of a changed file is kept and a turn can be taken
+    /// back, and a draft that keeps failing hands the task to the strong model.
+    #[test]
+    fn a_turn_is_planned_checkpointed_and_handed_over() {
+        let root = std::env::temp_dir().join(format!("sdc-batch2-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("orders.ts"), "the old body\n").unwrap();
+
+        let fake = |url: String, model: &str| Target {
+            url,
+            headers: vec![("content-type".to_string(), "application/json".to_string())],
+            dialect: Dialect::OpenAi,
+            model: model.to_string(),
+            price: None,
+            thinking: false,
+            effort: None,
+            local_context: None,
+            local_window: false,
+        };
+        let workspace = Workspace::new(root.to_str().unwrap(), None);
+
+        /* W7b: plan mode refuses the edit, says why, and answers with the plan. */
+        let (url, server) = provider(vec![
+            call("c1", "edit_file", serde_json::json!({ "path": "orders.ts", "old": "old", "new": "new" })),
+            chunk(serde_json::json!({ "content": "here is the plan" })) + "data: [DONE]\n\n",
+        ]);
+        let prompt = prompt_in(&root, "turn-plan", "/plan add pagination to the orders list", "local-test");
+        let recorder = crate::engines::Recorder::new();
+
+        drive(Backend::Api, &fake(url, "main-model"), &workspace, Options { autonomy: Autonomy::Auto, max_steps: 4, auto_check: false, research: None }, None, &Default::default(), &prompt, &recorder.sink());
+
+        let bodies = server.join().unwrap();
+
+        assert!(bodies[0]["messages"].to_string().contains("plan mode") && bodies[0]["messages"].to_string().contains("change nothing"));
+        assert!(bodies[1].to_string().contains("it was not run"), "the edit was refused: {}", bodies[1]["messages"]);
+        assert_eq!(std::fs::read_to_string(root.join("orders.ts")).unwrap(), "the old body\n", "and the file is untouched");
+        assert!(recorder.events().iter().any(|event| matches!(event, EngineEvent::Delta(text) if text.contains("here is the plan"))));
+
+        /* W7a: a file a turn changes is kept by its address, and the turn can be taken back. */
+        let (url, server) = provider(vec![
+            call("c1", "write_file", serde_json::json!({ "path": "orders.ts", "content": "the new body\n" })),
+            chunk(serde_json::json!({ "content": "done" })) + "data: [DONE]\n\n",
+        ]);
+        let prompt = prompt_in(&root, "turn-write", "rewrite orders.ts", "local-test");
+
+        drive(Backend::Api, &fake(url, "main-model"), &workspace, Options { autonomy: Autonomy::Auto, max_steps: 4, auto_check: false, research: None }, None, &Default::default(), &prompt, &crate::engines::Recorder::new().sink());
+
+        let _ = server.join().unwrap();
+
+        assert_eq!(std::fs::read_to_string(root.join("orders.ts")).unwrap(), "the new body\n");
+        assert_eq!(crate::v3::cas::undo_turn(&root, "turn-write"), 1);
+        assert_eq!(std::fs::read_to_string(root.join("orders.ts")).unwrap(), "the old body\n", "the turn was taken back");
+
+        /* I3: the draft fails the same step twice; the strong model takes over from the capsule and finishes. */
+        let missing = call("c1", "read_file", serde_json::json!({ "path": "nothing-here.txt" }));
+        let (draft_url, draft_server) = raw_provider(vec![ok(missing.clone()), ok(missing)]);
+        let (strong_url, strong_server) = provider(vec![chunk(serde_json::json!({ "content": "finished from the handover" })) + "data: [DONE]\n\n"]);
+
+        crate::v3::cascade::set_strong_for_test(Some(("backup".into(), "backup-model".into())));
+        FAKE_TARGETS.with(|targets| targets.borrow_mut().insert("backup".to_string(), fake(strong_url, "backup-model")));
+
+        let prompt = prompt_in(&root, "turn-cascade", "make the orders tests pass", "local-test");
+        let recorder = crate::engines::Recorder::new();
+
+        drive(Backend::Api, &fake(draft_url, "draft-model"), &workspace, Options { autonomy: Autonomy::Auto, max_steps: 8, auto_check: false, research: None }, None, &Default::default(), &prompt, &recorder.sink());
+        crate::v3::cascade::set_strong_for_test(None);
+        FAKE_TARGETS.with(|targets| targets.borrow_mut().clear());
+
+        let (asked, handed) = (draft_server.join().unwrap(), strong_server.join().unwrap());
+
+        assert_eq!(asked.len(), 2, "the draft was given two tries");
+        assert!(handed[0]["messages"].to_string().contains("got stuck") && handed[0]["messages"].to_string().contains("make the orders tests pass"));
+        assert!(recorder.events().contains(&EngineEvent::Delta("finished from the handover".into())));
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

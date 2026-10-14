@@ -146,6 +146,8 @@ pub struct Comparison {
     pub model: String,
     pub pairs: usize,
     pub verdict: stats::Verdict,
+    /// Q4: what the sequential test says about the pairs so far - keep going, better, or not better.
+    pub sprt: crate::bench::sprt::Decision,
     pub billable_saving: Option<(f64, (f64, f64))>,
     pub input_saving: Option<(f64, (f64, f64))>,
     pub usd_saving: Option<(f64, (f64, f64))>,
@@ -173,9 +175,12 @@ pub fn compare(baseline: &[RunRecord], candidate: &[RunRecord]) -> Vec<Compariso
             let q3_pairs: Vec<(bool, bool, f64, f64)> = pairs.iter().map(|(old, new)| (old.pass, new.pass, old.billable_equiv, new.billable_equiv)).collect();
             let saving = |pick: fn(&RunRecord) -> f64| stats::paired_saving(&pairs.iter().map(|(old, new)| (pick(old), pick(new))).collect::<Vec<_>>());
 
+            let (candidate_wins, baseline_wins) = crate::bench::sprt::from_pairs(&q3_pairs.iter().map(|(old, new, _, _)| (*new, *old)).collect::<Vec<(bool, bool)>>());
+
             Some(Comparison {
                 model,
                 pairs: pairs.len(),
+                sprt: crate::bench::sprt::sprt(candidate_wins, baseline_wins, 0.05, 0.05, 0.05),
                 verdict: stats::q3(&q3_pairs),
                 billable_saving: saving(|run| run.billable_equiv),
                 input_saving: saving(|run| run.input_tokens as f64),
