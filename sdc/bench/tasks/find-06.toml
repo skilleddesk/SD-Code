@@ -1,0 +1,14 @@
+id = "find-06"
+kind = "find"
+fixture = "py-notes"
+tiers = ["medium"]
+language = "en"
+prompt = '''
+Where are the notes written to disk (file and method), and how does it avoid leaving a half-written file behind?
+
+Do not change any files.
+'''
+
+[verify]
+answer_all = ["store\\.py", "save", "tmp|temporar|os\\.replace|rename|atomic"]
+no_edits = true

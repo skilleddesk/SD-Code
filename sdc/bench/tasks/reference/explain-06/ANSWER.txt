@@ -1,0 +1,1 @@
+reserve() checks available (stock - reserved), throws an Error when too few, else adds to reserved; release() lowers it.

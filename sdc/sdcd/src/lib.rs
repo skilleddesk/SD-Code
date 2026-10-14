@@ -43,6 +43,7 @@
 pub mod agent;
 pub mod anywhere;
 pub mod auth;
+pub mod bench;
 pub mod checkpoints;
 pub mod cli;
 pub mod console;

@@ -1,0 +1,1 @@
+8080 - set in docker-compose.yml (PORT, ports) and the Dockerfile (ENV PORT, EXPOSE).

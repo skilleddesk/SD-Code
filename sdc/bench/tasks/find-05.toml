@@ -1,0 +1,14 @@
+id = "find-05"
+kind = "find"
+fixture = "py-notes"
+tiers = ["smoke"]
+language = "en"
+prompt = '''
+Which function turns a due date written as 'in 3 days' into a date? Give the file and the function.
+
+Do not change any files.
+'''
+
+[verify]
+answer_all = ["dates\\.py", "parse_due"]
+no_edits = true

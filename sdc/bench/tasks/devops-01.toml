@@ -1,0 +1,12 @@
+id = "devops-01"
+kind = "devops"
+fixture = "devops-site"
+tiers = ["smoke"]
+language = "en"
+requires = ["grep"]
+prompt = '''
+The site answers 502 Bad Gateway for every request, although the app container is running and healthy. Find the cause in the configuration and fix it.
+'''
+
+[verify]
+commands = ["grep -Eq 'server +app:8080|proxy_pass +http://app:8080' nginx/site.conf", "! grep -q ':3000' nginx/site.conf"]

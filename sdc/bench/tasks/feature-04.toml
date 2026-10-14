@@ -1,0 +1,12 @@
+id = "feature-04"
+kind = "feature"
+fixture = "py-notes"
+tiers = []
+language = "en"
+prompt = '''
+Add a `tags` command to the CLI (`python3 -m notes.cli --db FILE tags`) that prints every tag with the number of notes that have it, one per line as `<tag> <count>`, most used first and ties in alphabetical order.
+'''
+
+[verify]
+hidden = "feature-04"
+commands = ["python3 -m unittest discover -s tests -t . -q"]

@@ -1,0 +1,12 @@
+id = "bugfix-01"
+kind = "bugfix"
+fixture = "rust-ledger"
+tiers = ["smoke"]
+language = "en"
+prompt = '''
+When a CSV contains an amount of -0.50, the imported entry ends up as +0.50. Find the cause and fix it.
+'''
+
+[verify]
+hidden = "bugfix-01"
+commands = ["cargo test -q"]

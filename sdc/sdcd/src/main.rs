@@ -50,6 +50,15 @@ fn main() -> Result<()> {
        macOS Dock has only `/usr/bin:/bin:/usr/sbin:/sbin`, and found none of the CLIs (0.15.8). */
     sdcd::host::env_path::widen();
 
+    /* v3 W1: `sdcd bench …` measures; it starts daemons of its own and needs no runtime here. */
+    {
+        let all: Vec<String> = std::env::args().skip(1).collect();
+
+        if all.first().map(String::as_str) == Some("bench") {
+            std::process::exit(sdcd::bench::main(&all[1..]));
+        }
+    }
+
     /* 0.21: Git on a Windows machine that has none, fetched in the background - checkpoints need it. Only
        for the daemon itself, not for a headless `sdcd run|verify|kill|audit` that leaves in a moment. */
     if !std::env::args().nth(1).is_some_and(|command| matches!(command.as_str(), "run" | "verify" | "kill" | "audit")) {

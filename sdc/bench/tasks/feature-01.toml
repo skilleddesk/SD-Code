@@ -1,0 +1,12 @@
+id = "feature-01"
+kind = "feature"
+fixture = "rust-ledger"
+tiers = ["medium"]
+language = "en"
+prompt = '''
+Add `Ledger::transfer(&mut self, date: &str, from: &str, to: &str, amount: Money, memo: &str) -> Result<(), LedgerError>` that moves money between two accounts: it posts `-amount` to `from` and `+amount` to `to`. If either posting would fail (unknown account, overdraft), nothing may be posted at all.
+'''
+
+[verify]
+hidden = "feature-01"
+commands = ["cargo test -q"]

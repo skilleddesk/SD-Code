@@ -1,0 +1,1 @@
+In src/pricing.ts (CODES): minOrderCents 2000, i.e. $20.00.

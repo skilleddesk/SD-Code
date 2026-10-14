@@ -1,0 +1,15 @@
+id = "explain-05"
+kind = "explain"
+fixture = "rust-ledger"
+tiers = []
+language = "en"
+prompt = '''
+Explain how `Money::parse` turns text like "12.5" into a value, and why amounts are stored as integer cents.
+
+Do not change any files.
+'''
+
+[verify]
+answer_any = ["1250", "cents?", "float|floating|binary|rounding|precision", "i64|integer", "decimal|fraction|two digits|2 digits|\\.5"]
+answer_min = 4
+no_edits = true

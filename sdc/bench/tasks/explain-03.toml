@@ -1,0 +1,15 @@
+id = "explain-03"
+kind = "explain"
+fixture = "py-notes"
+tiers = ["medium"]
+language = "en"
+prompt = '''
+Explain how note search ranks its results.
+
+Do not change any files.
+'''
+
+[verify]
+answer_any = ["tokeni[sz]", "lower", "title", "double|twice|2 ?[x×*]|weight|2 points|two points", "count|occurrence|frequen", "sort|order|rank"]
+answer_min = 4
+no_edits = true

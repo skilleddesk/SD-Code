@@ -1,0 +1,14 @@
+id = "find-08"
+kind = "find"
+fixture = "rust-ledger"
+tiers = []
+language = "en"
+prompt = '''
+Which error does the ledger return when an entry is posted to an account that was never opened, and where is that check made?
+
+Do not change any files.
+'''
+
+[verify]
+answer_all = ["UnknownAccount", "ledger\\.rs|fn post|post\\("]
+no_edits = true

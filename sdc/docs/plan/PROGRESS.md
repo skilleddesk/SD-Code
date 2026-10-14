@@ -4,10 +4,19 @@ Source of truth for resuming work on SDC-PLAN-v3. A new session reads this file 
 Status values: `todo` · `in-progress` · `blocked` · `done` · `killed` (with data) · `deferred`.
 Branch naming: `sdc-v3/<ID>`. Numbers come only from `bench/results/` (never typed by hand).
 
-- Current phase: **0 — Preparation** → waiting at **GATE 0** (`docs/reports/gate-0-bn.md`)
+- Current phase: **1 — Measure (W1)**. GATE 0 passed ("continue", 2026-10-14); owner then asked to complete the
+  whole project without stopping at gates (2026-10-14) and to lift SDC AI's step limits (done, see "Owner decisions").
 - Baseline: tag `sdc-baseline-v1` = `274ec6a` (= `v1.0.0`), binary `bench/bin/v1/sdcd` (not committed)
 - Assumption register: `docs/plan/ASSUMPTIONS.md`
-- Next action: owner answers the open decisions in `gate-0-bn.md` and says "continue" → Phase 1 (W1)
+- Next action: paid baseline runs need the owner's model list + keys (W1 harness is ready and validated); meanwhile Phase 2 (R1 journal).
+
+## Owner decisions
+
+| Date | Decision | Effect |
+|---|---|---|
+| 2026-10-14 | "continue" at Gate 0 without answering the open questions | recommended defaults taken: bench budgets smoke $2 / medium $40 / full $250 per run; knowledge sync off; single-user account server; weekly code proposals |
+| 2026-10-14 | "SDC AI needs no limit" | removed the sub-agent 24-step cap and the `/research` step cap; the main turn already had none. Kept: budget stop (a budget the person sets), runaway-loop guard, content-filter retry count, tool-output size caps (`RESULT_CAP`, `PAGE_CAP`) - see gate report |
+| 2026-10-14 | "complete the whole project" | gates are reported but not waited on; paid runs still need models/keys |
 
 ## Phase 0 — Preparation
 
@@ -18,14 +27,14 @@ Branch naming: `sdc-v3/<ID>`. Numbers come only from `bench/results/` (never typ
 | P0.3 | Verify A-01 (code facts) | done | sdc-v3/P0 | see ASSUMPTIONS A-01 | — |
 | P0.4 | Existing-capability check | done | sdc-v3/P0 | gate-0-bn.md §2 | — |
 | P0.5 | U0 uniqueness audit | done | sdc-v3/P0 | `docs/reports/U0-uniqueness-bn.md` | re-run in Phase 7 |
-| P0.6 | Open decisions to owner | blocked | — | gate-0-bn.md §5 | owner answers |
-| GATE 0 | Gate report | in-progress | sdc-v3/P0 | `docs/reports/gate-0-bn.md` | wait for "continue" |
+| P0.6 | Open decisions to owner | done | — | defaults taken (see Owner decisions) | benchmark model IDs + keys still open |
+| GATE 0 | Gate report | done | sdc-v3/P0 | `docs/reports/gate-0-bn.md` | — |
 
 ## Phase 1 — Measure
 
 | ID | Item | Status | Branch | Numbers | Next action |
 |---|---|---|---|---|---|
-| W1 | `sdcd bench` (fixtures, 40 tasks, runner, ledger, search bench, competitors, tiers, `--compare`, `--report-bn`) | todo | sdc-v3/W1 | — | after GATE 0 |
+| W1 | `sdcd bench` (fixtures, 40 tasks, runner, ledger, search bench, competitors, tiers, `--compare`, `--report-bn`) | in-progress | sdc-v3/W1 | harness done + validated (42/42 tasks fail untouched, pass with reference; mock end-to-end run OK; ledger = provider usage exactly, request byte-identical); search baseline `results/2026-10-14-search-v1` | paid baseline runs (needs models + keys); fleet fixture with I7; Windows/Linux v1 binaries from CI |
 | GATE 1 | A-02, A-03, A-09, A-10, A-14 measured | todo | — | — | — |
 
 ## Phase 2 — Durable foundation

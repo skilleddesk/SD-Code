@@ -1,0 +1,1 @@
+It splits at '.', whole 12 and fraction '5' -> 50 cents, giving 1250 cents in an i64; integers avoid float rounding errors.

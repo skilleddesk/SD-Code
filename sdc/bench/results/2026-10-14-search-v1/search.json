@@ -1,0 +1,48 @@
+{
+  "cold": false,
+  "files": 52501,
+  "repeats": 10,
+  "root": "/tmp/sdc-tree-50k",
+  "timings": [
+    {
+      "first_ms": 273.719125,
+      "kind": "filename",
+      "p50_ms": 242.843125,
+      "p95_ms": 244.461267,
+      "query": "**/*.rs",
+      "results": 100
+    },
+    {
+      "first_ms": 244.483916,
+      "kind": "filename",
+      "p50_ms": 248.08866700000002,
+      "p95_ms": 261.14934999999997,
+      "query": "**/module_7*/**/*.ts",
+      "results": 100
+    },
+    {
+      "first_ms": 244.281,
+      "kind": "text",
+      "p50_ms": 244.19850000000002,
+      "p95_ms": 263.0525838,
+      "query": "fn compute_total",
+      "results": 100
+    },
+    {
+      "first_ms": 265.477125,
+      "kind": "text",
+      "p50_ms": 259.35724999999996,
+      "p95_ms": 261.7117828,
+      "query": "TODO\\(perf\\)",
+      "results": 100
+    },
+    {
+      "first_ms": 241.71020900000002,
+      "kind": "text",
+      "p50_ms": 240.602417,
+      "p95_ms": 241.8806836,
+      "query": "[A-Z][a-z]+Service::new",
+      "results": 100
+    }
+  ]
+}

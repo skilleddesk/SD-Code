@@ -1,0 +1,1 @@
+Subtotal from the cart, then the code's discount, then tax on subtotal - discount; total = subtotal - discount + tax; id ORD-0001.

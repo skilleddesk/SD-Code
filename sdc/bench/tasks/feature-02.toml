@@ -1,0 +1,12 @@
+id = "feature-02"
+kind = "feature"
+fixture = "ts-shop"
+tiers = []
+language = "en"
+prompt = '''
+Orders should be kept and readable: store every order `createOrder` makes (in memory), add `getOrder(id: string): Order | undefined` to `src/orders.ts`, and add a route `GET /orders/:id` with a handler `getOrderHandler` in `src/api/routes.ts` that answers status 200 with the order, or status 404 with `{ error: "order not found" }`.
+'''
+
+[verify]
+hidden = "feature-02"
+commands = ["node --test test/*.test.ts"]

@@ -1,0 +1,14 @@
+id = "find-04"
+kind = "find"
+fixture = "ts-shop"
+tiers = []
+language = "en"
+prompt = '''
+Where is the minimum order amount for the discount code FLAT5 set, and what is it in dollars?
+
+Do not change any files.
+'''
+
+[verify]
+answer_all = ["pricing\\.ts", "\\$\\s?20|20(\\.00)? (dollars|USD)|2000"]
+no_edits = true

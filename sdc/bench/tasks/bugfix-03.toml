@@ -1,0 +1,12 @@
+id = "bugfix-03"
+kind = "bugfix"
+fixture = "rust-ledger"
+tiers = []
+language = "en"
+prompt = '''
+Importing a CSV row whose memo is in double quotes and contains a comma, for example `2026-05-02,cash,-12.00,"Lunch, team"`, fails with a field-count error. Fix the import so such memos work.
+'''
+
+[verify]
+hidden = "bugfix-03"
+commands = ["cargo test -q"]

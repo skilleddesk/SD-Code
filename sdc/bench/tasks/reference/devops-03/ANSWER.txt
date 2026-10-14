@@ -1,0 +1,1 @@
+It started at 02:13:13 UTC on 2026-10-11: the database (postgres on 5432) dropped the connection and then refused connections (ECONNREFUSED).

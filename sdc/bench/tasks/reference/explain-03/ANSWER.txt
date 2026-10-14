@@ -1,0 +1,1 @@
+Query and notes are tokenized (lowercased words). Score = 2*title count + body count per word; sorted by score then id.

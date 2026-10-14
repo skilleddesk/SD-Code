@@ -1,0 +1,15 @@
+id = "explain-04"
+kind = "explain"
+fixture = "devops-site"
+tiers = []
+language = "en"
+prompt = '''
+Explain what `docker compose up` starts in this project and how the services reach each other.
+
+Do not change any files.
+'''
+
+[verify]
+answer_any = ["\\bapp\\b", "\\bdb\\b|postgres", "nginx|\\bweb\\b", "8080", "5432", "volume|dbdata", "depends_on|depends|start order"]
+answer_min = 5
+no_edits = true

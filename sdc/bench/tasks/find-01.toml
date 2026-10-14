@@ -1,0 +1,14 @@
+id = "find-01"
+kind = "find"
+fixture = "rust-ledger"
+tiers = ["smoke"]
+language = "en"
+prompt = '''
+In this project, where is one line of a CSV file split into its fields? Give the file and the function name.
+
+Do not change any files.
+'''
+
+[verify]
+answer_all = ["import\\.rs", "split_fields"]
+no_edits = true

@@ -1,0 +1,15 @@
+id = "explain-06"
+kind = "explain"
+fixture = "ts-shop"
+tiers = []
+language = "en"
+prompt = '''
+Explain how stock reservation works in this shop and what happens when not enough stock is available.
+
+Do not change any files.
+'''
+
+[verify]
+answer_any = ["reserve", "available", "reserved", "throw|error|exception", "release"]
+answer_min = 4
+no_edits = true

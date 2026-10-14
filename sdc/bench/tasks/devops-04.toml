@@ -1,0 +1,12 @@
+id = "devops-04"
+kind = "devops"
+fixture = "devops-site"
+tiers = []
+language = "en"
+requires = ["grep"]
+prompt = '''
+Make the systemd unit in `deploy/` restart the service automatically when it fails, 5 seconds after the failure, and run it as the user `deploy`.
+'''
+
+[verify]
+commands = ["grep -Eq '^Restart=(on-failure|always)' deploy/shop-api.service", "grep -Eq '^RestartSec=5s?$' deploy/shop-api.service", "grep -Eq '^User=deploy$' deploy/shop-api.service"]

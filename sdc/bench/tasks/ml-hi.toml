@@ -1,0 +1,13 @@
+id = "ml-hi"
+kind = "multilingual"
+fixture = "py-notes"
+tiers = []
+language = "hi"
+prompt = '''
+`notes/store.py` में `NoteStore` के लिए एक मेथड `count_by_tag(self)` जोड़ो जो एक dict लौटाए: हर टैग के लिए उस टैग वाले नोट्स की संख्या। काम पूरा होने पर जवाब हिंदी में दो।
+'''
+
+[verify]
+answer_all = ["[\\x{0900}-\\x{097F}]"]
+hidden = "ml-hi"
+commands = ["python3 -m unittest discover -s tests -t . -q"]

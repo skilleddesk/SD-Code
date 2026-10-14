@@ -1,0 +1,12 @@
+id = "bugfix-02"
+kind = "bugfix"
+fixture = "rust-ledger"
+tiers = ["medium"]
+language = "en"
+prompt = '''
+Reports for a date range leave out the entries dated on the last day of the range, although the documentation says both days are included. Fix it.
+'''
+
+[verify]
+hidden = "bugfix-02"
+commands = ["cargo test -q"]

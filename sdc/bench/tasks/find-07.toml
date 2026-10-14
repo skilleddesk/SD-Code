@@ -1,0 +1,14 @@
+id = "find-07"
+kind = "find"
+fixture = "devops-site"
+tiers = []
+language = "en"
+prompt = '''
+On which port does the app listen inside its container, and in which files is that port configured?
+
+Do not change any files.
+'''
+
+[verify]
+answer_all = ["8080", "docker-compose\\.yml|Dockerfile"]
+no_edits = true

@@ -1,0 +1,15 @@
+id = "explain-02"
+kind = "explain"
+fixture = "ts-shop"
+tiers = ["medium"]
+language = "en"
+prompt = '''
+Explain step by step how `createOrder` computes an order's total.
+
+Do not change any files.
+'''
+
+[verify]
+answer_any = ["subtotal", "discount", "tax", "after (the )?discount|subtotal - discount|minus the discount|discounted|what is left|remaining", "ORD-|\\bid\\b"]
+answer_min = 4
+no_edits = true

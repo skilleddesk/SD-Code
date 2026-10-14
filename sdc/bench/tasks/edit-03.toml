@@ -1,0 +1,12 @@
+id = "edit-03"
+kind = "edit"
+fixture = "ts-shop"
+tiers = ["medium"]
+language = "en"
+prompt = '''
+Support the Indian rupee in `formatPrice`: currency code `INR`, the symbol `₹` before the amount and `.` as the decimal separator (for example `₹12.34`).
+'''
+
+[verify]
+hidden = "edit-03"
+commands = ["node --test test/*.test.ts"]

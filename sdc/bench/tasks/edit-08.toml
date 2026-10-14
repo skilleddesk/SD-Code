@@ -1,0 +1,12 @@
+id = "edit-08"
+kind = "edit"
+fixture = "ts-shop"
+tiers = []
+language = "en"
+prompt = '''
+Add a discount code `SAVE20`: 20% off, only for orders with a subtotal of at least $50.00.
+'''
+
+[verify]
+hidden = "edit-08"
+commands = ["node --test test/*.test.ts"]

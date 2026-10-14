@@ -1,0 +1,13 @@
+id = "repeat-01"
+kind = "repeat"
+fixture = "ts-shop"
+tiers = ["repeat"]
+language = "en"
+repeat_of = "edit-03"
+prompt = '''
+Support the British pound in `formatPrice`: currency code `GBP`, the symbol `£` before the amount and `.` as the decimal separator (for example `£12.34`).
+'''
+
+[verify]
+hidden = "repeat-01"
+commands = ["node --test test/*.test.ts"]

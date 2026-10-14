@@ -99,9 +99,11 @@ impl SdcAgent {
     }
 
     /// Makes this a `/research` turn: the research brief and tools, these limits, and sources at the end.
+    ///
+    /// v3 (owner's decision, 2026-10-14): no step cap of its own. The turn ends when the model answers, or
+    /// when its research time is up and it is asked for the answer without tools.
     pub fn with_research(mut self, limits: research::Limits) -> Self {
         self.research = Some(limits);
-        self.max_steps = self.max_steps.min(limits.steps());
         self
     }
 
@@ -244,8 +246,31 @@ fn target(backend: Backend, prompt: &Prompt) -> Result<Target, String> {
     }
 }
 
+/// v3 W1 (A-14): the provider's own input-token count for one short message - no tools, a one-line system
+/// prompt. The bench subtracts a one-character message's count to get the text's own tokens.
+pub(crate) fn probe_input_tokens(provider: &str, model: &str, text: &str) -> Result<u64, String> {
+    let prompt = Prompt {
+        session_id: String::new(),
+        turn_id: String::new(),
+        text: text.to_string(),
+        model: model.to_string(),
+        provider: Some(provider.to_string()),
+        history: Vec::new(),
+        project_root: None,
+        remote: None,
+        autonomy: Default::default(),
+        resume: None,
+        images: Vec::new(),
+        effort: None,
+    };
+    let target = target(Backend::Api, &prompt)?;
+    let messages = [dialect::user_message(text)];
+
+    ask_model(Backend::Api, &target, "Reply with the single word OK.", &messages, &[], &EventSink::discarding(), &|| false).map(|reply| reply.input_tokens)
+}
+
 /// The catalogue's `"$4 / $20"` for a model, as numbers.
-fn price_of(provider: &str, model: &str) -> Option<(f64, f64)> {
+pub(crate) fn price_of(provider: &str, model: &str) -> Option<(f64, f64)> {
     let blocks = crate::providers::models::blocked();
     let row = blocks
         .iter()
@@ -611,6 +636,25 @@ fn dedupe_reads(seen: &mut std::collections::HashMap<String, u64>, uses: &[diale
     }
 }
 
+/// v3 W1 (A-10): the step's file reads as the ledger records them - whether the path was read before in the
+/// turn (`earlier`, the paths `dedupe_reads` had seen) and whether it went back as the one-line stub.
+fn read_entries(earlier: &HashSet<String>, uses: &[dialect::ToolUse], results: &[dialect::ToolResult]) -> Vec<crate::bench::ledger::FileRead> {
+    uses.iter()
+        .zip(results)
+        .filter(|(call, result)| call.name == "read_file" && !result.2)
+        .map(|(call, result)| {
+            let path = call.input["path"].as_str().unwrap_or_default().trim().replace('\\', "/").trim_start_matches("./").to_string();
+
+            crate::bench::ledger::FileRead {
+                repeat: earlier.contains(&path),
+                deduped: result.1 == UNCHANGED_READ,
+                tokens: crate::context::tokens_of(&result.1),
+                path,
+            }
+        })
+        .collect()
+}
+
 /// The most a turn's conversation grows to before older tool output is folded, however large the window
 /// (1.0): every token of it is read again on each step, and past this a step is slow even when cached.
 const WORKING_TOKENS: u64 = 160_000;
@@ -738,8 +782,6 @@ fn sub_agent(
     sink: &EventSink,
     research_session: Option<std::sync::Arc<research::Session>>,
 ) -> (tools::Outcome, u64, u64) {
-    const SUB_STEPS: usize = 24;
-
     let stopped = || crate::engines::cancel::requested(&parent.turn_id);
     /* A research turn's sub-agent reads one page or runs one search, counted against the same limits. */
     let system = if research_session.is_some() { research::sub_agent_prompt() } else { sub_agent_prompt(workspace) };
@@ -792,15 +834,42 @@ fn sub_agent(
     /* 0.21: explore with the provider's fast model; the turn's own model is the fallback. */
     let fast = fast_target(backend, target, parent.provider.as_deref());
     let mut on_fast = fast.is_some();
+    /* v3 W1: a sub-agent's requests join the turn's ledger. Its job was written by the model, not the person,
+       so the first message counts as context. */
+    let ledger_on = crate::bench::ledger::enabled(&parent.turn_id);
+    let shape_of = |messages: &[Value], specs: &[dialect::ToolSpec]| {
+        ledger_on.then(|| {
+            let mut shape = crate::bench::ledger::shape(&system, specs, messages, 0, 0);
 
-    for _ in 0..SUB_STEPS {
+            shape.counted[2] += std::mem::take(&mut shape.counted[5]);
+            shape
+        })
+    };
+    let ledger = |step: usize, model: &str, shape: Option<crate::bench::ledger::Shape>, reply: &Reply, at: std::time::Instant| {
+        if let Some(shape) = shape {
+            crate::bench::ledger::record(&parent.turn_id, "sub", step, model, shape, reply, at.elapsed().as_millis() as u64);
+        }
+    };
+
+    /* v3 (owner's decision, 2026-10-14): a sub-agent has no step cap, like the turn itself (it had 24). It ends
+       when it reports, when the turn is stopped, or at the budget the person set. */
+    let mut sub_step = 0;
+
+    loop {
+        sub_step += 1;
+
         if stopped() {
             return (tools::Outcome::error("The turn was stopped."), input, output);
         }
 
         let active = if on_fast { fast.as_ref().unwrap_or(target) } else { target };
+        let shape = shape_of(&messages, &specs);
+        let asked_at = std::time::Instant::now();
         let reply = match ask_model(backend, active, &system, &messages, &specs, &EventSink::discarding(), &stopped) {
-            Ok(reply) => reply,
+            Ok(reply) => {
+                ledger(sub_step, &active.model, shape, &reply, asked_at);
+                reply
+            }
             /* The fast model was refused (or failed): this sub-agent - and later ones, when the refusal is the
                key's - go on with the turn's own model. Only before its first reply: a conversation the fast
                model has already written is not handed to another one (Anthropic's thinking rules differ). */
@@ -856,21 +925,6 @@ fn sub_agent(
 
         messages.extend(dialect::tool_results(target.dialect, &results));
         keep_small(target, window, &mut messages, fixed, scale);
-    }
-
-    /* Out of steps: one last call without tools, for whatever it found. */
-    dialect::append_user_text(target.dialect, &mut messages, "[SDC: you are out of steps. Write your report now from what you found, without calling tools.]");
-
-    let active = if on_fast { fast.as_ref().unwrap_or(target) } else { target };
-
-    match ask_model(backend, active, &system, &messages, &[], &EventSink::discarding(), &stopped) {
-        Ok(reply) => {
-            input += reply.input_tokens;
-            output += reply.output_tokens;
-
-            (tools::Outcome::ok(reply.text), input, output)
-        }
-        Err(reason) => (tools::Outcome::error(format!("The sub-agent ran out of steps: {reason}")), input, output),
     }
 }
 
@@ -1190,15 +1244,22 @@ fn drive(
 
     /* The map of the folder (0.20), unless the turn is a quick question: the first step can then be the one
        that matters instead of `list_dir .`. For this turn only - the conversation keeps the person's words. */
+    let mut map_chars = 0;
     let text = {
         let words = prompt.text.rsplit("[The person's message]").next().unwrap_or(&prompt.text);
         let wants_map = research_session.is_none() && orient::pace_of(words) != orient::Pace::Quick;
 
         match wants_map.then(|| orient::orientation(workspace)).flatten() {
-            Some(map) => format!("{map}\n\n{text}"),
+            Some(map) => {
+                map_chars = map.len() + 2;
+                format!("{map}\n\n{text}")
+            }
             None => text,
         }
     };
+    /* v3 W1: the context ledger, beside the request and only when the bench (or a test) listens. */
+    let ledger_on = crate::bench::ledger::enabled(&turn_id);
+    let history_len = prompt.history.len();
 
     messages.push(dialect::user_message_with_images(target.dialect, &text, &images));
 
@@ -1296,10 +1357,15 @@ fn drive(
         }
 
         let step_specs: &[dialect::ToolSpec] = if out_of_time { &[] } else { &specs };
+        let shape = ledger_on.then(|| crate::bench::ledger::shape(&system, step_specs, &messages, history_len, map_chars));
         let asked_at = std::time::Instant::now();
         let asked = ask_model(backend, target, &system, &messages, step_specs, &notes_sink(said_something), &stopped);
 
         model_time += asked_at.elapsed();
+
+        if let (Some(shape), Ok(reply)) = (shape, &asked) {
+            crate::bench::ledger::record(&turn_id, "main", step, &target.model, shape, reply, asked_at.elapsed().as_millis() as u64);
+        }
 
         let reply: Reply = match asked {
             Ok(reply) => {
@@ -1559,7 +1625,14 @@ fn drive(
             .map(|(index, result)| result.unwrap_or_else(|| (reply.tool_uses[index].id.clone(), "The turn was stopped.".to_string(), true, None)))
             .collect();
 
+        let earlier: HashSet<String> = if ledger_on { seen_reads.keys().cloned().collect() } else { HashSet::new() };
+
         dedupe_reads(&mut seen_reads, &reply.tool_uses, &mut results);
+
+        if ledger_on {
+            crate::bench::ledger::record_reads(&turn_id, "main", step, read_entries(&earlier, &reply.tool_uses, &results));
+        }
+
         messages.extend(dialect::tool_results(target.dialect, &results));
         steer(&mut messages);
 
@@ -2360,6 +2433,72 @@ mod end_to_end {
         assert!(matches!(events.last(), Some(EngineEvent::Done { meta, .. }) if meta.starts_with("3 steps · 200 in · 40 out")));
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// v3 W1: the ledger sums to the provider's own count on every step, names the tools each reply called - and
+    /// the requests are byte-for-byte the same with the ledger on and off.
+    #[test]
+    fn the_ledger_matches_the_providers_usage_and_leaves_the_request_unchanged() {
+        let run = |turn: &str, capture: bool| {
+            let root = std::env::temp_dir().join(format!("sdc-ledger-{turn}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&root);
+            std::fs::create_dir_all(&root).unwrap();
+            std::fs::write(root.join("notes.txt"), "a line of notes\n".repeat(40)).unwrap();
+
+            let usage = |input: u64, cached: u64| format!("data: {{\"choices\":[],\"usage\":{{\"prompt_tokens\":{input},\"completion_tokens\":7,\"prompt_tokens_details\":{{\"cached_tokens\":{cached}}}}}}}\n\ndata: [DONE]\n\n");
+            let (url, server) = provider(vec![
+                chunk(serde_json::json!({ "tool_calls": [{ "index": 0, "id": "c1", "function": { "name": "read_file", "arguments": "{\"path\":\"notes.txt\"}" } }] }))
+                    + "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n"
+                    + &usage(1_234, 0),
+                chunk(serde_json::json!({ "content": "The notes repeat one line." })) + &usage(1_777, 1_200),
+            ]);
+            let target = Target {
+                url,
+                headers: vec![("content-type".to_string(), "application/json".to_string())],
+                dialect: Dialect::OpenAi,
+                model: "local-test".to_string(),
+                price: None,
+                thinking: false,
+                effort: None,
+                local_context: None,
+                local_window: false,
+            };
+            let workspace = Workspace::new(root.to_str().unwrap(), None);
+            let mut prompt = prompt_in(&root, turn, "[SDC wrapper] [The person's message] what is in notes.txt? explain the file in detail", "local-test");
+
+            prompt.history = vec![crate::engines::Message::user("earlier"), crate::engines::Message::assistant("ok")];
+
+            if capture {
+                crate::bench::ledger::capture(turn);
+            }
+
+            drive(Backend::Api, &target, &workspace, Options { autonomy: Autonomy::Auto, max_steps: 10, auto_check: false, research: None }, None, &Default::default(), &prompt, &crate::engines::Recorder::new().sink());
+
+            let bodies = server.join().unwrap();
+            let _ = std::fs::remove_dir_all(&root);
+
+            (bodies, crate::bench::ledger::take(turn))
+        };
+
+        let (with_ledger, all) = run("ledger-on", true);
+        let (without, none) = run("ledger-off", false);
+        let (reads, records): (Vec<_>, Vec<_>) = all.into_iter().partition(|record| record.role.ends_with("-reads"));
+
+        assert!(none.is_empty());
+        assert_eq!(reads.len(), 1);
+        assert_eq!((reads[0].reads[0].path.as_str(), reads[0].reads[0].repeat, reads[0].reads[0].deduped), ("notes.txt", false, false));
+        assert!(reads[0].reads[0].tokens > 50);
+        assert_eq!(records.len(), 2, "one record per request");
+        assert_eq!(records.iter().map(|record| record.parts.iter().sum::<u64>()).collect::<Vec<_>>(), [1_234, 1_777], "the parts sum to the provider's input");
+        assert_eq!(records[1].cached_tokens, 1_200);
+        assert_eq!(records[0].tools_called, ["read_file"]);
+        assert!(records[1].counted[4] > 0, "the second request carries the file as a tool result");
+        assert!(records[0].counted[3] > 0 && records[0].counted[5] > 0 && records[0].counted[0] > 0 && records[0].counted[1] > 0);
+
+        /* Byte-identical apart from the folder name, which the two runs cannot share. */
+        let same = |bodies: &[Value], turn: &str| bodies.iter().map(|body| body.to_string().replace(&format!("sdc-ledger-{turn}-"), "sdc-ledger-X-")).collect::<Vec<_>>();
+
+        assert_eq!(same(&with_ledger, "ledger-on"), same(&without, "ledger-off"), "the ledger does not change a request");
     }
 
     #[test]

@@ -1,0 +1,13 @@
+id = "repeat-02"
+kind = "repeat"
+fixture = "py-notes"
+tiers = ["repeat"]
+language = "en"
+repeat_of = "edit-05"
+prompt = '''
+Add a method `rename_tag(self, old, new)` to `NoteStore` that renames a tag on every note that has it (tags compared in their normalized form), saves the store, and returns how many notes changed.
+'''
+
+[verify]
+hidden = "repeat-02"
+commands = ["python3 -m unittest discover -s tests -t . -q"]

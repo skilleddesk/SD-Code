@@ -1,0 +1,12 @@
+id = "edit-06"
+kind = "edit"
+fixture = "py-notes"
+tiers = []
+language = "en"
+prompt = '''
+`normalize_tag` should also collapse repeated dashes into one and remove dashes at the start and end, so '#Work -- Items' becomes 'work-items'.
+'''
+
+[verify]
+hidden = "edit-06"
+commands = ["python3 -m unittest discover -s tests -t . -q"]

@@ -1,0 +1,1 @@
+It looks up the account (UnknownAccount if missing). For an Asset account it computes balance + amount and refuses with Overdraft if negative. Otherwise it pushes the entry.

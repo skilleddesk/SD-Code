@@ -1,0 +1,12 @@
+id = "edit-01"
+kind = "edit"
+fixture = "rust-ledger"
+tiers = ["smoke"]
+language = "en"
+prompt = '''
+Add a method `abs(self) -> Money` to `Money` that returns the absolute amount.
+'''
+
+[verify]
+hidden = "edit-01"
+commands = ["cargo test -q"]

@@ -1,0 +1,12 @@
+id = "ml-ar"
+kind = "multilingual"
+fixture = "ts-shop"
+tiers = []
+language = "ar"
+prompt = '''
+أين يتم حساب ضريبة المبيعات في هذا المشروع؟ اذكر اسم الملف واسم الدالة، وما هي نسبة الضريبة في بنغلاديش (BD)؟ لا تغيّر أي ملف. أجب بالعربية.
+'''
+
+[verify]
+answer_all = ["pricing\\.ts", "taxFor", "15|١٥", "[\\x{0600}-\\x{06FF}]"]
+no_edits = true

@@ -1,0 +1,12 @@
+id = "bugfix-05"
+kind = "bugfix"
+fixture = "ts-shop"
+tiers = []
+language = "en"
+prompt = '''
+Customers cannot buy the last unit of an item: reserving all of the remaining stock fails. Fix it.
+'''
+
+[verify]
+hidden = "bugfix-05"
+commands = ["node --test test/*.test.ts"]

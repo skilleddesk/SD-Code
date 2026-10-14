@@ -76,3 +76,7 @@ id_ed25519.*
 
 # macOS AppleDouble files written on non-HFS volumes (exFAT external drives)
 ._*
+
+# The bench's DevOps fixture ships a log on purpose (a task reads it)
+!bench/fixtures/devops-site/logs/
+!bench/fixtures/devops-site/logs/app.log

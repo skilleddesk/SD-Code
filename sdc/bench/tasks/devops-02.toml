@@ -1,0 +1,12 @@
+id = "devops-02"
+kind = "devops"
+fixture = "devops-site"
+tiers = []
+language = "en"
+requires = ["grep"]
+prompt = '''
+Add a healthcheck to the `db` service that uses `pg_isready -U shop`, and make `app` start only after the database is healthy.
+'''
+
+[verify]
+commands = ["grep -q 'pg_isready' docker-compose.yml", "grep -Eq 'condition: *service_healthy' docker-compose.yml", "grep -Eq '^ +healthcheck:' docker-compose.yml"]

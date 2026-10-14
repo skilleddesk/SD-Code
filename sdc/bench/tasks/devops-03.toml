@@ -1,0 +1,14 @@
+id = "devops-03"
+kind = "devops"
+fixture = "devops-site"
+tiers = ["medium"]
+language = "en"
+prompt = '''
+Read logs/app.log. When did the outage start (UTC time), and what was the root cause?
+
+Do not change any files.
+'''
+
+[verify]
+answer_all = ["02:13", "5432|postgres|database|\\bdb\\b"]
+no_edits = true

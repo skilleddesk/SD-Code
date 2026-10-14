@@ -1,0 +1,15 @@
+id = "explain-01"
+kind = "explain"
+fixture = "rust-ledger"
+tiers = ["smoke"]
+language = "en"
+prompt = '''
+Explain how `Ledger::post` decides whether an entry is accepted.
+
+Do not change any files.
+'''
+
+[verify]
+answer_any = ["unknown|not exist|does ?n[o']t exist|never opened|UnknownAccount|not opened", "asset", "overdraft|below zero|negative", "balance", "push|stor|append|added|record"]
+answer_min = 4
+no_edits = true

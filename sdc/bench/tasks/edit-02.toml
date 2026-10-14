@@ -1,0 +1,12 @@
+id = "edit-02"
+kind = "edit"
+fixture = "rust-ledger"
+tiers = ["medium"]
+language = "en"
+prompt = '''
+`report::top_accounts` should leave out accounts whose balance is zero. Make it do so.
+'''
+
+[verify]
+hidden = "edit-02"
+commands = ["cargo test -q"]

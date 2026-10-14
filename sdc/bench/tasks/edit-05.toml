@@ -1,0 +1,12 @@
+id = "edit-05"
+kind = "edit"
+fixture = "py-notes"
+tiers = ["smoke"]
+language = "en"
+prompt = '''
+Add a method `update(self, note_id, title=None, body=None)` to `NoteStore` that changes only the fields that are given, saves the store, and returns True - or returns False when there is no such note.
+'''
+
+[verify]
+hidden = "edit-05"
+commands = ["python3 -m unittest discover -s tests -t . -q"]

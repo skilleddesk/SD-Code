@@ -1,0 +1,73 @@
+# Parallel corpus for `sdcd bench lang` (A-14): the same coding request in each language.
+# Sentences are typical of what people type to SDC. Translations: bn/hi/ar written for this corpus;
+# review by native speakers is tracked in docs/plan/PROGRESS.md.
+
+[[sentence]]
+en = "Fix the login bug: users with a capital letter in their email cannot sign in."
+bn = "লগইনের বাগটা ঠিক করো: ইমেইলে বড় হাতের অক্ষর থাকলে ব্যবহারকারীরা সাইন ইন করতে পারছে না।"
+banglish = "login er bug ta thik koro: email e capital letter thakle user ra sign in korte parche na."
+hi = "लॉगिन का बग ठीक करो: ईमेल में बड़ा अक्षर होने पर उपयोगकर्ता साइन इन नहीं कर पा रहे हैं।"
+ar = "أصلح خطأ تسجيل الدخول: المستخدمون الذين يحتوي بريدهم الإلكتروني على حرف كبير لا يستطيعون تسجيل الدخول."
+
+[[sentence]]
+en = "Add a button on the cart page that removes every item at once."
+bn = "কার্ট পেজে একটা বাটন যোগ করো যেটা একবারে সব আইটেম সরিয়ে দেবে।"
+banglish = "cart page e ekta button add koro jeta ekbare shob item remove kore debe."
+hi = "कार्ट पेज पर एक बटन जोड़ो जो एक बार में सभी आइटम हटा दे।"
+ar = "أضف زرًا في صفحة السلة يزيل جميع العناصر دفعة واحدة."
+
+[[sentence]]
+en = "Why is the server slow after midnight? Check the logs and tell me the cause."
+bn = "মাঝরাতের পর সার্ভার ধীর হয়ে যায় কেন? লগ দেখে কারণটা বলো।"
+banglish = "majhrater por server slow hoye jay keno? log dekhe karon ta bolo."
+hi = "आधी रात के बाद सर्वर धीमा क्यों हो जाता है? लॉग देखकर कारण बताओ।"
+ar = "لماذا يصبح الخادم بطيئًا بعد منتصف الليل؟ افحص السجلات وأخبرني بالسبب."
+
+[[sentence]]
+en = "Write tests for the payment module and make sure they all pass."
+bn = "পেমেন্ট মডিউলের জন্য টেস্ট লেখো আর নিশ্চিত করো সবগুলো পাস করে।"
+banglish = "payment module er jonno test lekho ar nishchit koro shobgulo pass kore."
+hi = "पेमेंट मॉड्यूल के लिए टेस्ट लिखो और पक्का करो कि सब पास हों।"
+ar = "اكتب اختبارات لوحدة الدفع وتأكد من نجاحها جميعًا."
+
+[[sentence]]
+en = "Deploy the latest version to the staging server and roll back if the health check fails."
+bn = "সর্বশেষ ভার্সনটা স্টেজিং সার্ভারে ডিপ্লয় করো, আর হেলথ চেক ফেল করলে আগের অবস্থায় ফিরিয়ে নাও।"
+banglish = "latest version ta staging server e deploy koro, ar health check fail korle rollback koro."
+hi = "नवीनतम संस्करण को स्टेजिंग सर्वर पर डिप्लॉय करो और हेल्थ चेक फेल होने पर रोलबैक करो।"
+ar = "انشر أحدث إصدار على خادم الاختبار وتراجع عنه إذا فشل فحص السلامة."
+
+[[sentence]]
+en = "Rename the function getUserData to loadProfile everywhere in the project."
+bn = "পুরো প্রজেক্টে getUserData ফাংশনের নাম বদলে loadProfile করো।"
+banglish = "puro project e getUserData function er naam bodle loadProfile koro."
+hi = "पूरे प्रोजेक्ट में getUserData फ़ंक्शन का नाम बदलकर loadProfile करो।"
+ar = "أعد تسمية الدالة getUserData إلى loadProfile في كل مكان في المشروع."
+
+[[sentence]]
+en = "The invoice total is wrong when a discount and tax apply together. Find out why."
+bn = "ডিসকাউন্ট আর ট্যাক্স একসাথে লাগলে ইনভয়েসের মোট ভুল আসে। কেন হচ্ছে খুঁজে বের করো।"
+banglish = "discount ar tax eksathe laagle invoice er total vul ashe. keno hocche khuje ber koro."
+hi = "जब डिस्काउंट और टैक्स एक साथ लगते हैं तो इनवॉइस का कुल गलत आता है। पता करो क्यों।"
+ar = "إجمالي الفاتورة خاطئ عندما يُطبَّق الخصم والضريبة معًا. اكتشف السبب."
+
+[[sentence]]
+en = "Make the product list load faster; it takes five seconds on a phone."
+bn = "প্রোডাক্টের তালিকা আরো দ্রুত লোড করাও; ফোনে পাঁচ সেকেন্ড লাগে।"
+banglish = "product list ta aro taratari load korao; phone e paanch second lage."
+hi = "प्रोडक्ट लिस्ट को तेज़ी से लोड कराओ; फ़ोन पर पाँच सेकंड लगते हैं।"
+ar = "اجعل قائمة المنتجات تُحمَّل أسرع؛ تستغرق خمس ثوانٍ على الهاتف."
+
+[[sentence]]
+en = "Explain what this function does and whether it can return null."
+bn = "এই ফাংশনটা কী করে আর এটা null ফেরত দিতে পারে কিনা ব্যাখ্যা করো।"
+banglish = "ei function ta ki kore ar eta null return korte pare kina bujhiye bolo."
+hi = "समझाओ कि यह फ़ंक्शन क्या करता है और क्या यह null लौटा सकता है।"
+ar = "اشرح ما تفعله هذه الدالة وهل يمكن أن تُرجع null."
+
+[[sentence]]
+en = "Set up a nightly backup of the database and keep the last fourteen copies."
+bn = "ডাটাবেসের রাতের ব্যাকআপ সেট করো আর শেষ চৌদ্দটা কপি রেখে দাও।"
+banglish = "database er raater backup set koro ar shesh choddo ta copy rekhe dao."
+hi = "डेटाबेस का रात का बैकअप सेट करो और आखिरी चौदह कॉपियाँ रखो।"
+ar = "أعدّ نسخًا احتياطيًا ليليًا لقاعدة البيانات واحتفظ بآخر أربع عشرة نسخة."

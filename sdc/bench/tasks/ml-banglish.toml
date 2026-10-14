@@ -1,0 +1,12 @@
+id = "ml-banglish"
+kind = "multilingual"
+fixture = "ts-shop"
+tiers = ["medium"]
+language = "banglish"
+prompt = '''
+cart e same SKU duibar add korle ager quantity muche jay, notun ta boshe jay. eta thik koro jate quantity jog hoy (unit price notun tai thakbe).
+'''
+
+[verify]
+hidden = "ml-banglish"
+commands = ["node --test test/*.test.ts"]

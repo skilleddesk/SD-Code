@@ -1,0 +1,12 @@
+id = "edit-07"
+kind = "edit"
+fixture = "rust-ledger"
+tiers = []
+language = "en"
+prompt = '''
+Make the message of `LedgerError::Overdraft` say how much is missing, exactly like this: `overdraft on cash: short by 50.00`.
+'''
+
+[verify]
+hidden = "edit-07"
+commands = ["cargo test -q"]

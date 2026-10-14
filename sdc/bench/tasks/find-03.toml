@@ -1,0 +1,14 @@
+id = "find-03"
+kind = "find"
+fixture = "ts-shop"
+tiers = ["medium"]
+language = "en"
+prompt = '''
+Which handler function serves `DELETE /cart/items/:sku`, and in which file is it?
+
+Do not change any files.
+'''
+
+[verify]
+answer_all = ["routes\\.ts", "removeItemHandler"]
+no_edits = true

@@ -1,0 +1,12 @@
+id = "bugfix-06"
+kind = "bugfix"
+fixture = "py-notes"
+tiers = []
+language = "en"
+prompt = '''
+Searching the notes for a Bengali word (for example `বাজার`) finds nothing, even when a note contains that word. Fix search so that words in any language are found.
+'''
+
+[verify]
+hidden = "bugfix-06"
+commands = ["python3 -m unittest discover -s tests -t . -q"]

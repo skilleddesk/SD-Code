@@ -1,0 +1,12 @@
+id = "feature-03"
+kind = "feature"
+fixture = "py-notes"
+tiers = []
+language = "en"
+prompt = '''
+Add `notes/export.py` with `export_markdown(store) -> str` that returns every note as Markdown, in id order. For each note: a line `## <title>`, then a line `Tags: <tags joined by ', '>` only if it has tags, then a line `Due: <date>` only if it has a due date, then the body if it is not empty. Put one blank line between notes, and end the text with exactly one newline.
+'''
+
+[verify]
+hidden = "feature-03"
+commands = ["python3 -m unittest discover -s tests -t . -q"]

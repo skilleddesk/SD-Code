@@ -1,0 +1,14 @@
+id = "find-02"
+kind = "find"
+fixture = "rust-ledger"
+tiers = ["medium"]
+language = "en"
+prompt = '''
+Which function decides the category of a bank memo such as 'Starbucks coffee', and which category does that memo get?
+
+Do not change any files.
+'''
+
+[verify]
+answer_all = ["rules\\.rs", "categorize", "food-and-drink"]
+no_edits = true

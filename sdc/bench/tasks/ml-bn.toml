@@ -1,0 +1,12 @@
+id = "ml-bn"
+kind = "multilingual"
+fixture = "rust-ledger"
+tiers = ["smoke"]
+language = "bn"
+prompt = '''
+`Money::parse` ফাংশনটা কোন ফাইলে আছে, আর এটা "12.5" লেখাটাকে কোন মানে রূপান্তর করে? কোনো ফাইল বদলাবে না। উত্তর বাংলায় দাও।
+'''
+
+[verify]
+answer_all = ["money\\.rs", "1250|১২৫০", "[\\x{0980}-\\x{09FF}]"]
+no_edits = true

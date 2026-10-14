@@ -1,0 +1,12 @@
+id = "bugfix-04"
+kind = "bugfix"
+fixture = "ts-shop"
+tiers = ["medium"]
+language = "en"
+prompt = '''
+A customer whose cart is exactly $20.00 does not get the FLAT5 discount, although the promotion says 'orders of $20 or more'. Fix it.
+'''
+
+[verify]
+hidden = "bugfix-04"
+commands = ["node --test test/*.test.ts"]

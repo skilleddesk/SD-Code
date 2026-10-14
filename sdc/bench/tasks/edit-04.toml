@@ -1,0 +1,12 @@
+id = "edit-04"
+kind = "edit"
+fixture = "ts-shop"
+tiers = []
+language = "en"
+prompt = '''
+Add a `clear()` method to `Cart` that removes every line from it.
+'''
+
+[verify]
+hidden = "edit-04"
+commands = ["node --test test/*.test.ts"]

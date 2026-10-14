@@ -1,0 +1,1 @@
+app (node, 8080), db (postgres:5432, volume dbdata), web (nginx on 80 proxying to app); depends_on orders startup.

@@ -39,13 +39,6 @@ impl Default for Limits {
     }
 }
 
-impl Limits {
-    /// Model calls a research turn may make: one per search and per page, and room to plan and answer.
-    pub fn steps(&self) -> usize {
-        self.max_searches + self.max_pages + 8
-    }
-}
-
 /// The search service a `web_search` asks.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SearchProvider {
