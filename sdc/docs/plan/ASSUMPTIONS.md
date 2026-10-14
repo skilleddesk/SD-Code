@@ -24,7 +24,7 @@ change a status without a link.
 | A-15 | Interlingua keeps meaning ≥ 90% | untested | — | I8 |
 | A-16 | Fleet clustering −80% at 20 servers, 0 hidden diffs | partial (synthetic) | synthetic fleets: 5 → −44.6%, 10 → −68.3%, 20 → −80.4%, 0 hidden diffs each (SDC's token count, `results/2026-10-14-fleet-synthetic`); a real Docker fleet and provider counts are still to come | I7 |
 | A-17 | Self-learning causes no lasting regression over 4 weeks | untested | — | I11 / L |
-| A-18 | Knowledge gate blocks ≥ 98% of 50 poisoned items, rest rolled back | untested | — | I11 |
+| A-18 | Knowledge gate blocks ≥ 98% of 50 poisoned items, rest rolled back | holds (synthetic) | 50 poisoned proposals (instructions dressed as knowledge, the same claim the other way round, one sighting only, too short, a key hidden in a lesson) → 50/50 blocked, 0 rolled back needed; a rollback does take an admitted item back (test `fifty_poisoned_proposals_are_blocked_at_the_door`) | I11 |
 | A-19 | ≥ 95% correct resume after forced kill, 0 data loss | partial (local proven) | local: 100 SIGKILLs at random moments → 100/100 correct, 0 damaged files, 0 duplicated commands, scripted provider (`bench/results/2026-10-14-resume`, `sdcd bench resume`). Remote (VPS) part waits for R4 | R1–R2 (local), R4 (remote) |
 | A-20 | Sync server holds no plaintext | untested | — | X3 canary scan |
 | A-21 | Identical behaviour on 3 OS | untested | — | CI + X4 handoff |

@@ -1306,6 +1306,8 @@ fn drive(
     } else {
         text
     };
+    /* The person's own words, the part of the request SDC is answering (used by every note below). */
+    let request_text = prompt.text.rsplit("[The person's message]").next().unwrap_or(&prompt.text).to_string();
     /* v3 I4: a recipe from a similar verified task in this project, as data (switch `v3.recipes`). */
     let recipes_on = technique("recipes") && research_session.is_none() && prompt.remote.is_none();
     let text = match recipes_on.then(|| crate::v3::recipes::find(std::path::Path::new(workspace.root()), prompt.text.rsplit("[The person's message]").next().unwrap_or(&prompt.text))).flatten() {
@@ -1323,8 +1325,44 @@ fn drive(
         Some(budget) => format!("{text}\n\n{}", budget.opening()),
         None => text,
     };
+    /* v3 L1: what earlier work in this project learned the hard way, when this request matches it. */
+    let lessons_on = technique("lessons") && research_session.is_none() && prompt.remote.is_none();
+    let mut lesson_note: Option<String> = lessons_on.then(|| crate::v3::lessons::find(std::path::Path::new(workspace.root()), &request_text)).flatten();
+    /* v3 L3: a page an earlier turn read about this - with its address and how long ago it was read. */
+    let knowledge_note = (technique("knowledge") && research_session.is_none() && prompt.remote.is_none()).then(|| crate::v3::knowledge::lookup(std::path::Path::new(workspace.root()), &request_text)).flatten();
+    /* v3 W4: a map of the project's declarations, ranked for this request. */
+    let map = if technique("repomap") && research_session.is_none() {
+        crate::intel::repo_map(std::path::Path::new(workspace.root()), &request_text, &[], 1_200)
+    } else {
+        String::new()
+    };
+    /* v3 I8: one English brief of a message that is not in English - the person's technical words untouched. */
+    let brief = if technique("interlingua") && research_session.is_none() {
+        let root = std::path::Path::new(workspace.root());
+
+        crate::v3::interlingua::learn(root, &request_text);
+        let glossary = crate::v3::interlingua::glossary(root);
+
+        crate::v3::interlingua::detect(&request_text, &glossary).map(|language| crate::v3::interlingua::brief(&request_text, language, &glossary))
+    } else {
+        None
+    };
+    let text = {
+        let mut notes = String::new();
+
+        for note in [lesson_note.as_deref(), knowledge_note.as_deref(), (!map.is_empty()).then_some(map.as_str()), brief.as_deref()].into_iter().flatten() {
+            map_chars += note.len() + 2;
+            notes.push_str(note);
+            notes.push_str("\n\n");
+        }
+
+        format!("{notes}{text}")
+    };
+
     let mut converged = false;
     let mut pending_note: Option<String> = None;
+    /* v3 L1: the turn's steps, so a lesson can be distilled from the ones that failed. */
+    let mut steps: Vec<crate::v3::lessons::Step> = Vec::new();
     /* v3 I9: what the capsule tells the next model - the steps taken and the last words said. */
     let mut step_log: Vec<String> = Vec::new();
     let mut passed_checks: Vec<String> = Vec::new();
@@ -1788,6 +1826,24 @@ fn drive(
                 return;
             }
 
+            /* v3 L1: what this turn learned the hard way, kept for the next one - and only what the core admits. */
+            if lessons_on {
+                for lesson in crate::v3::lessons::observe(&steps) {
+                    let admitted = !crate::v3::on("knowledge_core")
+                        || matches!(
+                            crate::v3::knowledge_core::propose(
+                                std::path::Path::new(workspace.root()),
+                                crate::v3::knowledge_core::Candidate { kind: "lesson".into(), text: lesson.clone(), observations: vec![turn_id.clone()] },
+                            ),
+                            crate::v3::knowledge_core::Decision::Admitted(_)
+                        );
+
+                    if admitted {
+                        crate::v3::lessons::save(std::path::Path::new(workspace.root()), &lesson);
+                    }
+                }
+            }
+
             if recipes_on && summary == "Done" {
                 let done = crate::v3::recipes::Done {
                     request: prompt.text.rsplit("[The person's message]").next().unwrap_or(&prompt.text),
@@ -1796,7 +1852,21 @@ fn drive(
                     tools: step_log.iter().map(|step| step.split(" → ").next().unwrap_or(step).to_string()).collect(),
                 };
 
-                crate::v3::recipes::save(std::path::Path::new(workspace.root()), &done);
+                if !crate::v3::on("knowledge_core")
+                    || matches!(
+                        crate::v3::knowledge_core::propose(
+                            std::path::Path::new(workspace.root()),
+                            crate::v3::knowledge_core::Candidate {
+                                kind: "recipe".into(),
+                                text: crate::v3::recipes::distil(&done).unwrap_or_default(),
+                                observations: vec![turn_id.clone()],
+                            },
+                        ),
+                        crate::v3::knowledge_core::Decision::Admitted(_)
+                    )
+                {
+                    crate::v3::recipes::save(std::path::Path::new(workspace.root()), &done);
+                }
             }
 
             sink.send(EngineEvent::Done {
@@ -1922,6 +1992,23 @@ fn drive(
             }
 
             step_log.push(format!("{} {} → {}", call.name, what.chars().take(80).collect::<String>(), if result.2 { "error" } else { "ok" }));
+            steps.push(crate::v3::lessons::Step {
+                tool: call.name.clone(),
+                target: what.chars().take(120).collect(),
+                /* A command that exited non-zero failed, whichever tool ran it. */
+                ok: !result.2 && !result.1.trim_start().starts_with("exit code: 1"),
+                note: result.1.lines().next().unwrap_or_default().chars().take(160).collect(),
+            });
+
+            /* v3 I11 canary: a lesson the turn was sent is taken back when the very thing it warned about fails again. */
+            if let Some(note) = lesson_note.as_deref() {
+                let first = what.split_whitespace().next().unwrap_or_default();
+
+                if !first.is_empty() && !steps.last().is_some_and(|step| step.ok) && note.contains(first) && crate::v3::on("knowledge_core") {
+                    crate::v3::knowledge_core::rollback_matching(std::path::Path::new(workspace.root()), note, "the step it warned about failed again while it was sent");
+                    lesson_note = None;
+                }
+            }
         }
 
         /* v3 I6: files marked secret never reach a model; what did is written down (local projects). */
@@ -3049,6 +3136,50 @@ mod end_to_end {
         assert!(audit.contains("app.txt") && !audit.contains("vault/keys.txt"), "{audit}");
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// v3 W4/L1/I8: with the knowledge switches on, the request carries the English brief, the project's map and the
+    /// two code-intelligence tools; with them off it reads exactly as it did before.
+    #[test]
+    fn the_knowledge_switches_change_the_request_only_when_they_are_on() {
+        let run = |features: &[&str], tag: &str| {
+            let root = std::env::temp_dir().join(format!("sdc-knowledge-{tag}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&root);
+            std::fs::create_dir_all(root.join("src")).unwrap();
+            std::fs::write(root.join("src/orders.ts"), "export function createOrder() {}\nexport function listOrders() {}\n").unwrap();
+
+            let (url, server) = provider(vec![chunk(serde_json::json!({ "content": "done" })) + "data: [DONE]\n\n"]);
+            let target = Target {
+                url,
+                headers: vec![("content-type".to_string(), "application/json".to_string())],
+                dialect: Dialect::OpenAi,
+                model: "local-test".to_string(),
+                price: None,
+                thinking: false,
+                effort: None,
+                local_context: None,
+                local_window: false,
+            };
+            let workspace = Workspace::new(root.to_str().unwrap(), None);
+            let prompt = prompt_in(&root, "turn-knowledge", "kaj ta koro orders.ts e (do the work on orders)", "local-test");
+
+            crate::v3::forcing(features, || {
+                drive(Backend::Api, &target, &workspace, Options { autonomy: Autonomy::Auto, max_steps: 2, auto_check: false, research: None }, None, &Default::default(), &prompt, &crate::engines::Recorder::new().sink())
+            });
+
+            let _ = std::fs::remove_dir_all(&root);
+            server.join().unwrap()
+        };
+        let off = run(&[], "off");
+        let on = run(&["interlingua", "repomap", "intel"], "on");
+        let asked = |bodies: &[Value]| bodies[0]["messages"].to_string();
+        let tools = |body: &Value| body["tools"].as_array().unwrap().iter().map(|tool| tool["function"]["name"].as_str().unwrap_or_default().to_string()).collect::<Vec<_>>();
+
+        assert!(!asked(&off).contains("English brief"), "off: nothing is added");
+        assert!(!tools(&off[0]).contains(&"find_symbol".to_string()));
+        assert!(asked(&on).contains("English brief of the person's message"), "on: one English brief: {}", asked(&on));
+        assert!(asked(&on).contains("SDC code map"), "and the project's declarations");
+        assert!(tools(&on[0]).contains(&"find_symbol".to_string()) && tools(&on[0]).contains(&"symbols".to_string()));
     }
 
     #[test]

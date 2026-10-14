@@ -56,6 +56,7 @@ pub mod errors;
 pub mod fs;
 pub mod git;
 pub mod host;
+pub mod intel;
 pub mod intent;
 pub mod ops;
 pub mod paths;

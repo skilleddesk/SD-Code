@@ -73,7 +73,7 @@ impl Daemon {
         crate::continuity::brief(&facts, &earlier, &edited, engine, model)
     }
 
-    pub(super) fn long_task_memory(&self, session_id: &str, root: Option<&str>, remote: Option<&crate::ssh::Ssh>, include_file: bool) -> Option<String> {
+    pub(super) fn long_task_memory(&self, session_id: &str, root: Option<&str>, remote: Option<&crate::ssh::Ssh>, include_file: bool, request: &str) -> Option<String> {
         let mut parts = Vec::new();
 
         if let Some(steps) = self
@@ -105,6 +105,9 @@ impl Daemon {
                 };
 
                 if let Some(text) = text.filter(|text| !text.trim().is_empty()) {
+                    /* v3 L0: with `v3.memory` only the facts this request touches travel (off until it passes Q3). */
+                    let text = if crate::v3::on("memory") { crate::v3::memory::select(&text, request, crate::v3::memory::MAX_FACTS) } else { text };
+
                     parts.push(format!("What this project remembers (.sdc/memory.md):\n{}", text.chars().take(4000).collect::<String>()));
                 }
             }

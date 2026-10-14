@@ -68,6 +68,11 @@ pub fn specs_for(caps: Caps) -> Vec<ToolSpec> {
 
     all.extend(more_specs());
 
+    /* v3 W4: where the project's declarations are (switch `v3.intel` - two tools are added). */
+    if crate::v3::on("intel") {
+        all.extend(intel_specs());
+    }
+
     if caps.vision {
         all.extend(vision_specs());
     }
@@ -637,6 +642,8 @@ fn execute_call(context: &mut ToolContext, call: &ToolUse) -> Outcome {
         "grep" => grep(context, &call_id, &text("pattern"), &text("path"), call.input["glob"].as_str(), call.input["ignore_case"].as_bool().unwrap_or(false)),
         "glob" => glob(context, &call_id, &text("pattern"), &text("path")),
         "fleet_run" => fleet_run(context, &call_id, &call.input),
+        "find_symbol" => find_symbol(context, &call_id, &text("name")),
+        "symbols" => file_symbols(context, &call_id, &text("path")),
         "web_fetch" => web_fetch(context, &call_id, &text("url")),
         "web_search" => web_search(context, &call_id, &text("query")),
         "start_process" => start_process(context, &call_id, &text("command"), number("wait_seconds").unwrap_or(6).min(60)),
@@ -778,6 +785,90 @@ fn fleet_run(context: &mut ToolContext, call_id: &str, input: &Value) -> Outcome
 
     completed(context, call_id, failed == 0, &format!("{} server(s) · {failed} failed", answers.len()), None);
     Outcome::ok(crate::v3::fleet::render(&command, &answers))
+}
+
+/// v3 W4: the two code-intelligence tools' specs.
+fn intel_specs() -> Vec<ToolSpec> {
+    vec![
+        ToolSpec {
+            name: "find_symbol",
+            description: "Find where something is declared in this project (a function, struct, class, type, section). Answers file:line and the kind. Use it before reading files to find the right place.",
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": { "name": { "type": "string", "description": "The declaration's name, or part of it." } },
+                "required": ["name"],
+                "additionalProperties": false,
+            }),
+        },
+        ToolSpec {
+            name: "symbols",
+            description: "List one file's declarations (name, kind, line) without reading its code. Use it to see a long file's shape before reading the part you need.",
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": { "path": { "type": "string", "description": "The file, relative to the project folder." } },
+                "required": ["path"],
+                "additionalProperties": false,
+            }),
+        },
+    ]
+}
+
+/// v3 W4: where a name is declared, across the project (the newest-changed files are looked at first).
+fn find_symbol(context: &mut ToolContext, call_id: &str, name: &str) -> Outcome {
+    let name = name.trim();
+
+    if name.chars().count() < 2 {
+        return Outcome::error("find_symbol needs a name (two letters or more).");
+    }
+
+    started(context, call_id, "read", "Find symbol", name);
+
+    let root = std::path::PathBuf::from(context.workspace.root());
+    let mut found: Vec<String> = Vec::new();
+
+    for path in crate::search::files(&root, 4_000) {
+        let Ok(text) = std::fs::read_to_string(root.join(&path)) else {
+            continue;
+        };
+
+        for symbol in crate::intel::matching(&crate::intel::symbols(&path, &text), name) {
+            found.push(format!("{path}:{}: {} {}", symbol.line, symbol.kind, symbol.name));
+        }
+
+        if found.len() >= 40 {
+            break;
+        }
+    }
+
+    completed(context, call_id, !found.is_empty(), &format!("{} found", found.len()), None);
+
+    if found.is_empty() {
+        return Outcome::ok(format!("No declaration of {name} in this project. It may be in a dependency, or named differently - grep for the text instead."));
+    }
+
+    Outcome::ok(format!("{name}:\n{}", found.join("\n")))
+}
+
+/// v3 W4: one file's declarations.
+fn file_symbols(context: &mut ToolContext, call_id: &str, path: &str) -> Outcome {
+    let path = path.trim();
+    let Ok(full) = context.workspace.resolve(path) else {
+        return failed_with(context, call_id, format!("{path} is outside the project folder"));
+    };
+    let Ok(text) = std::fs::read_to_string(&full) else {
+        return failed_with(context, call_id, format!("cannot read {path}"));
+    };
+
+    let symbols = crate::intel::symbols(path, &text);
+
+    started(context, call_id, "read", "Symbols", path);
+    completed(context, call_id, true, &format!("{} declarations", symbols.len()), None);
+
+    if symbols.is_empty() {
+        return Outcome::ok(format!("{path} has no declarations SDC recognises ({} lines) - read it instead.", text.lines().count()));
+    }
+
+    Outcome::ok(symbols.iter().map(|symbol| format!("{}: {} {}", symbol.line, symbol.kind, symbol.name)).collect::<Vec<_>>().join("\n"))
 }
 
 fn list_dir(context: &mut ToolContext, call_id: &str, path: &str) -> Outcome {
@@ -1309,6 +1400,11 @@ fn web_fetch(context: &mut ToolContext, call_id: &str, url: &str) -> Outcome {
     match super::web::fetch_page(url, page_cap) {
         Ok(page) => {
             completed(context, call_id, true, &format!("done · {} ln", page.text.lines().count()), None);
+
+            /* v3 L3: what this page said is worth keeping - the next turn about it need not fetch again. */
+            if crate::v3::on("knowledge") {
+                crate::v3::knowledge::remember(std::path::Path::new(context.workspace.root()), &page.url, &page.title, &page.text);
+            }
 
             let dated = page.date.as_deref().map(|date| format!(" · {date}")).unwrap_or_default();
 

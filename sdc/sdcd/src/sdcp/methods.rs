@@ -1797,7 +1797,7 @@ impl Daemon {
            On a host both are a round trip each, so they are asked at the same time (0.15.4). */
         let (memory, brief) = std::thread::scope(|scope| {
             let brief = scope.spawn(|| self.continuity_brief(&session_id, &turn_id, project_root.as_deref(), remote.as_ref(), &engine_id, &model));
-            let memory = self.long_task_memory(&session_id, project_root.as_deref(), remote.as_ref(), include_memory_file);
+            let memory = self.long_task_memory(&session_id, project_root.as_deref(), remote.as_ref(), include_memory_file, &prompt_text);
 
             (memory, brief.join().ok().flatten())
         });

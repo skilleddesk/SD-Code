@@ -12,7 +12,12 @@
 pub mod budget;
 pub mod failover;
 pub mod fleet;
+pub mod interlingua;
 pub mod journal;
+pub mod knowledge;
+pub mod knowledge_core;
+pub mod lessons;
+pub mod memory;
 pub mod ledger_diff;
 pub mod outline;
 pub mod privacy;
@@ -53,6 +58,12 @@ pub const FEATURES: &[Feature] = &[
     Feature { name: "skeleton", default_on: false, token_technique: true, what: "I2: files over 200 lines are read as an outline first" },
     Feature { name: "recipes", default_on: false, token_technique: true, what: "I4/L2: a recipe from a similar verified task in .sdc/recipes is sent with the request" },
     Feature { name: "interlingua", default_on: false, token_technique: true, what: "I8: one English task brief per message, answer in the person's language" },
+    Feature { name: "intel", default_on: false, token_technique: false, what: "W4: the find_symbol and symbols tools - where the project's declarations are (adds tools, so off unless switched on)" },
+    Feature { name: "repomap", default_on: false, token_technique: true, what: "W4: a map of the project's declarations, ranked for the request, travels with it" },
+    Feature { name: "memory", default_on: false, token_technique: true, what: "L0: only the memory facts the request touches are sent, not the whole file" },
+    Feature { name: "lessons", default_on: false, token_technique: true, what: "L1: a lesson from a step that failed in this project, and what worked instead" },
+    Feature { name: "knowledge", default_on: false, token_technique: true, what: "L3: a page an earlier turn fetched is sent again as a short excerpt with its address and date" },
+    Feature { name: "knowledge_core", default_on: true, token_technique: false, what: "I11: learned knowledge needs two sightings, must not contradict what is known, and is taken back when it proves wrong" },
 ];
 
 #[derive(Debug, Default, Clone)]

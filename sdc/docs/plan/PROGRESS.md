@@ -54,14 +54,14 @@ Branch naming: `sdc-v3/<ID>`. Numbers come only from `bench/results/` (never typ
 | ID | Item | Status | Branch | Numbers | Next action |
 |---|---|---|---|---|---|
 | W3 | Search module `sdcd/src/search/` | done | sdc-v3/W3 | 52,501 files, p50: filename 2.5-3.2 ms (v1 229-234), text 2.0-6.6 ms (v1 227-1204 incl. a no-match full scan); first call 150 ms (v1 229-2815); peak RSS 58 MB (`results/2026-10-14-search-v1` vs `-v3`); `ignore` parallel walk + .gitignore, notify-patched index, byte prefilter, trigram Bloom content index; switch `v3.search` (on) | Windows/Linux numbers in CI; `nucleo` fuzzy names + UI debounce; same engine via `sdcd search` on a VPS |
-| W4 | Code intelligence (tree-sitter, symbols, repo map) | todo | sdc-v3/W4 | — | — |
+| W4 | Code intelligence (tree-sitter, symbols, repo map) | built (pattern extractor) | sdc-v3/W4 | `intel::symbols` names declarations in 10 language families (name, kind, line); `find_symbol` and `symbols` tools (switch `v3.intel`, off: they add tools); `repo_map` ranks changed/named/most-declared files within a token budget (switch `v3.repomap`); end-to-end test: switch off = the request reads as before | tree-sitter grammars behind the same `symbols()` seam (the extractor is line-pattern, not a parser); a repo map that updates as files change |
 | W5 | Cache layout + tool pruning | built, off (awaits Q3) | sdc-v3/W5 | `stable_prefix`: the date leaves the system prompt for the turn's message; `tool_pruning`: intent tool sets (core + web/browser/process/remember by the request's words), a called tool joins the list; test proves both change only what they say | paid bench comparison per model (Q3); Gemini context caching; Anthropic 4-breakpoint layout |
 | I1 | Context Ledger | built, off (awaits Q3) | sdc-v3/W5 | `ledger_diff`: a changed whole-file re-read goes back as a unified diff (≤60% of the file), cleared on fold; v1's unchanged-read stub kept | `recall(Lk)` tool; refs on stubs |
 | I2 | Skeleton-first reads | built, off (awaits Q3) | sdc-v3/W5 | `skeleton`: files >200 lines read whole answer an outline (imports summed, declarations with line numbers; 12 language families) when it saves ≥40% | tree-sitter symbols (W4); expand by symbol |
 | I10 | Token Receipt | done (footer) | sdc-v3/W5 | every agent turn's footer: input by part (apportioned to the provider's count) and tokens saved per technique (unchanged re-reads, diffs, tool pruning); switch `v3.receipt` (on) | monthly "saved $X"; dev-only shadow baseline; a UI card |
 | Q2 | Model profiles (generated) | done (mechanism) | sdc-v3/W5 | `protocol/model-profiles.json` written only by `sdcd bench profiles` from Q3 verdicts; per-turn switches settle setting → profile → default; unknown models: no token technique | first real profile needs the paid comparisons; best edit format per model |
-| L0 | Memory | todo | sdc-v3/L0 | — | — |
-| L1 | Lessons | todo | sdc-v3/L1 | — | — |
+| L0 | Memory | built, off (awaits Q3) | sdc-v3/W4 | `v3::memory::select` sends only the facts the request touches (plus the newest few), `consolidate` keeps one wording of a repeated fact; wired where the kernel reads `.sdc/memory.md`; switch `v3.memory` (a token technique, off) | memory that SDC rewrites itself (today only the person's `remember` writes it) |
+| L1 | Lessons | built, off (awaits Q3) | sdc-v3/W4 | a step that failed and the step that worked after it become a lesson in `.sdc/lessons.md`; a matching request is sent the best one as data; a lesson that warns about a step which fails again while it is sent is taken back; switch `v3.lessons` | A-?? needs a paid run; lessons from what the person said ("no, not that") |
 | GATE 3 | A-04–A-08, A-11; input −35% vs v1; Q3 on 5 models | todo | — | — | — |
 
 ## Phase 4 — Quality and cost
@@ -77,7 +77,7 @@ Branch naming: `sdc-v3/<ID>`. Numbers come only from `bench/results/` (never typ
 | Q4 | Runtime quality guard (SPRT) | todo | sdc-v3/Q4 | — | — |
 | Q5 | Lift weak models | todo | sdc-v3/Q5 | — | — |
 | L2 | Recipes (see I4) | built, off | sdc-v3/I4 | see I4 | see I4 |
-| L3 | External knowledge | todo | sdc-v3/L3 | — | — |
+| L3 | External knowledge | built, off (awaits Q3) | sdc-v3/W4 | every `web_fetch` keeps the page (address, title, date, words, 1,500-char excerpt) in `.sdc/knowledge/`; a later request sharing 3+ words gets the excerpt with its address and age, and a warning past 30 days; switch `v3.knowledge` | a paid run; embeddings for better matching |
 | GATE 4 | A-12, A-13; Q3 on all models | todo | — | — | — |
 
 ## Phase 5 — Cross-device and security
@@ -101,8 +101,8 @@ Branch naming: `sdc-v3/<ID>`. Numbers come only from `bench/results/` (never typ
 | W8 | `/research` | todo | sdc-v3/W8 | — | — |
 | I6 | Privacy Split Router (cloud-only part) | done (cloud part) | sdc-v3/I6 | `secret_paths` in `.sdc/policy.toml`: reads refused, grep/search lines dropped, commands naming a secret file have output withheld; `.sdc/audit/sent.jsonl` records files sent per provider/model; canary end-to-end test (read + grep + cat) → 0 leaks; switch `v3.privacy` (on) | 100-task canary run on the bench; embeddings (none exist yet); local summariser deferred (D-1) |
 | I7 | Fleet Fan-out | built (switch off by default) | sdc-v3/I7 | `fleet_run` tool: parallel SSH, outputs normalised (times, PIDs, ids, IPs, durations, host names) and clustered, majority sample + diffs; asks before non-read-only commands; canary-first; synthetic A-16: 20 servers −80.4%, 0 hidden diffs (`results/2026-10-14-fleet-synthetic`); switch `v3.fleet` (off: it adds a tool) | real Docker 5/10/20 fleet; `@fleet` chat syntax |
-| I8 | Interlingua | todo | sdc-v3/I8 | — | — |
-| I11 | Self-Improving Knowledge Core (umbrella over L0–L5) | todo | sdc-v3/I11 | — | — |
+| I8 | Interlingua | built, off (awaits Q3) | sdc-v3/W4 | one English brief per non-English message: a built-in Banglish/Hinglish dictionary plus the person's own glosses (`kaj (work)`) kept in `.sdc/interlingua.json`; paths, identifiers and options are never translated; an English message is untouched; switch `v3.interlingua` | a paid run; more languages than Banglish/Hinglish |
+| I11 | Self-Improving Knowledge Core (umbrella over L0–L5) | done | sdc-v3/W4 | one door for every learned fact: two sightings from separate turns, no instruction-shaped text, no contradiction with what is admitted, right size; admitted items are kept with their evidence, refusals with their reason; `rollback` takes back what proves wrong; nightly pass over the day's candidates; A-18 test: 50 poisoned proposals → 50 blocked, the one honest fact stands; switch `v3.knowledge_core` (on) | wiring the model profiles (Q2) through the same door; a UI for what SDC learned |
 | I12 | (definition to confirm with owner — not described in the master prompt) | blocked | — | — | owner defines |
 | PAR | Parallel agents in worktrees + Agents board | todo | sdc-v3/parallel | — | — |
 | AUTO | Automations + Inbox | todo | sdc-v3/automations | — | — |
