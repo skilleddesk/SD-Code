@@ -182,6 +182,9 @@ export type SdcpMethod =
   | 'provider.registry.set'
   | 'checkpoint.create'
   | 'checkpoint.list'
+  | 'runner.list'
+  | 'agents.board'
+  | 'inbox.list'
   | 'checkpoint.restore'
   | 'rewind.apply'
   | 'rewind.redo'
@@ -2172,6 +2175,22 @@ export interface SdcpMethodMap {
     result: { checkpoints: CheckpointRecord[] };
   };
   'checkpoint.restore': { params: { checkpointId: string }; result: { restored: number } };
+
+  'runner.list': {
+    params: { sessionId: string };
+    result: { runners: { name: string; host: string; dir: string }[]; chosen: string | null };
+  };
+  'agents.board': {
+    params: { sessionId: string };
+    result: { agents: { id: string; request: string; worktree: string; state: string; note: string; startedAt: number }[] };
+  };
+  'inbox.list': {
+    params: { sessionId: string };
+    result: {
+      automations: { name: string; request: string; every: string | null; at: string | null; enabled: boolean; lastRun?: number | null }[];
+      notes: { name: string; at: number; request: string; summary: string; file: string }[];
+    };
+  };
 
   'rewind.apply': {
     params: { sessionId: string; turnId: string };

@@ -9,6 +9,7 @@
 //! (`protocol/model-profiles.json`, Q2). Reliability, speed and safety features that do not change what a
 //! model is told start on.
 
+pub mod automations;
 pub mod bandit;
 pub mod budget;
 pub mod cas;
@@ -24,8 +25,10 @@ pub mod lessons;
 pub mod memory;
 pub mod ledger_diff;
 pub mod outline;
+pub mod parallel;
 pub mod plan;
 pub mod router;
+pub mod runner;
 pub mod privacy;
 pub mod profiles;
 pub mod recipes;
@@ -77,6 +80,9 @@ pub const FEATURES: &[Feature] = &[
     Feature { name: "cascade", default_on: true, token_technique: false, what: "I3: when the draft model is stuck, cascade.strong takes the task over from a capsule of its state" },
     Feature { name: "terms", default_on: true, token_technique: false, what: "G37: a site's robots.txt decides before SDC reads a page, and a crawl delay is given" },
     Feature { name: "bandit", default_on: false, token_technique: false, what: "L4: which model wins for which kind of task is learned from the turns themselves" },
+    Feature { name: "runner", default_on: true, token_technique: false, what: "R4: a project's turns can run on the VPS the person names in `.sdc/runners.toml`" },
+    Feature { name: "automations", default_on: true, token_technique: false, what: "AUTO: a request SDC runs on a clock, whose answer waits in the Inbox" },
+    Feature { name: "parallel", default_on: true, token_technique: false, what: "PAR: several agents at once, each in its own git worktree, on one board" },
 ];
 
 #[derive(Debug, Default, Clone)]
@@ -102,6 +108,7 @@ pub fn configure(store: &crate::store::sqlite::Store) {
 
     failover::configure(store);
     router::configure(store);
+    runner::configure(store);
     cascade::configure(store);
 
     if let Ok(mut slot) = slot().lock() {
@@ -306,7 +313,7 @@ pub fn status() -> serde_json::Value {
 
 /// Whether a settings key belongs here (the settings method accepts these).
 pub fn is_setting(key: &str) -> bool {
-    key == "v3.maxQuality" || key == failover::SETTING || key == router::SETTING || crate::v3::cascade::is_setting(key) || key.strip_prefix("v3.").is_some_and(|name| FEATURES.iter().any(|feature| feature.name == name))
+    key == "v3.maxQuality" || key == failover::SETTING || key == router::SETTING || key == runner::SETTING || crate::v3::cascade::is_setting(key) || key.strip_prefix("v3.").is_some_and(|name| FEATURES.iter().any(|feature| feature.name == name))
 }
 
 #[cfg(test)]

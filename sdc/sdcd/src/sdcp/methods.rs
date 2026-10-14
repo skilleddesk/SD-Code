@@ -225,7 +225,11 @@ impl Daemon {
             /* Duel, console, events ----------------------------------------------------------- */
             "duel.start" => self.duel_start(envelope, &*out),
             "duel.keep" | "duel.discard" => self.duel_keep(envelope, &*out),
-            "console.attach" => self.console_attach(envelope),
+            /* v3 R4/PAR/AUTO: the runner this project's turns go to, the agents on the board, and the Inbox. */
+        "runner.list" => self.runner_list(envelope),
+        "agents.board" => self.agents_board(envelope),
+        "inbox.list" => self.inbox_list(envelope),
+        "console.attach" => self.console_attach(envelope),
             "console.detach" => self.console_detach(envelope),
             "event.list" => Ok(self.event_list(envelope)),
             "event.subscribe" => Ok(json!({ "fromSeq": self.state.events.seq() + 1 })),
@@ -239,6 +243,71 @@ impl Daemon {
 
     /// `host.status` - the acceptance item that names it. It also *pushes* the same fact as an event,
     /// because the app's host list is folded from `HostStatus`, never read from a result.
+    /// `runner.list` (R4): the hosts this project's turns can run on, and which one is chosen for them.
+    fn runner_list(&self, envelope: &Envelope) -> Result<Value, ErrorObject> {
+        let Some(root) = self.project_root(envelope) else {
+            return Err(ErrorObject::new("invalid_request", "runner.list needs a project whose folder I can see"));
+        };
+        let named = crate::v3::runner::load(&root).map_err(|error| ErrorObject::new("runner_unreadable", error))?;
+        let chosen = crate::v3::runner::chosen(&root, crate::v3::runner::default_name().as_deref()).map_err(|error| ErrorObject::new("runner_unreadable", error))?;
+
+        Ok(json!({
+            "runners": named.iter().map(|runner| json!({ "name": runner.name, "host": runner.host, "dir": runner.dir })).collect::<Vec<_>>(),
+            "chosen": chosen.map(|runner| runner.name),
+            "setting": crate::v3::runner::default_name(),
+        }))
+    }
+
+    /// `agents.board` (PAR): the agents working now and those that finished, newest first.
+    fn agents_board(&self, envelope: &Envelope) -> Result<Value, ErrorObject> {
+        let Some(root) = self.project_root(envelope) else {
+            return Err(ErrorObject::new("invalid_request", "agents.board needs a project whose folder I can see"));
+        };
+
+        Ok(json!({
+            "agents": crate::v3::parallel::board(&root).iter().map(|agent| json!({
+                "id": agent.id,
+                "request": agent.request,
+                "worktree": agent.worktree,
+                "state": match agent.state {
+                    crate::v3::parallel::State::Running => "running",
+                    crate::v3::parallel::State::Done => "done",
+                    crate::v3::parallel::State::Failed => "failed",
+                    crate::v3::parallel::State::Stopped => "stopped",
+                },
+                "note": agent.note,
+                "startedAt": agent.started_at,
+            })).collect::<Vec<_>>(),
+        }))
+    }
+
+    /// `inbox.list` (AUTO): what the automations produced, and when each one last ran.
+    fn inbox_list(&self, envelope: &Envelope) -> Result<Value, ErrorObject> {
+        let Some(root) = self.project_root(envelope) else {
+            return Err(ErrorObject::new("invalid_request", "inbox.list needs a project whose folder I can see"));
+        };
+        let written = crate::v3::automations::load(&root).map_err(|error| ErrorObject::new("automations_unreadable", error))?;
+        let last = crate::v3::automations::last_runs(&root);
+
+        Ok(json!({
+            "automations": written.iter().map(|item| json!({
+                "name": item.name,
+                "request": item.request,
+                "every": item.every,
+                "at": item.at,
+                "enabled": item.enabled,
+                "lastRun": last.get(&item.name),
+            })).collect::<Vec<_>>(),
+            "notes": crate::v3::automations::notes(&root).iter().map(|note| json!({
+                "name": note.name,
+                "at": note.at,
+                "request": note.request,
+                "summary": note.summary,
+                "file": note.file,
+            })).collect::<Vec<_>>(),
+        }))
+    }
+
     fn host_status(&self, out: &dyn Notifier) -> Value {
         let platform = format!("{} · {}", std::env::consts::OS, std::env::consts::ARCH);
 

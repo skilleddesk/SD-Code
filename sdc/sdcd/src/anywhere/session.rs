@@ -86,7 +86,8 @@ pub fn need_for(method: &str) -> Need {
         /* Stopping things is always easy (plan 5.8): no step-up, available even while locked. */
         "kill.all" | "kill.list" => Need::Level(Level::Locked),
         /* Looking. */
-        "host.status" | "session.list" | "event.list" | "audit.verify" | "checkpoint.list" | "trust.score" => Need::Level(Level::View),
+        "host.status" | "session.list" | "event.list" | "audit.verify" | "checkpoint.list" | "trust.score" | "runner.list" | "agents.board"
+        | "inbox.list" => Need::Level(Level::View),
         /* The file gateway (0.18): looking is View, starting a chat is Operate. Reading a protected file also
            needs a fresh passkey for that file; `core` asks for it. */
         "hosts.list" | "fs.list" | "fs.read" | "fs.search" | "fs.git" | "chat.options" => Need::Level(Level::View),

@@ -488,6 +488,27 @@ pub fn run(
         return;
     };
 
+    /* v3 R4: when the person names a VPS for this project, this turn's tools run there instead of here. */
+    let prompt = if prompt.remote.is_none() && crate::v3::on("runner") {
+        match crate::v3::runner::remote_for(std::path::Path::new(root), crate::v3::runner::default_name().as_deref()) {
+            Ok(Some(ssh)) => {
+                let mut owned = prompt.clone();
+
+                sink.send(EngineEvent::Thinking(format!("This turn runs on {}, as `.sdc/runner` asks.\n", ssh.target.user_host)));
+                owned.remote = Some(ssh);
+                owned
+            }
+            Ok(None) => prompt.clone(),
+            Err(problem) => {
+                sink.send(EngineEvent::Thinking(format!("{problem} - this turn stays on this machine.\n")));
+
+                prompt.clone()
+            }
+        }
+    } else {
+        prompt.clone()
+    };
+
     let workspace = Workspace::new(root, prompt.remote.clone());
 
     /* 0.21: a local model's turn starts Ollama itself when it is installed and stopped. */
@@ -495,7 +516,7 @@ pub fn run(
         crate::host::tools::ensure_ollama();
     }
 
-    let target = match target(backend, prompt) {
+    let target = match target(backend, &prompt) {
         Ok(target) => target,
         Err(reason) => {
             sink.send(EngineEvent::Failed(reason));
@@ -504,7 +525,7 @@ pub fn run(
         }
     };
 
-    drive(backend, &target, &workspace, options, checkpoint, policy, prompt, sink);
+    drive(backend, &target, &workspace, options, checkpoint, policy, &prompt, sink);
 }
 
 /// One model call: the request, the stream, the assembled reply.

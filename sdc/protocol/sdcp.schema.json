@@ -256,6 +256,9 @@
           "checkpoint.create",
           "checkpoint.list",
           "checkpoint.restore",
+    "runner.list",
+    "agents.board",
+    "inbox.list",
           "rewind.apply",
           "rewind.redo",
           "duel.start",
@@ -1392,6 +1395,40 @@
           },
           "result": {
             "restored": "integer"
+          }
+        },
+        "runner.list": {
+          "params": {
+            "sessionId": "string"
+          },
+          "result": {
+            "runners": [
+              "runner"
+            ],
+            "chosen": "string"
+          }
+        },
+        "agents.board": {
+          "params": {
+            "sessionId": "string"
+          },
+          "result": {
+            "agents": [
+              "agent"
+            ]
+          }
+        },
+        "inbox.list": {
+          "params": {
+            "sessionId": "string"
+          },
+          "result": {
+            "automations": [
+              "automation"
+            ],
+            "notes": [
+              "note"
+            ]
           }
         },
         "rewind.apply": {
