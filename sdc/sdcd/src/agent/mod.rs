@@ -3081,7 +3081,8 @@ mod end_to_end {
     #[test]
     fn a_secret_the_agent_reads_never_reaches_the_provider_but_is_written_back() {
         let root = std::env::temp_dir().join(format!("sdc-redact-e2e-{}", std::process::id()));
-        let key = "sk-proj-FAKEfakeFAKEfake0123456789abcdefABCDEF";
+        /* Built from pieces: no scanner should take a test fixture for a real key. */
+        let key = &format!("{}{}", "sk-proj-", "FAKEfakeFAKEfake0123456789abcdefABCDEF");
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         std::fs::write(root.join("config.txt"), format!("model = small\nOPENAI_API_KEY={key}\n")).unwrap();

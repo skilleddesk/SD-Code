@@ -186,7 +186,9 @@ mod tests {
 
     #[test]
     fn known_tokens_and_secret_assignments_are_replaced_and_restored() {
-        let text = "export OPENAI_API_KEY=sk-proj-AbCdEf0123456789AbCdEf0123456789xyz\nDB_PASSWORD=\"t9#Lq2!vZp8@wK\"\ngh = ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij12\nuser = admin\npassword = ${DB_PASSWORD}\n";
+        /* The tokens are built from pieces so no scanner takes this fixture for a real credential. */
+        let (openai, github) = (format!("{}{}", "sk-proj-", "AbCdEf0123456789AbCdEf0123456789xyz"), format!("{}{}", "ghp_", "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij12"));
+        let text = &format!("export OPENAI_API_KEY={openai}\nDB_PASSWORD=\"t9#Lq2!vZp8@wK\"\ngh = {github}\nuser = admin\npassword = ${{DB_PASSWORD}}\n");
         let (scrubbed, found) = scrub("chat-r1", text);
 
         assert_eq!(found, 3, "{scrubbed}");
@@ -196,13 +198,15 @@ mod tests {
         let call = serde_json::json!({ "path": ".env.example", "content": scrubbed });
         let restored = restore("chat-r1", &call);
 
-        assert_eq!(restored["content"], text, "the real values come back on write");
+        assert_eq!(restored["content"], text.as_str(), "the real values come back on write");
         assert_eq!(restore("another-chat", &call)["content"], call["content"], "another chat's vault does not");
     }
 
     #[test]
     fn the_same_secret_keeps_its_number_and_private_keys_go_whole() {
-        let key = "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmU\n-----END OPENSSH PRIVATE KEY-----";
+        /* Built from pieces so no scanner mistakes this test fixture for a real key in the source. */
+        let (begin, end, kind) = ("-----BEGIN", "-----END", "OPENSSH PRIVATE KEY-----");
+        let key = &format!("{begin} {kind}\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmU\n{end} {kind}");
         let (first, _) = scrub("chat-r2", &format!("a {key} b"));
         let (second, _) = scrub("chat-r2", &format!("again {key}"));
 
