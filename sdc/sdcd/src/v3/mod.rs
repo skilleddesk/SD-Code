@@ -11,6 +11,7 @@
 
 pub mod budget;
 pub mod failover;
+pub mod fleet;
 pub mod journal;
 pub mod ledger_diff;
 pub mod outline;
@@ -43,6 +44,7 @@ pub const FEATURES: &[Feature] = &[
     Feature { name: "search", default_on: true, token_technique: false, what: "W3: the indexed, .gitignore-aware search engine" },
     Feature { name: "receipt", default_on: true, token_technique: false, what: "I10: a token receipt after every agent turn" },
     Feature { name: "privacy", default_on: true, token_technique: false, what: "I6: files marked secret in .sdc/policy.toml never reach a model" },
+    Feature { name: "fleet", default_on: false, token_technique: false, what: "I7: the fleet_run tool - one command on many servers, outputs clustered (adds a tool, so off unless switched on)" },
     Feature { name: "budget", default_on: true, token_technique: false, what: "I5: @budget 40k / @budget $0.10 in a message" },
     Feature { name: "stable_prefix", default_on: false, token_technique: true, what: "W5: nothing volatile (today's date) in the cached prefix" },
     Feature { name: "tool_pruning", default_on: false, token_technique: true, what: "W5: only the tools the task's intent needs" },

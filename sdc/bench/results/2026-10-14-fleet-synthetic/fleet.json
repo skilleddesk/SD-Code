@@ -1,0 +1,32 @@
+{
+  "rows": [
+    {
+      "clustered_tokens": 214,
+      "different": 1,
+      "groups": 2,
+      "hidden_diffs": 0,
+      "plain_tokens": 386,
+      "reduction": 0.4455958549222798,
+      "servers": 5
+    },
+    {
+      "clustered_tokens": 242,
+      "different": 2,
+      "groups": 2,
+      "hidden_diffs": 0,
+      "plain_tokens": 764,
+      "reduction": 0.6832460732984293,
+      "servers": 10
+    },
+    {
+      "clustered_tokens": 297,
+      "different": 3,
+      "groups": 2,
+      "hidden_diffs": 0,
+      "plain_tokens": 1519,
+      "reduction": 0.804476629361422,
+      "servers": 20
+    }
+  ],
+  "synthetic": true
+}

@@ -22,7 +22,7 @@ change a status without a link.
 | A-13 | Recipes −50% tool calls on repeated tasks | untested | — | I4 |
 | A-14 | Bengali costs 2–4× English tokens, per provider | untested | — | W1 |
 | A-15 | Interlingua keeps meaning ≥ 90% | untested | — | I8 |
-| A-16 | Fleet clustering −80% at 20 servers, 0 hidden diffs | untested | — | I7 |
+| A-16 | Fleet clustering −80% at 20 servers, 0 hidden diffs | partial (synthetic) | synthetic fleets: 5 → −44.6%, 10 → −68.3%, 20 → −80.4%, 0 hidden diffs each (SDC's token count, `results/2026-10-14-fleet-synthetic`); a real Docker fleet and provider counts are still to come | I7 |
 | A-17 | Self-learning causes no lasting regression over 4 weeks | untested | — | I11 / L |
 | A-18 | Knowledge gate blocks ≥ 98% of 50 poisoned items, rest rolled back | untested | — | I11 |
 | A-19 | ≥ 95% correct resume after forced kill, 0 data loss | partial (local proven) | local: 100 SIGKILLs at random moments → 100/100 correct, 0 damaged files, 0 duplicated commands, scripted provider (`bench/results/2026-10-14-resume`, `sdcd bench resume`). Remote (VPS) part waits for R4 | R1–R2 (local), R4 (remote) |

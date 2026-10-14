@@ -46,6 +46,11 @@ pub fn install(store: Arc<Store>) {
     let _ = installed().set(store);
 }
 
+/// The daemon's store, for v3 code that runs where no handler is at hand (the fleet tool's host list).
+pub fn store() -> Option<Arc<Store>> {
+    installed().get().cloned()
+}
+
 fn now() -> String {
     chrono::Utc::now().to_rfc3339()
 }

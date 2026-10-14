@@ -636,6 +636,7 @@ fn execute_call(context: &mut ToolContext, call: &ToolUse) -> Outcome {
         "read_file" => read_file(context, &call_id, &text("path")),
         "grep" => grep(context, &call_id, &text("pattern"), &text("path"), call.input["glob"].as_str(), call.input["ignore_case"].as_bool().unwrap_or(false)),
         "glob" => glob(context, &call_id, &text("pattern"), &text("path")),
+        "fleet_run" => fleet_run(context, &call_id, &call.input),
         "web_fetch" => web_fetch(context, &call_id, &text("url")),
         "web_search" => web_search(context, &call_id, &text("query")),
         "start_process" => start_process(context, &call_id, &text("command"), number("wait_seconds").unwrap_or(6).min(60)),
@@ -724,6 +725,59 @@ fn read_file(context: &mut ToolContext, call_id: &str, path: &str) -> Outcome {
             Outcome::error(error.message)
         }
     }
+}
+
+/// v3 I7: one command on many servers, the answers clustered. A command that changes anything asks first; with
+/// `canary` it runs on the first server alone, and goes on to the rest only if that one exits 0.
+fn fleet_run(context: &mut ToolContext, call_id: &str, input: &Value) -> Outcome {
+    let command = input["command"].as_str().unwrap_or_default().trim().to_string();
+    let selector: Vec<String> = input["hosts"].as_array().map(|hosts| hosts.iter().filter_map(|host| host.as_str().map(str::to_string)).collect()).unwrap_or_default();
+
+    if command.is_empty() || selector.is_empty() {
+        return Outcome::error("fleet_run needs a command and hosts (names, ids or [\"all\"]).");
+    }
+
+    let servers = crate::v3::fleet::select_hosts(&selector);
+
+    if servers.is_empty() {
+        return Outcome::error(format!("No connected server matches {}. The servers SDC knows are in the Hosts list.", selector.join(", ")));
+    }
+
+    if !crate::v3::fleet::read_only(&command) {
+        if let Some(refused) = ask_always(
+            context,
+            &format!("Run on {} server(s): {command}", servers.len()),
+            "A command that may change the servers",
+            &servers.iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>().join(", "),
+            "This runs on every server listed. Use canary to try one server first.",
+        ) {
+            return refused;
+        }
+    }
+
+    started(context, call_id, "run", "Fleet", &format!("{} server(s) · {command}", servers.len()));
+
+    let mut answers = Vec::new();
+    let rest = if input["canary"].as_bool().unwrap_or(false) {
+        answers = crate::v3::fleet::run_on(&servers[..1], &command);
+
+        if answers.first().is_some_and(|answer| answer.exit != 0) {
+            completed(context, call_id, false, "canary failed", None);
+
+            return Outcome::ok(format!("Canary {} failed (exit {}), so the other {} server(s) were not touched:\n{}", servers[0].0, answers[0].exit, servers.len() - 1, answers[0].output));
+        }
+
+        &servers[1..]
+    } else {
+        &servers[..]
+    };
+
+    answers.extend(crate::v3::fleet::run_on(rest, &command));
+
+    let failed = answers.iter().filter(|answer| answer.exit != 0).count();
+
+    completed(context, call_id, failed == 0, &format!("{} server(s) · {failed} failed", answers.len()), None);
+    Outcome::ok(crate::v3::fleet::render(&command, &answers))
 }
 
 fn list_dir(context: &mut ToolContext, call_id: &str, path: &str) -> Outcome {

@@ -1244,6 +1244,11 @@ fn drive(
         specs.extend(servers.specs().iter().cloned());
     }
 
+    /* v3 I7: the fleet tool, when switched on. */
+    if crate::v3::on("fleet") && research_session.is_none() && backend == Backend::Api {
+        specs.push(crate::v3::fleet::spec());
+    }
+
     /* v3 W5: only the tools the request needs; a call to another one adds it for the rest of the turn. */
     let all_specs = specs.clone();
     let pruning = technique("tool_pruning") && research_session.is_none();

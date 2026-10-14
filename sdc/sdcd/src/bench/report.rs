@@ -31,7 +31,7 @@ pub fn load(dir: &Path) -> Result<Results, String> {
         .collect::<Result<Vec<_>, _>>()?;
     let mut extra = BTreeMap::new();
 
-    for name in ["search", "lang", "resume"] {
+    for name in ["search", "lang", "resume", "fleet"] {
         if let Some(value) = std::fs::read_to_string(dir.join(format!("{name}.json"))).ok().and_then(|text| serde_json::from_str(&text).ok()) {
             extra.insert(name.to_string(), value);
         }
@@ -330,6 +330,17 @@ pub fn markdown_bn(results: &Results, baseline: Option<&Results>) -> String {
             "\n## হঠাৎ বন্ধ হওয়ার পর resume (A-19, local)\n\n| kill | turn শুরুর আগেই | resume হয়েছে | সঠিক | হার | ফাইল নষ্ট | command দুবার চলেছে |\n|---|---|---|---|---|---|---|\n| {} | {} | {} | {} | {:.1}% | {} | {} |\n",
             resume["kills"], resume["not_started"], resume["resumed"], resume["correct"], resume["correct_rate"].as_f64().unwrap_or(0.0) * 100.0, resume["damaged"], resume["duplicated_commands"]
         ));
+    }
+
+    if let Some(fleet) = results.extra.get("fleet") {
+        out.push_str("\n## Fleet clustering (A-16, synthetic fleet)\n\n| server | সত্যিই আলাদা | সব output (tokens) | clustered (tokens) | কম | group | লুকানো diff |\n|---|---|---|---|---|---|---|\n");
+
+        for row in fleet["rows"].as_array().into_iter().flatten() {
+            out.push_str(&format!(
+                "| {} | {} | {} | {} | {:.1}% | {} | {} |\n",
+                row["servers"], row["different"], row["plain_tokens"], row["clustered_tokens"], row["reduction"].as_f64().unwrap_or(0.0) * 100.0, row["groups"], row["hidden_diffs"]
+            ));
+        }
     }
 
     if let Some(baseline) = baseline {

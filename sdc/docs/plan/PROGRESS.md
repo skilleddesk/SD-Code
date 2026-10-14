@@ -100,7 +100,7 @@ Branch naming: `sdc-v3/<ID>`. Numbers come only from `bench/results/` (never typ
 |---|---|---|---|---|---|
 | W8 | `/research` | todo | sdc-v3/W8 | — | — |
 | I6 | Privacy Split Router (cloud-only part) | done (cloud part) | sdc-v3/I6 | `secret_paths` in `.sdc/policy.toml`: reads refused, grep/search lines dropped, commands naming a secret file have output withheld; `.sdc/audit/sent.jsonl` records files sent per provider/model; canary end-to-end test (read + grep + cat) → 0 leaks; switch `v3.privacy` (on) | 100-task canary run on the bench; embeddings (none exist yet); local summariser deferred (D-1) |
-| I7 | Fleet Fan-out | todo | sdc-v3/I7 | — | — |
+| I7 | Fleet Fan-out | built (switch off by default) | sdc-v3/I7 | `fleet_run` tool: parallel SSH, outputs normalised (times, PIDs, ids, IPs, durations, host names) and clustered, majority sample + diffs; asks before non-read-only commands; canary-first; synthetic A-16: 20 servers −80.4%, 0 hidden diffs (`results/2026-10-14-fleet-synthetic`); switch `v3.fleet` (off: it adds a tool) | real Docker 5/10/20 fleet; `@fleet` chat syntax |
 | I8 | Interlingua | todo | sdc-v3/I8 | — | — |
 | I11 | Self-Improving Knowledge Core (umbrella over L0–L5) | todo | sdc-v3/I11 | — | — |
 | I12 | (definition to confirm with owner — not described in the master prompt) | blocked | — | — | owner defines |

@@ -12,6 +12,7 @@
 //! sdcd bench validate    [--tier all]                     # every task fails untouched and passes its reference
 //! sdcd bench resume      [--kills 100] [--label NAME]     # A-19: kill -9 mid-turn, restart, check the work
 //! sdcd bench profiles    --baseline L --candidate feature=L2 [...]  # Q2: model-profiles.json from Q3 verdicts
+//! sdcd bench fleet       [--label NAME]                   # A-16 on synthetic 5/10/20-server fleets
 //! sdcd bench report      LABEL [--baseline LABEL]         # writes bench/results/LABEL/report-bn.md
 //! sdcd bench compare     BASELINE CANDIDATE [--report-bn]  # the Q3 rule per model
 //! ```
@@ -133,9 +134,10 @@ pub fn main(args: &[String]) -> i32 {
         "validate" => validate(rest),
         "resume" => resume_cmd(rest),
         "profiles" => profiles_cmd(rest),
+        "fleet" => fleet_cmd(rest),
         "compare" => compare_cmd(rest),
         _ => {
-            println!("{}", include_str!("mod.rs").lines().skip(2).take(17).map(|line| line.trim_start_matches("//! ")).collect::<Vec<_>>().join("\n"));
+            println!("{}", include_str!("mod.rs").lines().skip(2).take(18).map(|line| line.trim_start_matches("//! ")).collect::<Vec<_>>().join("\n"));
             Ok(())
         }
     };
@@ -325,6 +327,38 @@ fn profiles_cmd(args: &[String]) -> Result<(), String> {
 
     std::fs::write(&out, serde_json::to_string_pretty(&profiles).unwrap_or_default() + "\n").map_err(|error| format!("{}: {error}", out.display()))?;
     println!("written {}", out.display());
+
+    Ok(())
+}
+
+/// `sdcd bench fleet` (A-16, synthetic): token reduction of the clustered report over every output whole, and
+/// whether every server that really differs is named in the report (hidden diffs must be 0).
+fn fleet_cmd(args: &[String]) -> Result<(), String> {
+    let mut rows = Vec::new();
+
+    for (servers, different) in [(5, 1), (10, 2), (20, 3)] {
+        let answers = crate::v3::fleet::synthetic(servers, different);
+        let report = crate::v3::fleet::render("uptime && docker ps", &answers);
+        let plain = crate::context::tokens_of(&crate::v3::fleet::render_plain("uptime && docker ps", &answers));
+        let clustered = crate::context::tokens_of(&report);
+        let groups = crate::v3::fleet::cluster(&answers);
+        let named_different: usize = groups.iter().skip(1).map(|group| group.hosts.len()).sum();
+        let hidden = different.saturating_sub(named_different);
+        let reduction = 1.0 - clustered as f64 / plain as f64;
+
+        println!("{servers:>3} servers, {different} really different: {plain} → {clustered} tokens ({:.1}% less), groups {}, hidden diffs {hidden}", reduction * 100.0, groups.len());
+        rows.push(json!({ "servers": servers, "different": different, "plain_tokens": plain, "clustered_tokens": clustered, "reduction": reduction, "groups": groups.len(), "hidden_diffs": hidden }));
+    }
+
+    if let Some(label) = flag(args, "--label") {
+        let bench = bench_dir(args)?;
+        let out = results_dir(&bench, &label);
+
+        std::fs::create_dir_all(&out).map_err(|error| error.to_string())?;
+        std::fs::write(out.join("fleet.json"), serde_json::to_string_pretty(&json!({ "synthetic": true, "rows": rows })).unwrap_or_default()).map_err(|error| error.to_string())?;
+        write_meta_if_missing(&out, &label, "fleet", &bench)?;
+        println!("written {}", out.join("fleet.json").display());
+    }
 
     Ok(())
 }
