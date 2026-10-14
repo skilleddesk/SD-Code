@@ -31,6 +31,7 @@ secret redaction, untrusted-data চিহ্ন, rate limit, নতুন searc
 | Fleet clustering, synthetic | ৫ server −44.6%, ১০ −68.3%, ২০ −80.4%, লুকানো diff ০ | `results/2026-10-14-fleet-synthetic` |
 | ৪২টি bench task | প্রতিটি অপরিবর্তিত fixture-এ fail, reference সমাধানে pass | `sdcd bench validate` |
 | আসল model-এ একটি agent turn (installed 2.0.0, DeepSeek) | সঠিক উত্তর, ফাইল অপরিবর্তিত, journal পূর্ণ (start→model→intent→result→end), ৮,৮৪৬ in / ১৪২ out | এই সেশনের লগ |
+| একই ৩টি task, v1 binary বনাম 2.0 (paid, DeepSeek `deepseek-chat`) | খরচ $0.020020 → $0.005638 (**−৭১.৮%**), billable সাশ্রয় −৬৫.৪% [৪১.৪–৭৯.১], pass ৩/৩ → ৩/৩, input −১১.১%, output −১.৮% | `results/cost-v1-keychain`, `results/cost-smoke-v2`; বিশ্লেষণ `docs/reports/cost-test-bn.md` |
 
 **সীমা:** Search-এর সংখ্যা শুধু macOS-এ; Windows/Linux CI থেকে আসবে। Fleet সংখ্যা synthetic (আসল Docker fleet নয়) এবং SDC-র নিজের token গণনায়।
 Resume-এর পরীক্ষা scripted provider-এ — আসল model-এ নয়।
@@ -40,11 +41,12 @@ Resume-এর পরীক্ষা scripted provider-এ — আসল model-�
 | ID | অবস্থা | প্রমাণ / কেন |
 |---|---|---|
 | A-01 | আংশিক | ৯টির মধ্যে ৪ সত্য, ৩ আংশিক, ২ মিথ্যা (`ASSUMPTIONS.md`) |
-| A-02 | মাপা হয়নি | ledger বানানো (`bench::ledger`), কিন্তু baseline run-এ টাকা লাগে |
-| A-03 | মাপা হয়নি | একই কারণ |
+| A-02 | **মিথ্যা (মাপা)** | provider-এর হিসাবে input-এর ২১.০% system, ৪১.২% tools, ২২.৮% tool result — ধারণা ছিল "~২৫% system+tools, ~৫০% tool result" (`results/cost-smoke-v2`) |
+| A-03 | মাপা হয়নি | প্রতি task-এ ১ রান, variance-এর জন্য ≥২ রান লাগে (টাকা লাগে) |
 | A-04 | **প্রমাণিত** | পুরো folder হাঁটাই ধীরতার কারণ; index দিয়ে 2–4 ms |
 | A-05 | **প্রমাণিত (macOS)** | filename p50 ≤3.2 ms, text ≤6.6 ms; Windows/Linux CI-তে |
-| A-06…A-08 | মাপা হয়নি | repo map/tool pruning/cache লক্ষ্য — paid bench লাগে |
+| A-06…A-07 | মাপা হয়নি | repo map/tool pruning ডিফল্টে বন্ধ (Q3-এর অপেক্ষায়); দুটো আলাদা arm চালালে মাপা যাবে |
+| A-08 | **প্রমাণিত (এক turn-এ)** | DeepSeek-এর নিজের হিসাবে cached ৮০.৮%; step 1-এ ০, step 4-এ ৭,৫৫২/৭,৭১৮ — `results/cost-smoke-v2/ledger.jsonl` |
 | A-09 | মাপা হয়নি | competitor CLI চালাতে তাদের নিজস্ব account/খরচ লাগে |
 | A-10 | মাপা হয়নি | ledger-এ repeat-read মাপার ব্যবস্থা আছে, run নেই |
 | A-11…A-13 | মাপা হয়নি | paid bench |
@@ -92,6 +94,8 @@ node sdc/protocol/check.mjs
 cd sdc/bench && ../sdcd/target/release/sdcd bench validate
 ../sdcd/target/release/sdcd bench resume --kills 100 --label <label>
 ../sdcd/target/release/sdcd bench search --root <50k-tree> --label <label>   # tree: bench gen-tree
-# টাকা লাগে (আপনার অনুমতি/বাজেট লাগবে):
-../sdcd/target/release/sdcd bench run --models deepseek:deepseek-flash --tier smoke --max-usd 2
+# টাকা লাগে (ছোট পরীক্ষা চালানো হয়েছে, খরচ $0.026):
+../sdcd/target/release/sdcd bench run --models deepseek:deepseek-chat --tier smoke --runs 1 --max-usd 0.50 --label <label>
+../sdcd/target/release/sdcd bench run ... --binary bench/bin/v1/sdcd --label <baseline>   # একই task, v1 daemon
+../sdcd/target/release/sdcd bench compare <baseline> <label> --report-bn
 ```
