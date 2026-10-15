@@ -15,6 +15,16 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [2.0.1] — the macOS build that signs only when it can
+
+The 2.0.0 installers never appeared: that release run built Windows and Linux, but both `macos` jobs died at the
+very last step with `failed to bundle project: failed to codesign application: failed to import keychain
+certificate`. The job handed the bundler an *empty* `APPLE_CERTIFICATE` - a secret that is not set still becomes
+an environment variable - and tauri imports a certificate whenever that variable exists at all, so even the
+unsigned build failed. The workflow now copies the Apple values into the environment only when a certificate is
+really there, and says in the log that the build is unsigned when it is not. Nothing in the app changed: 2.0.1
+carries 2.0.0's code.
+
 ## [2.0.0] — SDC-v3: the trust kernel
 
 SDC now checks its own work, keeps what it learns, and can run a turn somewhere else. Every part below sits

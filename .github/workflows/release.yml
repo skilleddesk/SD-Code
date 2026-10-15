@@ -113,18 +113,43 @@ jobs:
     # secrets when they are there (Settings → Secrets → Actions) and stays out of the way when they are not: the
     # installers are then unsigned, which is what the release notes below tell the person downloading them.
     #
-    # They are read here, at job level, because a step's `if` cannot see `secrets` - only `env`.
-    env:
-      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-      APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-      APPLE_ID: ${{ secrets.APPLE_ID }}
-      APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+    # The values are *not* read into the job's `env`. A secret that is not set would then reach the bundler as an
+    # empty APPLE_CERTIFICATE, tauri imports a certificate whenever that variable exists at all, and the macOS
+    # bundle then fails with "failed to import keychain certificate" - which is exactly what the v2.0.0 release
+    # run did on both macos jobs, while Windows and Linux passed. So the values are copied into the environment
+    # only when a certificate is really there, and `have` carries the answer to the `if`s below, which cannot
+    # read `secrets` themselves.
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Look for a signing certificate
+        id: signing
+        if: matrix.platform == 'macos-latest'
+        env:
+          CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          NOTARY_ID: ${{ secrets.APPLE_ID }}
+          NOTARY_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          NOTARY_TEAM: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [ -z "$CERTIFICATE" ]; then
+            echo "have=no" >> "$GITHUB_OUTPUT"
+            echo "no Apple certificate in the secrets - this macOS build is unsigned (ad-hoc)"
+            exit 0
+          fi
+
+          echo "have=yes" >> "$GITHUB_OUTPUT"
+          {
+            echo "APPLE_CERTIFICATE=$CERTIFICATE"
+            echo "APPLE_CERTIFICATE_PASSWORD=$CERTIFICATE_PASSWORD"
+            echo "APPLE_SIGNING_IDENTITY=$SIGNING_IDENTITY"
+            echo "APPLE_ID=$NOTARY_ID"
+            echo "APPLE_PASSWORD=$NOTARY_PASSWORD"
+            echo "APPLE_TEAM_ID=$NOTARY_TEAM"
+          } >> "$GITHUB_ENV"
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
@@ -168,7 +193,7 @@ jobs:
       # Without this step a macOS build still succeeds - it is signed ad-hoc, which runs on this machine and
       # trips Gatekeeper on someone else's, which is the difference the secrets make.
       - name: macOS signing identity (X5)
-        if: matrix.platform == 'macos-latest' && env.APPLE_CERTIFICATE != ''
+        if: steps.signing.outputs.have == 'yes'
         run: |
           KEYCHAIN="$RUNNER_TEMP/sdc-signing.keychain-db"
 

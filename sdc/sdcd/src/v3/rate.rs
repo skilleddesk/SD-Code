@@ -135,6 +135,30 @@ mod tests {
     }
 
     #[test]
+    fn acquire_does_not_wait_or_take_a_token_when_the_switch_is_off() {
+        let url = "https://acquire-off.example/v1/chat";
+
+        for _ in 0..BURST as usize {
+            reserve(&host(url), PER_MINUTE, BURST, Instant::now());
+        }
+
+        /* Only `rate_limit` is named, so the other tests that run beside this one are not touched. */
+        std::env::set_var(crate::bench::ABLATE_ENV, "rate_limit");
+
+        let started = Instant::now();
+
+        acquire(url);
+        std::env::remove_var(crate::bench::ABLATE_ENV);
+
+        assert!(started.elapsed() < Duration::from_millis(250), "a switched-off limiter must not sleep");
+
+        /* The skipped call took no token: the debt is still about one token (0.5s), not two (1s). */
+        let wait = reserve(&host(url), PER_MINUTE, BURST, Instant::now());
+
+        assert!(wait > Duration::ZERO && wait <= Duration::from_millis(500), "waited {wait:?}");
+    }
+
+    #[test]
     fn parallel_requests_to_one_host_each_take_a_distinct_slot() {
         let now = Instant::now();
         let threads: Vec<_> = (0..8).map(|_| std::thread::spawn(move || reserve("bucket-parallel.example", 60.0, 2.0, now))).collect();
@@ -159,6 +183,14 @@ mod tests {
         assert_eq!(reserve("bucket-idle.example", 60.0, 2.0, later), Duration::ZERO);
         assert_eq!(reserve("bucket-idle.example", 60.0, 2.0, later), Duration::ZERO);
         assert_eq!(reserve("bucket-idle.example", 60.0, 2.0, later), Duration::from_secs(1));
+    }
+
+    #[test]
+    fn different_paths_and_cases_of_one_host_share_a_bucket() {
+        let now = Instant::now();
+
+        assert_eq!(reserve(&host("https://Shared.example/v1/chat"), 60.0, 1.0, now), Duration::ZERO);
+        assert_eq!(reserve(&host("http://shared.EXAMPLE/v1/models"), 60.0, 1.0, now), Duration::from_secs(1));
     }
 
     #[test]

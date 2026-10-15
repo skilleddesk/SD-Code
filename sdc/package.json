@@ -1,6 +1,6 @@
 {
   "name": "sdc",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "private": true,
   "description": "SDC (Skilleddesk Code) - pnpm workspace root: Tauri 2 desktop app in app/, host daemon (Rust) in sdcd/.",
   "packageManager": "pnpm@10.34.5",
