@@ -47,7 +47,7 @@ Resume-এর পরীক্ষা scripted provider-এ — আসল model-�
 | A-05 | **প্রমাণিত (macOS)** | filename p50 ≤3.2 ms, text ≤6.6 ms; Windows/Linux CI-তে |
 | A-06…A-07 | মাপা হয়নি | repo map/tool pruning ডিফল্টে বন্ধ (Q3-এর অপেক্ষায়); দুটো আলাদা arm চালালে মাপা যাবে |
 | A-08 | **প্রমাণিত (DeepSeek, এক নমুনায়)** | DeepSeek-এর নিজের হিসাবে cached ৮০.৮%; step 1-এ ০, step 4-এ ৭,৫৫২/৭,৭১৮ — `results/cost-smoke-v2/ledger.jsonl` |
-| A-09 | মাপা হয়নি | competitor CLI চালাতে তাদের নিজস্ব account/খরচ লাগে |
+| A-09 | **প্রমাণিত (Claude Code)** | input-এর ৮৭% (DeepSeek-এ), ৮৬% (Haiku-তে) cache থেকে; Codex মাপা হয়নি (login নেই) — `vs-claude-code-bn.md` |
 | A-10 | মাপা হয়নি | ledger-এ repeat-read মাপার ব্যবস্থা আছে, run নেই |
 | A-11…A-13 | মাপা হয়নি | paid bench |
 | A-14 | মাপা হয়নি | `sdcd bench lang` তৈরি; provider-এর গণনা লাগে (DeepSeek-এ চালানো যেত, আপনার সীমার বাইরে রেখেছি) |
@@ -58,7 +58,7 @@ Resume-এর পরীক্ষা scripted provider-এ — আসল model-�
 | A-19 | **আংশিক (local প্রমাণিত)** | ১০০/১০০; VPS অংশে আসল server লাগে |
 | A-20 | মাপা হয়নি | server-এ canary string খুঁজে দেখার পরীক্ষা চালানো হয়নি (বিশ্লেষণ: payload sealed রাখাই নকশা) |
 | A-21 | CI-র উপর | তিন OS-এর `cargo test`/UI check CI চালায় — ফল নিচে §৬ |
-| A-22 | মাপা হয়নি | A-02…A-13-র উপর নির্ভরশীল |
+| A-22 | **আংশিক** | DeepSeek-এ Claude Code-এর চেয়ে ৬৫% কম ($0.0324 → $0.0114), ৬/৬ জোড়ায়, ৯৫% ব্যবধান [৪৯–৭৫]%; ছোট নমুনা, এক model, Codex অনুপস্থিত — `vs-claude-code-bn.md` |
 
 ## ৪. যা বানানো হয়েছে (প্রতিটি আইটেম, `PROGRESS.md`-এর সাথে মিলিয়ে)
 

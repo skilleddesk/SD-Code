@@ -15,7 +15,7 @@ change a status without a link.
 | A-06 | Repo map cuts find-task input ≥ 30% on all models | untested | — | W4 |
 | A-07 | Tool pruning keeps quality (Q3 rule) | untested | — | W5 |
 | A-08 | Cached share ≥ 70% after 3 turns, per provider | untested | — | W5 |
-| A-09 | Claude Code / Codex CLI already use prompt caching | untested | — | W1 `bench competitors` |
+| A-09 | Claude Code / Codex CLI already use prompt caching | proven for Claude Code | input-এর 87% (DeepSeek-এ) ও 86% (Haiku-তে) provider-এর cache থেকে — `bench/results/vs-cc-on-deepseek`, `vs-cc-on-claude-haiku`; Codex মাপা হয়নি (login নেই) | W1 `bench competitors` |
 | A-10 | Duplicate reads ≥ 10% of input on long tasks | untested | — | W1 ledger |
 | A-11 | Skeleton reads −20% read tokens, time < +20% | untested | — | I2 |
 | A-12 | Cheap-API draft acceptance ≥ 35% | untested | — | I3 |
@@ -28,7 +28,7 @@ change a status without a link.
 | A-19 | ≥ 95% correct resume after forced kill, 0 data loss | partial (local proven) | local: 100 SIGKILLs at random moments → 100/100 correct, 0 damaged files, 0 duplicated commands, scripted provider (`bench/results/2026-10-14-resume`, `sdcd bench resume`). Remote (VPS) part waits for R4 | R1–R2 (local), R4 (remote) |
 | A-20 | Sync server holds no plaintext | untested | — | X3 canary scan |
 | A-21 | Identical behaviour on 3 OS | untested | — | CI + X4 handoff |
-| A-22 | v3 cloud bill ≥ 40% below Claude Code / Codex on the same model | untested | — | Phase 7 |
+| A-22 | v3 cloud bill ≥ 40% below Claude Code / Codex on the same model | partial | DeepSeek-এ Claude Code-এর চেয়ে 65% কম ($0.0324 → $0.0114), 6/6 জোড়ায় SDC সস্তা, জোড়া-প্রতি median 72% [49–75]; pass 6/6 দুদিকে। ৩ task × ২ run, ছোট fixture, এক model; Codex ও অন্য model বাকি — `docs/reports/vs-claude-code-bn.md` | Phase 7 |
 
 ## A-01 detail — code facts (checked against `sdc-baseline-v1` = `274ec6a`)
 

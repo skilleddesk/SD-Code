@@ -636,7 +636,16 @@ fn run_competitor(task: &Task, model: &Model, bench: &Path, label: &str, index: 
     record.tool_calls = report.tool_calls.clone();
     record.billable_equiv = runner::billable(report.input_tokens, report.cached_tokens, report.output_tokens, price);
     /* Claude Code says what it cost; the catalogue price is the fallback, cached input at a tenth. */
-    record.usd = report.reported_usd.unwrap_or_else(|| runner::usd(report.input_tokens, report.cached_tokens, report.output_tokens, price));
+    /* The competitor's own dollar figure is priced by its own table, so it is only right for its own models. A
+       Claude Code run on another provider's model (ANTHROPIC_BASE_URL) reports Claude prices for it - for those
+       the cost is worked out from the tokens at the catalogue price, as for SDC's runs. */
+    let own_models = ["claude", "haiku", "sonnet", "opus"].iter().any(|name| model.model.to_lowercase().contains(name));
+    let from_tokens = runner::usd(report.input_tokens, report.cached_tokens, report.output_tokens, price);
+
+    record.usd = match report.reported_usd {
+        Some(reported) if own_models || price.is_none() => reported,
+        _ => from_tokens,
+    };
     record.wall_ms = wall_ms;
     record.answer = report.answer.chars().take(4_000).collect();
     record.error = report.error.clone();

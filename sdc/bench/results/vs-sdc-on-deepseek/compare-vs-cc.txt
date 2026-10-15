@@ -1,0 +1,16 @@
+task/run            CC in   SDC in     CC $    SDC $   saving
+bugfix-01/0        236988    79976   0.0071   0.0031      57%
+bugfix-01/1        133164    82562   0.0053   0.0031      41%
+edit-01/0          177755    26191   0.0054   0.0013      76%
+edit-01/1          140193    26507   0.0048   0.0013      73%
+explain-01/0       106969    15149   0.0047   0.0012      75%
+explain-01/1       128321    22089   0.0050   0.0014      71%
+
+input tokens   Claude Code 923,390.0000  SDC 252,474.0000  SDC is 73% lower
+cached tokens  Claude Code 802,688.0000  SDC 207,232.0000  SDC is 74% lower
+output tokens  Claude Code 15,069.0000  SDC 7,876.0000  SDC is 48% lower
+USD            Claude Code     0.0324  SDC     0.0114  SDC is 65% lower
+
+per-pair USD saving: median 72%  95% interval [49%, 75%]  over 6 pairs
+pass: Claude Code 6 / 6   SDC 6 / 6
+sdc wins on 6 of 6 pairs
