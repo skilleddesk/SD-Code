@@ -591,6 +591,7 @@ fn run_sdc(client: &mut runner::Client, daemon: &runner::Daemon, task: &Task, mo
 
             if !record.ledger {
                 record.input_tokens = turn.reported_input;
+                record.cached_tokens = turn.reported_cached.min(turn.reported_input);
                 record.output_tokens = turn.reported_output;
                 record.tool_calls = turn.tool_cards.clone();
             }

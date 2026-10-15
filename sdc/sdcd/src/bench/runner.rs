@@ -318,6 +318,9 @@ pub struct TurnResult {
     pub wall_ms: u64,
     pub reported_input: u64,
     pub reported_output: u64,
+    /// What the turn's footer says the provider's cache served (v1 prints it; it has no ledger). Approximate:
+    /// the footer rounds thousands to one decimal.
+    pub reported_cached: u64,
     pub tool_cards: BTreeMap<String, u64>,
     pub error: Option<String>,
     pub timed_out: bool,
@@ -345,6 +348,9 @@ pub fn absorb(event: &Value, started: Instant, result: &mut TurnResult) -> bool 
             result.reported_input = event["inputTokens"].as_u64().unwrap_or(result.reported_input);
             result.reported_output = event["outputTokens"].as_u64().unwrap_or(result.reported_output);
         }
+        "TurnCompleted" => {
+            result.reported_cached = footer_cached(event["meta"].as_str().unwrap_or_default()).unwrap_or(result.reported_cached);
+        }
         "ErrorRaised" => {
             result.error = Some(format!("{}: {}", event["title"].as_str().unwrap_or_default(), event["explanation"].as_str().unwrap_or_default()));
         }
@@ -354,6 +360,17 @@ pub fn absorb(event: &Value, started: Instant, result: &mut TurnResult) -> bool 
     }
 
     false
+}
+
+/// The cached tokens a turn's footer reports: `… · 61.9k cached · …` or `… · 850 cached`.
+pub fn footer_cached(meta: &str) -> Option<u64> {
+    let before = meta.split(" cached").next().filter(|_| meta.contains(" cached"))?;
+    let figure = before.rsplit(" · ").next()?.trim();
+
+    match figure.strip_suffix('k') {
+        Some(thousands) => thousands.parse::<f64>().ok().map(|value| (value * 1_000.0).round() as u64),
+        None => figure.parse().ok(),
+    }
 }
 
 const NOBODY: &str = "Nobody can answer during this benchmark run. Proceed with your best judgement and finish the task.";
@@ -484,6 +501,13 @@ mod tests {
         assert_eq!(run.tool_calls["read_file"], 2);
         assert_eq!((run.read_tokens, run.repeat_read_tokens), (580, 280));
         assert!(run.ledger);
+    }
+
+    #[test]
+    fn a_footer_says_how_much_the_providers_cache_served() {
+        assert_eq!(footer_cached("5 steps · 71.8k in · 2.2k out · 62.0k cached · 40s model, 2s tools"), Some(62_000));
+        assert_eq!(footer_cached("2 steps · 900 in · 40 out · 850 cached"), Some(850));
+        assert_eq!(footer_cached("2 steps · 900 in · 40 out"), None);
     }
 
     #[test]

@@ -1,0 +1,249 @@
+{
+  "ablate": null,
+  "binary": "bin/v1/sdcd",
+  "competitor_versions": {},
+  "date": "2026-10-15",
+  "enable": null,
+  "git_commit": "558e010",
+  "label": "cost-v1-footer",
+  "max_usd": 0.5,
+  "mode": "sdc",
+  "models": [
+    "deepseek:deepseek-chat"
+  ],
+  "os": "macos aarch64",
+  "runs": 1,
+  "sdcd_version": "sdcd 1.0.0 (SDCP 0.1)",
+  "tasks": [
+    "bugfix-01",
+    "edit-01",
+    "explain-01"
+  ],
+  "tier": "smoke",
+  "v3": [
+    {
+      "default": true,
+      "name": "journal",
+      "on": true,
+      "tokenTechnique": false,
+      "what": "R1: every agent step written ahead to the job journal"
+    },
+    {
+      "default": true,
+      "name": "resume",
+      "on": true,
+      "tokenTechnique": false,
+      "what": "R2: a turn the daemon lost (crash, power) continues from its journal"
+    },
+    {
+      "default": true,
+      "name": "offline",
+      "on": true,
+      "tokenTechnique": false,
+      "what": "R3: a model step waits for the network instead of failing the turn"
+    },
+    {
+      "default": true,
+      "name": "rate_limit",
+      "on": true,
+      "tokenTechnique": false,
+      "what": "W9: per-provider request pacing (token bucket)"
+    },
+    {
+      "default": true,
+      "name": "redact",
+      "on": true,
+      "tokenTechnique": false,
+      "what": "W9: secrets in tool output are replaced by placeholders before any model sees them"
+    },
+    {
+      "default": true,
+      "name": "untrusted",
+      "on": true,
+      "tokenTechnique": false,
+      "what": "W9: web pages and fetched text are marked as data, never instructions"
+    },
+    {
+      "default": true,
+      "name": "search",
+      "on": true,
+      "tokenTechnique": false,
+      "what": "W3: the indexed, .gitignore-aware search engine"
+    },
+    {
+      "default": true,
+      "name": "receipt",
+      "on": true,
+      "tokenTechnique": false,
+      "what": "I10: a token receipt after every agent turn"
+    },
+    {
+      "default": true,
+      "name": "privacy",
+      "on": true,
+      "tokenTechnique": false,
+      "what": "I6: files marked secret in .sdc/policy.toml never reach a model"
+    },
+    {
+      "default": false,
+      "name": "fleet",
+      "on": false,
+      "tokenTechnique": false,
+      "what": "I7: the fleet_run tool - one command on many servers, outputs clustered (adds a tool, so off unless switched on)"
+    },
+    {
+      "default": true,
+      "name": "budget",
+      "on": true,
+      "tokenTechnique": false,
+      "what": "I5: @budget 40k / @budget $0.10 in a message"
+    },
+    {
+      "default": false,
+      "name": "stable_prefix",
+      "on": false,
+      "tokenTechnique": true,
+      "what": "W5: nothing volatile (today's date) in the cached prefix"
+    },
+    {
+      "default": false,
+      "name": "tool_pruning",
+      "on": false,
+      "tokenTechnique": true,
+      "what": "W5: only the tools the task's intent needs"
+    },
+    {
+      "default": false,
+      "name": "ledger_diff",
+      "on": false,
+      "tokenTechnique": true,
+      "what": "I1: a re-read of a changed file is sent as a diff"
+    },
+    {
+      "default": false,
+      "name": "skeleton",
+      "on": false,
+      "tokenTechnique": true,
+      "what": "I2: files over 200 lines are read as an outline first"
+    },
+    {
+      "default": false,
+      "name": "recipes",
+      "on": false,
+      "tokenTechnique": true,
+      "what": "I4/L2: a recipe from a similar verified task in .sdc/recipes is sent with the request"
+    },
+    {
+      "default": false,
+      "name": "interlingua",
+      "on": false,
+      "tokenTechnique": true,
+      "what": "I8: one English task brief per message, answer in the person's language"
+    },
+    {
+      "default": false,
+      "name": "intel",
+      "on": false,
+      "tokenTechnique": false,
+      "what": "W4: the find_symbol and symbols tools - where the project's declarations are (adds tools, so off unless switched on)"
+    },
+    {
+      "default": false,
+      "name": "repomap",
+      "on": false,
+      "tokenTechnique": true,
+      "what": "W4: a map of the project's declarations, ranked for the request, travels with it"
+    },
+    {
+      "default": false,
+      "name": "memory",
+      "on": false,
+      "tokenTechnique": true,
+      "what": "L0: only the memory facts the request touches are sent, not the whole file"
+    },
+    {
+      "default": false,
+      "name": "lessons",
+      "on": false,
+      "tokenTechnique": true,
+      "what": "L1: a lesson from a step that failed in this project, and what worked instead"
+    },
+    {
+      "default": false,
+      "name": "knowledge",
+      "on": false,
+      "tokenTechnique": true,
+      "what": "L3: a page an earlier turn fetched is sent again as a short excerpt with its address and date"
+    },
+    {
+      "default": true,
+      "name": "knowledge_core",
+      "on": true,
+      "tokenTechnique": false,
+      "what": "I11: learned knowledge needs two sightings, must not contradict what is known, and is taken back when it proves wrong"
+    },
+    {
+      "default": true,
+      "name": "cas",
+      "on": true,
+      "tokenTechnique": false,
+      "what": "W7a: a file's old content is kept by its own hash before SDC changes it, so a turn can be taken back without git"
+    },
+    {
+      "default": true,
+      "name": "router",
+      "on": true,
+      "tokenTechnique": false,
+      "what": "W6: a plainly light request goes to the fast model named in router.fast; everything else stays on the main model"
+    },
+    {
+      "default": true,
+      "name": "effort",
+      "on": true,
+      "tokenTechnique": false,
+      "what": "Q5: a small model is given room to think and one instruction to lean on the tools"
+    },
+    {
+      "default": true,
+      "name": "cascade",
+      "on": true,
+      "tokenTechnique": false,
+      "what": "I3: when the draft model is stuck, cascade.strong takes the task over from a capsule of its state"
+    },
+    {
+      "default": true,
+      "name": "terms",
+      "on": true,
+      "tokenTechnique": false,
+      "what": "G37: a site's robots.txt decides before SDC reads a page, and a crawl delay is given"
+    },
+    {
+      "default": false,
+      "name": "bandit",
+      "on": false,
+      "tokenTechnique": false,
+      "what": "L4: which model wins for which kind of task is learned from the turns themselves"
+    },
+    {
+      "default": true,
+      "name": "runner",
+      "on": true,
+      "tokenTechnique": false,
+      "what": "R4: a project's turns can run on the VPS the person names in `.sdc/runners.toml`"
+    },
+    {
+      "default": true,
+      "name": "automations",
+      "on": true,
+      "tokenTechnique": false,
+      "what": "AUTO: a request SDC runs on a clock, whose answer waits in the Inbox"
+    },
+    {
+      "default": true,
+      "name": "parallel",
+      "on": true,
+      "tokenTechnique": false,
+      "what": "PAR: several agents at once, each in its own git worktree, on one board"
+    }
+  ]
+}

@@ -1,6 +1,6 @@
-# SDC 2.0.0 (SDC-v3) — চূড়ান্ত রিপোর্ট
+# SDC 2.0.1 (SDC-v3) — চূড়ান্ত রিপোর্ট
 
-তারিখ: ২০২৬-১০-১৪ · base `sdc-baseline-v1` (v1.0.0, `274ec6a`) → `2.0.0`
+তারিখ: ২০২৬-১০-১৫ · base `sdc-baseline-v1` (v1.0.0, `274ec6a`) → `v2.0.1` (`558e010`). `v2.0.0` tag-এর release workflow ব্যর্থ হয়েছিল, তাই 2.0.1 প্রকাশিত হয়েছে (কারণ §৬)।
 
 এই রিপোর্টে শুধু সেই সংখ্যাই আছে যা `bench/results/`-এ ফাইল হিসেবে আছে বা যা এই সেশনে চালিয়ে দেখা হয়েছে।
 যেটা মাপা হয়নি সেটা "মাপা হয়নি" বলা হয়েছে।
@@ -31,7 +31,7 @@ secret redaction, untrusted-data চিহ্ন, rate limit, নতুন searc
 | Fleet clustering, synthetic | ৫ server −44.6%, ১০ −68.3%, ২০ −80.4%, লুকানো diff ০ | `results/2026-10-14-fleet-synthetic` |
 | ৪২টি bench task | প্রতিটি অপরিবর্তিত fixture-এ fail, reference সমাধানে pass | `sdcd bench validate` |
 | আসল model-এ একটি agent turn (installed 2.0.0, DeepSeek) | সঠিক উত্তর, ফাইল অপরিবর্তিত, journal পূর্ণ (start→model→intent→result→end), ৮,৮৪৬ in / ১৪২ out | এই সেশনের লগ |
-| একই ৩টি task, v1 binary বনাম 2.0 (paid, DeepSeek `deepseek-chat`) | খরচ $0.020020 → $0.005638 (**−৭১.৮%**), billable সাশ্রয় −৬৫.৪% [৪১.৪–৭৯.১], pass ৩/৩ → ৩/৩, input −১১.১%, output −১.৮% | `results/cost-v1-keychain`, `results/cost-smoke-v2`; বিশ্লেষণ `docs/reports/cost-test-bn.md` |
+| একই ৩টি task, v1 binary বনাম 2.0, দুদিকেই cache গোনা (paid, DeepSeek `deepseek-chat`) | খরচ $0.0075 → $0.0054 (**≈ −২৮%**), input −৩৬%, pass ৩/৩ → ৩/৩। **৯৫% CI [−২৩.৬%, +৪০.১%] শূন্য ছুঁয়েছে** — ৩ task × ১ run, তাই "বাড়েনি, সম্ভবত কমেছে", প্রমাণিত সাশ্রয় নয়। (প্রথম পরীক্ষার −৭১.৮% বাড়ানো ছিল: v1-এর cache গোনা হয়নি; সংশোধন `cost-test-bn.md`-এর শুরুতে) | `results/cost-v1-footer`, `results/cost-v2-footer`; পুরোনো `cost-v1-keychain`, `cost-smoke-v2` |
 
 **সীমা:** Search-এর সংখ্যা শুধু macOS-এ; Windows/Linux CI থেকে আসবে। Fleet সংখ্যা synthetic (আসল Docker fleet নয়) এবং SDC-র নিজের token গণনায়।
 Resume-এর পরীক্ষা scripted provider-এ — আসল model-এ নয়।
@@ -46,7 +46,7 @@ Resume-এর পরীক্ষা scripted provider-এ — আসল model-�
 | A-04 | **প্রমাণিত** | পুরো folder হাঁটাই ধীরতার কারণ; index দিয়ে 2–4 ms |
 | A-05 | **প্রমাণিত (macOS)** | filename p50 ≤3.2 ms, text ≤6.6 ms; Windows/Linux CI-তে |
 | A-06…A-07 | মাপা হয়নি | repo map/tool pruning ডিফল্টে বন্ধ (Q3-এর অপেক্ষায়); দুটো আলাদা arm চালালে মাপা যাবে |
-| A-08 | **প্রমাণিত (এক turn-এ)** | DeepSeek-এর নিজের হিসাবে cached ৮০.৮%; step 1-এ ০, step 4-এ ৭,৫৫২/৭,৭১৮ — `results/cost-smoke-v2/ledger.jsonl` |
+| A-08 | **প্রমাণিত (DeepSeek, এক নমুনায়)** | DeepSeek-এর নিজের হিসাবে cached ৮০.৮%; step 1-এ ০, step 4-এ ৭,৫৫২/৭,৭১৮ — `results/cost-smoke-v2/ledger.jsonl` |
 | A-09 | মাপা হয়নি | competitor CLI চালাতে তাদের নিজস্ব account/খরচ লাগে |
 | A-10 | মাপা হয়নি | ledger-এ repeat-read মাপার ব্যবস্থা আছে, run নেই |
 | A-11…A-13 | মাপা হয়নি | paid bench |
@@ -84,7 +84,25 @@ content-filter retry, tool output-এর আকার-সীমা।
 
 ## ৬. Release ও যাচাই
 
-CI_PLACEHOLDER
+প্রকাশিত: <https://github.com/skilleddesk/SD-Code/releases/tag/v2.0.1> — সাতটি installer ও `SHA256SUMS.txt`:
+Windows `x64-setup.exe` + `x64_en-US.msi`, macOS `x64.dmg` + `aarch64.dmg`, Linux `amd64.AppImage` + `amd64.deb` + `x86_64.rpm`।
+
+| পরীক্ষা (commit `558e010`) | ফল |
+|---|---|
+| CI (rust ×৩ OS, dependency scan, SDC Anywhere e2e, desktop app) | সবুজ |
+| Secret scan (gitleaks + credential-file) | সবুজ |
+| window check (আসল window, তিন OS) | সবুজ |
+| release workflow (চারটি build → draft → publish) | সবুজ |
+| `cargo audit` | পরিষ্কার; একটিমাত্র ignore, কারণসহ: `RUSTSEC-2023-0071` (`rsa`, fix নেই; SDC শুধু SSH client) |
+
+আমি নিজে macOS `aarch64.dmg` নামিয়ে `SHA256SUMS.txt`-এর সাথে মিলিয়েছি (মিলেছে), আলাদা কপিতে খুলে চালিয়েছি
+(`sdcd 2.0.1`, ১৫ kill → ১৫/১৫ resume, ৮ task বৈধ), তারপর `/Applications/SDC.app` বদলেছি (আগেরটি `~/SDC.app.previous`-এ);
+ইনস্টল-করা app-এ DeepSeek দিয়ে আসল turn: সঠিক উত্তর, ফাইল অপরিবর্তিত। 
+
+**যা এখনো সত্যি:**
+- installer **সাইনবিহীন** (ad-hoc): macOS-এ প্রথমবার Privacy & Security → Open Anyway, Windows-এ More info → Run anyway। Apple Developer ID ও secret যোগ হলে workflow নিজেই sign ও notarize করবে।
+- Windows ও Linux installer আমি নিজে চালাইনি — আমার মেশিন macOS। সেগুলোর জন্য প্রমাণ হলো CI ও window check (আসল window, ওই OS-এ)।
+- v2.0.0 কেন ব্যর্থ: তার release run-এ Windows ও Linux build সফল হলেও **দুটি macOS build** (`aarch64` ও `x64`) "Build and upload into the draft" ধাপে ব্যর্থ হয়, তাই publish ধাপ চলেনি এবং কিছু প্রকাশিত হয়নি (আংশিক release ব্যবহারকারীর কাছে যায়নি — workflow-এর draft-then-publish নকশা এটাই চায়)। 2.0.1-এ (`558e010`) macOS installer শুধু তখনই sign করে যখন certificate আছে; এই বদলের পর সব build সফল। ব্যর্থ ধাপের ভেতরের ত্রুটি-বার্তা আমি পড়িনি — কারণ হিসেবে আমি commit-এর বার্তা ও বদলানো কোডের উপর নির্ভর করছি।
 
 ## ৭. পুনরায় চালানোর কমান্ড
 
@@ -94,7 +112,7 @@ node sdc/protocol/check.mjs
 cd sdc/bench && ../sdcd/target/release/sdcd bench validate
 ../sdcd/target/release/sdcd bench resume --kills 100 --label <label>
 ../sdcd/target/release/sdcd bench search --root <50k-tree> --label <label>   # tree: bench gen-tree
-# টাকা লাগে (ছোট পরীক্ষা চালানো হয়েছে, খরচ $0.026):
+# টাকা লাগে (ছোট পরীক্ষা চালানো হয়েছে, মোট ≈ $0.04):
 ../sdcd/target/release/sdcd bench run --models deepseek:deepseek-chat --tier smoke --runs 1 --max-usd 0.50 --label <label>
 ../sdcd/target/release/sdcd bench run ... --binary bench/bin/v1/sdcd --label <baseline>   # একই task, v1 daemon
 ../sdcd/target/release/sdcd bench compare <baseline> <label> --report-bn
