@@ -15,6 +15,26 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [2.0.2] — what the bench found
+
+The intelligent features were put through the bench for the first time, on DeepSeek, one at a time and together
+(`sdc/docs/reports/intelligence-test-bn.md`), and the test found a bug.
+
+- **Recipes were never kept.** The knowledge gate wanted the same text seen in two separate turns, but a recipe is
+  about one task and can never be seen twice, so every recipe was refused and learning did nothing. A recipe's
+  evidence is the passing check it was made from, so one sighting is enough now; a lesson or a fact still needs two.
+  On repeated work this cuts tool calls by about a fifth (6 runs, small sample).
+- **Two token savers are on for DeepSeek's chat model, and only for it.** Tool pruning (-16% cost) and the project
+  code map (-8%, -30% input on find tasks) passed the plan's acceptance rule: same pass rate, saving above zero.
+  Together, shipped as the default, 20 tasks: pass 20/20 against 20/20, billable cost -21%. The other four (stable
+  prefix, diffs for changed re-reads, outlines of long files, the English brief) showed no real saving and stay
+  off. The verdicts are written by `sdcd bench profiles` into `protocol/model-profiles.json`, never by hand; any
+  other model keeps today's behaviour until it passes its own test.
+- **Bench:** `--keep-learning` carries a project's notes from one task to the next, and a run through Claude Code
+  on another provider's model is priced from its tokens, not from Claude's table.
+- **Not shown:** better quality - DeepSeek passes every task with or without the features, so there is nothing to
+  improve - and anything on Claude, for which SDC has no API key to run.
+
 ## [2.0.1] — the macOS build that signs only when it can
 
 The 2.0.0 installers never appeared: that release run built Windows and Linux, but both `macos` jobs died at the
