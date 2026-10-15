@@ -1,4 +1,19 @@
 {
-  "generated": "none yet - written by `sdcd bench profiles` from comparisons that pass the Q3 rule; until then every model has the conservative profile (no v3 token technique on)",
-  "models": {}
+  "generated": "2026-10-15",
+  "models": {
+    "deepseek:deepseek-chat": {
+      "techniques": [
+        "tool_pruning",
+        "repomap"
+      ],
+      "evidence": [
+        "stable_prefix: q-one-stable_prefix vs q-medium-off - 20 pairs, pass +0.0 pt, McNemar p 1.000, billable saving 1.0% [-17.0-2.2] → rejected (saving CI lower bound -17.0% is not above 0)",
+        "tool_pruning: q-one-tool_pruning vs q-medium-off - 20 pairs, pass +0.0 pt, McNemar p 1.000, billable saving 16.1% [11.9-20.6] → accepted",
+        "ledger_diff: q-one-ledger_diff vs q-medium-off - 20 pairs, pass +0.0 pt, McNemar p 1.000, billable saving 0.8% [-0.4-6.7] → rejected (saving CI lower bound -0.4% is not above 0)",
+        "skeleton: q-one-skeleton vs q-medium-off - 20 pairs, pass +0.0 pt, McNemar p 1.000, billable saving -2.6% [-7.4-1.9] → rejected (saving CI lower bound -7.4% is not above 0)",
+        "repomap: q-one-repomap vs q-medium-off - 20 pairs, pass +0.0 pt, McNemar p 1.000, billable saving 7.9% [2.5-20.2] → accepted",
+        "interlingua: q-one-interlingua vs q-medium-off - 20 pairs, pass +0.0 pt, McNemar p 1.000, billable saving 0.6% [-3.3-7.2] → rejected (saving CI lower bound -3.3% is not above 0)"
+      ]
+    }
+  }
 }

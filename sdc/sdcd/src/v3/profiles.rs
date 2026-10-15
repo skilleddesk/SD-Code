@@ -66,6 +66,18 @@ pub fn current() -> &'static Profiles {
 mod tests {
     use super::*;
 
+    /// The shipped profile is the bench's verdict, not a guess: on DeepSeek's chat model tool pruning and the code map
+    /// passed the Q3 rule (`bench/results/q-one-*`), the other four did not - and every other model gets nothing.
+    #[test]
+    fn the_shipped_profile_holds_only_what_the_bench_accepted() {
+        let shipped = Profiles::parse(BUNDLED);
+        let on: std::collections::BTreeSet<String> = shipped.techniques("deepseek", "deepseek-chat").into_iter().collect();
+
+        assert_eq!(on.into_iter().collect::<Vec<_>>(), ["repomap", "tool_pruning"]);
+        assert!(shipped.techniques("openai-api", "gpt-5-nano").is_empty() && shipped.techniques("anthropic-api", "claude-sonnet-5-5").is_empty());
+        assert!(shipped.models["deepseek:deepseek-chat"].evidence.len() == 6, "every technique's verdict is on record");
+    }
+
     #[test]
     fn the_bundled_file_parses_and_unknown_models_get_nothing() {
         let bundled = Profiles::parse(BUNDLED);

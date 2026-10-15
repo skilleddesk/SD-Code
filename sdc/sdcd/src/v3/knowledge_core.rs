@@ -104,7 +104,12 @@ pub fn gate(candidate: &Candidate, admitted: &[Item]) -> Result<(), String> {
 
     let sources: HashSet<&String> = candidate.observations.iter().collect();
 
-    if sources.len() < 2 {
+    /* A lesson or a fact is a claim, and one sighting of a claim is a guess. A recipe is not a claim: it is made only
+       from a turn whose change was followed by a passing check (`recipes::distil`), and its text is about that one
+       task - so it can never be "seen again". Its evidence is the check, which is why one sighting is enough. */
+    let needed = if candidate.kind == "recipe" { 1 } else { 2 };
+
+    if sources.len() < needed {
         return Err("seen once only - a single sighting is a guess, so SDC waits for the second".into());
     }
 
@@ -330,6 +335,18 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         root
+    }
+
+    #[test]
+    fn a_recipe_from_a_verified_turn_is_admitted_on_its_one_sighting() {
+        let root = root("recipe");
+        let recipe = "# Recipe\n\nkeywords: currency formatprice rupee symbol\n\nTask: add the rupee to formatPrice\n\nChanged: src/format.ts\n\nVerified with: `node --test`\n";
+
+        assert!(matches!(propose(&root, Candidate { kind: "recipe".into(), text: recipe.into(), observations: vec!["turn-1".into()] }), Decision::Admitted(_)));
+        assert!(
+            matches!(propose(&root, Candidate { kind: "lesson".into(), text: "`npm test` failed here; `pnpm test` worked.".into(), observations: vec!["turn-1".into()] }), Decision::Refused(_)),
+            "a lesson still needs two"
+        );
     }
 
     #[test]

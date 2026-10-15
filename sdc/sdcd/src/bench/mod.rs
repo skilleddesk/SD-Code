@@ -4,7 +4,7 @@
 //! sdcd bench list        [--tier smoke|medium|full]
 //! sdcd bench run         --models deepseek:deepseek-chat,anthropic-api:claude-sonnet-5-5 [--tier smoke] [--runs N]
 //!                        [--label NAME] [--binary bench/bin/v1/sdcd] [--ablate FEATURE] [--max-usd 2] [--tasks a,b]
-//!                        [--enable FEATURE,...] [--data-dir DIR] [--keep] [--dry-run]
+//!                        [--enable FEATURE,...] [--keep-learning] [--data-dir DIR] [--keep] [--dry-run]
 //! sdcd bench competitors --models claude-code:claude-sonnet-5-5,codex:gpt-5.1-codex [--tier smoke] [...same]
 //! sdcd bench lang        --models deepseek:deepseek-chat [--label NAME]
 //! sdcd bench search      --root DIR [--repeats 10] [--label NAME] [--cold]
@@ -60,7 +60,7 @@ fn has(args: &[String], name: &str) -> bool {
 
 /// The words that are not flags or flag values.
 fn positional(args: &[String]) -> Vec<String> {
-    let switches = ["--keep", "--dry-run", "--report-bn", "--cold"];
+    let switches = ["--keep", "--dry-run", "--report-bn", "--cold", "--keep-learning"];
     let mut words = Vec::new();
     let mut skip = false;
 
@@ -530,7 +530,7 @@ fn run(args: &[String], mode: &str) -> Result<(), String> {
                     let keep = has(args, "--keep");
 
                     match (client.as_mut(), &daemon) {
-                        (Some(client), Some(daemon)) => run_sdc(client, daemon, task, model, &bench, &label, index, keep, &mut record),
+                        (Some(client), Some(daemon)) => run_sdc(client, daemon, task, model, &bench, &label, index, keep, has(args, "--keep-learning"), &mut record),
                         _ => run_competitor(task, model, &bench, &label, index, keep, &mut record),
                     }
 
@@ -572,7 +572,7 @@ fn run(args: &[String], mode: &str) -> Result<(), String> {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn run_sdc(client: &mut runner::Client, daemon: &runner::Daemon, task: &Task, model: &Model, bench: &Path, label: &str, index: usize, keep: bool, record: &mut RunRecord) {
+fn run_sdc(client: &mut runner::Client, daemon: &runner::Daemon, task: &Task, model: &Model, bench: &Path, label: &str, index: usize, keep: bool, learn: bool, record: &mut RunRecord) {
     let work = match runner::prepare(task, bench, label, &model.slug(), index) {
         Ok(work) => work,
         Err(error) => {
@@ -581,6 +581,13 @@ fn run_sdc(client: &mut runner::Client, daemon: &runner::Daemon, task: &Task, mo
         }
     };
     let before = ledger::read(&daemon.ledger_file).len();
+    /* `--keep-learning`: what earlier runs on this fixture left in `.sdc/` (recipes, lessons, memory, pages read)
+       is there when this one starts, as it would be for a person who keeps working in one project. */
+    let learned = std::env::temp_dir().join("sdc-bench").join(label).join("learned").join(&task.fixture);
+
+    if learn && learned.is_dir() {
+        let _ = task::copy_tree(&learned, &work.join(".sdc"));
+    }
 
     match runner::run_turn(client, task, model, &work) {
         Ok(turn) => {
@@ -611,6 +618,11 @@ fn run_sdc(client: &mut runner::Client, daemon: &runner::Daemon, task: &Task, mo
             record.failures = outcome.failures;
         }
         Err(error) => record.error = Some(format!("{error} (daemon log: {})", daemon.log().display())),
+    }
+
+    if learn && work.join(".sdc").is_dir() {
+        let _ = std::fs::remove_dir_all(&learned);
+        let _ = task::copy_tree(&work.join(".sdc"), &learned);
     }
 
     if !keep {

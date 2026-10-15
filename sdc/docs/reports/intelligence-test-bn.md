@@ -1,0 +1,90 @@
+# SDC-র "বুদ্ধিমান" কৌশল চালু করলে কী হয় — মান ও খরচ (DeepSeek)
+
+তারিখ: ২০২৬-১০-১৫ · model `deepseek:deepseek-chat` · মোট খরচ ≈ $০.৪৫ · প্রতিটি সংখ্যা `bench/results/q-*`-এর কাঁচা ফাইল থেকে।
+
+## ১. প্রশ্ন
+
+লক্ষ্য: **খরচ কম, কিন্তু মান ভালো বা অন্তত সমান।** এতক্ষণ আমার সব পরীক্ষায় এই কৌশলগুলো বন্ধ ছিল। এখানে চালু করে দেখা হলো —
+একই ২০টি task (মাঝারি tier: find, explain, edit, bugfix, feature, devops, বাংলা/Banglish), একই model, প্ল্যানের Q3 নিয়ম
+(McNemar p ≥ ০.১, pass rate ১ পয়েন্টের বেশি না কমা, খরচ-সাশ্রয়ের ৯৫% ব্যবধান শূন্যের উপরে)।
+
+## ২. সব কৌশল একসাথে (২০ task × ২ run = ৪০ জোড়া)
+
+| | বন্ধ | চালু | বদল |
+|---|---|---|---|
+| **pass** | **৪০/৪০** | **৪০/৪০** | সমান |
+| খরচ | $০.০৭৩৫ | $০.০৬১০ | −১৭% |
+| input token | 1,615,504 | 1,273,043 | −২১% |
+| tool call | ৩১৪ | ২০৪ | −৩৫% |
+| model-ধাপ | ২৪৭ | ২০৫ | −১৭% |
+| সময় (median) | ৯.৪ s | ৬.৭ s | −২৮% |
+
+Q3: billable সাশ্রয় **২২.৫% [১৮.৪–২৭.১]**, p = ১.০০ → **গৃহীত**।
+দুটি run-এ চালু অবস্থায় খরচ ২৫–২৭% *বেশি* ছিল (`bugfix-01`, `edit-03`); `bugfix` ও `feature` ধরনের কাজে সাশ্রয় প্রায় শূন্য।
+
+## ৩. প্রতিটি কৌশল আলাদা (২০ জোড়া, pass সব ক্ষেত্রে সমান)
+
+| কৌশল | খরচ | Q3 | মন্তব্য |
+|---|---|---|---|
+| **tool pruning** (কাজ অনুযায়ী tool তালিকা) | **−১৬.১% [১১.৯–২০.৬]** | ✅ গৃহীত | `bugfix`-এ input −৩৮% |
+| **repomap** (প্রজেক্টের declaration-মানচিত্র) | **−৭.৯% [২.৫–২০.২]** | ✅ গৃহীত | `find`-এ input −৩০%, `explain`-এ −৩৯% |
+| stable prefix (তারিখ prefix-এর বাইরে) | −১.০% [−১৭.০–২.২] | ❌ | প্রকৃত সাশ্রয় নেই |
+| ledger diff (বদলানো ফাইলের diff) | −০.৮% [−০.৪–৬.৭] | ❌ | এই task-গুলোয় একই ফাইল বদলে আবার পড়ার ঘটনা কম |
+| skeleton (লম্বা ফাইলের রূপরেখা) | **+২.৬%** [−৭.৪–১.৯] | ❌ | read token −১৬%, কিন্তু মোট input `find`-এ +১৪% |
+| interlingua (ইংরেজি ব্রিফ) | −০.৬% [−৩.৩–৭.২] | ❌ | বাংলা task মাত্র ৪টি |
+
+প্ল্যানের নিয়মে বাতিল মানে ওই কৌশল ওই model-এ **বন্ধ থাকবে**। তাই `protocol/model-profiles.json`-এ
+`deepseek:deepseek-chat`-এর জন্য শুধু `tool_pruning` ও `repomap` আছে; বাকি model-এ কিছুই নেই (পরীক্ষা হয়নি)।
+ফাইলটি `sdcd bench profiles` লেখে, হাতে নয়; ছয়টি রায়ই evidence হিসেবে ভেতরে আছে।
+
+**যা পাঠানো হচ্ছে তার যাচাই:** কোনো flag ছাড়া (profile-চালিত) পুরো মাঝারি tier আবার চালানো হয়েছে —
+pass ২০/২০ বনাম ২০/২০, billable সাশ্রয় **২১.০% [১০.৮–২৬.৯]**, tool call ১৫৫ → ১১১ (−২৮%), খরচ $০.০৩৬৮ → $০.০৩৩১। 
+
+## ৪. শেখার কৌশল (recipe, lesson, memory, পড়া পৃষ্ঠা) — "একই ধরনের কাজ দ্বিতীয়বার"
+
+পরীক্ষা: প্রথমে INR যোগ, পরে GBP যোগ (আর একটি Python জোড়া), প্রজেক্ট আগের কাজ মনে রাখে; ৩ বার করে।
+
+**এই পরীক্ষা আমার একটা আসল বাগ ধরেছে:** জ্ঞান-দরজা প্রতিটি recipe-র জন্য "একই লেখা দুই আলাদা turn-এ দেখা" দাবি করছিল।
+কিন্তু recipe প্রতিটি task-এর নিজস্ব ("indian rupee" বনাম "british pound"), তাই কোনোটাই দ্বিতীয়বার দেখা যেত না →
+**প্রতিটি recipe প্রত্যাখ্যাত হচ্ছিল**, শেখা কিছুই কাজ করছিল না (`knowledge/refused.jsonl` তাই দেখিয়েছে)।
+ঠিক করা হয়েছে: recipe-র প্রমাণ হলো একটা পাস-করা check, তাই একটি দেখাই যথেষ্ট; lesson/তথ্য এখনো দুইবার লাগে (টেস্টসহ)।
+
+ঠিক করার পর (repeat কাজ, ৬ run, pass সব ক্ষেত্রে ৬/৬):
+
+| | tool call | input | খরচ |
+|---|---|---|---|
+| কিছুই চালু নয় | ৪৮ | 270,014 | $০.০১১২ |
+| শুধু stateless কৌশল | ৪২ | 258,641 | $০.০১০৯ |
+| + recipe/lesson/memory/পৃষ্ঠা | **৩৪** | **179,274** | **$০.০০৯২** |
+
+শেখার নিজস্ব অবদান: tool call −১৯%, input −৩১%, খরচ −১৬%। প্ল্যানের লক্ষ্য (A-13) ছিল **−৫০% tool call** — **পূর্ণ হয়নি**।
+নমুনা ছোট (৬ run), এবং শেখার কৌশলগুলো এখনো ডিফল্টে **বন্ধ**: Q3-এর জন্য আলাদা করে মাঝারি tier-এ পরীক্ষা বাকি, আর এই
+tier-এ কিছু শেখার সুযোগই নেই (সব task আলাদা প্রজেক্টে)।
+
+## ৫. "মান কি ভালো হয়েছে?" — সৎ উত্তর
+
+- **মান কমেনি:** ধরা-পড়া প্রতিটি তুলনায় pass rate হুবহু সমান। একটি কৌশলও কোনো task fail করায়নি।
+- **মান বেড়েছে, তা দেখানো যায়নি।** DeepSeek এই সব task-ই (১০০% দুই দিকেই) পারে — "সিলিং"। যে model সবই পারে,
+  তার মান বাড়ানো দেখা যায় না। বেশি কঠিন task, বা দুর্বল model (ছোট Qwen/Llama), না হলে "মান বাড়ে কি না" প্রশ্নের উত্তর
+  এই পরীক্ষা দিতে পারে না। McNemar/SPRT-ও তাই "আরো জোড়া লাগবে" বলছে — কারণ কোনো জোড়াতেই ফল আলাদা হয়নি।
+- তাই এখন যা বলা যায়: **কম খরচে সমান মান** (DeepSeek, ছোট–মাঝারি task)। **"ভালো মান" অপ্রমাণিত।**
+
+## ৬. Claude
+
+**চালানো হয়নি।** এই কৌশলগুলো SDC-র নিজের agent loop-এ বসে, যা API key দিয়ে চলে; SDC-তে Anthropic key নেই (OpenRouter-এরও না)।
+Claude Code-এর ভেতরে SDC-র কৌশল বসানো যায় না। Provider Hub-এ একটা Anthropic key যোগ করলে একই কমান্ড চলবে
+(`--models anthropic-api:<model>`); বাকি model-এ এই profile তখন খালিই থাকবে, যতক্ষণ না তাদের নিজস্ব পরীক্ষা পাস করছে।
+
+## ৭. পুনরায় চালানো
+
+```sh
+cd sdc/bench
+S=../sdcd/target/release/sdcd; M=deepseek:deepseek-chat
+$S bench run --models $M --tier medium --runs 2 --label q-medium-off
+$S bench run --models $M --tier medium --runs 2 --enable stable_prefix,tool_pruning,ledger_diff,skeleton,repomap,intel,interlingua --label q-medium-on
+$S bench compare q-medium-off q-medium-on --report-bn
+for f in stable_prefix tool_pruning ledger_diff skeleton repomap interlingua; do
+  $S bench run --models $M --tier medium --runs 1 --enable $f --label q-one-$f; done
+$S bench profiles --baseline q-medium-off --candidate tool_pruning=q-one-tool_pruning --candidate repomap=q-one-repomap ...
+$S bench run --models $M --tier repeat --runs 1 --keep-learning --enable <features> --label q-repeat-on-1
+```
