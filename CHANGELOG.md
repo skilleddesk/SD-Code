@@ -17,6 +17,13 @@ working build is a trap rather than a history. The entries below are kept for th
 
 ## [Unreleased]
 
+- **P0-3 Modular split.** `sdcp/methods.rs` was one 5682-line `impl Daemon`; it is now **2130 lines plus six domain
+  modules** (`host_methods`, `workspace_methods`, `file_methods`, `model_methods`, `guard_methods`, `fleet_methods`),
+  each following the convention `kernel.rs` set: `use super::*;`, a `dispatch_<domain>` that falls through to its
+  neighbour, `pub(super)` handlers, private helpers left where they were. Nothing was rewritten - every line of the
+  old file is in the new set (0 short) and the 83 RPC arms before and after are identical. The five empty module
+  roots the plan asks for now exist (`runtime/`, `sme/`, `precision/`, `rotation/`, `guard/`), each saying which task
+  will move code in.
 - **P0-1 Characterization tests and baseline.** `sdc/sdcd/tests/characterization.rs` pins the behaviour the v3 work must not
   change (permission gate, policy defaults, cost model, the three engine wire formats, Verify plans, the ledger chain, the
   token technique profile) and guards file-search latency. A real baseline is frozen in `sdc/bench/baselines/2026-10-17/`:
