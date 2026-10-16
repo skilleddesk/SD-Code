@@ -15,6 +15,15 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [2.0.4] — the savings follow DeepSeek's other name for the same model
+
+DeepSeek serves `deepseek-chat` as `deepseek-flash` (the API answers `"model": "deepseek-flash"` to a request for
+either, checked 2026-10-16), and its model list now shows `deepseek-flash` and `deepseek-v4-pro`. The bench
+measured the model under the first name, and a profile is looked up by name - so a person who picked `deepseek-flash`
+in the app got none of the savings 2.0.3 proved. A name a provider serves as another model is now measured as that
+model (`profiles::ALIASES`, DeepSeek's own API only). `deepseek-v4-pro` is a different model, not measured, and
+gets nothing; every other model still gets nothing until it passes its own test.
+
 ## [2.0.3] — SDC learns, and a repeated task takes three steps instead of seven
 
 Why learning saved only about a fifth of the tool calls, found on DeepSeek and fixed:

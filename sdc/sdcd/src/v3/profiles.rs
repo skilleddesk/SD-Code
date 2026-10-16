@@ -22,6 +22,12 @@ pub struct Profile {
     pub evidence: Vec<String>,
 }
 
+/// Names a provider answers with the same model as another (`name`, `provider`, `measured as`). DeepSeek's
+/// `deepseek-chat` is served by `deepseek-flash` - the API replies `"model": "deepseek-flash"` to a request for
+/// either (checked 2026-10-16) - so what the bench found on one holds for the other. `deepseek-v4-pro` is a
+/// different model and is not listed.
+const ALIASES: &[(&str, &str, &str)] = &[("deepseek-flash", "deepseek", "deepseek-chat")];
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct Profiles {
     #[serde(default)]
@@ -39,8 +45,10 @@ impl Profiles {
     /// The techniques on for a model, by its provider and id.
     pub fn techniques(&self, provider: &str, model: &str) -> HashSet<String> {
         let bare = model.rsplit('/').next().unwrap_or(model);
+        /* A name the provider serves as another model is measured as that model (see `ALIASES`). */
+        let served = ALIASES.iter().find(|(from, to_provider, _)| *from == bare && *to_provider == provider).map(|(_, _, to)| *to).unwrap_or(bare);
 
-        [format!("{provider}:{model}"), format!("{provider}:{bare}"), format!("*:{bare}")]
+        [format!("{provider}:{model}"), format!("{provider}:{bare}"), format!("*:{bare}"), format!("{provider}:{served}")]
             .iter()
             .find_map(|key| self.models.get(key))
             .map(|profile| profile.techniques.iter().cloned().collect())
@@ -77,6 +85,9 @@ mod tests {
 
         assert_eq!(on.into_iter().collect::<Vec<_>>(), ["knowledge", "lessons", "memory", "recipes", "repomap", "tool_pruning"]);
         assert!(shipped.techniques("openai-api", "gpt-5-nano").is_empty() && shipped.techniques("anthropic-api", "claude-sonnet-5-5").is_empty());
+        assert_eq!(shipped.techniques("deepseek", "deepseek-flash"), shipped.techniques("deepseek", "deepseek-chat"), "the name DeepSeek serves deepseek-chat under is the same model");
+        assert!(shipped.techniques("deepseek", "deepseek-v4-pro").is_empty(), "a different DeepSeek model has not been measured");
+        assert!(shipped.techniques("openrouter", "deepseek-flash").is_empty(), "the alias holds on DeepSeek's own API only");
         assert!(shipped.models["deepseek:deepseek-chat"].evidence.len() == 10, "every technique's verdict is on record");
     }
 
