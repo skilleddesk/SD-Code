@@ -11,7 +11,7 @@
 //! sdcd bench gen-tree    --out DIR [--files 50000]
 //! sdcd bench validate    [--tier all]                     # every task fails untouched and passes its reference
 //! sdcd bench resume      [--kills 100] [--label NAME]     # A-19: kill -9 mid-turn, restart, check the work
-//! sdcd bench profiles    --baseline L --candidate feature=L2 [...]  # Q2: model-profiles.json from Q3 verdicts
+//! sdcd bench profiles    --baseline L --candidate feature=L2[@own-baseline] [...]  # Q2: model-profiles.json from Q3 verdicts
 //! sdcd bench fleet       [--label NAME]                   # A-16 on synthetic 5/10/20-server fleets
 //! sdcd bench drift       --labels A,B,C [--target 0.8]   # Q4: a model's pass rate slipping away from where it was
 //! sdcd bench report      LABEL [--baseline LABEL]         # writes bench/results/LABEL/report-bn.md
@@ -302,9 +302,16 @@ fn profiles_cmd(args: &[String]) -> Result<(), String> {
             return Err(format!("`{feature}` is not a v3 token technique"));
         }
 
+        /* `feature=label@baseline`: a technique measured on another tier brings its own baseline (the learning
+           techniques only show on the repeat tier), so one file can hold every verdict. */
+        let (label, baseline_label, own) = match label.split_once('@') {
+            Some((label, own)) => (label, own, Some(report::load(&results_dir(&bench, own))?)),
+            None => (label.as_str(), baseline_label.as_str(), None),
+        };
+        let baseline_runs = own.as_ref().map(|own| &own.runs).unwrap_or(&baseline.runs);
         let results = report::load(&results_dir(&bench, label))?;
 
-        for comparison in report::compare(&baseline.runs, &results.runs) {
+        for comparison in report::compare(baseline_runs, &results.runs) {
             let verdict = &comparison.verdict;
             let evidence = format!(
                 "{feature}: {label} vs {baseline_label} - {} pairs, pass {:+.1} pt, McNemar p {:.3}, billable saving {} → {}",

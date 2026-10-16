@@ -1421,6 +1421,8 @@ fn drive(
     };
     /* v3 L1: what earlier work in this project learned the hard way, when this request matches it. */
     let lessons_on = technique("lessons") && research_session.is_none() && prompt.remote.is_none();
+    /* v3 L0-L2: what this turn proves is kept even while sending it is off (switch `v3.learn`). */
+    let learning = crate::v3::on("learn") && research_session.is_none() && prompt.remote.is_none();
     let mut lesson_note: Option<String> = lessons_on.then(|| crate::v3::lessons::find(std::path::Path::new(workspace.root()), &request_text)).flatten();
     /* v3 L3: a page an earlier turn read about this - with its address and how long ago it was read. */
     let knowledge_note = (technique("knowledge") && research_session.is_none() && prompt.remote.is_none()).then(|| crate::v3::knowledge::lookup(std::path::Path::new(workspace.root()), &request_text)).flatten();
@@ -1951,7 +1953,7 @@ fn drive(
             }
 
             /* v3 L1: what this turn learned the hard way, kept for the next one - and only what the core admits. */
-            if lessons_on {
+            if lessons_on || learning {
                 for lesson in crate::v3::lessons::observe(&steps) {
                     let admitted = !crate::v3::on("knowledge_core")
                         || matches!(
@@ -1968,12 +1970,13 @@ fn drive(
                 }
             }
 
-            if recipes_on && summary == "Done" {
+            if (recipes_on || learning) && summary == "Done" {
                 let done = crate::v3::recipes::Done {
                     request: prompt.text.rsplit("[The person's message]").next().unwrap_or(&prompt.text),
                     changed: context.changed.iter().cloned().collect(),
                     passed_checks: passed_checks.clone(),
-                    tools: step_log.iter().map(|step| step.split(" → ").next().unwrap_or(step).to_string()).collect(),
+                    tools: step_log.clone(),
+                    changes: if crate::v3::on("cas") { crate::v3::recipes::changes(std::path::Path::new(workspace.root()), &turn_id) } else { String::new() },
                 };
 
                 if !crate::v3::on("knowledge_core")
@@ -1990,6 +1993,20 @@ fn drive(
                     )
                 {
                     crate::v3::recipes::save(std::path::Path::new(workspace.root()), &done);
+                }
+            }
+
+            /* v3 L0: a check that passed after a change in two separate turns becomes a fact in the project's memory. */
+            if learning && summary == "Done" && crate::v3::on("knowledge_core") {
+                let root = std::path::Path::new(workspace.root());
+                let facts: HashSet<String> = passed_checks.iter().filter_map(|check| crate::v3::memory::check_fact(check)).collect();
+
+                for fact in facts {
+                    if let crate::v3::knowledge_core::Decision::Admitted(_) =
+                        crate::v3::knowledge_core::propose(root, crate::v3::knowledge_core::Candidate { kind: "memory".into(), text: fact.clone(), observations: vec![turn_id.clone()] })
+                    {
+                        crate::v3::memory::remember(root, &fact);
+                    }
                 }
             }
 
@@ -2134,17 +2151,16 @@ fn drive(
             steps.push(crate::v3::lessons::Step {
                 tool: call.name.clone(),
                 target: what.chars().take(120).collect(),
-                /* A command that exited non-zero failed, whichever tool ran it. */
-                ok: !result.2 && !result.1.trim_start().starts_with("exit code: 1"),
+                /* A command that exited non-zero failed, whichever tool ran it (not only exit code 1). */
+                ok: !result.2 && crate::v3::lessons::exit_code(&result.1).is_none_or(|code| code == 0),
                 note: result.1.lines().next().unwrap_or_default().chars().take(160).collect(),
             });
 
-            /* v3 I11 canary: a lesson the turn was sent is taken back when the very thing it warned about fails again. */
+            /* v3 I11 canary: a lesson the turn was sent is taken back when the step it recommended fails here. (The
+               step it warned about failing again proves the lesson right, not wrong.) */
             if let Some(note) = lesson_note.as_deref() {
-                let first = what.split_whitespace().next().unwrap_or_default();
-
-                if !first.is_empty() && !steps.last().is_some_and(|step| step.ok) && note.contains(first) && crate::v3::on("knowledge_core") {
-                    crate::v3::knowledge_core::rollback_matching(std::path::Path::new(workspace.root()), note, "the step it warned about failed again while it was sent");
+                if crate::v3::lessons::recommended(note).is_some_and(|step| step == what.trim()) && !steps.last().is_some_and(|step| step.ok) && crate::v3::on("knowledge_core") {
+                    crate::v3::knowledge_core::rollback_matching(std::path::Path::new(workspace.root()), note, "the step it recommended failed while it was sent");
                     lesson_note = None;
                 }
             }

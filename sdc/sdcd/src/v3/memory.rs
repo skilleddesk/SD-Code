@@ -7,6 +7,61 @@
 //! wording, so a long-lived memory file stays readable and cheap.
 
 use std::collections::HashSet;
+use std::path::Path;
+
+pub const FILE: &str = ".sdc/memory.md";
+
+/// The part of the memory file SDC writes itself; everything above it is the person's.
+const LEARNED: &str = "## Learned by SDC";
+
+/// At most this many facts SDC wrote itself are kept - the oldest go first.
+const MAX_LEARNED: usize = 12;
+
+/// A check command without what was piped or chained onto it this time (`2>&1 | tail -20`, `&& python3 - <<'EOF'`):
+/// the same check run two ways is one fact, and a one-off probe stuck to it is not part of the check.
+pub fn check_command(command: &str) -> &str {
+    let command = command.trim();
+    let end = [" 2>&1", " |", " &&", " ;", " <<", " >"].iter().filter_map(|cut| command.find(cut)).min().unwrap_or(command.len());
+
+    command[..end].trim()
+}
+
+/// The fact a passing command teaches, when it is a check (tests, build, lint, types) rather than a look around.
+pub fn check_fact(command: &str) -> Option<String> {
+    const CHECKS: &[&str] = &["test", "build", "lint", "check", "clippy", "tsc", "pytest", "vet", "compile", "typecheck"];
+    let command = check_command(command);
+    let lower = command.to_lowercase();
+
+    if command.is_empty() || command.chars().count() > 120 || command.contains('\n') || !CHECKS.iter().any(|word| lower.contains(word)) {
+        return None;
+    }
+
+    Some(format!("`{command}` passes here after a change - it is how this project checks its work."))
+}
+
+/// Writes a fact SDC learned into the memory file, below the person's own, once. Answers whether it was new.
+pub fn remember(root: &Path, fact: &str) -> bool {
+    let path = root.join(FILE);
+    let text = std::fs::read_to_string(&path).unwrap_or_default();
+
+    if facts(&text).iter().any(|known| known == fact.trim()) {
+        return false;
+    }
+
+    let (person, learned) = match text.split_once(LEARNED) {
+        Some((person, learned)) => (person.trim_end().to_string(), facts(learned)),
+        None => (text.trim_end().to_string(), Vec::new()),
+    };
+    let mut learned = learned;
+
+    learned.push(fact.trim().to_string());
+
+    let start = learned.len().saturating_sub(MAX_LEARNED);
+    let lines: Vec<String> = learned[start..].iter().map(|fact| format!("- {fact}")).collect();
+    let head = if person.is_empty() { String::new() } else { format!("{person}\n\n") };
+
+    std::fs::create_dir_all(path.parent().unwrap_or(root)).is_ok() && std::fs::write(&path, format!("{head}{LEARNED}\n\n{}\n", lines.join("\n"))).is_ok()
+}
 
 /// At most this many facts travel with one request.
 pub const MAX_FACTS: usize = 24;
@@ -115,6 +170,38 @@ mod tests {
         assert!(selected.contains("src/orders.ts"), "{selected}");
         assert!(selected.contains("Never commit .env"), "the newest facts fill the rest");
         assert!(selected.contains("facts kept"), "and it says what it left out");
+    }
+
+    #[test]
+    fn sdc_writes_a_learned_check_below_the_persons_facts_once_and_keeps_the_newest() {
+        let root = std::env::temp_dir().join(format!("sdc-memory-learn-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join(".sdc")).unwrap();
+        std::fs::write(root.join(FILE), "- Use pnpm, never npm\n").unwrap();
+
+        assert_eq!(check_fact("ls src"), None, "a look around is not a check");
+        let fact = check_fact("pnpm test").expect("a test run is");
+
+        assert_eq!(check_fact("pnpm test 2>&1 | tail -20"), Some(fact.clone()), "the same check piped another way is the same fact");
+        assert_eq!(check_command("python3 -m unittest -v && python3 - <<'EOF'\nprint(1)\nEOF"), "python3 -m unittest -v");
+
+        assert!(remember(&root, &fact));
+        assert!(!remember(&root, &fact), "the same fact is written once");
+
+        let text = std::fs::read_to_string(root.join(FILE)).unwrap();
+
+        assert!(text.starts_with("- Use pnpm, never npm\n\n## Learned by SDC"), "the person's facts stay first:\n{text}");
+
+        for index in 0..20 {
+            remember(&root, &check_fact(&format!("cargo test -p crate{index}")).unwrap());
+        }
+
+        let text = std::fs::read_to_string(root.join(FILE)).unwrap();
+
+        assert_eq!(facts(&text).len(), 1 + MAX_LEARNED, "only the newest learned facts are kept:\n{text}");
+        assert!(text.contains("crate19") && !text.contains("pnpm test") && text.contains("Use pnpm, never npm"));
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

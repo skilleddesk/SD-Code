@@ -15,6 +15,45 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [2.0.3] — SDC learns, and a repeated task takes three steps instead of seven
+
+Why learning saved only about a fifth of the tool calls, found on DeepSeek and fixed:
+
+- **Recipes with a diff of a new method were refused.** The knowledge door allowed 1,200 characters; a recipe that
+  carries a whole new method is longer, so in five runs out of five the recipe of `edit-05` never reached its repeat.
+  A recipe may now take 3,000 characters (its diff is capped at 1,500); a lesson or a fact keeps 1,200.
+- **The recipe said *where*, not *how*.** It now carries the change itself as a unified diff (from the turn's
+  CAS pre-images; sources before tests; nothing kept when the diff holds anything shaped like a secret), and the
+  model is told the diff's context lines can be matched by an edit without reading the file first.
+- **The recipe replayed the detour.** Its route listed every step, failures and looking around included; now it is
+  only the steps that led to the change - reads of the files it changed, the edits, the check.
+- **One-off probes passed for checks.** `Verified with` carried a `node -e …` probe beside the test suite, and the
+  same test run as `… 2>&1 | tail -20` was a different "fact" every time, so no memory fact was ever seen twice. A
+  check is now the command before any pipe or chain, and only real checks (test, build, lint) are kept.
+- **Result (repeat tier, DeepSeek, 5 runs × 4 tasks, `sdc/bench/results/q3-repeat-*`):** pass 20/20 against 20/20,
+  billable cost −20.0% [6.8–32.6] - the plan's Q3 rule accepts it, so recipes, lessons, memory and pages read are now
+  on for DeepSeek's chat model (and only for it; `protocol/model-profiles.json`, written by `sdcd bench profiles`).
+  Tool calls on the repeated tasks: 69 → 44 (−36%); the same change for another currency 7 → 3 (−57%); a similar
+  method that needs new logic −15%.
+- **Bench:** `sdcd bench profiles --candidate feature=label@baseline` - a technique measured on another tier brings
+  its own baseline, so one profile file holds every verdict.
+
+Also in this version:
+
+- **Learning no longer waits for the switch that sends it.** Recipes and lessons were written only while sending
+  them was on - and sending is off by default - so a normal install learned nothing. Now what a turn proves is kept
+  in `.sdc/` whenever `v3.learn` is on (the default), through the same knowledge door; what is *sent* to the model
+  still follows each technique's own switch and the model's profile.
+- **SDC writes its own memory (L0).** A test, build or lint command that passes after a change in two separate turns
+  is written under `## Learned by SDC` in `.sdc/memory.md` (newest 12, below the person's own lines).
+- **Lessons: three fixes.** Any non-zero exit is a failure (only `exit code: 1` was); a lesson is taken back when
+  the step it recommends fails, not when the step it warned about fails again; the same lesson is written once.
+  And a lesson the knowledge core took back was still sent - the rollback was recorded in `admitted.json` while
+  lessons were read from `lessons.md`; a lesson taken back now stays in the file but is not sent again.
+- **The knowledge door refuses a redacted secret's placeholder**, which means nothing outside its own chat.
+- **A flaky test fixed:** the rate limiter's "switch off" test set `SDC_ABLATE` for the whole process, which
+  switched the limiter off for the test running beside it (about 1 run in 4 failed); it is now off on its own thread.
+
 ## [2.0.2] — what the bench found
 
 The intelligent features were put through the bench for the first time, on DeepSeek, one at a time and together

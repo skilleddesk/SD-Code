@@ -74,6 +74,7 @@ pub const FEATURES: &[Feature] = &[
     Feature { name: "memory", default_on: false, token_technique: true, what: "L0: only the memory facts the request touches are sent, not the whole file" },
     Feature { name: "lessons", default_on: false, token_technique: true, what: "L1: a lesson from a step that failed in this project, and what worked instead" },
     Feature { name: "knowledge", default_on: false, token_technique: true, what: "L3: a page an earlier turn fetched is sent again as a short excerpt with its address and date" },
+    Feature { name: "learn", default_on: true, token_technique: false, what: "L0-L2: what a turn proved (a recipe, a lesson, a check that passes) is kept in .sdc/ even while sending it is off, so a technique switched on later starts with a history" },
     Feature { name: "knowledge_core", default_on: true, token_technique: false, what: "I11: learned knowledge needs two sightings, must not contradict what is known, and is taken back when it proves wrong" },
     Feature { name: "cas", default_on: true, token_technique: false, what: "W7a: a file's old content is kept by its own hash before SDC changes it, so a turn can be taken back without git" },
     Feature { name: "router", default_on: true, token_technique: false, what: "W6: a plainly light request goes to the fast model named in router.fast; everything else stays on the main model" },
@@ -144,6 +145,20 @@ fn listed(variable: &str, feature: &str) -> bool {
 thread_local! {
     /// Features a test turns on for its own thread only (`forcing`), so tests running side by side do not see them.
     static FORCED: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// Features a test turns off for its own thread only (`ablating`) - an environment variable would reach every
+    /// test running beside it.
+    static ABLATED: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Runs `body` with these features off, on this thread only (tests).
+#[cfg(test)]
+pub fn ablating<T>(features: &[&str], body: impl FnOnce() -> T) -> T {
+    ABLATED.with(|ablated| ablated.borrow_mut().extend(features.iter().map(|feature| feature.to_string())));
+
+    let result = body();
+
+    ABLATED.with(|ablated| ablated.borrow_mut().clear());
+    result
 }
 
 /// Runs `body` with these features on, on this thread only (tests).
@@ -166,6 +181,11 @@ pub fn on(feature: &str) -> bool {
     #[cfg(test)]
     if FORCED.with(|forced| forced.borrow().iter().any(|name| name == feature)) {
         return true;
+    }
+
+    #[cfg(test)]
+    if ABLATED.with(|ablated| ablated.borrow().iter().any(|name| name == feature)) {
+        return false;
     }
 
     if crate::bench::ablated(feature) {
@@ -206,6 +226,11 @@ pub fn on_for(feature: &str, provider: &str, model: &str) -> bool {
     #[cfg(test)]
     if FORCED.with(|forced| forced.borrow().iter().any(|name| name == feature)) {
         return true;
+    }
+
+    #[cfg(test)]
+    if ABLATED.with(|ablated| ablated.borrow().iter().any(|name| name == feature)) {
+        return false;
     }
 
     if listed("SDC_V3_ENABLE", feature) {

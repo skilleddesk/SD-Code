@@ -67,15 +67,17 @@ mod tests {
     use super::*;
 
     /// The shipped profile is the bench's verdict, not a guess: on DeepSeek's chat model tool pruning and the code map
-    /// passed the Q3 rule (`bench/results/q-one-*`), the other four did not - and every other model gets nothing.
+    /// passed the Q3 rule on the medium tier (`bench/results/q-one-*`), the other four did not; the four learning
+    /// techniques passed it together on the repeat tier (`q3-repeat-learn` against `q3-repeat-base`) - and every
+    /// other model gets nothing.
     #[test]
     fn the_shipped_profile_holds_only_what_the_bench_accepted() {
         let shipped = Profiles::parse(BUNDLED);
         let on: std::collections::BTreeSet<String> = shipped.techniques("deepseek", "deepseek-chat").into_iter().collect();
 
-        assert_eq!(on.into_iter().collect::<Vec<_>>(), ["repomap", "tool_pruning"]);
+        assert_eq!(on.into_iter().collect::<Vec<_>>(), ["knowledge", "lessons", "memory", "recipes", "repomap", "tool_pruning"]);
         assert!(shipped.techniques("openai-api", "gpt-5-nano").is_empty() && shipped.techniques("anthropic-api", "claude-sonnet-5-5").is_empty());
-        assert!(shipped.models["deepseek:deepseek-chat"].evidence.len() == 6, "every technique's verdict is on record");
+        assert!(shipped.models["deepseek:deepseek-chat"].evidence.len() == 10, "every technique's verdict is on record");
     }
 
     #[test]

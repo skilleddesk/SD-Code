@@ -23,7 +23,7 @@ fn buckets() -> &'static Mutex<HashMap<String, Bucket>> {
 
 /// The host of an endpoint URL (the bucket's name).
 pub fn host(url: &str) -> String {
-    url.split_once("://").map(|(_, rest)| rest).unwrap_or(url).split('/').next().unwrap_or(url).to_ascii_lowercase()
+    url.split_once("://").map(|(_, rest)| rest).unwrap_or(url).split(['/', '?', '#']).next().unwrap_or(url).to_ascii_lowercase()
 }
 
 /// How long the next request to `host` must wait (and takes its token).
@@ -142,13 +142,10 @@ mod tests {
             reserve(&host(url), PER_MINUTE, BURST, Instant::now());
         }
 
-        /* Only `rate_limit` is named, so the other tests that run beside this one are not touched. */
-        std::env::set_var(crate::bench::ABLATE_ENV, "rate_limit");
-
+        /* Off on this thread only: `SDC_ABLATE` in the environment also switched it off for the tests beside this one. */
         let started = Instant::now();
 
-        acquire(url);
-        std::env::remove_var(crate::bench::ABLATE_ENV);
+        crate::v3::ablating(&["rate_limit"], || acquire(url));
 
         assert!(started.elapsed() < Duration::from_millis(250), "a switched-off limiter must not sleep");
 
@@ -194,9 +191,128 @@ mod tests {
     }
 
     #[test]
+    fn the_default_limits_pass_twenty_at_once_then_queue_half_a_second_apart() {
+        let now = Instant::now();
+        let waits: Vec<Duration> = (0..23).map(|_| reserve("bucket-default.example", PER_MINUTE, BURST, now)).collect();
+
+        assert!(waits[..BURST as usize].iter().all(|wait| wait.is_zero()), "the default burst goes at once");
+        assert_eq!(&waits[20..], &[Duration::from_millis(500), Duration::from_secs(1), Duration::from_millis(1500)]);
+    }
+
+    #[test]
+    fn a_request_that_waited_has_paid_for_its_slot_so_the_next_one_still_queues() {
+        let now = Instant::now();
+
+        assert_eq!(reserve("bucket-queue.example", 60.0, 1.0, now), Duration::ZERO);
+        assert_eq!(reserve("bucket-queue.example", 60.0, 1.0, now), Duration::from_secs(1));
+
+        /* The second request wakes at +1s holding its token; one arriving then finds the bucket empty, not refilled. */
+        assert_eq!(reserve("bucket-queue.example", 60.0, 1.0, now + Duration::from_secs(1)), Duration::from_secs(1));
+    }
+
+    #[test]
+    fn a_poisoned_lock_does_not_stop_the_limiter() {
+        /* A thread that panics while holding the buckets poisons the lock; pacing must carry on regardless. */
+        let _ = std::thread::spawn(|| {
+            let _guard = buckets().lock().unwrap_or_else(|poison| poison.into_inner());
+
+            panic!("poison the buckets on purpose");
+        })
+        .join();
+
+        let now = Instant::now();
+
+        assert_eq!(reserve("bucket-poison.example", 60.0, 1.0, now), Duration::ZERO);
+        assert_eq!(reserve("bucket-poison.example", 60.0, 1.0, now), Duration::from_secs(1));
+    }
+
+    #[test]
+    fn a_slower_rate_makes_each_queued_request_wait_longer() {
+        let now = Instant::now();
+
+        /* 30 a minute is one token every 2s. */
+        assert_eq!(reserve("bucket-slow.example", 30.0, 1.0, now), Duration::ZERO);
+        assert_eq!(reserve("bucket-slow.example", 30.0, 1.0, now), Duration::from_secs(2));
+        assert_eq!(reserve("bucket-slow.example", 30.0, 1.0, now), Duration::from_secs(4));
+    }
+
+    #[test]
+    fn a_partial_refill_frees_exactly_the_tokens_earned() {
+        let now = Instant::now();
+
+        assert_eq!(reserve("bucket-partial.example", 60.0, 2.0, now), Duration::ZERO);
+        assert_eq!(reserve("bucket-partial.example", 60.0, 2.0, now), Duration::ZERO);
+
+        /* One second at 60 a minute earns one token: one request goes at once, the next owes a full second. */
+        let later = now + Duration::from_secs(1);
+
+        assert_eq!(reserve("bucket-partial.example", 60.0, 2.0, later), Duration::ZERO);
+        assert_eq!(reserve("bucket-partial.example", 60.0, 2.0, later), Duration::from_secs(1));
+    }
+
+    #[test]
+    fn the_same_host_on_another_port_is_a_separate_bucket() {
+        let now = Instant::now();
+
+        assert_eq!(reserve(&host("http://bucket-port.example:8080/v1"), 60.0, 1.0, now), Duration::ZERO);
+        assert_eq!(reserve(&host("http://bucket-port.example:8081/v1"), 60.0, 1.0, now), Duration::ZERO);
+        assert_eq!(reserve(&host("http://bucket-port.example:8080/v2"), 60.0, 1.0, now), Duration::from_secs(1));
+    }
+
+    #[test]
+    fn a_request_arriving_exactly_when_a_token_is_earned_goes_at_once() {
+        let now = Instant::now();
+
+        assert_eq!(reserve("bucket-boundary.example", 60.0, 1.0, now), Duration::ZERO);
+
+        /* The bucket lands on exactly zero tokens, which is not a debt: no wait. The next one right after does wait. */
+        let later = now + Duration::from_secs(1);
+
+        assert_eq!(reserve("bucket-boundary.example", 60.0, 1.0, later), Duration::ZERO);
+        assert_eq!(reserve("bucket-boundary.example", 60.0, 1.0, later), Duration::from_secs(1));
+    }
+
+    #[test]
+    fn a_deep_debt_is_cleared_by_waiting_it_out_and_the_bucket_starts_over_full() {
+        let now = Instant::now();
+
+        /* One token, then three more requests queue: the bucket is three tokens in debt. */
+        let waits: Vec<Duration> = (0..4).map(|_| reserve("bucket-debt.example", 60.0, 1.0, now)).collect();
+
+        assert_eq!(waits, [0, 1, 2, 3].map(Duration::from_secs));
+
+        /* Two seconds on, two of the three are paid off: the next request owes the last second and its own. */
+        assert_eq!(reserve("bucket-debt.example", 60.0, 1.0, now + Duration::from_secs(2)), Duration::from_secs(2));
+
+        /* Long after, the debt is gone and the burst is whole again. */
+        assert_eq!(reserve("bucket-debt.example", 60.0, 1.0, now + Duration::from_secs(600)), Duration::ZERO);
+        assert_eq!(reserve("bucket-debt.example", 60.0, 1.0, now + Duration::from_secs(600)), Duration::from_secs(1));
+    }
+
+    #[test]
+    fn a_bucket_refills_at_the_rate_of_its_own_call_not_a_shared_clock() {
+        let now = Instant::now();
+
+        /* Two hosts drained together, then one asked a second later: only that one has earned a token back. */
+        for name in ["bucket-clock-a.example", "bucket-clock-b.example"] {
+            assert_eq!(reserve(name, 60.0, 1.0, now), Duration::ZERO);
+        }
+
+        assert_eq!(reserve("bucket-clock-a.example", 60.0, 1.0, now + Duration::from_secs(1)), Duration::ZERO);
+        assert_eq!(reserve("bucket-clock-b.example", 60.0, 1.0, now), Duration::from_secs(1));
+    }
+
+    #[test]
     fn the_host_is_lowercased_and_stripped_of_scheme_and_path() {
         assert_eq!(host("HTTPS://API.Example.COM/v1"), "api.example.com");
         assert_eq!(host("localhost:8080/v1/chat"), "localhost:8080");
         assert_eq!(host("api.example.com"), "api.example.com");
+    }
+
+    #[test]
+    fn a_query_or_fragment_straight_after_the_host_does_not_make_a_new_bucket() {
+        assert_eq!(host("https://api.example.com?key=1"), "api.example.com");
+        assert_eq!(host("https://api.example.com#top"), "api.example.com");
+        assert_eq!(host("https://api.example.com/v1?key=1"), "api.example.com");
     }
 }

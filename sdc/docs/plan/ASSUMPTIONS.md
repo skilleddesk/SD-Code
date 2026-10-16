@@ -8,18 +8,18 @@ change a status without a link.
 | ID | Assumption | Status | Evidence | Measured in |
 |---|---|---|---|---|
 | A-01 | Code facts from the analysis are correct (see A-01 detail below) | partial | 4 true, 3 partial, 2 false — below | Phase 0 |
-| A-02 | Input shares: ~25% system + tools, ~50% tool results | untested | — | W1 ledger |
+| A-02 | Input shares: ~25% system + tools, ~50% tool results | false (DeepSeek, one sample) | provider count: system 21.0%, tools 41.2%, tool results 22.8% (`bench/results/cost-smoke-v2`) | W1 ledger |
 | A-03 | Token variance CV ≤ 15% across repeated runs | untested | — | W1 |
 | A-04 | Root cause of slow search identified | proven | The v1 walk was the cost: every query 227-261 ms whatever it matched, and a no-match scan 1.2 s. Replacing the walk with a watched index alone took matching queries to 2-4 ms; the remaining full-scan cost was file reads (ripgrep needs the same ~0.63 s), removed by a trigram content index → 6.6 ms (`results/2026-10-14-search-v1` vs `-v3`, same 52,501-file tree, macOS arm64, warm cache) | W1 `bench search`, W3 |
 | A-05 | Search p50 < 50 ms filename / < 200 ms text on 50k files | proven (macOS) | v3 p50: filename 2.5-3.2 ms, text 2.0-6.6 ms incl. no-match; v1 229-234 / 227-1204 ms (`results/2026-10-14-search-v3`). Warm OS cache; the first call (index build) is 150 ms. Windows and Linux to be measured in CI | W3 |
 | A-06 | Repo map cuts find-task input ≥30% on all models | partial | DeepSeek: find −30%, explain −39% (`q-one-repomap`, 5+3 task); অন্য model পরীক্ষিত নয় | W4 |
 | A-07 | Tool pruning keeps quality (Q3 rule) | proven (DeepSeek) | ২০ জোড়া: pass সমান, billable −16.1% [11.9–20.6], Q3 গৃহীত (`q-one-tool_pruning`); অন্য model পরীক্ষিত নয় | W5 |
-| A-08 | Cached share ≥ 70% after 3 turns, per provider | untested | — | W5 |
+| A-08 | Cached share ≥ 70% after 3 turns, per provider | proven (DeepSeek, one sample) | DeepSeek's own count: 80.8% cached; step 1: 0, step 4: 7,552 of 7,718 (`bench/results/cost-smoke-v2/ledger.jsonl`); other providers untested | W5 |
 | A-09 | Claude Code / Codex CLI already use prompt caching | proven for Claude Code | input-এর 87% (DeepSeek-এ) ও 86% (Haiku-তে) provider-এর cache থেকে — `bench/results/vs-cc-on-deepseek`, `vs-cc-on-claude-haiku`; Codex মাপা হয়নি (login নেই) | W1 `bench competitors` |
 | A-10 | Duplicate reads ≥ 10% of input on long tasks | untested | — | W1 ledger |
 | A-11 | Skeleton reads −20% read tokens, time < +20% | false (DeepSeek) | read token −16%, কিন্তু মোট input +2.6% (`find`-এ +14%), Q3 বাতিল (`q-one-skeleton`) | I2 |
 | A-12 | Cheap-API draft acceptance ≥ 35% | untested | — | I3 |
-| A-13 | Recipes −50% tool calls on repeats | partial | recipe/lesson/memory/পৃষ্ঠা চালু: শেখার নিজস্ব অবদান: tool call ৪২ → ৩৪ (−১৯%); সব কৌশল মিলিয়ে ৪৮ → ৩৪ (−২৯%); লক্ষ্য −৫০% পূর্ণ হয়নি। একটি বাগ (জ্ঞান-দরজা recipe ফেরত দিত) পরীক্ষায় ধরা পড়ে ঠিক হয়েছে — `intelligence-test-bn.md` | I4 |
+| A-13 | Recipes −50% tool calls on repeats | partial → true for a true repeat (2026-10-16) | DeepSeek, 5 runs: `repeat-01` (the same change for another currency) 7 → 3 tool calls (−57%); `repeat-02` (a similar method with new logic) −15%; both repeats together 69 → 44 (−36%); pass 20/20 both sides, Q3 accepted (`bench/results/q3-repeat-*`). The recipe now carries the change as a diff and the proven route only; at 1,200 chars the knowledge door had refused every recipe with a diff of a new method. Earlier note: recipe/lesson/memory/পৃষ্ঠা চালু: শেখার নিজস্ব অবদান: tool call ৪২ → ৩৪ (−১৯%); সব কৌশল মিলিয়ে ৪৮ → ৩৪ (−২৯%); লক্ষ্য −৫০% পূর্ণ হয়নি। একটি বাগ (জ্ঞান-দরজা recipe ফেরত দিত) পরীক্ষায় ধরা পড়ে ঠিক হয়েছে — `intelligence-test-bn.md` | I4 |
 | A-14 | Bengali costs 2–4× English tokens, per provider | untested | — | W1 |
 | A-15 | Interlingua keeps meaning ≥ 90% | untested | — | I8 |
 | A-16 | Fleet clustering −80% at 20 servers, 0 hidden diffs | partial (synthetic) | synthetic fleets: 5 → −44.6%, 10 → −68.3%, 20 → −80.4%, 0 hidden diffs each (SDC's token count, `results/2026-10-14-fleet-synthetic`); a real Docker fleet and provider counts are still to come | I7 |

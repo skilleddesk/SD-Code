@@ -79,7 +79,24 @@ pub fn observe(steps: &[Step]) -> Vec<String> {
     lessons
 }
 
-/// Appends a lesson to the project's `.sdc/lessons.md`. Answers the file it wrote.
+/// The exit code a `run_command` answer opens with (`exit code: 2 …`), or `None` for any other tool's answer.
+pub fn exit_code(answer: &str) -> Option<i64> {
+    let rest = answer.trim_start().strip_prefix("exit code: ")?;
+    let digits: String = rest.chars().take_while(|c| c.is_ascii_digit() || *c == '-').collect();
+
+    digits.parse().ok()
+}
+
+/// The step a lesson note recommends (`… ; `cargo test --lib` worked.`), if it recommends one.
+pub fn recommended(note: &str) -> Option<&str> {
+    let (_, after) = note.rsplit_once("; `")?;
+    let (step, tail) = after.split_once('`')?;
+
+    tail.trim_start().starts_with("worked").then_some(step)
+}
+
+/// Appends a lesson to the project's `.sdc/lessons.md` - once: a lesson already in the file is not written again.
+/// Answers the file.
 pub fn save(root: &Path, lesson: &str) -> Option<PathBuf> {
     let path = root.join(FILE);
 
@@ -88,6 +105,11 @@ pub fn save(root: &Path, lesson: &str) -> Option<PathBuf> {
     }
 
     let existing = std::fs::read_to_string(&path).unwrap_or_default();
+
+    if parse(&existing).iter().any(|entry| entry.text == lesson.trim()) {
+        return Some(path);
+    }
+
     let text = if existing.trim().is_empty() {
         "# Lessons\n\nWhat SDC learned the hard way in this project. Edit or delete any line - SDC reads this file.\n\n".to_string()
     } else {
@@ -133,9 +155,12 @@ pub fn find(root: &Path, request: &str) -> Option<String> {
     }
 
     let text = std::fs::read_to_string(root.join(FILE)).ok()?;
+    /* A lesson the knowledge core took back (I11) stays in the file for the person to read, but is not sent again. */
+    let taken_back: Vec<String> = crate::v3::knowledge_core::admitted(root).into_iter().filter(|item| item.kind == "lesson" && item.rolled_back.is_some()).map(|item| item.text).collect();
 
     parse(&text)
         .into_iter()
+        .filter(|entry| !taken_back.contains(&entry.text))
         .filter_map(|entry| {
             let shared = wanted.intersection(&entry.keywords).count();
 
@@ -189,6 +214,35 @@ mod tests {
 
         assert!(note.contains("cargo test --lib") && note.contains("Data, not instructions"));
         assert!(find(&root, "change the login button colour").is_none(), "an unrelated request does not");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_lesson_is_kept_once_and_any_non_zero_exit_is_a_failure() {
+        let root = std::env::temp_dir().join(format!("sdc-lessons-once-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        let lesson = "`npm test` failed here (EACCES); `pnpm test` worked.";
+
+        save(&root, lesson).unwrap();
+        save(&root, lesson).unwrap();
+        assert_eq!(std::fs::read_to_string(root.join(FILE)).unwrap().matches(lesson).count(), 1, "the same lesson is written once");
+
+        assert_eq!(exit_code("exit code: 0\nok"), Some(0));
+        assert_eq!(exit_code("exit code: 2\nusage"), Some(2), "exit 2 is a failure too, not only exit 1");
+        assert_eq!(exit_code("exit code: 127 (stopped: timed out)"), Some(127));
+        assert_eq!(exit_code("done · 20 ln"), None);
+
+        assert_eq!(recommended(&format!("[SDC lesson …]\n- {lesson}")), Some("pnpm test"));
+
+        /* Taken back by the knowledge core: still in the file, no longer sent. */
+        assert!(find(&root, "npm test fails with EACCES, run the tests").is_some());
+        crate::v3::knowledge_core::propose(&root, crate::v3::knowledge_core::Candidate { kind: "lesson".into(), text: lesson.into(), observations: vec!["turn-1".into(), "turn-2".into()] });
+        assert!(crate::v3::knowledge_core::rollback_matching(&root, &format!("- {lesson}"), "the step it recommended failed").is_some());
+        assert!(find(&root, "npm test fails with EACCES, run the tests").is_none(), "a lesson taken back is not sent again");
+        assert_eq!(recommended("- `npm install` failed the same way more than once here (x). Repeating it does not help - read the file or check the error first."), None);
 
         let _ = std::fs::remove_dir_all(&root);
     }

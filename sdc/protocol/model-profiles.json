@@ -1,10 +1,14 @@
 {
-  "generated": "2026-10-15",
+  "generated": "2026-10-16",
   "models": {
     "deepseek:deepseek-chat": {
       "techniques": [
         "tool_pruning",
-        "repomap"
+        "repomap",
+        "recipes",
+        "lessons",
+        "memory",
+        "knowledge"
       ],
       "evidence": [
         "stable_prefix: q-one-stable_prefix vs q-medium-off - 20 pairs, pass +0.0 pt, McNemar p 1.000, billable saving 1.0% [-17.0-2.2] → rejected (saving CI lower bound -17.0% is not above 0)",
@@ -12,7 +16,11 @@
         "ledger_diff: q-one-ledger_diff vs q-medium-off - 20 pairs, pass +0.0 pt, McNemar p 1.000, billable saving 0.8% [-0.4-6.7] → rejected (saving CI lower bound -0.4% is not above 0)",
         "skeleton: q-one-skeleton vs q-medium-off - 20 pairs, pass +0.0 pt, McNemar p 1.000, billable saving -2.6% [-7.4-1.9] → rejected (saving CI lower bound -7.4% is not above 0)",
         "repomap: q-one-repomap vs q-medium-off - 20 pairs, pass +0.0 pt, McNemar p 1.000, billable saving 7.9% [2.5-20.2] → accepted",
-        "interlingua: q-one-interlingua vs q-medium-off - 20 pairs, pass +0.0 pt, McNemar p 1.000, billable saving 0.6% [-3.3-7.2] → rejected (saving CI lower bound -3.3% is not above 0)"
+        "interlingua: q-one-interlingua vs q-medium-off - 20 pairs, pass +0.0 pt, McNemar p 1.000, billable saving 0.6% [-3.3-7.2] → rejected (saving CI lower bound -3.3% is not above 0)",
+        "recipes: q3-repeat-learn vs q3-repeat-base - 20 pairs, pass +0.0 pt, McNemar p 1.000, billable saving 20.0% [6.8-32.6] → accepted",
+        "lessons: q3-repeat-learn vs q3-repeat-base - 20 pairs, pass +0.0 pt, McNemar p 1.000, billable saving 20.0% [6.8-32.6] → accepted",
+        "memory: q3-repeat-learn vs q3-repeat-base - 20 pairs, pass +0.0 pt, McNemar p 1.000, billable saving 20.0% [6.8-32.6] → accepted",
+        "knowledge: q3-repeat-learn vs q3-repeat-base - 20 pairs, pass +0.0 pt, McNemar p 1.000, billable saving 20.0% [6.8-32.6] → accepted"
       ]
     }
   }

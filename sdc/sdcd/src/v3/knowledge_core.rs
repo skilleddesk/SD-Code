@@ -98,7 +98,11 @@ pub fn gate(candidate: &Candidate, admitted: &[Item]) -> Result<(), String> {
         return Err("too short to say anything: a lesson needs the command and what to do instead".into());
     }
 
-    if text.chars().count() > 1_200 {
+    /* A recipe carries its change as a diff (`recipes::changes`, itself capped), so it is allowed more room than a
+       lesson or a fact; at 1,200 every recipe with a diff of a whole new method was refused. */
+    let longest = if candidate.kind == "recipe" { 3_000 } else { 1_200 };
+
+    if text.chars().count() > longest {
         return Err("too long for knowledge: this wants to be two or three separate lessons".into());
     }
 
@@ -115,6 +119,11 @@ pub fn gate(candidate: &Candidate, admitted: &[Item]) -> Result<(), String> {
 
     if instruction_shaped(text) {
         return Err("it reads as an order to SDC, not as something about the project".into());
+    }
+
+    /* A redacted secret's placeholder means only something within its own chat; kept, it would be a broken command. */
+    if text.contains("‹secret:") {
+        return Err("it carries a redacted secret, which means nothing outside the chat it came from".into());
     }
 
     let ours = words(text);
@@ -346,6 +355,13 @@ mod tests {
         assert!(
             matches!(propose(&root, Candidate { kind: "lesson".into(), text: "`npm test` failed here; `pnpm test` worked.".into(), observations: vec!["turn-1".into()] }), Decision::Refused(_)),
             "a lesson still needs two"
+        );
+        assert!(
+            matches!(
+                propose(&root, Candidate { kind: "recipe".into(), text: format!("{recipe}\nRoute: run_command deploy --key ‹secret:1›"), observations: vec!["turn-2".into()] }),
+                Decision::Refused(ref reason) if reason.contains("redacted secret")
+            ),
+            "a recipe carrying a secret's placeholder is not kept"
         );
     }
 
