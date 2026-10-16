@@ -15,6 +15,12 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [Unreleased]
+
+- **P0-0 Plan Tracker.** `sdcd plan next|status|validate|sync|set` follows `sdc/docs/PROMPT-BOOK-SDC.md` by itself: the first `todo`
+  task whose dependencies are done and whose phase gate reads `Result: PASS` in `sdc/docs/GATES.md` (an interrupted task resumes
+  first). `sdc/docs/PLAN-STATUS.md` holds the 66 rows. No existing behaviour changed.
+
 ## [2.0.4] — the savings follow DeepSeek's other name for the same model
 
 DeepSeek serves `deepseek-chat` as `deepseek-flash` (the API answers `"model": "deepseek-flash"` to a request for
