@@ -17,6 +17,16 @@ working build is a trap rather than a history. The entries below are kept for th
 
 ## [Unreleased]
 
+- **P0-1 Characterization tests and baseline.** `sdc/sdcd/tests/characterization.rs` pins the behaviour the v3 work must not
+  change (permission gate, policy defaults, cost model, the three engine wire formats, Verify plans, the ledger chain, the
+  token technique profile) and guards file-search latency. A real baseline is frozen in `sdc/bench/baselines/2026-10-17/`:
+  `deepseek:deepseek-chat`, tier `full`, 40 tasks x 3 runs, **99.2% (119/120)**, **$0.2023**. New: `sdcd bench baseline LABEL
+  [--as NAME] [--note TEXT] [--force]`, and a frozen baseline is now named by its label (`--baseline 2026-10-17`).
+- **P0-2 Keychain and Claude compliance.** `sdc/sdcd/src/auth/migrate.rs` (written earlier, never wired in) now compiles and
+  has an entry point: `sdcd keys migrate [--apply]` writes each plaintext key to the OS store, **reads it back, and only then
+  deletes the file** - a store that returns something else leaves the file where it was. `sdcd keys stray [DIR]` reports
+  key-shaped files by path, rule and line, never by value (exit 2 = found something). The doctor has a twelfth row, "API keys",
+  saying which store is really in use. SDC no longer reads or forwards the Claude Code CLI's own credential.
 - **P0-0 Plan Tracker.** `sdcd plan next|status|validate|sync|set` follows `sdc/docs/PROMPT-BOOK-SDC.md` by itself: the first `todo`
   task whose dependencies are done and whose phase gate reads `Result: PASS` in `sdc/docs/GATES.md` (an interrupted task resumes
   first). `sdc/docs/PLAN-STATUS.md` holds the 66 rows. No existing behaviour changed.

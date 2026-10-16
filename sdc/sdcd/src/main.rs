@@ -62,6 +62,12 @@ fn main() -> Result<()> {
         if all.first().map(String::as_str) == Some("plan") {
             std::process::exit(sdcd::plan::main(&all[1..]));
         }
+
+        /* P0-2: `sdcd keys migrate|stray` talks to the OS key store and the file system directly; like `plan`
+           it needs no runtime, so a locked or missing keychain cannot be reported as a daemon failure. */
+        if all.first().map(String::as_str) == Some("keys") {
+            std::process::exit(sdcd::auth::migrate::main(&all[1..]));
+        }
     }
 
     /* 0.21: Git on a Windows machine that has none, fetched in the background - checkpoints need it. Only
@@ -131,7 +137,7 @@ async fn run() -> Result<()> {
             }
             "--help" => {
                 println!(
-                    "sdcd {VERSION}\n  --port <n>        loopback port (default {})\n  --database <p>    SQLite file (default: the platform data directory)\n  --idle-exit <secs> exit after <secs> with no client (default: never)",
+                    "sdcd {VERSION}\n  --port <n>        loopback port (default {})\n  --database <p>    SQLite file (default: the platform data directory)\n  --idle-exit <secs> exit after <secs> with no client (default: never)\n\n  run|verify|kill|audit …   talk to a running daemon\n  bench …                   measure models (v3)\n  plan next|status|validate|sync|set   follow the Master Plan (P0-0)\n  keys migrate [--apply] | keys stray [DIR]   where the API keys live (P0-2)",
                     paths::DEFAULT_PORT
                 );
                 return Ok(());

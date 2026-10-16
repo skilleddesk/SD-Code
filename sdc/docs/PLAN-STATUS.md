@@ -6,8 +6,8 @@ Status: `todo` · `in-progress` · `blocked` · `done`.
 | ID | title | phase | depends_on | status | switch | report | note |
 |---|---|---|---|---|---|---|---|
 | P0-0 | Plan Tracker | 0 |  | done | n/a | sdc/docs/reports/P0-0.md | plan tracker |
-| P0-1 | Characterization tests and baseline | 0 | P0-0 | todo | n/a |  |  |
-| P0-2 | Keychain and Claude compliance | 0 | P0-1 | todo | secrets.keychain |  |  |
+| P0-1 | Characterization tests and baseline | 0 | P0-0 | done | n/a | sdc/docs/reports/P0-1.md | 99.2% 119/120 on deepseek-chat full tier for $0.2023; baseline frozen 2026-10-17 |
+| P0-2 | Keychain and Claude compliance | 0 | P0-1 | done | secrets.keychain | sdc/docs/reports/P0-2.md | keys migrate wired + doctor row; Claude CLI credential no longer read |
 | P0-3 | Modular split | 0 | P0-1 | todo | n/a |  |  |
 | P0-4 | Crash-resilient journal (local + VPS) | 0 | P0-3 | todo | journal.v2 |  |  |
 | P0-5 | Data layer | 0 | P0-3 | todo | data.v2 |  |  |

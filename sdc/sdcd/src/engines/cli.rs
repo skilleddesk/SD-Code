@@ -490,13 +490,9 @@ impl CliAdapter {
            turn goes over `ssh` instead: same args, same prompt placement, same stream - a different
            machine (0.7.13). */
         let mut command = match prompt.remote {
-            Some(_) => match self.remote_command(prompt, &args, &{
-                let program = self.spec.program;
-
-                tokio::task::spawn_blocking(move || crate::engines::credentials::forwarded(program))
-                    .await
-                    .unwrap_or_default()
-            }) {
+            /* P0-2: nothing of this machine's CLI sign-in travels with a remote turn. SDC never reads, copies or
+               forwards a CLI's token; on the host the CLI uses the sign-in the person made there. */
+            Some(_) => match self.remote_command(prompt, &args, &[]) {
                 Ok(command) => command,
                 Err(error) => {
                     sink.send(EngineEvent::Failed(error.message));

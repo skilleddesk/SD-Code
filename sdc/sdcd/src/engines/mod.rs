@@ -21,7 +21,6 @@ pub mod cancel;
 pub mod claude_code;
 pub mod cli;
 pub mod codex;
-pub mod credentials;
 pub mod draft;
 pub mod gemini;
 pub mod native_api;

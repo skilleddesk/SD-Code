@@ -58,6 +58,9 @@ pub fn checks(store: &Store) -> Vec<Value> {
         None => json!({ "id": "browser", "label": "Browser for the agent", "state": "warn", "detail": "none found - the agent cannot look at pages it builds", "fix": "Install" }),
     });
 
+    /* 0.21.1: the agent's browser is the eleventh row. P0-2: where the API keys live is the twelfth. */
+    rows.push(crate::auth::migrate::doctor_row());
+
     /* 7 - the busy port the prototype's example complains about. */
     rows.push(match std::net::TcpListener::bind(("127.0.0.1", 3000)) {
         Ok(_) => json!({ "id": "port3000", "label": "Port 3000", "state": "ok", "detail": "free" }),
@@ -341,12 +344,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn reports_exactly_eleven_checks_with_the_five_required_fields() {
+    fn reports_exactly_twelve_checks_with_the_five_required_fields() {
         let store = Store::in_memory().unwrap();
         let rows = checks(&store);
 
-        /* 0.21.1: the agent's browser is the eleventh. */
-        assert_eq!(rows.len(), 11);
+        /* 0.21.1: the agent's browser is the eleventh. P0-2: where the API keys live is the twelfth. */
+        assert_eq!(rows.len(), 12);
 
         for row in &rows {
             assert!(row["id"].is_string(), "every check has an id");
@@ -357,6 +360,15 @@ mod tests {
 
             assert!(["ok", "warn", "fail"].contains(&state));
         }
+    }
+
+    #[test]
+    fn the_keys_row_names_the_store_that_is_really_in_use() {
+        let row = crate::auth::migrate::doctor_row();
+
+        assert_eq!(row["id"], "secrets");
+        /* Whichever store this machine has, the row says so rather than claiming the keychain. */
+        assert!(row["detail"].as_str().unwrap().contains(if crate::auth::keychain::backend() == "os" { "OS keychain" } else { "protected file" }));
     }
 
     #[test]

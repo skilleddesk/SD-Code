@@ -2,4 +2,5 @@
 
 pub mod cli_login;
 pub mod keychain;
+pub mod migrate;
 pub mod remote;

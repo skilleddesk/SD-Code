@@ -1274,9 +1274,9 @@ mod tests {
         assert_eq!(file, "run/turn-9.env");
         assert!(secrets_write_line(&file).starts_with("umask 077;"));
 
-        let text = secrets_text(&[("CLAUDE_CODE_OAUTH_TOKEN".to_string(), "tok'1".to_string())]);
+        let text = secrets_text(&[("SOME_SECRET_NAME".to_string(), "tok'1".to_string())]);
 
-        assert_eq!(text, "export CLAUDE_CODE_OAUTH_TOKEN='tok'\\''1'\n");
+        assert_eq!(text, "export SOME_SECRET_NAME='tok'\\''1'\n");
 
         let line = turn_line_with_secrets("claude", &[], None, &[], "run/turn-9.pid", Some(&file)).unwrap();
 
