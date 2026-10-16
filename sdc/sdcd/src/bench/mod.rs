@@ -276,12 +276,40 @@ fn resume_cmd(args: &[String]) -> Result<(), String> {
         summary.duplicated_commands
     );
 
+    /* P0-4: the runner turn type, on the same journal. Its transport is a VPS, which a bench on a laptop cannot
+       provide, so the trial drives the records, the writer and the replay the daemon really uses and leaves the
+       ssh hop out - and says so in the line it prints. */
+    /* The plan's VPS half: 20 kill points, five times each - the same 100 kills the local half runs. */
+    let runner = resume::runner_trials(&scratch.join("runner"), (kills / 5).max(1), 5, 7);
+    let runner_correct = runner.iter().filter(|trial| trial.correct()).count();
+
+    println!(
+        "runner (VPS) turns: {} kills, correct {}/{} ({:.1}%), damaged tails {} - records and replay only, no ssh hop on this machine",
+        runner.len(),
+        runner_correct,
+        runner.len(),
+        if runner.is_empty() { 0.0 } else { runner_correct as f64 / runner.len() as f64 * 100.0 },
+        runner.iter().filter(|trial| trial.damaged_tail).count()
+    );
+
     if let Some(label) = flag(args, "--label") {
         let bench = bench_dir(args)?;
         let out = results_dir(&bench, &label);
 
         std::fs::create_dir_all(&out).map_err(|error| error.to_string())?;
         std::fs::write(out.join("resume.json"), serde_json::to_string_pretty(&json!({ "summary": summary, "trials": trials })).unwrap_or_default()).map_err(|error| error.to_string())?;
+        std::fs::write(
+            out.join("resume-runner.json"),
+            serde_json::to_string_pretty(&json!({
+                "kills": runner.len(),
+                "correct": runner_correct,
+                "damaged_tails": runner.iter().filter(|trial| trial.damaged_tail).count(),
+                "transport": "absent - the records, writer and replay the daemon uses, driven without an ssh hop",
+                "trials": runner,
+            }))
+            .unwrap_or_default(),
+        )
+        .map_err(|error| error.to_string())?;
         write_meta_if_missing(&out, &label, "resume", &bench)?;
         println!("written {}", out.join("resume.json").display());
     }

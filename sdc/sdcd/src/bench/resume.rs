@@ -313,9 +313,330 @@ pub fn summarise(trials: &[Trial]) -> Summary {
     }
 }
 
+/// One line of a runner turn: what the daemon writes while the turn's tools run over ssh (P0-4).
+#[derive(Clone, Copy, Debug)]
+enum Op {
+    /// The Step Runtime introduces a step; the reserved `step_id` column carries it from here on.
+    Step(usize),
+    /// A reply from the model that asked for this many tool calls on the runner.
+    Reply(usize, usize),
+    /// A result that came back from the runner for call `index` of that step.
+    Result(usize, usize),
+    /// The tool-answer messages the daemon appends once the results are in.
+    Answers,
+}
+
+/// A runner turn: four steps, the first asking for two calls and the second for one (the shape R4's turns have).
+fn runner_script() -> Vec<Op> {
+    vec![
+        Op::Step(1),
+        Op::Reply(1, 2),
+        Op::Result(1, 0),
+        Op::Result(1, 1),
+        Op::Answers,
+        Op::Step(2),
+        Op::Reply(2, 1),
+        Op::Result(2, 0),
+        Op::Answers,
+        Op::Step(3),
+        Op::Reply(3, 0),
+    ]
+}
+
+const ANSWERS_PER_STEP: usize = 2;
+
+fn runner_call(step: usize, index: usize) -> String {
+    format!("c{step}-{index}")
+}
+
+/// What a resume of the first `ops` records has to say, worked out from the script alone. Written out here a
+/// second time on purpose: a resume is only correct against an expectation that was not read off the resume.
+#[derive(Debug, PartialEq)]
+struct Expected {
+    step_id: String,
+    messages: usize,
+    calls: usize,
+    answered: usize,
+}
+
+fn expected(ops: &[Op]) -> Expected {
+    let mut step_id = String::new();
+    let mut announced = String::new();
+    let mut messages = 0;
+    let mut calls = 0;
+    let mut answered = 0;
+
+    for op in ops {
+        match op {
+            /* A step that announced itself and then wrote nothing left no record: the journal can only know the
+               step a record belongs to, which is why `step_id` is a column and not a separate record. */
+            Op::Step(number) => announced = format!("step-{number}"),
+            /* A reply is one message, and it is what a crash leaves as the outstanding calls. */
+            Op::Reply(_, count) => {
+                step_id = announced.clone();
+                messages += 1;
+                calls = *count;
+                answered = 0;
+            }
+            Op::Result(..) => {
+                step_id = announced.clone();
+                answered += 1;
+            }
+            /* The tool answers carry the results, so the outstanding calls are spent with them. */
+            Op::Answers => {
+                step_id = announced.clone();
+                messages += ANSWERS_PER_STEP;
+                calls = 0;
+                answered = 0;
+            }
+        }
+    }
+
+    Expected { step_id, messages, calls, answered }
+}
+
+/// One kill-and-resume of a runner turn.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct RunnerTrial {
+    pub index: usize,
+    /// How many of the turn's records had been written when the writer was killed.
+    pub kill_after: usize,
+    /// Whether the tail record was left damaged, as a kill during the last write leaves it.
+    pub damaged_tail: bool,
+    pub origin_kept: bool,
+    pub step_kept: bool,
+    pub messages_kept: bool,
+    pub calls_kept: bool,
+    pub answered_kept: bool,
+    pub damaged_counted: bool,
+    pub note: String,
+}
+
+impl RunnerTrial {
+    pub fn correct(&self) -> bool {
+        self.origin_kept && self.step_kept && self.messages_kept && self.calls_kept && self.answered_kept && self.damaged_counted
+    }
+}
+
+/// Kills a runner turn at `points` places, `repeats` times each, and rebuilds it every time.
+///
+/// This is the VPS half of P0-4. The records, the writer and the replay are the ones the daemon really uses;
+/// what is missing against a live trial is only the transport, because a kill -9 trial over ssh needs a VPS to
+/// run against and this machine has none. `sdcd bench resume` reports the two halves separately for that reason.
+pub fn runner_trials(root: &std::path::Path, points: usize, repeats: usize, seed: u64) -> Vec<RunnerTrial> {
+    use crate::v3::journal::{Origin, Writer};
+
+    let script = runner_script();
+    let mut state = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+    let mut next = move || {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        state
+    };
+    let mut trials = Vec::new();
+    let mut index = 0;
+
+    for point in 0..points {
+        for repeat in 0..repeats {
+            /* A fresh store every trial: a resume is what the journal says, and a journal that already has a
+               turn in it would make the answer come from somewhere else. */
+            let dir = root.join(format!("runner-{point}-{repeat}"));
+            let _ = std::fs::remove_dir_all(&dir);
+            let _ = std::fs::create_dir_all(&dir);
+
+            let store = match crate::store::sqlite::Store::open(&dir.join("sdc.db")) {
+                Ok(store) => std::sync::Arc::new(store),
+                Err(error) => {
+                    trials.push(RunnerTrial {
+                        index,
+                        kill_after: point,
+                        damaged_tail: false,
+                        origin_kept: false,
+                        step_kept: false,
+                        messages_kept: false,
+                        calls_kept: false,
+                        answered_kept: false,
+                        damaged_counted: false,
+                        note: format!("the store would not open: {error}"),
+                    });
+                    index += 1;
+                    continue;
+                }
+            };
+
+            let start = serde_json::json!({ "prompt": "fix the failing test", "remote": "vps.example" });
+            let Some(mut writer) = Writer::on_runner(store.clone(), &format!("t-{point}-{repeat}"), "s-1", start) else {
+                continue;
+            };
+
+            /* Walk the script to the kill point: everything up to here was written before the power went. */
+            let kill_after = if point == 0 { 0 } else { (next() as usize) % script.len() + 1 };
+            let mut steps_done = 0usize;
+
+            for op in script.iter().take(kill_after) {
+                match *op {
+                    Op::Step(number) => {
+                        writer.step(&format!("step-{number}"));
+                        steps_done = number;
+                    }
+                    Op::Reply(step, count) => {
+                        let calls: Vec<crate::agent::dialect::ToolUse> = (0..count)
+                            .map(|slot| crate::agent::dialect::ToolUse { id: runner_call(step, slot), name: "Run".into(), input: serde_json::json!({ "shell": "make test" }) })
+                            .collect();
+
+                        writer.model(step, &serde_json::json!({ "role": "assistant", "content": format!("step {step}") }), &calls);
+                    }
+                    Op::Result(step, slot) => {
+                        writer.result(step, &runner_call(step, slot), "Run", "ok", false);
+                    }
+                    Op::Answers => {
+                        let answers: Vec<serde_json::Value> = (0..ANSWERS_PER_STEP)
+                            .map(|slot| serde_json::json!({ "role": "tool", "content": format!("result {slot}") }))
+                            .collect();
+
+                        writer.messages(steps_done, &answers);
+                    }
+                }
+            }
+
+            /* The kill: no `end` record, exactly what `kill -9` leaves behind. */
+            std::mem::forget(writer);
+
+            /* One trial in three is left with the last write half done. */
+            let damaged_tail = next() % 3 == 0 && kill_after > 0;
+
+            if damaged_tail {
+                let _ = store
+                    .connection
+                    .lock()
+                    .unwrap()
+                    .execute(
+                        "UPDATE job_events SET payload = substr(payload, 1, length(payload) / 2) WHERE id = (SELECT MAX(id) FROM job_events)",
+                        [],
+                    );
+            }
+
+            /* A damaged tail loses one *record*, and a `Step` op writes no record - only the record after it
+               carries that step - so the walk back skips the steps that announced themselves and wrote nothing. */
+            let surviving = if damaged_tail {
+                let mut end = kill_after - 1;
+
+                while end > 0 && matches!(script[end], Op::Step(_)) {
+                    end -= 1;
+                }
+
+                &script[..end]
+            } else {
+                &script[..kill_after]
+            };
+            /* The tail record is damaged, not gone: its payload is unreadable but its *columns* still are, and
+               `step_id` is a column. So the step it announced is the step the resume reports, while the messages,
+               calls and answers come from the records that still read back. */
+            let mut want = expected(&script[..kill_after]);
+
+            if damaged_tail {
+                let read_back = expected(surviving);
+
+                want.messages = read_back.messages;
+                want.calls = read_back.calls;
+                want.answered = read_back.answered;
+            }
+            let rebuilt = crate::v3::journal::rebuild(&store, &format!("t-{point}-{repeat}"));
+
+            let trial = match rebuilt {
+                None => RunnerTrial {
+                    index,
+                    kill_after,
+                    damaged_tail,
+                    origin_kept: false,
+                    step_kept: false,
+                    messages_kept: false,
+                    calls_kept: false,
+                    answered_kept: false,
+                    damaged_counted: false,
+                    note: "the turn could not be rebuilt at all".into(),
+                },
+                Some((_, resumed)) => {
+                    let origin_kept = resumed.origin == Origin::Vps;
+                    let step_kept = resumed.step_id == want.step_id;
+                    let messages_kept = resumed.messages.len() == want.messages;
+                    let calls_kept = resumed.calls.len() == want.calls;
+                    /* An answered call is one the turn may not run again; a missing one would run twice. */
+                    let answered_kept = resumed.answered.len() == want.answered;
+                    let damaged_counted = resumed.damaged == usize::from(damaged_tail);
+
+                    RunnerTrial {
+                        index,
+                        kill_after,
+                        damaged_tail,
+                        origin_kept,
+                        step_kept,
+                        messages_kept,
+                        calls_kept,
+                        answered_kept,
+                        damaged_counted,
+                        note: if origin_kept && step_kept && messages_kept && calls_kept && answered_kept && damaged_counted {
+                            String::new()
+                        } else {
+                            format!(
+                                "want step {} / {} messages / {} calls / {} answered / {} damaged, got {} / {} / {} / {} / {}",
+                                want.step_id,
+                                want.messages,
+                                want.calls,
+                                want.answered,
+                                usize::from(damaged_tail),
+                                resumed.step_id,
+                                resumed.messages.len(),
+                                resumed.calls.len(),
+                                resumed.answered.len(),
+                                resumed.damaged,
+                            )
+                        },
+                    }
+                }
+            };
+
+            trials.push(trial);
+            index += 1;
+
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+    }
+
+    trials
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_runner_script_is_the_shape_the_trial_expects() {
+        let script = runner_script();
+
+        assert_eq!(expected(&script[..0]), Expected { step_id: String::new(), messages: 0, calls: 0, answered: 0 });
+        /* Through the first answers: one reply, two results, then the answers spend the calls. */
+        assert_eq!(expected(&script[..5]), Expected { step_id: "step-1".into(), messages: 1 + ANSWERS_PER_STEP, calls: 0, answered: 0 });
+        /* Killed right after the reply: the two calls are outstanding and none is answered. */
+        assert_eq!(expected(&script[..2]), Expected { step_id: "step-1".into(), messages: 1, calls: 2, answered: 0 });
+        /* Killed after one result: that one is answered, and it is the one that must not run again. */
+        assert_eq!(expected(&script[..3]), Expected { step_id: "step-1".into(), messages: 1, calls: 2, answered: 1 });
+    }
+
+    #[test]
+    fn a_runner_turn_resumes_correctly_at_every_kill_point() {
+        let dir = tempfile::tempdir().unwrap();
+        let trials = runner_trials(dir.path(), 20, 5, 7);
+
+        assert_eq!(trials.len(), 100, "20 kill points, five times each");
+
+        for trial in &trials {
+            assert!(trial.correct(), "trial {} (killed after {} records{}): {}", trial.index, trial.kill_after, if trial.damaged_tail { ", tail damaged" } else { "" }, trial.note);
+        }
+
+        assert!(trials.iter().any(|trial| trial.damaged_tail), "the damaged-tail case has to be among them");
+    }
 
     #[test]
     fn the_script_continues_from_any_number_of_answers() {

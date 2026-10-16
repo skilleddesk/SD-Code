@@ -1560,9 +1560,27 @@ fn drive(
         }
 
         sink.send(EngineEvent::Thinking(format!(
-            "Resumed from the journal of the interrupted turn: {} step(s) kept, {} call(s) run again.\n",
+            "Resumed from the journal of the interrupted turn{}: {} step(s) kept, {} call(s) run again.{}",
+            /* P0-4: a resumed turn says which machine the work happened on, and whether a record was lost, so a
+               turn that comes back short is explained rather than looking like the model forgot. */
+            match resume.origin {
+                crate::v3::journal::Origin::Vps => match &resume.remote {
+                    Some(host) => format!(", on {host}"),
+                    None => ", on the runner".to_string(),
+                },
+                crate::v3::journal::Origin::Local => String::new(),
+            },
             resume.messages.iter().filter(|message| message["role"] == "assistant").count(),
-            rerun.len()
+            rerun.len(),
+            match (resume.damaged, resume.skipped_newer, &resume.step_id) {
+                (0, 0, step) if step.is_empty() => String::new(),
+                (damaged, newer, step) => format!(
+                    "{} record(s) did not read back and were skipped{}{}.\n",
+                    damaged,
+                    if newer > 0 { format!(", {newer} came from a newer build") } else { String::new() },
+                    if step.is_empty() { String::new() } else { format!(" (interrupted inside {step})") },
+                ),
+            },
         )));
     }
 
@@ -1571,7 +1589,7 @@ fn drive(
        turn is never silently redone: its tools ran over there, and replaying them here would be a different turn. */
     let journal = (backend == Backend::Api && research_session.is_none())
         .then(|| {
-            crate::v3::journal::Writer::open(
+            crate::v3::journal::Writer::open_on(
                 &turn_id,
                 &prompt.session_id,
                 serde_json::json!({
@@ -1586,6 +1604,12 @@ fn drive(
                        here when this is set: the work happened over there. */
                     "remote": prompt.remote.as_ref().map(|ssh| ssh.target.user_host.clone()),
                 }),
+                /* P0-4: `origin` is written on every record, so a crashed VPS turn can be found after a restart
+                   without reading its payload, and the resume can say which machine the work happened on. */
+                match prompt.remote {
+                    Some(_) => crate::v3::journal::Origin::Vps,
+                    None => crate::v3::journal::Origin::Local,
+                },
             )
         })
         .flatten();

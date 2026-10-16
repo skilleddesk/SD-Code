@@ -197,6 +197,24 @@ CREATE INDEX IF NOT EXISTS job_events_turn ON job_events(turn_id, id);
 CREATE INDEX IF NOT EXISTS job_events_kind ON job_events(kind, turn_id);
 "#,
     ),
+    (
+        /* P0-4. Three columns the v3 journal did not have:
+           - `schema` versions the record itself. Rows written before this migration read back as 1 - the shape
+             they really have - and rows written now carry 2, so a replay can tell which reader a row needs and
+             can step over a row from a *newer* build instead of guessing at it.
+           - `step_id` is reserved for the Step Runtime (P0-12/P0-14): the step a record belongs to, as an id and
+             not just the `step` number, so a resumed turn can say which step it was inside when the power went.
+           - `origin` says which machine ran the turn's tools (`local`, `vps`). R4 decided a turn that ran on a
+             runner is reported, not continued here; P0-4 keeps that promise but has to be able to *find* those
+             turns after a crash, and a column is how a query finds them. */
+        "0201-journal-v2",
+        r#"
+ALTER TABLE job_events ADD COLUMN schema INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE job_events ADD COLUMN step_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE job_events ADD COLUMN origin TEXT NOT NULL DEFAULT 'local';
+CREATE INDEX IF NOT EXISTS job_events_origin ON job_events(origin, turn_id);
+"#,
+    ),
 ];
 
 /// The daemon's database handle.
@@ -315,6 +333,26 @@ impl Store {
         let answer: String = connection.query_row("PRAGMA quick_check", [], |row| row.get(0)).unwrap_or_else(|error| error.to_string());
 
         (answer != "ok").then_some(answer)
+    }
+
+    /// fsync on every commit (P0-4), for the journal's promise that a record which was written is on the disk
+    /// before the step it describes may be called done. WAL with the default `synchronous = NORMAL` leaves the
+    /// last commits in the operating system's cache: a `kill -9` keeps them, because the kernel still has them,
+    /// but a power cut does not - and that is exactly the failure the journal exists for.
+    ///
+    /// Answers whether SQLite reports the setting took (`2` is FULL), so the caller can say so rather than
+    /// assume it.
+    pub fn durable(&self) -> bool {
+        let Ok(connection) = self.connection.lock() else {
+            return false;
+        };
+
+        /* An in-memory database has no disk to be durable against, and SQLite refuses the setting there. */
+        if connection.pragma_update(None, "synchronous", "FULL").is_err() {
+            return false;
+        }
+
+        connection.query_row("PRAGMA synchronous", [], |row| row.get::<_, i64>(0)).map(|mode| mode == 2).unwrap_or(false)
     }
 
     fn migrate(&self) -> Result<()> {

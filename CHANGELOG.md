@@ -17,6 +17,14 @@ working build is a trap rather than a history. The entries below are kept for th
 
 ## [Unreleased]
 
+- **P0-4 Crash-resilient journal (local + VPS).** Journal records are versioned (`schema`), carry the reserved
+  `step_id`, say which machine ran the turn (`origin`), and are append-only with `synchronous = FULL`, so a commit is
+  an fsync. A damaged tail record is skipped **and counted** (`Resume::damaged`) instead of vanishing, a record from
+  a newer build is stepped over rather than guessed at, and a turn whose *start* record was the damaged one now comes
+  back with `start_lost` instead of disappearing. Runner (VPS) turns are journalled too (`Writer::on_runner`), R4's
+  rule unchanged - reported, never continued here - and the resume line names the machine and any lost record.
+  Measured: local **100 kill -9 runs, 100/100 correct resume** (77 killed mid-turn, 0 duplicated commands); runner
+  turn type **100/100** (20 kill points x 5, 27 damaged tails) over the records, writer and replay the daemon uses.
 - **P0-3 Modular split.** `sdcp/methods.rs` was one 5682-line `impl Daemon`; it is now **2130 lines plus six domain
   modules** (`host_methods`, `workspace_methods`, `file_methods`, `model_methods`, `guard_methods`, `fleet_methods`),
   each following the convention `kernel.rs` set: `use super::*;`, a `dispatch_<domain>` that falls through to its
