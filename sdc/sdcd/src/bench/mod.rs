@@ -14,6 +14,7 @@
 //! sdcd bench profiles    --baseline L --candidate feature=L2[@own-baseline] [...]  # Q2: model-profiles.json from Q3 verdicts
 //! sdcd bench fleet       [--label NAME]                   # A-16 on synthetic 5/10/20-server fleets
 //! sdcd bench drift       --labels A,B,C [--target 0.8]   # Q4: a model's pass rate slipping away from where it was
+//! sdcd bench baseline    LABEL [--as NAME] [--note TEXT] [--force]   # P0-1: freeze a finished result set
 //! sdcd bench report      LABEL [--baseline LABEL]         # writes bench/results/LABEL/report-bn.md
 //! sdcd bench compare     BASELINE CANDIDATE [--report-bn]  # the Q3 rule per model
 //! ```
@@ -60,7 +61,7 @@ fn has(args: &[String], name: &str) -> bool {
 
 /// The words that are not flags or flag values.
 fn positional(args: &[String]) -> Vec<String> {
-    let switches = ["--keep", "--dry-run", "--report-bn", "--cold", "--keep-learning"];
+    let switches = ["--keep", "--dry-run", "--report-bn", "--cold", "--keep-learning", "--force"];
     let mut words = Vec::new();
     let mut skip = false;
 
@@ -103,7 +104,15 @@ fn results_dir(bench: &Path, label: &str) -> PathBuf {
         return path.to_path_buf();
     }
 
-    bench.join("results").join(label)
+    let results = bench.join("results").join(label);
+
+    /* P0-1: a frozen baseline is named by its label like any other result set, so `--baseline 2026-10-17-deepseek`
+       finds `bench/baselines/…` without anyone pasting a path into a script. */
+    if !results.join("runs.jsonl").exists() && bench.join("baselines").join(label).join("runs.jsonl").exists() {
+        return bench.join("baselines").join(label);
+    }
+
+    results
 }
 
 fn tier_defaults(tier: &str) -> (usize, f64) {
@@ -121,7 +130,7 @@ fn git_commit(dir: &Path) -> String {
 /// `sdcd bench …` - the process's exit code.
 pub fn main(args: &[String]) -> i32 {
     let Some(command) = args.first().cloned() else {
-        eprintln!("usage: sdcd bench list|run|competitors|lang|search|gen-tree|report|compare (see `sdcd bench help`)");
+        eprintln!("usage: sdcd bench list|run|competitors|lang|search|gen-tree|report|compare|baseline (see `sdcd bench help`)");
         return 3;
     };
     let rest = &args[1..];
@@ -138,6 +147,7 @@ pub fn main(args: &[String]) -> i32 {
         "profiles" => profiles_cmd(rest),
         "fleet" => fleet_cmd(rest),
         "drift" => drift_cmd(rest),
+        "baseline" => baseline_cmd(rest),
         "compare" => compare_cmd(rest),
         _ => {
             println!("{}", include_str!("mod.rs").lines().skip(2).take(19).map(|line| line.trim_start_matches("//! ")).collect::<Vec<_>>().join("\n"));
@@ -403,6 +413,65 @@ fn drift_cmd(args: &[String]) -> Result<(), String> {
             None => println!("{model:<40} steady [{}]", reading.join(", ")),
         }
     }
+
+    Ok(())
+}
+
+/// `sdcd bench baseline LABEL [--as NAME] [--note TEXT] [--force]` (P0-1): freezes a finished result set as the
+/// thing a later change is measured against - `bench/baselines/NAME/` keeps `meta.json`, `runs.jsonl` and the
+/// report exactly as they were measured, plus `baseline.json` with the commit and the sha256 of `runs.jsonl`.
+///
+/// A baseline is a claim about what the code did on a day, and every future comparison reads it, so it is written
+/// once: a second freeze of the same name stops instead of quietly re-measuring what "before" means. `--as` names
+/// the frozen folder - the plan's `bench/baselines/<date>/` - while the result set keeps the label it was run with.
+fn baseline_cmd(args: &[String]) -> Result<(), String> {
+    let bench = bench_dir(args)?;
+    let label = positional(args).into_iter().next().ok_or("a label is required: sdcd bench baseline LABEL")?;
+    let from = results_dir(&bench, &label);
+    let results = report::load(&from)?;
+
+    if results.runs.is_empty() {
+        return Err(format!("{} holds no runs", from.display()));
+    }
+
+    let name = flag(args, "--as").unwrap_or_else(|| label.clone());
+    let to = bench.join("baselines").join(&name);
+
+    if to.join("baseline.json").exists() && !has(args, "--force") {
+        return Err(format!("{} is already a baseline: pass --force to replace it, or freeze a new name", to.display()));
+    }
+
+    std::fs::create_dir_all(&to).map_err(|error| error.to_string())?;
+
+    let runs = std::fs::read(from.join("runs.jsonl")).map_err(|error| error.to_string())?;
+
+    for file in ["meta.json", "runs.jsonl", "ledger.jsonl", "report-bn.md", "seed.json"] {
+        let source = from.join(file);
+
+        if source.is_file() {
+            std::fs::copy(&source, to.join(file)).map_err(|error| format!("{file}: {error}"))?;
+        }
+    }
+
+    let frozen = json!({
+        "baseline": name,
+        "results": label,
+        "frozen_at": chrono::Local::now().format("%Y-%m-%d").to_string(),
+        "measured_on": results.meta["date"],
+        "git_commit": results.meta["git_commit"],
+        "sdcd_version": results.meta["sdcd_version"],
+        "os": results.meta["os"],
+        "models": results.meta["models"],
+        "runs": results.runs.len(),
+        /* The hash is of the file that was copied, so a baseline edited after the fact is visible as such. */
+        "sha256": hex::encode(<sha2::Sha256 as sha2::Digest>::digest(&runs)),
+        "note": flag(args, "--note"),
+        "from": from.display().to_string(),
+    });
+
+    std::fs::write(to.join("baseline.json"), format!("{}\n", serde_json::to_string_pretty(&frozen).unwrap_or_default())).map_err(|error| error.to_string())?;
+
+    println!("baseline {name}: {} run(s) · {} · {}", frozen["runs"], frozen["git_commit"], to.display());
 
     Ok(())
 }
@@ -842,6 +911,62 @@ mod tests {
     #[test]
     fn positional_words_skip_flags_and_their_values() {
         assert_eq!(positional(&strings(&["base", "--report-bn", "new", "--bench-dir", "x"])), ["base", "new"]);
+    }
+
+    /// A bench tree with one finished result set: what `sdcd bench run` leaves behind, minus the money.
+    fn a_bench_tree(label: &str, runs: usize) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        let results = dir.path().join("results").join(label);
+
+        std::fs::create_dir_all(dir.path().join("tasks")).unwrap();
+        std::fs::create_dir_all(&results).unwrap();
+
+        let lines: Vec<String> = (0..runs)
+            .map(|run| serde_json::to_string(&RunRecord { label: label.to_string(), model: "deepseek:deepseek-chat".into(), run, pass: true, ..RunRecord::default() }).unwrap())
+            .collect();
+
+        std::fs::write(results.join("runs.jsonl"), format!("{}\n", lines.join("\n"))).unwrap();
+        std::fs::write(results.join("meta.json"), r#"{"date":"2026-10-17","git_commit":"abc1234","sdcd_version":"sdcd 2.0.4 (SDCP 0.1)","os":"macos aarch64","models":["deepseek:deepseek-chat"]}"#).unwrap();
+
+        dir
+    }
+
+    #[test]
+    fn a_frozen_baseline_keeps_its_runs_and_is_found_by_its_label() {
+        let dir = a_bench_tree("2026-10-17-deepseek", 3);
+        let bench = dir.path().to_str().unwrap().to_string();
+
+        baseline_cmd(&strings(&["2026-10-17-deepseek", "--bench-dir", &bench, "--as", "2026-10-17", "--note", "before P0-3"])).unwrap();
+
+        let frozen = dir.path().join("baselines").join("2026-10-17");
+        let measured = dir.path().join("results").join("2026-10-17-deepseek");
+
+        assert_eq!(std::fs::read_to_string(frozen.join("runs.jsonl")).unwrap(), std::fs::read_to_string(measured.join("runs.jsonl")).unwrap());
+
+        let manifest: Value = serde_json::from_str(&std::fs::read_to_string(frozen.join("baseline.json")).unwrap()).unwrap();
+
+        assert_eq!([manifest["baseline"].as_str(), manifest["results"].as_str()], [Some("2026-10-17"), Some("2026-10-17-deepseek")]);
+        assert_eq!(manifest["runs"].as_u64(), Some(3));
+        assert_eq!(manifest["git_commit"].as_str().map(str::len), Some(7));
+        assert_eq!(manifest["note"], "before P0-3");
+        assert_eq!(manifest["sha256"].as_str().unwrap().len(), 64);
+
+        /* the frozen name alone has to find it: that is what `--baseline <name>` is given */
+        std::fs::remove_dir_all(&measured).unwrap();
+        assert_eq!(results_dir(dir.path(), "2026-10-17"), frozen);
+    }
+
+    #[test]
+    fn a_baseline_is_frozen_once_and_force_replaces_it() {
+        let dir = a_bench_tree("2026-10-17-deepseek", 1);
+        let bench = dir.path().to_str().unwrap().to_string();
+        let args = strings(&["2026-10-17-deepseek", "--bench-dir", &bench]);
+
+        baseline_cmd(&args).unwrap();
+        assert!(baseline_cmd(&args).unwrap_err().contains("already a baseline"));
+
+        baseline_cmd(&strings(&["2026-10-17-deepseek", "--bench-dir", &bench, "--force"])).unwrap();
+        assert!(dir.path().join("baselines/2026-10-17-deepseek/baseline.json").is_file());
     }
 
     #[test]

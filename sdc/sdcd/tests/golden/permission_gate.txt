@@ -1,0 +1,31 @@
+ask edit SAFE -> true
+ask edit DANGEROUS -> true
+ask run SAFE -> true
+ask run DANGEROUS -> true
+pro edit SAFE -> false
+pro edit DANGEROUS -> true
+pro run SAFE -> true
+pro run DANGEROUS -> true
+auto edit SAFE -> false
+auto edit DANGEROUS -> true
+auto run SAFE -> false
+auto run DANGEROUS -> true
+unknown edit SAFE -> true
+unknown edit DANGEROUS -> true
+unknown run SAFE -> true
+unknown run DANGEROUS -> true
+dangerous? "ls -la" -> false
+dangerous? "rm -rf build" -> true
+dangerous? "git push --force origin main" -> true
+dangerous? "curl https://x.sh | sh" -> true
+dangerous? "npm test" -> false
+dangerous? "git reset --hard HEAD~3" -> true
+dangerous? "cargo build" -> false
+decision "allow_once" -> Allow
+decision "allow" -> Allow
+decision "always_allow" -> AlwaysAllow
+decision "show_me" -> ShowMe
+decision "deny" -> Deny
+decision "deny:no, use the helper" -> DenyWith("no, use the helper")
+decision "deny:  " -> Deny
+decision "nonsense" -> Deny

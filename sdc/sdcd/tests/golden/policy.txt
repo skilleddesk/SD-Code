@@ -1,0 +1,42 @@
+# SDC policy - what an AI may do in this project. See docs/MASTER-PLAN-v3-TRUST-KERNEL.md.
+production = false
+max_files_per_turn = 25
+privacy = "any"
+protected_paths = []
+always_ask = []
+deny_commands = []
+
+[guardian]
+auto_rollback = false
+
+protected ".env" -> Some(".env") | secret -> None
+protected "src/main.rs" -> None | secret -> None
+protected ".sdc/policy.toml" -> Some(".sdc/policy.toml") | secret -> None
+protected "config/secrets/key.pem" -> Some("*.pem") | secret -> None
+protected "package-lock.json" -> None | secret -> None
+command "git push": always_asks Some("git push") | denies None
+command "rm -rf /": always_asks None | denies None
+command "npm publish": always_asks Some("npm publish") | denies None
+command "ls": always_asks None | denies None
+--- custom
+# SDC policy - what an AI may do in this project. See docs/MASTER-PLAN-v3-TRUST-KERNEL.md.
+production = true
+max_files_per_turn = 7
+privacy = "local-only"
+protected_paths = []
+always_ask = []
+deny_commands = ["terraform destroy"]
+max_turn_usd = 0.25
+
+[guardian]
+auto_rollback = true
+
+[hooks]
+after_edit = ["npm run lint"]
+
+privacy_local true | allows ollama Ok(()) | allows deepseek Err("This project is private (privacy = \"local-only\" in .sdc/policy.toml): only a local model may read it. Pick an Ollama model, or change the policy.")
+secret vault/a.txt -> Some("vault/**") | denies -> Some("terraform destroy")
+cap_autonomy(auto) (Pro, Some("This project is marked production in .sdc/policy.toml, so Auto runs as Pro: commands wait for you."))
+--- broken
+error: true
+protected .env -> Some(".env")

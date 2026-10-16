@@ -1,0 +1,20 @@
+endpoint deepseek-chat: Endpoint { provider: "deepseek", key_ref: "sdc.provider.deepseek", url: "https://api.deepseek.com/v1/chat/completions", dialect: "openai" } | api_model deepseek-chat | adaptive_thinking false
+endpoint claude-sonnet-5-5: Endpoint { provider: "custom", key_ref: "sdc.provider.custom", url: "http://127.0.0.1:8080/v1/chat/completions", dialect: "openai" } | api_model claude-sonnet-5-5 | adaptive_thinking true
+endpoint gpt-5.1: Endpoint { provider: "custom", key_ref: "sdc.provider.custom", url: "http://127.0.0.1:8080/v1/chat/completions", dialect: "openai" } | api_model gpt-5.1 | adaptive_thinking false
+endpoint qwen3-coder-plus: Endpoint { provider: "qwen", key_ref: "sdc.provider.qwen", url: "https://dashscope-us.aliyuncs.com/compatible-mode/v1/chat/completions", dialect: "openai" } | api_model qwen3-coder-plus | adaptive_thinking false
+sse "data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}" -> [Delta("Hello")]
+sse "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"thinking\"}}]}" -> [Thinking("thinking")]
+sse "data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"Hi\"}}" -> [Delta("Hi")]
+sse "data: {\"usage\":{\"prompt_tokens\":120,\"completion_tokens\":30}}" -> [Usage { input_tokens: 120, output_tokens: 30, cost_usd: None }]
+sse "data: [DONE]" -> [Done { summary: "Done", meta: "", pass: None }]
+sse ": keep-alive" -> []
+sse "" -> []
+ollama "{\"message\":{\"role\":\"assistant\",\"content\":\"ok\"},\"done\":false}" -> [Delta("ok")]
+ollama "{\"message\":{\"role\":\"assistant\",\"content\":\"\"},\"done\":true,\"prompt_eval_count\":42,\"eval_count\":7}" -> [Usage { input_tokens: 42, output_tokens: 7, cost_usd: Some(0.0) }, Done { summary: "Done", meta: "7 tokens", pass: None }]
+ollama "not json" -> []
+ollama context_for qwen3.5:9b -> 16384
+gemini auth_plan(true, key=true, None) -> LeaveAlone
+gemini auth_plan(false, key=false, None) -> LeaveAlone
+gemini auth_plan(false, key=true, Some("oauth-personal")) -> UseKey { rewrite: true, key: "k" }
+gemini auth_plan(false, key=true, Some("vertex-ai")) -> LeaveAlone
+gemini auth_plan(false, key=true, None) -> UseKey { rewrite: false, key: "k" }

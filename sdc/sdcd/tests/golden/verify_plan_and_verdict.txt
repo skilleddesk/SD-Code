@@ -1,0 +1,13 @@
+plan ["package.json", "pnpm-lock.yaml"] posix -> [Check { name: "typecheck", command: "pnpm run typecheck" }, Check { name: "lint", command: "pnpm run lint" }, Check { name: "test", command: "pnpm run test" }, Check { name: "build", command: "pnpm run build" }]
+plan ["Cargo.toml"] posix -> [Check { name: "cargo check", command: "cargo check --all-targets" }, Check { name: "cargo test", command: "cargo test" }]
+plan ["go.mod"] posix -> [Check { name: "go vet", command: "go vet ./..." }, Check { name: "go test", command: "go test ./..." }]
+plan ["README.md"] posix -> []
+plan [] posix -> []
+verdict pass/clean -> PASS
+verdict fail/clean -> FAIL
+verdict none/clean/changed -> UNPROVEN
+verdict none/clean/unchanged -> NO_CHECKS
+verdict pass/secret -> FAIL
+verdict pass/sast-high -> FAIL
+verdict pass/dep-critical -> FAIL
+verdict pass/bad-review -> FAIL

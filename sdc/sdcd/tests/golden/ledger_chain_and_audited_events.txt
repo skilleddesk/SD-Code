@@ -1,0 +1,20 @@
+audited TurnStarted -> true
+audited TurnDelta -> false
+audited ToolCallStarted -> true
+audited ToolOutput -> false
+audited ToolCallCompleted -> true
+audited PermissionRequested -> true
+audited PermissionResolved -> true
+audited CheckpointSaved -> true
+audited RewindApplied -> true
+audited ErrorRaised -> true
+audited CostUpdated -> true
+audited PolicyViolation -> true
+audited KillSwitch -> true
+audited BudgetStop -> true
+audited GuardianAction -> true
+audited TurnCompleted -> true
+audited Plan -> false
+audited Unknown -> false
+verify intact=true entries=5
+second ledger intact=true

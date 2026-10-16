@@ -1,0 +1,16 @@
+{
+  "baseline": "2026-10-17",
+  "from": "/Volumes/External SD/SDC Code/SDC/sdc/bench/results/baseline-2026-10-17-deepseek",
+  "frozen_at": "2026-10-17",
+  "git_commit": "4d39612",
+  "measured_on": "2026-10-17",
+  "models": [
+    "deepseek:deepseek-chat"
+  ],
+  "note": "P0-1 baseline before the v3 work: 40 tasks x 3 runs on deepseek-chat",
+  "os": "macos aarch64",
+  "results": "baseline-2026-10-17-deepseek",
+  "runs": 120,
+  "sdcd_version": "sdcd 2.0.4 (SDCP 0.1)",
+  "sha256": "75b923c6200b8c8c662c04e193661bfb90cd27723fae3299d6f56dcb1096e19a"
+}

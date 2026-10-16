@@ -1,0 +1,14 @@
+price Some("deepseek") deepseek-chat -> Some((0.14, 0.28))
+price Some("anthropic-api") claude-sonnet-5-5 -> None
+price Some("ollama") qwen3.5:9b -> Some((0.0, 0.0))
+price None claude-opus-5-5 -> Some((4.0, 20.0))
+price Some("deepseek") no-such-model -> None
+tokens_in "" -> 1
+tokens_in "hello world" -> 3
+tokens_in "ব\u{9be}ংল\u{9be} ভ\u{9be}ষ\u{9be}য\u{9bc} একটি ব\u{9be}র\u{9cd}ত\u{9be}" -> 11
+tokens_in "fn main() { println!(\"hi\"); }" -> 8
+complexity "fix the typo" -> simple
+complexity "refactor the whole database layer and migrate the schema" -> complex
+complexity "what does this function do? explain briefly" -> normal
+estimate {"complexity":"simple","inputTokens":20040,"outputTokens":4175,"source":"estimate","usd":0.0039746}
+parse_price Some((4.0, 20.0)) None
