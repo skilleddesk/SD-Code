@@ -47,6 +47,7 @@ pub mod bench;
 pub mod checkpoints;
 pub mod cli;
 pub mod console;
+pub mod data;
 pub mod context;
 pub mod continuity;
 pub mod crash;

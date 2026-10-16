@@ -17,6 +17,16 @@ working build is a trap rather than a history. The entries below are kept for th
 
 ## [Unreleased]
 
+- **P0-5 Data layer.** A new `src/data/` module holds the four files and the one rule that decides between them:
+  a project's file beats the computer's file, so `.sdc/policy.toml`'s `privacy = "local-only"` drops every remote row
+  of `~/.sdc/rotation.toml` whatever the preference says (`data::chain_for_project` is the only place that decides).
+  `rotation.toml` (chain rows and globals) is schema-validated with defaults empty, and a broken file is a warning
+  plus the default rather than a refusal to start. `.sdc/audit/sent.jsonl` records what left the machine - model,
+  step, tokens, which redaction rule fired, a hash of the capsule, never the text - append-only and `sync_all`'d, and
+  a torn line is counted rather than hidden. `~/.sdc/cache` is content-addressed with a size cap and LRU eviction,
+  and its use order is SDC's own `index.json` counter because a file's access time is not to be trusted (`relatime`).
+  BLAKE3 is not in this build, so the cache is keyed by SHA-256 like the rest of the daemon; `data::cache::key` is
+  the single place that decides.
 - **P0-4 Crash-resilient journal (local + VPS).** Journal records are versioned (`schema`), carry the reserved
   `step_id`, say which machine ran the turn (`origin`), and are append-only with `synchronous = FULL`, so a commit is
   an fsync. A damaged tail record is skipped **and counted** (`Resume::damaged`) instead of vanishing, a record from

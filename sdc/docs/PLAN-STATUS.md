@@ -10,7 +10,7 @@ Status: `todo` · `in-progress` · `blocked` · `done`.
 | P0-2 | Keychain and Claude compliance | 0 | P0-1 | done | secrets.keychain | sdc/docs/reports/P0-2.md | keys migrate wired + doctor row; Claude CLI credential no longer read |
 | P0-3 | Modular split | 0 | P0-1 | done | n/a | sdc/docs/reports/P0-3.md | methods.rs 5682 -> 2130 + 6 domain modules; 83 arms identical, 0 lines lost |
 | P0-4 | Crash-resilient journal (local + VPS) | 0 | P0-3 | done | journal.v2 | sdc/docs/reports/P0-4.md | 100/100 local kill -9 + 100/100 runner; versioned records, step_id, origin, fsync, damaged tail counted |
-| P0-5 | Data layer | 0 | P0-3 | todo | data.v2 |  |  |
+| P0-5 | Data layer | 0 | P0-3 | done | data.v2 | sdc/docs/reports/P0-5.md | rotation.toml + sent.jsonl + capped LRU cache + tested precedence; 28 data tests |
 | P0-6 | Daemon security | 0 | P0-3 | todo | daemon.secure |  |  |
 | P0-7 | UI guide and visual baseline | 0 | P0-3 | todo | n/a |  |  |
 | P0-8 | Local Runtime Guard | 0 | P0-3 | todo | local.runtime_guard |  |  |
