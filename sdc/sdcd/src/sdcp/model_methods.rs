@@ -826,7 +826,7 @@ impl Daemon {
             }
         }
 
-        Ok(listed)
+        Ok(with_probe_classes(listed))
     }
 
     /// `models.select`: record the chosen model. A setting, not an event - see `providers::models`.
@@ -854,5 +854,51 @@ impl Daemon {
         );
 
         Ok(removed)
+    }
+}
+
+/// P0-9: a local model that has been probed carries its class (S/M/L, `?` when only provisional) so the selector can
+/// show it. Reads the profile files only - listing models never calls the runtime.
+fn with_probe_classes(mut listed: Value) -> Value {
+    if let Some(rows) = listed["models"].as_array_mut() {
+        for row in rows.iter_mut().filter(|row| row["providerId"] == "ollama") {
+            if let Some(profile) = row["id"].as_str().and_then(|id| crate::sme::probe::latest("ollama", id)) {
+                row["probe"] = crate::sme::probe::row(&profile);
+            }
+        }
+    }
+
+    listed
+}
+
+#[cfg(test)]
+mod probe_class_tests {
+    use super::*;
+    use crate::sme::probe::{save, Class, ModelKey, Profile, Status};
+
+    /// A probed local model shows its class in the list; a model with no profile, and every cloud model, shows none.
+    #[test]
+    fn a_probed_local_model_carries_its_class_and_nothing_else_does() {
+        let _guard = crate::sme::probe::DATA_DIR_LOCK.lock().unwrap_or_else(|poison| poison.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+
+        std::env::set_var("SDC_DATA_DIR", dir.path());
+
+        let key = ModelKey { provider: "ollama".into(), model: "qwen3.5:9b".into(), digest: "sha256:aa".into(), quantization: "Q4_K_M".into(), runtime: "0.12".into() };
+
+        save(&Profile { key, status: Status::Provisional, class: Class::M, effective_context: 16_384, max_reliable_output: 512, tool_call_reliability: 0.9, tool_calls_printed_as_text: 0, json_adherence: 1.0, tokens_per_second: 30.0, first_token_ms: 200, vram_bytes: None, gpu_share: None, logprobs: false, thinking: true, seed: 1, probed_at: "2026-10-17".into() }).unwrap();
+
+        let listed = with_probe_classes(json!({ "models": [
+            { "id": "qwen3.5:9b", "providerId": "ollama" },
+            { "id": "llama3.2:3b", "providerId": "ollama" },
+            { "id": "deepseek-chat", "providerId": "deepseek" },
+        ] }));
+        let rows = listed["models"].as_array().unwrap();
+
+        assert_eq!(rows[0]["probe"]["class"], "M?", "provisional shows a question mark");
+        assert_eq!(rows[0]["probe"]["effectiveContext"], 16_384);
+        assert!(rows[1].get("probe").is_none() && rows[2].get("probe").is_none());
+
+        std::env::remove_var("SDC_DATA_DIR");
     }
 }

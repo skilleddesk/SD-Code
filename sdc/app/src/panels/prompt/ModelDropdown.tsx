@@ -167,7 +167,7 @@ export function ModelDropdown({ sessionId }: { sessionId: string | null }) {
         </div>
         <Row
           name={row.name === '' ? row.id : row.name}
-          description={`${row.id} · ${tierLabel(row.tier)}${row.cost === '' ? ` · ${row.source}` : ` · ${row.cost}`}`}
+          description={`${row.id} · ${tierLabel(row.tier)}${row.cost === '' ? ` · ${row.source}` : ` · ${row.cost}`}${row.probe === undefined ? '' : ` · ${strings.prompt.model.probeClass(row.probe.class, row.probe.effectiveContext)}`}`}
         />
         {selected ? <Check size={14} className="shrink-0 text-accent" aria-hidden="true" /> : null}
       </div>

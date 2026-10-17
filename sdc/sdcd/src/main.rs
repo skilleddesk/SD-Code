@@ -59,6 +59,11 @@ fn main() -> Result<()> {
         }
 
         /* P0-0: `sdcd plan next|status|validate|sync|set` reads the plan files and needs no runtime. */
+        /* P0-9: `sdcd probe MODEL` measures an installed Ollama model; needs a running Ollama and no runtime here. */
+        if all.first().map(String::as_str) == Some("probe") {
+            std::process::exit(sdcd::sme::probe::main(&all[1..]));
+        }
+
         if all.first().map(String::as_str) == Some("plan") {
             std::process::exit(sdcd::plan::main(&all[1..]));
         }

@@ -33,6 +33,9 @@ export const bn: StringsPack = {
     steerHint: '↵ চলমান কাজে যোগ করুন',
     steerSend: 'চলমান কাজে যোগ করুন',
     steerPlaceholder: 'কাজ চলার মাঝেই কিছু যোগ করুন - পরের ধাপে সেটা মাথায় নেবে…',
+    model: {
+      probeClass: (label: string, contextTokens: number): string => `ক্লাস ${label} · ${Math.round(contextTokens / 1024)}K context`,
+    },
   },
   turns: {
     explored: 'দেখে নিল',

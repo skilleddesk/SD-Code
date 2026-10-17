@@ -607,6 +607,8 @@ const english = {
       /** The dropdown's search field (0.9.0). */
       search: 'Search models…',
       noMatches: (query: string): string => `Nothing matches “${query}”`,
+      /** A measured local model's class beside its name (P0-9): S small, M medium, L large; `?` = measured on an earlier version. */
+      probeClass: (label: string, contextTokens: number): string => `class ${label} · ${Math.round(contextTokens / 1024)}K context`,
       groupTitles: {
         tier: 'Tier',
         engine: 'Engine',

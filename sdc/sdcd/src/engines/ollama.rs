@@ -87,7 +87,7 @@ pub fn explain_error(raw: &str, model: &str) -> String {
 }
 
 /// Plain-HTTP request/response. `GET` when `body` is empty, `POST` otherwise.
-fn call(path: &str, body: Option<&str>) -> Result<String, String> {
+pub(crate) fn call(path: &str, body: Option<&str>) -> Result<String, String> {
     let address: SocketAddr = ENDPOINT.parse().map_err(|error| format!("{ENDPOINT}: {error}"))?;
     let mut socket = TcpStream::connect_timeout(&address, std::time::Duration::from_secs(2))
         .map_err(|error| format!("{ENDPOINT}: {error}"))?;

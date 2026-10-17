@@ -85,6 +85,7 @@ pub const FEATURES: &[Feature] = &[
     Feature { name: "runner", default_on: true, token_technique: false, what: "R4: a project's turns can run on the VPS the person names in `.sdc/runners.toml`" },
     Feature { name: "automations", default_on: true, token_technique: false, what: "AUTO: a request SDC runs on a clock, whose answer waits in the Inbox" },
     Feature { name: "local.runtime_guard", default_on: true, token_technique: false, what: "P0-8: a prompt is counted before it is sent, and one that does not fit the model's window is split by the caller, never sent to be cut silently" },
+    Feature { name: "models.probe", default_on: false, token_technique: false, what: "P0-9: a local model is measured (context, tools, JSON, speed) the first time it is used and again when its file or runtime changes; off, only `sdcd probe` measures" },
     Feature { name: "parallel", default_on: true, token_technique: false, what: "PAR: several agents at once, each in its own git worktree, on one board" },
 ];
 

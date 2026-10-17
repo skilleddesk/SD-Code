@@ -137,6 +137,8 @@ export interface CatalogModel {
   cost: string;
   /** Where the row came from: the provider just now, its last answer, or this build's bundle. */
   source: 'live' | 'cache' | 'bundled';
+  /** A local model that has been measured (P0-9): its class (`S`, `M`, `L`; a `?` after it when the measurement is of an earlier file or runtime). */
+  probe?: { class: string; status: 'probed' | 'provisional'; effectiveContext: number; toolCallReliability: number };
 }
 
 /** One provider's models, as the dropdown draws them. */
