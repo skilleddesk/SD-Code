@@ -17,6 +17,13 @@ working build is a trap rather than a history. The entries below are kept for th
 
 ## [Unreleased]
 
+- **P0-6 sdcd local API hardening.** The daemon has a door now (`src/guard/daemon.rs`, the first occupant of the
+  `guard/` seam P0-3 opened): a per-client token from the OS random generator that can be retired on its own, a `Host`
+  check that refuses a rebinding name however it arrived, an `Origin` check so a page in another tab cannot read an
+  answer even with a token, a refusal rate limit, and **no `Access-Control-Allow-Origin` at all** - there is no
+  cross-origin case to allow. The status page runs through it, with the LAN address allowed by name so the phone link
+  keeps working. Verified against a running daemon with curl: correct request 200, foreign Origin 403, rebinding Host
+  403, wrong token 403, no token 403, the phone's LAN link 200, and no CORS header on the answer.
 - **P0-5 Data layer.** A new `src/data/` module holds the four files and the one rule that decides between them:
   a project's file beats the computer's file, so `.sdc/policy.toml`'s `privacy = "local-only"` drops every remote row
   of `~/.sdc/rotation.toml` whatever the preference says (`data::chain_for_project` is the only place that decides).

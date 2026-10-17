@@ -68,27 +68,64 @@ pub fn configure(state: Arc<DaemonState>, enabled: bool, port: Option<u16>) -> V
         Ok(listener) => listener,
         Err(error) => return json!({ "enabled": false, "error": format!("port {port} could not be opened: {error}") }),
     };
-    let expected = token.clone();
+    /* P0-6: the status page is the one HTTP surface the daemon has, and it is reachable from the network on
+       purpose (it exists to be opened from a phone). So it goes through the daemon's door: the `Host` header must
+       be a name this computer answers to - which is the DNS-rebinding defence, because a hostname that resolves to
+       this machine is still not this machine's name - the token is a per-client one that can be retired, `Origin`
+       must match `Host` so a page in another tab cannot read the answer, and a source that keeps getting it wrong
+       stops being looked at. The LAN address is allowed by name, which is what keeps the phone working. */
+    let mut guard = crate::guard::daemon::Guard::allowing(&lan_address().map(|address| vec![address]).unwrap_or_default());
+
+    /* The stored token is adopted rather than replaced: a person has this link bookmarked, and a new one every start
+       would be a new link every start. It is still per client and still revocable. */
+    guard.adopt("status", &token);
+
+    let guard = std::sync::Arc::new(std::sync::Mutex::new(guard));
     let task = tokio::spawn(async move {
         loop {
-            let Ok((mut socket, _)) = listener.accept().await else {
+            let Ok((mut socket, peer)) = listener.accept().await else {
                 continue;
             };
-            let (state, expected) = (state.clone(), expected.clone());
+            let (state, guard) = (state.clone(), guard.clone());
 
             tokio::spawn(async move {
                 let mut buffer = vec![0u8; 4096];
                 let read = socket.read(&mut buffer).await.unwrap_or(0);
                 let request = String::from_utf8_lossy(&buffer[..read]).to_string();
                 let line = request.lines().next().unwrap_or_default().to_string();
-                let authorised = line.starts_with("GET ") && line.contains(&format!("token={expected}"));
-                let (status, body) = if authorised {
+                let header = |name: &str| {
+                    request
+                        .lines()
+                        .find(|row| row.to_ascii_lowercase().starts_with(&format!("{}:", name.to_ascii_lowercase())))
+                        .map(|row| row.split_once(':').map(|(_, value)| value.trim().to_string()).unwrap_or_default())
+                };
+                /* The token arrives in the query string, because a link is what a person has to be able to open. */
+                let token = line.split("token=").nth(1).map(|rest| rest.split(['&', ' ']).next().unwrap_or_default().to_string());
+
+                let allowed = guard
+                    .lock()
+                    .map(|mut guard| {
+                        guard
+                            .check(&crate::guard::daemon::Request {
+                                host: header("host"),
+                                origin: header("origin"),
+                                token,
+                                peer: peer.ip().into(),
+                                loopback: peer.ip().is_loopback(),
+                            })
+                            .is_ok()
+                    })
+                    .unwrap_or(false);
+
+                let (status, body) = if allowed && line.starts_with("GET ") {
                     ("200 OK", tokio::task::spawn_blocking(move || page(&state)).await.unwrap_or_default())
                 } else {
                     ("403 Forbidden", "<!doctype html><meta charset=\"utf-8\"><p>This link is not valid.</p>".to_string())
                 };
+                /* No `Access-Control-Allow-Origin`, on purpose and for good: there is no cross-origin case to allow,
+                   and a wildcard here would hand this page to any site the person has open. */
                 let response = format!(
-                    "HTTP/1.1 {status}\r\nContent-Type: text/html; charset=utf-8\r\nCache-Control: no-store\r\nX-Frame-Options: DENY\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    "HTTP/1.1 {status}\r\nContent-Type: text/html; charset=utf-8\r\nCache-Control: no-store\r\nX-Frame-Options: DENY\r\nReferrer-Policy: no-referrer\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                     body.len()
                 );
 
