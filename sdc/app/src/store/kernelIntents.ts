@@ -15,6 +15,8 @@ import type {
   TaskSpec,
   TeamMember,
   TeamState,
+  ReceiptRow,
+  ReceiptTotals,
   TimelineBranch,
   TraceStep,
   UpdateInfo,
@@ -146,6 +148,11 @@ export async function restoreFile(checkpointId: string, path: string): Promise<b
   }
 
   return result !== null;
+}
+
+/** A turn's receipt (P0-15): every model it used and what each cost; `null` when it could not be read. */
+export async function turnReceipt(turnId: string): Promise<{ turnId: string; rows: ReceiptRow[]; totals: ReceiptTotals } | null> {
+  return call(() => sdcpCall('turn.receipt', { turnId }), strings.turns.proof.failed);
 }
 
 /** The Step Trace (P0-12): the newest model calls of a chat, oldest first; `null` when it could not be read. */

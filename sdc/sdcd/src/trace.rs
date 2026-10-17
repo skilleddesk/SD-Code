@@ -172,6 +172,68 @@ pub fn recent(store: &Store, session_id: Option<&str>, limit: usize) -> Vec<Valu
 }
 
 // ---------------------------------------------------------------------------------------------------------------
+// The receipt (P0-15)
+// ---------------------------------------------------------------------------------------------------------------
+
+/// A step ran on this machine when its model key names a local runtime.
+fn is_local(model_key: &str) -> bool {
+    model_key.starts_with("ollama:") || model_key.starts_with("local:") || model_key.starts_with("vllm:")
+}
+
+/// The receipt of a turn, **computed from its Step Trace rows and nothing else**, so it cannot disagree with the trace:
+/// one row per model (and purpose), what each cost in tokens, time and money, whether it was local or a Rotation Chain
+/// step, and the totals. A cost is `null` for a model with no price (a subscription, a local model), never a made-up zero.
+pub fn receipt(store: &Store, turn_id: &str) -> Value {
+    let connection = store.connection.lock().unwrap_or_else(|poison| poison.into_inner());
+    let mut rows: std::collections::BTreeMap<(String, String, String), (u64, u64, u64, u64, Option<f64>)> = std::collections::BTreeMap::new();
+
+    if let Ok(mut statement) = connection.prepare("SELECT model_key, mode, purpose, tokens_in, tokens_out, wall_ms, cost_usd FROM step_trace WHERE task_id = ?1 ORDER BY id") {
+        let found = statement.query_map(params![turn_id], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, i64>(3)? as u64, row.get::<_, i64>(4)? as u64, row.get::<_, i64>(5)? as u64, row.get::<_, Option<f64>>(6)?)));
+
+        for (model, mode, purpose, tokens_in, tokens_out, wall_ms, cost) in found.into_iter().flatten().flatten() {
+            let entry = rows.entry((model, mode, purpose)).or_default();
+
+            entry.0 += 1;
+            entry.1 += tokens_in;
+            entry.2 += tokens_out;
+            entry.3 += wall_ms;
+            entry.4 = match (entry.4, cost) {
+                (None, None) => None,
+                (a, b) => Some(a.unwrap_or(0.0) + b.unwrap_or(0.0)),
+            };
+        }
+    }
+
+    let (mut steps, mut tokens_in, mut tokens_out, mut wall_ms, mut local_steps, mut chain_steps) = (0u64, 0u64, 0u64, 0u64, 0u64, 0u64);
+    let mut cost: Option<f64> = None;
+    let mut out = Vec::new();
+
+    for ((model, mode, purpose), (count, input, output, wall, row_cost)) in rows {
+        let local = is_local(&model);
+        let chain = purpose == "chain";
+
+        steps += count;
+        tokens_in += input;
+        tokens_out += output;
+        wall_ms += wall;
+        local_steps += if local { count } else { 0 };
+        chain_steps += if chain { count } else { 0 };
+        cost = match (cost, row_cost) {
+            (None, None) => None,
+            (a, b) => Some(a.unwrap_or(0.0) + b.unwrap_or(0.0)),
+        };
+
+        out.push(json!({ "modelKey": model, "mode": mode, "purpose": purpose, "local": local, "chain": chain, "steps": count, "tokensIn": input, "tokensOut": output, "wallMs": wall, "costUsd": row_cost }));
+    }
+
+    json!({
+        "turnId": turn_id,
+        "rows": out,
+        "totals": { "steps": steps, "tokensIn": tokens_in, "tokensOut": tokens_out, "wallMs": wall_ms, "costUsd": cost, "localSteps": local_steps, "chainSteps": chain_steps },
+    })
+}
+
+// ---------------------------------------------------------------------------------------------------------------
 // The Speed Gate
 // ---------------------------------------------------------------------------------------------------------------
 

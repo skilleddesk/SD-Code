@@ -14,7 +14,7 @@
 // levels in any channel, against a tolerance that absorbs anti-aliasing and the one animation the opening
 // screen has (measured on this machine: two runs of one build differ by about 0.01% of pixels).
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { dirname, extname, join, normalize } from 'node:path';
@@ -37,6 +37,18 @@ const views = [
   { name: 'phone-dark', width: 390, height: 844, scheme: 'dark' },
   { name: 'phone-light', width: 390, height: 844, scheme: 'light' },
 ];
+
+/* Component fixtures (`tests/visual/fixtures/*.html`, written by the unit tests from the real components): a page per
+   component, served with the built stylesheet, photographed in both themes. `{{CSS}}` and `{{THEME}}` are filled here. */
+const fixtures = join(here, '..', 'tests', 'visual', 'fixtures');
+const css = existsSync(join(dist, 'index.html')) ? (/href="([^"]+\.css)"/.exec(readFileSync(join(dist, 'index.html'), 'utf8'))?.[1] ?? '') : '';
+const fixtureNames = existsSync(fixtures) ? readdirSync(fixtures).filter((name) => name.endsWith('.html') && !name.startsWith('._')).map((name) => name.replace(/\.html$/, '')) : [];
+
+for (const name of fixtureNames) {
+  for (const scheme of ['dark', 'light']) {
+    views.push({ name: `${name}-${scheme}`, width: 640, height: 260, scheme, fixture: name });
+  }
+}
 
 const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml', '.woff': 'font/woff', '.woff2': 'font/woff2', '.png': 'image/png', '.ico': 'image/x-icon' };
 
@@ -150,6 +162,15 @@ export function difference(a, b, level = LEVEL) {
 function serve() {
   return new Promise((resolve) => {
     const server = createServer((request, response) => {
+      const fixture = /^\/_fixture\/([a-z0-9-]+)\.html\?theme=(dark|light)/.exec(request.url ?? '');
+
+      if (fixture && existsSync(join(fixtures, `${fixture[1]}.html`))) {
+        response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+        response.end(readFileSync(join(fixtures, `${fixture[1]}.html`), 'utf8').replace('{{CSS}}', css).replace('{{THEME}}', fixture[2]));
+
+        return;
+      }
+
       const path = normalize(decodeURIComponent((request.url ?? '/').split('?')[0])).replace(/^(\.\.[/\\])+/, '');
       let file = join(dist, path);
 
@@ -214,7 +235,24 @@ async function main() {
     const taken = join(scratch, `${view.name}.png`);
     const approved = join(baselines, `${view.name}.png`);
 
-    await shoot(browser, url, view, taken);
+    const target = view.fixture ? `${url}_fixture/${view.fixture}.html?theme=${view.scheme}` : url;
+
+    /* A shot is only trusted when a second shot of the same build agrees with it: the app fades dialogs and toasts in and
+       out by the clock, and a photograph taken half way through a fade says nothing about the build. Up to four tries. */
+    let settled = false;
+
+    for (let attempt = 0; attempt < 4 && !settled; attempt += 1) {
+      await shoot(browser, target, view, taken);
+      await shoot(browser, target, view, `${taken}.again.png`);
+
+      settled = existsSync(taken) && existsSync(`${taken}.again.png`) && difference(decodePng(readFileSync(taken)), decodePng(readFileSync(`${taken}.again.png`))) <= 0.0005;
+    }
+
+    if (!settled) {
+      console.error(`visual: ${view.name}: UNSTABLE - two shots of the same build never agreed, so nothing was compared`);
+      failed += 1;
+      continue;
+    }
 
     if (!existsSync(taken)) {
       console.error(`visual: ${view.name}: the browser wrote no screenshot`);

@@ -20,7 +20,7 @@ Status: `todo` · `in-progress` · `blocked` · `done`.
 | P0-12 | Speed baseline and Step Trace | 0 | P0-11 | done | trace.steps | sdc/docs/reports/P0-12.md | Step Trace (<1ms/step) + Speed Gate (fails on injected 10%) + Trace tab; baseline median 3.84s p90 5.86s |
 | P0-13 | Output compressor, OS normalizer, command runner | 0 | P0-3 | done | tools.compress, tools.osnorm, tools.runner | sdc/docs/reports/P0-13.md | compressor contract (property test), per-OS normaliser, deadline+group-kill runner; 41 guard tests |
 | P0-14 | Sandbox Runner and Step Transaction | 0 | P0-13, P0-4 | done | exec.sandbox, edit.transaction | sdc/docs/reports/P0-14.md | Sandbox Runner (macOS proven, Windows gap stated) + Step Transaction (kill at 14 instants, never a mixture) |
-| P0-15 | Proof-of-Work badge and receipt | 0 | P0-12 | todo | ui.proof_badge |  |  |
+| P0-15 | Proof-of-Work badge and receipt | 0 | P0-12 | done | ui.proof_badge | sdc/docs/reports/P0-15.md | Proof-of-Work badge + receipt from the Step Trace (totals equal trace), en/bn, component visual fixture |
 | P0-16 | Hardware Auto-Tuner and VRAM Arbiter | 0 | P0-9 | todo | local.autotune |  |  |
 | P0-17 | Phase 0 release and Gate 0 | 0 | P0-0, P0-1, P0-2, P0-3, P0-4, P0-5, P0-6, P0-7, P0-8, P0-9, P0-10, P0-11, P0-12, P0-13, P0-14, P0-15, P0-16 | todo | n/a |  |  |
 | P1-1 | Code Graph and zero-model queries | 1 | Gate 0 | todo | graph.v1 |  |  |

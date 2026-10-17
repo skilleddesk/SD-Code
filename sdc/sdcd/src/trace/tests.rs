@@ -139,3 +139,50 @@ fn a_model_with_no_baseline_is_said_not_silently_passed() {
 
     assert!(verdict.lines.iter().any(|line| line.contains("no baseline")));
 }
+
+fn traced(store: &Store, task: &str, step: u32, model: &str, mode: &str, purpose: &str, tokens: (u64, u64), wall_ms: u64, cost: Option<f64>) {
+    insert(store, &Step { task_id: task.into(), step_id: format!("{task}.s{step}"), session_id: "s".into(), step, model_key: model.into(), mode: mode.into(), purpose: purpose.into(), tokens_in: tokens.0, tokens_out: tokens.1, wall_ms, cost_usd: cost, ..Step::default() }, "2026").unwrap();
+}
+
+/// The plan's test: the receipt's totals are the Step Trace's totals - the receipt is computed from the rows, so the two
+/// cannot disagree, and here they are checked against an independent sum of the very same rows.
+#[test]
+fn the_receipts_totals_equal_the_step_traces_totals() {
+    let store = the_store();
+
+    traced(&store, "t1", 1, "ollama:qwen3.5:9b", "local-rotation", "main", (1000, 100), 3000, None);
+    traced(&store, "t1", 2, "ollama:qwen3.5:9b", "local-rotation", "main", (1500, 80), 2500, None);
+    traced(&store, "t1", 3, "deepseek:deepseek-chat", "local-rotation", "chain", (2000, 300), 6000, Some(0.0012));
+    traced(&store, "other", 1, "deepseek:deepseek-chat", "pinned", "main", (9999, 9999), 9999, Some(9.0));
+
+    let receipt = receipt(&store, "t1");
+    let rows = recent(&store, Some("s"), 100).into_iter().filter(|row| row["taskId"] == "t1").collect::<Vec<_>>();
+    let sum = |key: &str| rows.iter().map(|row| row[key].as_u64().unwrap()).sum::<u64>();
+    let totals = &receipt["totals"];
+
+    assert_eq!(totals["steps"], rows.len() as u64);
+    assert_eq!(totals["tokensIn"].as_u64().unwrap(), sum("tokensIn"));
+    assert_eq!(totals["tokensOut"].as_u64().unwrap(), sum("tokensOut"));
+    assert_eq!(totals["wallMs"].as_u64().unwrap(), sum("wallMs"));
+    assert!((totals["costUsd"].as_f64().unwrap() - 0.0012).abs() < 1e-12, "only the priced step has a cost");
+    assert_eq!((totals["localSteps"].clone(), totals["chainSteps"].clone()), (json!(2), json!(1)), "two steps on the local model, one on the chain");
+
+    let per_row: u64 = receipt["rows"].as_array().unwrap().iter().map(|row| row["steps"].as_u64().unwrap()).sum();
+
+    assert_eq!(per_row, 3, "the rows add up to the totals");
+    assert_eq!(receipt["rows"].as_array().unwrap().len(), 2, "one row per model and purpose, the other turn excluded");
+}
+
+#[test]
+fn a_model_with_no_price_has_no_cost_not_a_zero_and_an_empty_turn_has_an_empty_receipt() {
+    let store = the_store();
+
+    traced(&store, "free", 1, "ollama:qwen3.5:9b", "local-only", "main", (10, 5), 100, None);
+
+    assert!(receipt(&store, "free")["totals"]["costUsd"].is_null());
+
+    let empty = receipt(&store, "never-ran");
+
+    assert_eq!(empty["totals"]["steps"], 0);
+    assert!(empty["rows"].as_array().unwrap().is_empty() && empty["totals"]["costUsd"].is_null());
+}

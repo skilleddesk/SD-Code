@@ -141,6 +141,8 @@ function verifyOf(verifies: readonly VerifyView[], turnId: string): { verify?: T
       pass: run.pass,
       reviewer: run.review === null ? '' : run.review.model === '' ? run.review.engine : run.review.model,
       issues: run.review?.issues?.length ?? 0,
+      checksPassed: run.checks.filter((check) => check.status === 'pass').length,
+      checksFailed: run.checks.filter((check) => check.status === 'fail').length,
     },
   };
 }

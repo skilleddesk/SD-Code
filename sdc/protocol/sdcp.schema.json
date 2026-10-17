@@ -242,6 +242,7 @@
           "models.list",
           "models.select",
           "trace.list",
+          "turn.receipt",
           "event.list",
           "event.append",
           "event.subscribe",
@@ -1362,6 +1363,18 @@
               "object"
             ],
             "rotation": "object"
+          }
+        },
+        "turn.receipt": {
+          "params": {
+            "turnId": "string"
+          },
+          "result": {
+            "turnId": "string",
+            "rows": [
+              "object"
+            ],
+            "totals": "object"
           }
         },
         "trace.list": {

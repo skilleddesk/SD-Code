@@ -7,11 +7,13 @@ import { ErrorCard } from './ErrorCard';
 import { PlanCard } from './PlanCard';
 import { SourcesList } from './SourcesList';
 import { TurnFooter } from './TurnFooter';
+import { changedFiles } from './grouping';
 import { ChangedFiles } from './ChangedFiles';
 import { UserMessage } from './UserMessage';
 import { BrandLogo } from '../ui/BrandLogo';
 import {
   type CollapsedSummaryData,
+  type TimelineItem,
   type Turn,
 } from './types';
 
@@ -117,7 +119,15 @@ function TurnBlock({ turn, sessionId, latest }: { turn: Turn; sessionId: string;
       <TurnFooter
         footer={turn.footer}
         verify={turn.running ? null : { sessionId, turnId: turn.id, author: turn.author, result: turn.verify ?? null }}
+        lines={turn.running ? null : changedLines(turn.timeline)}
       />
     </div>
   );
+}
+
+/** Lines added plus removed across the turn's changed files; `null` when it changed none (the badge shows only what was measured). */
+function changedLines(items: readonly TimelineItem[]): number | null {
+  const files = changedFiles(items);
+
+  return files.length === 0 ? null : files.reduce((sum, file) => sum + file.added + file.removed, 0);
 }

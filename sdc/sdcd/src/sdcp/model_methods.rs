@@ -45,6 +45,8 @@ impl Daemon {
             "models.list" => self.models_list(envelope, &*out),
             "models.select" => self.models_select(envelope, &*out),
             /* P0-12: the Step Trace - the newest model calls with their tokens, times, mode and verify result. */
+            /* P0-15: a turn's receipt - every model it used, local or chain, with its time, tokens and cost. */
+            "turn.receipt" => Ok(crate::trace::receipt(self.store(), &envelope.require_str("turnId")?)),
             "trace.list" => Ok(json!({ "steps": crate::trace::recent(self.store(), envelope.opt_str("sessionId").as_deref(), envelope.opt_i64("limit").map_or(100, |limit| limit.clamp(1, 500) as usize)) })),
 
             /* Providers ------------------------------------------------------------------------ */

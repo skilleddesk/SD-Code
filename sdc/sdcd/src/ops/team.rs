@@ -52,7 +52,7 @@ pub fn current_role(store: &Store) -> String {
 fn reads(method: &str) -> bool {
     matches!(
         method,
-        "host.status" | "host.doctor" | "session.list" | "project.list" | "event.list" | "event.subscribe" | "provider.list" | "models.list" | "trace.list"
+        "host.status" | "host.doctor" | "session.list" | "project.list" | "event.list" | "event.subscribe" | "provider.list" | "models.list" | "trace.list" | "turn.receipt"
             | "checkpoint.list" | "checkpoint.files" | "checkpoint.fileDiff" | "audit.list" | "audit.verify" | "policy.get" | "cost.summary"
             | "cost.estimate" | "kill.list" | "fs.read" | "fs.list" | "fs.stat" | "fs.search" | "git.status" | "git.diff" | "engine.status"
             | "site.list" | "deploy.list" | "deploy.get" | "deploy.preview" | "health.history" | "approval.list" | "xray.get" | "proof.export"

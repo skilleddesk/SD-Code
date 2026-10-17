@@ -99,6 +99,9 @@ export interface TurnVerifyData {
   pass: boolean | null;
   reviewer: string;
   issues: number;
+  /** Checks that ran and passed / failed (P0-15) - what the Proof-of-Work badge counts. */
+  checksPassed: number;
+  checksFailed: number;
 }
 
 /** One step of the agent's plan card. */

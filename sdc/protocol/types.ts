@@ -162,6 +162,7 @@ export type SdcpMethod =
    */
   | 'models.list'
   | 'trace.list'
+  | 'turn.receipt'
   | 'models.select'
   /**
    * One command, run to completion by the daemon: the **execute** step an agent loop needs, and the
@@ -1281,6 +1282,32 @@ export interface CliSelfCheck {
   sentence: string;
 }
 
+/** One line of a turn's receipt: a model (under one purpose) and what its steps cost. */
+export interface ReceiptRow {
+  modelKey: string;
+  mode: string;
+  purpose: string;
+  local: boolean;
+  /** A Rotation Chain row's step (P2), as opposed to the model the person chose. */
+  chain: boolean;
+  steps: number;
+  tokensIn: number;
+  tokensOut: number;
+  wallMs: number;
+  /** `null` for a model with no price (a subscription, a local model) - never a made-up zero. */
+  costUsd: number | null;
+}
+
+export interface ReceiptTotals {
+  steps: number;
+  tokensIn: number;
+  tokensOut: number;
+  wallMs: number;
+  costUsd: number | null;
+  localSteps: number;
+  chainSteps: number;
+}
+
 /** One traced model call (P0-12). */
 export interface TraceStep {
   taskId: string;
@@ -2093,6 +2120,14 @@ export interface SdcpMethodMap {
       /** The Rotation Chain on this computer (P0-10): how many rows are enabled. The mode badge reads it. */
       rotation: { enabledRows: number };
     };
+  };
+  /**
+   * A turn's receipt (P0-15): every model it used, with the time, tokens and cost of each, and whether the steps ran
+   * locally or on a Rotation Chain row. Computed from the Step Trace rows, so its totals are the trace's totals.
+   */
+  'turn.receipt': {
+    params: { turnId: string };
+    result: { turnId: string; rows: ReceiptRow[]; totals: ReceiptTotals };
   };
   /** The Step Trace (P0-12): the newest model calls, oldest first - what each cost and how long it took. */
   'trace.list': {

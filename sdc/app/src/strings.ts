@@ -399,6 +399,25 @@ const english = {
       showCodeToast: 'Opened the file',
       explainMoreToast: 'Expanded',
     },
+    /** The Proof-of-Work badge and the receipt under a finished turn (P0-15). Only what was measured is shown. */
+    proof: {
+      verified: (passed: number): string => (passed === 1 ? '✓ 1 check passed' : `✓ ${passed} checks passed`),
+      failed: 'The receipt could not be read.',
+      checksFailed: (failed: number): string => (failed === 1 ? '✗ 1 check failed' : `✗ ${failed} checks failed`),
+      unverified: 'not verified',
+      lines: (count: number): string => (count === 1 ? '1 line changed' : `${count} lines changed`),
+      models: (list: string): string => list,
+      open: 'Receipt',
+      close: 'Hide receipt',
+      title: 'Receipt',
+      local: 'on this computer',
+      chain: 'Rotation Chain',
+      chosen: 'your model',
+      stepsLabel: (count: number): string => (count === 1 ? '1 step' : `${count} steps`),
+      total: 'Total',
+      free: 'no price',
+      split: (local: number, chain: number): string => `${local} local · ${chain} chain`,
+    },
     footer: {
       /** Before `TurnCompleted` arrives: the run has not reported what it used. */
       pending: 'Running · totals arrive with the last event',

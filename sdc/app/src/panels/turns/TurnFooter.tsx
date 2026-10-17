@@ -1,3 +1,4 @@
+import { ProofBadge } from '../../kernel/ProofBadge';
 import { TrustChip } from '../../kernel/TrustChip';
 import { CircleCheckBig, CircleX, LoaderCircle, ScanSearch, ThumbsDown, ThumbsUp } from 'lucide-react';
 import { useState } from 'react';
@@ -28,11 +29,13 @@ export interface TurnFooterProps {
     author: { engine: string; model: string };
     result: TurnVerifyData | null;
   } | null;
+  /** Lines the turn added plus removed (P0-15's badge), or `null` when it changed nothing. */
+  lines?: number | null;
 }
 
 type Feedback = 'up' | 'down' | null;
 
-export function TurnFooter({ footer, verify = null }: TurnFooterProps) {
+export function TurnFooter({ footer, verify = null, lines = null }: TurnFooterProps) {
   const [feedback, setFeedback] = useState<Feedback>(null);
 
   const rate = (direction: Exclude<Feedback, null>): void => {
@@ -58,6 +61,7 @@ export function TurnFooter({ footer, verify = null }: TurnFooterProps) {
   const totals = [footer.summary, footer.detail].filter((part) => part.trim() !== '');
 
   return (
+    <>
     <div className="turn-footer mt-[8px] flex flex-wrap items-center gap-[10px] border-t border-border-subtle py-[9px] text-[11.5px] tabular-nums text-text-muted">
       <div className="summary min-w-[180px] flex-1">
         {totals.length === 0 ? (
@@ -112,6 +116,8 @@ export function TurnFooter({ footer, verify = null }: TurnFooterProps) {
         </button>
       </div>
     </div>
+    {verify === null ? null : <ProofBadge turnId={verify.turnId} verify={verify.result} lines={lines} />}
+    </>
   );
 }
 

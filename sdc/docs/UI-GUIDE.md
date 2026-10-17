@@ -118,7 +118,7 @@ Named surfaces the plan's new UI is modelled on (where to copy from):
 | ResearchCard | `panels/prompt/ResearchCard.tsx` | reading progress |
 | CostMeter | `kernel/CostMeter.tsx` | budget gauge, receipt |
 | PolicyEditor | `kernel/PolicyEditor.tsx` | Rotation Chain list (up/down, toggle) |
-| ProofTab | `kernel/ProofTab.tsx` | Proof-of-Work badge, Working Memory and Step Trace tabs |
+| ProofTab | `kernel/ProofTab.tsx` | Working Memory tab (the Proof-of-Work badge itself is `kernel/ProofBadge.tsx`, P0-15) |
 | TimeMachineTab | `panels/right/TimeMachineTab.tsx` | one Time Machine point per step transaction |
 | PreviewDiff / VerifyTab | `panels/right/` | Diff Review |
 | Palette / slash commands | `overlays/Palette.tsx, panels/prompt/slash.ts` | @ picker |
@@ -143,6 +143,10 @@ All component trees: `src/panels/{main,prompt,rail,right,sidebar,statusbar,tabs,
 | phone-light | 390×844 | light |
 
 The bottom-centre toast strip (the rows a fixed toast can occupy) is not compared: in a browser tab the app says it has no daemon in a toast whose timing varies run to run. The tolerance is 0.5% of pixels differing by more than 24 levels; two runs of one build differ by ~0.000% here. **Coverage is honest, not complete:** the opening screen (the first-launch *Welcome to SDC* dialog over the shell) is covered. Screens that need a daemon, a project or a connected provider are not on a path a headless browser can reach without them; each new screen in P0-15/P2-2/P3-9 adds its own view when it has a way to be reached without a backend. A change that is intended: `UPDATE_VISUAL=1 pnpm --filter @sdc/app smoke:visual`, review the PNG diff in the commit.
+
+### Component fixtures
+
+A component that cannot be reached without a backend can still have a photograph: its unit test renders the real component with `renderToStaticMarkup` and writes `app/tests/visual/fixtures/<name>.html`; `smoke:visual` serves that page with the built stylesheet and photographs it in both themes (`<name>-dark`, `<name>-light`, 640×260). Today: `proof-badge` (the Proof-of-Work badge and receipt, closed, open and failed). A shot is only compared after a second shot of the same build agrees with it, because the app fades things by the clock.
 
 ## How to build a new surface (checklist)
 
