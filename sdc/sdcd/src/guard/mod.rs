@@ -12,4 +12,7 @@
 //! The permission gate the person already sees is `crate::agent::gate`; it moves in here when P0-13 and P0-14 give
 //! it neighbours, so that everything allowed to say "no" to a step can be read in one place.
 
+pub mod compress;
 pub mod daemon;
+pub mod osnorm;
+pub mod runner;

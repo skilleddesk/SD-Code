@@ -18,7 +18,7 @@ Status: `todo` · `in-progress` · `blocked` · `done`.
 | P0-10 | Model-selection contract and Pin Guard | 0 | P0-5, P0-9 | todo | models.contract (default ON after tests) |  |  |
 | P0-11 | Bench rules, hard tier and small-model bench | 0 | P0-9 | todo | n/a |  |  |
 | P0-12 | Speed baseline and Step Trace | 0 | P0-11 | todo | trace.steps |  |  |
-| P0-13 | Output compressor, OS normalizer, command runner | 0 | P0-3 | todo | tools.compress, tools.osnorm, tools.runner |  |  |
+| P0-13 | Output compressor, OS normalizer, command runner | 0 | P0-3 | done | tools.compress, tools.osnorm, tools.runner | sdc/docs/reports/P0-13.md | compressor contract (property test), per-OS normaliser, deadline+group-kill runner; 41 guard tests |
 | P0-14 | Sandbox Runner and Step Transaction | 0 | P0-13, P0-4 | todo | exec.sandbox, edit.transaction |  |  |
 | P0-15 | Proof-of-Work badge and receipt | 0 | P0-12 | todo | ui.proof_badge |  |  |
 | P0-16 | Hardware Auto-Tuner and VRAM Arbiter | 0 | P0-9 | todo | local.autotune |  |  |

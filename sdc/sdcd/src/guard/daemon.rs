@@ -487,6 +487,29 @@ mod tests {
     }
 
     #[test]
+    fn a_source_is_limited_again_after_the_window_if_it_keeps_guessing() {
+        let mut guard = Guard::new();
+
+        guard.issue("app");
+
+        let peer: IpAddr = "127.0.0.1".parse().unwrap();
+
+        for _ in 0..REFUSAL_LIMIT {
+            let _ = guard.check(&request("wrong", Some("127.0.0.1"), None));
+        }
+
+        guard.refusals.get_mut(&peer).unwrap().since = Some(Instant::now() - REFUSAL_WINDOW - Duration::from_secs(1));
+
+        /* A new window starts from zero, not from where the last one stopped: the full allowance is told the truth,
+           and only then is the source cut off again. */
+        for attempt in 0..REFUSAL_LIMIT {
+            assert_eq!(guard.check(&request("wrong", Some("127.0.0.1"), None)), Err(Refusal::Token), "attempt {attempt} of the new window");
+        }
+
+        assert_eq!(guard.check(&request("wrong", Some("127.0.0.1"), None)), Err(Refusal::Rate));
+    }
+
+    #[test]
     fn a_socket_client_with_no_host_header_is_accepted_when_the_transport_is_loopback() {
         let mut guard = Guard::new();
         let token = guard.issue("cli");

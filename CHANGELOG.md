@@ -17,6 +17,16 @@ working build is a trap rather than a history. The entries below are kept for th
 
 ## [Unreleased]
 
+- **P0-13 Output compressor, OS-normaliser, command runner.** Three modules in `src/guard/`, where P0-3 said they
+  would go. `compress` has a contract rather than a heuristic: **a line that matches a failure signal is never
+  dropped**, whatever the byte budget, and the number of dropped lines is reported - a property test over 200 random
+  inputs and budgets pins it. `osnorm` turns the same tool call into something that runs on each of the three
+  operating systems (`grep` -> `findstr`, path separators, the right shell), with each OS's mapping asserted in full
+  because only macOS can be run here. `runner` gives every command a deadline, kills the whole **process group** when
+  it passes (not just the shell), caps how much output it collects, and always answers `Exited` or `TimedOut` with
+  the output attached. Three real bugs found by their own tests: a shared counter made a log ending in an error report
+  zero dropped lines, a `MAIN_SEPARATOR` guard meant Windows path conversion never ran on macOS, and a too-clever
+  path heuristic rejected `src/app/main.rs`.
 - **P0-6 sdcd local API hardening.** The daemon has a door now (`src/guard/daemon.rs`, the first occupant of the
   `guard/` seam P0-3 opened): a per-client token from the OS random generator that can be retired on its own, a `Host`
   check that refuses a rebinding name however it arrived, an `Origin` check so a page in another tab cannot read an
