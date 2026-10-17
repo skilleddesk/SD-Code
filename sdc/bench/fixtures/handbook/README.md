@@ -1,0 +1,32 @@
+# Operations Handbook
+
+- docs/chapter-01.md — Chapter 1: Observability notes 1
+- docs/chapter-02.md — Chapter 2: Recovery notes 2
+- docs/chapter-03.md — Chapter 3: Access notes 3
+- docs/chapter-04.md — Chapter 4: Storage notes 4
+- docs/chapter-05.md — Chapter 5: Storage notes 5
+- docs/chapter-06.md — Chapter 6: Capacity notes 6
+- docs/chapter-07.md — Chapter 7: Incidents notes 7
+- docs/chapter-08.md — Chapter 8: Scheduling notes 8
+- docs/chapter-09.md — Chapter 9: Capacity notes 9
+- docs/chapter-10.md — Chapter 10: Billing notes 10
+- docs/chapter-11.md — Chapter 11: Access notes 11
+- docs/chapter-12.md — Chapter 12: Storage notes 12
+- docs/chapter-13.md — Chapter 13: Networking notes 13
+- docs/chapter-14.md — Chapter 14: Releases notes 14
+- docs/chapter-15.md — Chapter 15: Releases notes 15
+- docs/chapter-16.md — Chapter 16: Billing notes 16
+- docs/chapter-17.md — Chapter 17: Scheduling notes 17
+- docs/chapter-18.md — Chapter 18: Scheduling notes 18
+- docs/chapter-19.md — Chapter 19: Releases notes 19
+- docs/chapter-20.md — Chapter 20: Networking notes 20
+- docs/chapter-21.md — Chapter 21: Access notes 21
+- docs/chapter-22.md — Chapter 22: Capacity notes 22
+- docs/chapter-23.md — Chapter 23: Networking notes 23
+- docs/chapter-24.md — Chapter 24: Scheduling notes 24
+- docs/chapter-25.md — Chapter 25: Networking notes 25
+- docs/chapter-26.md — Chapter 26: Networking notes 26
+- docs/chapter-27.md — Chapter 27: Storage notes 27
+- docs/chapter-28.md — Chapter 28: Capacity notes 28
+- docs/chapter-29.md — Chapter 29: Storage notes 29
+- docs/chapter-30.md — Chapter 30: Scheduling notes 30

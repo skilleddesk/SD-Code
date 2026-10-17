@@ -1,0 +1,13 @@
+id = "small-notest-01"
+kind = "edit"
+fixture = "py-scripts"
+tiers = ["small"]
+language = "en"
+max_steps = 30
+prompt = '''
+`scripts/stats.py: median` is wrong for a list with an even number of values: it should return the mean of the two middle values. Fix it. The project has no tests - do not add any, and do not change anything else.
+'''
+
+[verify]
+hidden = "small-notest-01"
+commands = ["python3 -m unittest discover -s tests -t . -q"]

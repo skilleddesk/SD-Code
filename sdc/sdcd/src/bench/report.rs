@@ -239,6 +239,20 @@ pub fn markdown_bn(results: &Results, baseline: Option<&Results>) -> String {
         out.push_str(&format!("- ablation: `{ablate}` বন্ধ\n"));
     }
 
+    {
+        let noise = super::rules::noise(&results.runs);
+
+        out.push_str(&format!(
+            "- **Noise (চান্স কতটা):** {} টি task-এর মধ্যে {} টি task রানে রানে ফল বদলেছে (flaky); রানগুলোর pass rate-এর ব্যবধান {:.1} শতাংশ-পয়েন্ট ({}). seed: {}, temperature: {}\n",
+            noise.tasks,
+            noise.flaky_tasks,
+            noise.spread * 100.0,
+            noise.run_pass_rates.iter().map(|rate| percent(*rate)).collect::<Vec<_>>().join(" · "),
+            meta["seed"].as_u64().map(|seed| seed.to_string()).unwrap_or_else(|| "অজানা".into()),
+            meta["temperature"].as_f64().map(|t| t.to_string()).unwrap_or_else(|| "মডেলের নিজের".into()),
+        ));
+    }
+
     out.push_str("\nমান = median [bootstrap 95% CI]। billable = uncached_in + 0.1×cached_in + out×(price_out/price_in)।\n\n");
     out.push_str("## প্রতি model-এর ফল\n\n| agent | model | run (skip) | pass | input tokens | output tokens | billable | USD/run | মোট USD | সময় (s) | TTFT (s) | cached |\n|---|---|---|---|---|---|---|---|---|---|---|---|\n");
 

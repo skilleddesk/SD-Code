@@ -1,0 +1,13 @@
+id = "small-bn-01"
+kind = "multilingual"
+fixture = "py-notes"
+tiers = ["small"]
+language = "bn"
+max_steps = 30
+prompt = '''
+`notes/dates.py`-এ একটা নতুন ফাংশন `days_until(text, today=None)` যোগ করো। সে `parse_due` যে লেখাগুলো বোঝে (ISO তারিখ, "today", "tomorrow", "in N days") সেগুলোই বুঝবে, আর আজ থেকে ওই তারিখ পর্যন্ত কত দিন তা পূর্ণসংখ্যা হিসেবে ফেরত দেবে - তারিখ পেরিয়ে গেলে সংখ্যাটা ঋণাত্মক হবে। অন্য কিছু বদলাবে না।
+'''
+
+[verify]
+hidden = "small-bn-01"
+commands = ["python3 -m unittest discover -s tests -t . -q"]

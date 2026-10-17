@@ -1,0 +1,13 @@
+id = "small-rename-01"
+kind = "edit"
+fixture = "py-rename"
+tiers = ["small"]
+language = "en"
+max_steps = 60
+prompt = '''
+Rename the function `compute_total` to `compute_grand_total` everywhere in the project - its definition, every module that imports and calls it, and the tests. Nothing else changes.
+'''
+
+[verify]
+hidden = "small-rename-01"
+commands = ["python3 -m unittest discover -s tests -t . -q"]

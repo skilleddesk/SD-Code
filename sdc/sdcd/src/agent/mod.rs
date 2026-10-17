@@ -577,6 +577,9 @@ fn ask_model(backend: Backend, target: &Target, turn: (&str, crate::guard::model
         body = ollama_native::body(body, num_ctx);
     }
 
+    /* P0-11: a bench run states its seed (and temperature) on every request; outside a bench this changes nothing. */
+    crate::bench::rules::apply(&mut body, target.local_context.is_some(), target.thinking);
+
     /* 1.0: on Model Studio a request is sent with what makes a step fast, in three levels, and a level the
        endpoint refuses (a 400) is stepped down from - and not sent to that endpoint and model again:
          2  the cache marks (system prompt and the newest message) + level 1,

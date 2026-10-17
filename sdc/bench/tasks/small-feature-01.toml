@@ -1,0 +1,13 @@
+id = "small-feature-01"
+kind = "feature"
+fixture = "py-notes"
+tiers = ["small"]
+language = "en"
+max_steps = 60
+prompt = '''
+Add a priority to notes, across the project. A note has a `priority` from 1 (most urgent) to 5, default 3: `NoteStore.add(..., priority=3)` stores it and raises `ValueError` outside 1..5; a notes file saved before this change loads with priority 3; `search` breaks ties between equal scores by priority (1 first) and then by id; the CLI's `add` takes `--priority N`, and `list` prints `<id>\t<title>\tP<priority>` for each note.
+'''
+
+[verify]
+hidden = "small-feature-01"
+commands = ["python3 -m unittest discover -s tests -t . -q"]

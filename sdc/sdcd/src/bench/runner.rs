@@ -139,7 +139,10 @@ pub fn prepare(task: &Task, bench: &Path, label: &str, slug: &str, run: usize) -
     let work = std::env::temp_dir().join("sdc-bench").join(label).join(format!("{}-{slug}-{run}", task.id));
     let _ = std::fs::remove_dir_all(&work);
 
-    task::copy_tree(&bench.join("fixtures").join(&task.fixture), &work)?;
+    /* A private task may name a real folder (an absolute path) as its fixture; a published one names a fixture. */
+    let fixture = if Path::new(&task.fixture).is_absolute() { PathBuf::from(&task.fixture) } else { bench.join("fixtures").join(&task.fixture) };
+
+    task::copy_tree(&fixture, &work)?;
 
     let work = std::fs::canonicalize(&work).map_err(|error| error.to_string())?;
 

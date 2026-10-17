@@ -22,6 +22,9 @@ app/src-tauri/gen/schemas/
 
 # Benchmark binaries (built from tags, e.g. bench/bin/v1/) - reproducible from the tag
 bench/bin/
+# The person's own bench tasks (P0-11): real projects, never published. See `sdcd bench private`.
+bench/tasks/private/
+bench/results/private-*/
 
 # Coverage output
 coverage/

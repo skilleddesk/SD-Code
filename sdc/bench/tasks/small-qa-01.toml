@@ -1,0 +1,13 @@
+id = "small-qa-01"
+kind = "explain"
+fixture = "handbook"
+tiers = ["small"]
+language = "en"
+max_steps = 20
+prompt = '''
+The operations handbook in `docs/` has 30 chapters. How many times does the sync worker retry a failed upload at most, and how long does it wait between attempts? Name the chapter file and quote the sentence exactly. Change no files.
+'''
+
+[verify]
+answer_all = ["chapter-17", "(?i)at most 7 times", "45 seconds", "retries a failed upload at most 7 times, waiting 45 seconds between attempts"]
+no_edits = true

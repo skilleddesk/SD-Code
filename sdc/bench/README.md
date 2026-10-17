@@ -55,3 +55,17 @@ Q3 = p ≥ 0.1, pass-rate drop ≤ 1 point, saving CI above 0.
   in the file fallback (Linux) live in the data folder and are then not found.
 - `bench search` timings are with the OS file cache as it is; drop it first for a cold number and pass `--cold`.
 - DevOps tasks use `grep` in their checks; the fleet tasks (I7, Docker 5/10/20) arrive with I7.
+
+## Rules, tiers and your own tasks (P0-11)
+
+A result is only worth believing with its noise beside it, so these are enforced in code (`sdcd/src/bench/rules.rs`):
+
+- **A fixed seed** (`--seed N`, default 20261017) and, when stated, a temperature (`--temperature T`) are sent with every request and written into `meta.json`. (DeepSeek, OpenAI-compatible endpoints and Ollama accept both; a request with thinking on keeps the provider's own temperature.)
+- **At least 3 runs per task** outside the smoke tier; `--allow-few-runs` accepts a result with no noise estimate and says so.
+- **Paired runs** (same task, same run index, two builds) feed McNemar in `bench compare` (`stats::mcnemar_p`, tested against the binomial table).
+- **Noise in every report**: how many tasks flipped between runs and how far apart the runs' pass rates were - in `report-bn.md` and in the machine-readable `summary.json` (`schema: 1`: label, tier, rules, per-model pass rate, noise, USD).
+- **A budget**: `--max-usd`.
+
+Tiers beyond smoke/medium/full: `hard` (what the baseline fails or flips - today `ml-bn`, plus your private tasks), `small` (the 8-9B local-model bench: long-document QA with a quoted answer, a multi-file feature, a rename across 24 modules, a long function that is easy to cut off, Bangla and Banglish instructions, a file near the context limit, an edit in a project with no tests) and `private`. `small` is not part of `full`, so every baseline's "the 40 tasks" keeps its meaning.
+
+**Your own tasks** go in `tasks/private/` (git-ignored: never committed, never published) and may name a real project folder as their fixture; `sdcd bench private` prints where and shows an example. They join the `hard` tier automatically.

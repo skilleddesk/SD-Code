@@ -1,0 +1,1 @@
+It is in docs/chapter-17.md: "The sync worker retries a failed upload at most 7 times, waiting 45 seconds between attempts, before it parks the job in the dead-letter queue." So at most 7 retries, 45 seconds apart.

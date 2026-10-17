@@ -1,0 +1,13 @@
+id = "small-limit-01"
+kind = "find"
+fixture = "bigfile"
+tiers = ["small"]
+language = "en"
+max_steps = 20
+prompt = '''
+`registry.py` is a large file. Which function returns the string "amber-4471"? Give its name and the line number it starts on. Change no files.
+'''
+
+[verify]
+answer_all = ["code_0041", "\\b163\\b"]
+no_edits = true

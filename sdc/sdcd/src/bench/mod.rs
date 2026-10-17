@@ -9,13 +9,17 @@
 //! sdcd bench lang        --models deepseek:deepseek-chat [--label NAME]
 //! sdcd bench search      --root DIR [--repeats 10] [--label NAME] [--cold]
 //! sdcd bench gen-tree    --out DIR [--files 50000]
+//! sdcd bench private                                      # where your own (git-ignored) tasks go, and an example
 //! sdcd bench validate    [--tier all]                     # every task fails untouched and passes its reference
 //! sdcd bench resume      [--kills 100] [--label NAME]     # A-19: kill -9 mid-turn, restart, check the work
 //! sdcd bench profiles    --baseline L --candidate feature=L2[@own-baseline] [...]  # Q2: model-profiles.json from Q3 verdicts
 //! sdcd bench fleet       [--label NAME]                   # A-16 on synthetic 5/10/20-server fleets
 //! sdcd bench drift       --labels A,B,C [--target 0.8]   # Q4: a model's pass rate slipping away from where it was
 //! sdcd bench baseline    LABEL [--as NAME] [--note TEXT] [--force]   # P0-1: freeze a finished result set
-//! sdcd bench report      LABEL [--baseline LABEL]         # writes bench/results/LABEL/report-bn.md
+//! sdcd bench report      LABEL [--baseline LABEL]         # writes bench/results/LABEL/report-bn.md and summary.json
+//!
+//! Rules (P0-11, `bench::rules`): `--seed N` (default 20261017) and `--temperature T` go on every request, three runs
+//! per task at least outside smoke (`--allow-few-runs` to accept none), and the noise of every result is printed.
 //! sdcd bench compare     BASELINE CANDIDATE [--report-bn]  # the Q3 rule per model
 //! ```
 //!
@@ -27,6 +31,7 @@ pub mod competitors;
 pub mod lang;
 pub mod ledger;
 pub mod report;
+pub mod rules;
 pub mod sprt;
 pub mod resume;
 pub mod runner;
@@ -143,6 +148,7 @@ pub fn main(args: &[String]) -> i32 {
         "gen-tree" => gen_tree(rest),
         "report" => report_cmd(rest),
         "validate" => validate(rest),
+        "private" => private_cmd(rest),
         "resume" => resume_cmd(rest),
         "profiles" => profiles_cmd(rest),
         "fleet" => fleet_cmd(rest),
@@ -167,11 +173,15 @@ pub fn main(args: &[String]) -> i32 {
 fn selected(args: &[String], bench: &Path) -> Result<(Vec<Task>, String), String> {
     let tier = flag(args, "--tier").unwrap_or_else(|| "smoke".into());
 
-    if !["smoke", "medium", "full", "repeat", "fleet", "all"].contains(&tier.as_str()) {
-        return Err(format!("unknown tier `{tier}`: smoke, medium, full, repeat, fleet or all"));
+    if !["smoke", "medium", "full", "repeat", "fleet", "hard", "small", "private", "all"].contains(&tier.as_str()) {
+        return Err(format!("unknown tier `{tier}`: smoke, medium, full, repeat, fleet, hard, small, private or all"));
     }
 
-    let all = task::load_all(&bench.join("tasks"))?;
+    let mut all = task::load_all(&bench.join("tasks"))?;
+
+    /* P0-11: the person's own tasks, from `tasks/private/` (never committed), join the hard tier. */
+    all.extend(task::load_private(bench)?);
+    all.sort_by(|a, b| a.id.cmp(&b.id));
     /* The repeat tier (I4) runs each original before its repeat: ids sort `edit-…` before `repeat-…`. */
     let originals: Vec<String> = all.iter().filter(|task| tier == "repeat" && task.in_tier("repeat")).filter_map(|task| task.repeat_of.clone()).collect();
     let mut tasks: Vec<Task> = all.into_iter().filter(|task| tier == "all" || task.in_tier(&tier) || originals.contains(&task.id)).collect();
@@ -183,6 +193,20 @@ fn selected(args: &[String], bench: &Path) -> Result<(Vec<Task>, String), String
     }
 
     Ok((tasks, tier))
+}
+
+/// `sdcd bench private`: where the person's own tasks go, and what one looks like. Nothing is written.
+fn private_cmd(args: &[String]) -> Result<(), String> {
+    let bench = bench_dir(args)?;
+    let dir = bench.join("tasks").join("private");
+
+    println!("Private tasks live in {} - git-ignored, so they are never committed or published.", dir.display());
+    println!("Each one is a normal task file, plus `hidden/<dir>/` and `reference/<id>/` beside it, and may name a real project folder:\n");
+    println!("  # {}/fix-login.toml", dir.display());
+    println!("  id = \"mine-01\"\n  kind = \"bugfix\"\n  fixture = \"/Users/me/code/shop\"   # an absolute folder: copied, never changed\n  prompt = '''\n  The login form accepts an empty password. Fix it.\n  '''\n  [verify]\n  hidden = \"mine-01\"\n  commands = [\"npm test --silent\"]\n");
+    println!("They join the `hard` tier automatically: `sdcd bench run --tier hard --models ...`. Found now: {}", task::load_private(&bench)?.len());
+
+    Ok(())
 }
 
 /// `sdcd bench validate`: every task must FAIL on its untouched fixture (so it measures something) and PASS
@@ -197,7 +221,6 @@ fn validate(args: &[String]) -> Result<(), String> {
     }
 
     let (tasks, _) = selected(&args, &bench)?;
-    let hidden = bench.join("tasks").join("hidden");
     let mut wrong = Vec::new();
 
     for task in &tasks {
@@ -206,12 +229,13 @@ fn validate(args: &[String]) -> Result<(), String> {
             continue;
         }
 
+        let hidden = task::side_root(&bench, task, "hidden");
         let pristine = runner::prepare(task, &bench, "validate", "pristine", 0)?;
         let untouched = task::verify(task, "", &pristine, &hidden);
 
         runner::clean(&pristine);
 
-        let reference = bench.join("tasks").join("reference").join(&task.id);
+        let reference = task::side_root(&bench, task, "reference").join(&task.id);
         let solved_dir = runner::prepare(task, &bench, "validate", "reference", 0)?;
         let answer = std::fs::read_to_string(reference.join("ANSWER.txt")).unwrap_or_default();
 
@@ -523,6 +547,11 @@ fn run(args: &[String], mode: &str) -> Result<(), String> {
     let (default_runs, default_usd) = tier_defaults(&tier);
     let runs: usize = flag(args, "--runs").and_then(|value| value.parse().ok()).unwrap_or(default_runs);
     let max_usd: f64 = flag(args, "--max-usd").and_then(|value| value.parse().ok()).unwrap_or(default_usd);
+    /* P0-11: the rules. Three runs at least outside smoke, a fixed seed, and a stated temperature when one is given. */
+    rules::check_runs(&tier, runs, has(args, "--allow-few-runs"))?;
+
+    let seed: u64 = flag(args, "--seed").and_then(|value| value.parse().ok()).unwrap_or(rules::DEFAULT_SEED);
+    let temperature: Option<f64> = flag(args, "--temperature").and_then(|value| value.parse().ok());
     let models: Vec<Model> = flag(args, "--models").ok_or("--models is required (provider:model, comma-separated)")?.split(',').map(Model::parse).collect::<Result<_, _>>()?;
     let ablate = flag(args, "--ablate");
 
@@ -553,6 +582,14 @@ fn run(args: &[String], mode: &str) -> Result<(), String> {
         return Ok(());
     }
 
+    /* The daemon the bench starts inherits these, and `rules::apply` puts them on every request it makes. */
+    std::env::set_var(rules::SEED_ENV, seed.to_string());
+
+    match temperature {
+        Some(value) => std::env::set_var(rules::TEMPERATURE_ENV, value.to_string()),
+        None => std::env::remove_var(rules::TEMPERATURE_ENV),
+    }
+
     let out = results_dir(&bench, &label);
 
     std::fs::create_dir_all(&out).map_err(|error| error.to_string())?;
@@ -578,6 +615,8 @@ fn run(args: &[String], mode: &str) -> Result<(), String> {
         "mode": mode,
         "tier": tier,
         "runs": runs,
+        "seed": seed,
+        "temperature": temperature,
         "models": models.iter().map(Model::label).collect::<Vec<_>>(),
         "tasks": tasks.iter().map(|task| task.id.clone()).collect::<Vec<_>>(),
         "ablate": ablate,
@@ -670,6 +709,7 @@ fn run(args: &[String], mode: &str) -> Result<(), String> {
     let results = report::load(&out)?;
 
     std::fs::write(out.join("report-bn.md"), report::markdown_bn(&results, None)).map_err(|error| error.to_string())?;
+    std::fs::write(out.join("summary.json"), serde_json::to_string_pretty(&rules::machine_summary(&label, &results.meta, &results.runs)).unwrap_or_default()).map_err(|error| error.to_string())?;
     println!("spent ${spent:.4}; results in {}", out.display());
 
     Ok(())
@@ -716,7 +756,7 @@ fn run_sdc(client: &mut runner::Client, daemon: &runner::Daemon, task: &Task, mo
             record.answer = turn.answer.chars().take(4_000).collect();
             record.error = turn.error.clone();
 
-            let outcome = task::verify(task, &turn.answer, &work, &bench.join("tasks").join("hidden"));
+            let outcome = task::verify(task, &turn.answer, &work, &task::side_root(bench, task, "hidden"));
 
             record.pass = outcome.pass && !turn.timed_out;
             record.failures = outcome.failures;
@@ -766,7 +806,7 @@ fn run_competitor(task: &Task, model: &Model, bench: &Path, label: &str, index: 
     record.answer = report.answer.chars().take(4_000).collect();
     record.error = report.error.clone();
 
-    let outcome = task::verify(task, &report.answer, &work, &bench.join("tasks").join("hidden"));
+    let outcome = task::verify(task, &report.answer, &work, &task::side_root(bench, task, "hidden"));
 
     record.pass = outcome.pass && report.error.is_none();
     record.failures = outcome.failures;
@@ -891,6 +931,7 @@ fn report_cmd(args: &[String]) -> Result<(), String> {
     let text = report::markdown_bn(&results, baseline.as_ref());
 
     std::fs::write(out.join("report-bn.md"), &text).map_err(|error| error.to_string())?;
+    std::fs::write(out.join("summary.json"), serde_json::to_string_pretty(&rules::machine_summary(&results.label, &results.meta, &results.runs)).unwrap_or_default()).map_err(|error| error.to_string())?;
     println!("{text}");
 
     Ok(())
@@ -1007,15 +1048,21 @@ mod tests {
     #[test]
     fn the_shipped_tasks_load_and_fill_the_plans_tiers() {
         let bench = Path::new(env!("CARGO_MANIFEST_DIR")).join("../bench");
-        let tasks = task::load_all(&bench.join("tasks")).unwrap();
+        let everything = task::load_all(&bench.join("tasks")).unwrap();
+        /* P0-11: the small-model bench is a tier of its own, so it is not among the plan's 40 that baselines measure. */
+        let (small, tasks): (Vec<Task>, Vec<Task>) = everything.into_iter().partition(|task| task.tiers.iter().any(|tier| tier == "small"));
         let count = |kind: &str| tasks.iter().filter(|task| task.kind == kind).count();
+
+        assert_eq!(small.len(), 8, "the seven situations of the small-model bench, Bangla and Banglish both");
+        assert!(small.iter().all(|task| !task.in_tier("full")), "and none of them is in the full tier");
+        assert!(tasks.iter().find(|task| task.id == "ml-bn").unwrap().in_tier("hard"), "the one task the baseline flipped is in the hard tier");
 
         /* The plan's 40: 8 find, 6 explain, 8 small edits, 6 bug fixes, 4 features, 4 DevOps, 4 multilingual. */
         assert_eq!([count("find"), count("explain"), count("edit"), count("bugfix"), count("feature"), count("devops"), count("multilingual")], [8, 6, 8, 6, 4, 4, 4]);
         assert_eq!(tasks.iter().filter(|task| task.in_tier("smoke")).count(), 8);
         assert_eq!(tasks.iter().filter(|task| task.in_tier("medium")).count(), 20);
 
-        for task in &tasks {
+        for task in tasks.iter().chain(&small) {
             assert!(bench.join("fixtures").join(&task.fixture).is_dir(), "{}: no fixture {}", task.id, task.fixture);
 
             if let Some(hidden) = &task.verify.hidden {

@@ -1,0 +1,13 @@
+id = "small-banglish-01"
+kind = "multilingual"
+fixture = "py-notes"
+tiers = ["small"]
+language = "banglish"
+max_steps = 30
+prompt = '''
+notes/dates.py te ekta notun function lagbe: days_until(text, today=None). parse_due ja ja bujhe (ISO date, "today", "tomorrow", "in N days") shob e bujhbe, ar aj theke oi date porjonto koto din ta integer hishebe ferot dibe - date perie gele number ta negative hobe. onno kichu bodlabe na.
+'''
+
+[verify]
+hidden = "small-bn-01"
+commands = ["python3 -m unittest discover -s tests -t . -q"]

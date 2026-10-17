@@ -3,8 +3,10 @@
 //! ```toml
 //! id = "bugfix-01"
 //! kind = "bugfix"            # find | explain | edit | bugfix | feature | devops | multilingual | fleet | repeat
-//! fixture = "rust-ledger"    # bench/fixtures/<fixture>, copied to a fresh folder for every run
-//! tiers = ["smoke", "medium"] # every task is in "full"
+//! fixture = "rust-ledger"    # bench/fixtures/<fixture>, copied to a fresh folder for every run (a private task may
+//!                            # name an absolute folder instead: a real project of the person's, never published)
+//! tiers = ["smoke", "medium"] # every task is in "full"; also "hard" (the baseline fails or flips it), "small" (the
+//!                            # 8-9B local-model bench) and "private" (tasks/private/, git-ignored)
 //! language = "en"
 //! repeat_of = "edit-02"      # a paired repeat (I4): same work, asked again later
 //! requires = ["docker"]      # skipped (and said so) when the machine lacks it
@@ -107,7 +109,9 @@ impl Task {
     /// have tiers of their own); `medium` holds the smoke tasks too.
     pub fn in_tier(&self, tier: &str) -> bool {
         match tier {
-            "full" => !matches!(self.kind.as_str(), "repeat" | "fleet") || self.tiers.iter().any(|t| t == "full"),
+            /* The small-model bench and the person's own private tasks are tiers of their own: adding them to `full`
+               would change what "the 40 tasks" of every baseline means. */
+            "full" => (!matches!(self.kind.as_str(), "repeat" | "fleet") && !self.tiers.iter().any(|t| t == "small" || t == "private")) || self.tiers.iter().any(|t| t == "full"),
             "medium" => self.tiers.iter().any(|t| t == "medium" || t == "smoke"),
             other => self.tiers.iter().any(|t| t == other),
         }
@@ -142,6 +146,41 @@ pub fn load_all(dir: &Path) -> Result<Vec<Task>, String> {
     }
 
     Ok(tasks)
+}
+
+/// The person's own tasks: `tasks/private/*.toml` and their `hidden/` and `reference/` beside them. They exist so the
+/// hard tier measures what the person really does - and so they are **never committed or published** (`bench/.gitignore`
+/// lists `tasks/private/`, and `sdcd bench private` says where they live). Each is forced into the `private` and `hard`
+/// tiers whatever its file says, and may name a real folder as its fixture.
+pub fn load_private(bench: &Path) -> Result<Vec<Task>, String> {
+    let dir = bench.join("tasks").join("private");
+
+    if !dir.is_dir() {
+        return Ok(Vec::new());
+    }
+
+    let mut tasks = load_all(&dir)?;
+
+    for task in &mut tasks {
+        for tier in ["private", "hard"] {
+            if !task.tiers.iter().any(|t| t == tier) {
+                task.tiers.push(tier.to_string());
+            }
+        }
+    }
+
+    Ok(tasks)
+}
+
+/// Where a task's `hidden/` and `reference/` folders live: beside the task, so a private task keeps both private.
+pub fn side_root(bench: &Path, task: &Task, name: &str) -> PathBuf {
+    let tasks = bench.join("tasks");
+
+    if task.tiers.iter().any(|t| t == "private") {
+        tasks.join("private").join(name)
+    } else {
+        tasks.join(name)
+    }
 }
 
 /// The verdict of one run, with what failed.
@@ -318,5 +357,41 @@ no_edits = true
         assert!(!verify(&with_tests, "", &work, &hidden).pass);
 
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn small_and_private_tasks_never_join_the_full_tier_the_baselines_were_measured_on() {
+        let mut task = Task::parse(TASK).unwrap();
+
+        assert!(task.in_tier("full"));
+
+        task.tiers = vec!["small".into()];
+
+        assert!(!task.in_tier("full") && task.in_tier("small"), "the small-model tasks are their own tier");
+
+        task.tiers = vec!["private".into()];
+
+        assert!(!task.in_tier("full"));
+    }
+
+    #[test]
+    fn private_tasks_are_loaded_from_their_own_folder_forced_into_the_hard_tier_and_keep_their_tests_private() {
+        let bench = tempfile::tempdir().unwrap();
+        let private = bench.path().join("tasks/private");
+
+        std::fs::create_dir_all(&private).unwrap();
+        std::fs::write(private.join("mine-01.toml"), TASK.replace("find-01", "mine-01").replace("tiers = [\"smoke\"]", "tiers = []")).unwrap();
+
+        let tasks = load_private(bench.path()).unwrap();
+
+        assert_eq!(tasks.len(), 1);
+        assert!(tasks[0].tiers.contains(&"private".to_string()) && tasks[0].tiers.contains(&"hard".to_string()));
+        assert!(tasks[0].in_tier("hard") && !tasks[0].in_tier("full"));
+        assert_eq!(side_root(bench.path(), &tasks[0], "hidden"), bench.path().join("tasks/private/hidden"));
+
+        let public = Task::parse(TASK).unwrap();
+
+        assert_eq!(side_root(bench.path(), &public, "hidden"), bench.path().join("tasks/hidden"));
+        assert!(load_private(tempfile::tempdir().unwrap().path()).unwrap().is_empty(), "no private folder is not an error");
     }
 }

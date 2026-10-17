@@ -1,0 +1,13 @@
+id = "small-cutoff-01"
+kind = "feature"
+fixture = "py-units"
+tiers = ["small"]
+language = "en"
+max_steps = 40
+prompt = '''
+Create `units/convert.py` with `convert(value: float, source: str, target: str) -> float`. Units are matched case-insensitively. It must support exactly these 40 conversions, written out one by one as an `if`/`elif` chain inside the function (no lookup table), with these factors: km->m 1000, m->km 0.001, m->cm 100, cm->m 0.01, cm->mm 10, mm->cm 0.1, km->cm 100000, cm->km 0.00001, kg->g 1000, g->kg 0.001, g->mg 1000, mg->g 0.001, kg->mg 1000000, mg->kg 0.000001, t->kg 1000, kg->t 0.001, l->ml 1000, ml->l 0.001, m3->l 1000, l->m3 0.001, h->min 60, min->h 1/60, min->s 60, s->min 1/60, h->s 3600, s->h 1/3600, d->h 24, h->d 1/24, kb->b 1024, b->kb 1/1024, mb->kb 1024, kb->mb 1/1024, gb->mb 1024, mb->gb 1/1024, gb->kb 1048576, kb->gb 1/1048576, mi->km 1.609344, km->mi 1/1.609344, lb->kg 0.45359237, kg->lb 1/0.45359237. The same known unit to itself returns the value unchanged. Anything else raises `ValueError`.
+'''
+
+[verify]
+hidden = "small-cutoff-01"
+commands = ["python3 -m unittest discover -s tests -t . -q"]
