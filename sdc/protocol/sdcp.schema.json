@@ -338,6 +338,7 @@
           "team.set",
           "settings.get",
           "settings.set",
+          "ship.check",
           "features.preset",
           "features.list",
           "rotation.escalate",
@@ -2339,6 +2340,19 @@
           "result": {
             "key": "string",
             "value": "string"
+          }
+        },
+        "ship.check": {
+          "params": {
+            "path": "string",
+            "url": "string?"
+          },
+          "result": {
+            "verdict": "string",
+            "checks": [
+              "object"
+            ],
+            "site": "string?"
           }
         },
         "features.preset": {

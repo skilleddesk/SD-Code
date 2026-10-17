@@ -1829,9 +1829,9 @@ export async function openFolderIn(root: string, hostId = 'local'): Promise<stri
  * sits. Nothing is shown for a folder it has swept before or found clean. It is a courtesy, never a gate: a sweep that cannot
  * run says nothing and the folder opens as it always did.
  */
-export async function sweepFolder(root: string): Promise<void> {
+export async function sweepFolder(root: string, again = false): Promise<void> {
   try {
-    const answer = await sdcpCall('secrets.sweep', { path: root, firstOnly: true });
+    const answer = await sdcpCall('secrets.sweep', { path: root, ...(again ? {} : { firstOnly: true }) });
 
     if (answer.skipped !== true && Array.isArray(answer.findings) && answer.findings.length > 0) {
       useSecretSweep.getState().show(root, answer.findings, answer.truncated === true);

@@ -25,6 +25,7 @@ impl Daemon {
             "rotation.get" => self.rotation_get(),
             "rotation.set" => self.rotation_set(envelope),
             "rotation.escalate" => self.rotation_escalate(envelope, out),
+            "ship.check" => self.ship_check(envelope),
             "secrets.sweep" => self.secrets_sweep(envelope),
             "secrets.move" => self.secrets_move(envelope),
 
@@ -72,6 +73,21 @@ impl Daemon {
         answer["skipped"] = json!(false);
 
         Ok(answer)
+    }
+
+    /// `ship.check`: the five Ship Safe checks on an opened folder, and on a site address when one is given. Blocking (it asks the
+    /// site and the public package registries), so the window shows a spinner and never waits on the daemon's other calls.
+    pub(super) fn ship_check(&self, envelope: &Envelope) -> Result<Value, ErrorObject> {
+        let root = self.local_project(envelope)?;
+        let site = envelope.opt_str("url").map(|url| url.trim().to_string()).filter(|url| !url.is_empty());
+
+        if let Some(site) = site.as_deref() {
+            if !site.starts_with("http://") && !site.starts_with("https://") {
+                return Err(ErrorObject::bad_request("the site address must start with http:// or https://"));
+            }
+        }
+
+        Ok(crate::trust::shipsafe::run(&root, site.as_deref(), &crate::trust::shipsafe::Registries::default()))
     }
 
     /// `secrets.move`: one found value goes into the OS keychain and leaves a marker in its file.

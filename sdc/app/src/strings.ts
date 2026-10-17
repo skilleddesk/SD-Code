@@ -99,6 +99,7 @@ const english = {
   rail: {
     label: 'Navigation',
     timeMachine: 'Time Machine - every change, one click back',
+    shipSafe: 'Ship Safe - check before you go live',
   },
   sidebar: {
     newChat: 'New chat',
@@ -1519,6 +1520,21 @@ const english = {
    * spec section 2.7 wants it) and `modals/Settings.tsx` renders it. The Keymap tab is the one
    * exception - it reads the command registry, so the two can never disagree (spec section 9.1).
    */
+  /** Ship Safe (Phase 4.5). */
+  shipSafe: {
+    title: 'Ship Safe',
+    subtitle: 'Five checks before you go live: secrets, access, security headers, vulnerable packages, and packages that may not exist.',
+    url: 'Site address (optional)',
+    network: 'The headers and access checks ask the site address above. The package check asks the public registries for each package’s name only - never your files or keys.',
+    run: 'Run the checks',
+    again: 'Run again',
+    running: 'Checking…',
+    noFolder: 'Open a folder first - Ship Safe checks the folder of the open chat.',
+    failed: 'Ship Safe could not run',
+    verdict: { pass: 'Everything that could be checked passed.', warn: 'Nothing failed, but something was skipped or needs a look - a skipped check is not a pass.', fail: 'Fix these before you ship.' },
+    status: { pass: 'passed', warn: 'look', fail: 'failed', skipped: 'skipped' },
+    names: { secrets: 'Secrets in your files', access: 'Who can reach your files', headers: 'Security headers', audit: 'Known vulnerabilities', existence: 'Packages that may not exist' },
+  },
   /** Simple / Pro, the three profiles and Settings → Advanced (Phase 4.4). */
   profiles: {
     mode: 'Mode',

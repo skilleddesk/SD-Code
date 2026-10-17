@@ -1,8 +1,9 @@
-import { Building2, History, Moon, Network, PanelLeft, PanelRight, Plug, Search, Settings, SquarePen, Sun } from 'lucide-react';
+import { Building2, History, Moon, Network, PanelLeft, PanelRight, Plug, Search, Settings, ShieldCheck, SquarePen, Sun } from 'lucide-react';
 
 import { setTheme as applyTheme, type Theme } from '../../lib/theme';
 import { strings } from '../../strings';
 import { useKernelUi } from '../../store/kernelUi';
+import { openShipSafe } from '../../store/shipSafe';
 import { usePrefsStore } from '../../store/prefs';
 import { useRightPanelStore } from '../../store/rightPanel';
 import { useLayoutStore } from '../../store/layout';
@@ -95,6 +96,7 @@ export function NavRail() {
           useRightPanelStore.getState().setActiveTab('timemachine', usePrefsStore.getState().activeTab);
         }}
       />
+      <IconButton id="openShipSafe" icon={ShieldCheck} label={strings.rail.shipSafe} size={40} iconSize={18} className="rail-btn" onClick={openShipSafe} />
       <IconButton id="openOps" icon={Network} label={strings.kernel.ops.title} size={40} iconSize={18} className="rail-btn" onClick={() => useKernelUi.getState().openOps()} />
 
       <span className="flex-1" />

@@ -13,6 +13,7 @@ import { HostSwitcherPopover } from './modals/HostSwitcherPopover';
 import { Permission } from './modals/Permission';
 import { EscalateDialog } from './modals/EscalateDialog';
 import { SecretSweep } from './modals/SecretSweep';
+import { ShipSafe } from './modals/ShipSafe';
 import { ProviderHub } from './modals/ProviderHub';
 import { NewProject } from './modals/NewProject';
 import { RemoteFolder } from './modals/RemoteFolder';
@@ -163,6 +164,7 @@ export function App() {
       <Onboarding />
       <SecretSweep />
       <EscalateDialog />
+      <ShipSafe />
       {/* Last of the dialogs: a turn waiting for an approval must never sit under another dialog. */}
       <Permission />
 

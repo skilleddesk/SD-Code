@@ -267,6 +267,7 @@ export type SdcpMethod =
   | 'team.set'
   | 'settings.get'
   | 'settings.set'
+  | 'ship.check'
   | 'features.preset'
   | 'features.list'
   | 'rotation.escalate'
@@ -714,6 +715,22 @@ export interface VoiceStatus {
   installHint: string | null;
   models: { id: string; file: string; bytes: number; note: string; installed: boolean; source: string }[];
   download: { state: 'idle' | 'downloading' | 'done' | 'failed'; id?: string; done?: number; total?: number; error?: string };
+}
+
+/** One Ship Safe check (Phase 4.5). `skipped` is never a pass: it says why the check could not run. */
+export interface ShipCheck {
+  id: 'secrets' | 'access' | 'headers' | 'audit' | 'existence';
+  title: string;
+  status: 'pass' | 'warn' | 'fail' | 'skipped';
+  summary: string;
+  details: string[];
+  fix: { kind: 'prompt'; label: string; prompt: string } | { kind: 'secrets'; label: string } | null;
+}
+
+export interface ShipReport {
+  verdict: 'pass' | 'warn' | 'fail';
+  checks: ShipCheck[];
+  site: string | null;
 }
 
 /** One switch of the ~40, as Settings → Advanced lists it (Phase 4.4). `active: false` means it is on or off but does nothing yet - `inactiveReason` says why. */
@@ -2519,6 +2536,7 @@ export interface SdcpMethodMap {
   'team.set': { params: { members?: TeamMember[]; current?: string }; result: TeamState };
   'settings.get': { params: { key: string }; result: { key: string; value: string | null } };
   'settings.set': { params: { key: string; value: string | boolean }; result: { key: string; value: string } };
+  'ship.check': { params: { path: string; url?: string }; result: ShipReport };
   'features.preset': { params: { preset: "safe" | "balanced" | "economical" }; result: FeaturesView };
   'features.list': { params: Record<string, never>; result: FeaturesView };
   'rotation.escalate': { params: { sessionId: string; confirm?: boolean; autonomy?: string }; result: EscalateAnswer };
