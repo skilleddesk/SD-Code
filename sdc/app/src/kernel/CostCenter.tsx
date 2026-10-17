@@ -74,6 +74,35 @@ export function CostCenter() {
               <Stat label={k.measured} value={`${summary.measuredTurns} / ${summary.measuredTurns + summary.unmeasuredTurns}`} note={k.measuredNote} />
             </div>
 
+            {summary.bySource === undefined ? null : (
+              <section aria-label={k.sourceTitle} data-cost-sources="">
+                <h3 className="mb-[4px] text-[10px] font-semibold uppercase tracking-[.1em] text-text-muted">{k.sourceTitle}</h3>
+                <p className="mb-[8px] text-[11.5px] text-text-muted">{k.sourceHelp}</p>
+                <table className="w-full text-[11.5px]">
+                  <thead>
+                    <tr className="text-left text-text-muted">
+                      <th className="py-[3px] font-medium" />
+                      <th className="py-[3px] text-right font-medium">{k.sourceToday}</th>
+                      <th className="py-[3px] text-right font-medium">{k.sourceMonth}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {summary.bySource.today.map((today, index) => {
+                      const month = summary.bySource?.month[index];
+
+                      return (
+                        <tr key={today.kind} className="border-t border-border-subtle" data-source={today.kind}>
+                          <td className="py-[4px] text-text-primary">{k.sources[today.kind]}</td>
+                          <td className="py-[4px] text-right font-mono tabular-nums">{today.kind === 'subscription' ? k.sourceTurns(today.turns) : `${usd(today.usd)} · ${k.sourceTurns(today.turns)}`}</td>
+                          <td className="py-[4px] text-right font-mono tabular-nums">{month === undefined ? '—' : month.kind === 'subscription' ? k.sourceTurns(month.turns) : `${usd(month.usd)} · ${k.sourceTurns(month.turns)}`}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </section>
+            )}
+
             <section aria-label={k.byDay}>
               <h3 className="mb-[8px] text-[10px] font-semibold uppercase tracking-[.1em] text-text-muted">{k.byDay}</h3>
               {summary.days.length === 0 ? <p className="text-[12px] text-text-muted">{k.none}</p> : null}

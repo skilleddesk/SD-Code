@@ -354,6 +354,51 @@ impl Runaway {
     }
 }
 
+/// What each kind of cost figure adds up to, for today and for this calendar month (Phase 4.7). The kinds are the ledger's own and
+/// are never merged into one unlabelled number: `measured` (the provider or the CLI reported it), `priced` (tokens x the catalogue's
+/// price), `local` (a model on this computer: nothing to pay), `subscription` (a plan: no per-token price, so no figure), and `estimate`
+/// (everything else - a guess, and said to be one).
+pub fn by_source(rows: &[Value], today: &str) -> Value {
+    let month = &today[..7.min(today.len())];
+    let mut totals: std::collections::BTreeMap<&str, [(f64, usize); 2]> = Default::default();
+
+    for row in rows {
+        let day = row["day"].as_str().unwrap_or_default();
+        let kind = match row["costSource"].as_str() {
+            Some("measured") => "measured",
+            Some("priced") => "priced",
+            Some("local") => "local",
+            Some("subscription") => "subscription",
+            _ => "estimate",
+        };
+        let cost = row["costUsd"].as_f64().unwrap_or(0.0);
+        let entry = totals.entry(kind).or_default();
+
+        if day.starts_with(month) {
+            entry[1].0 += cost;
+            entry[1].1 += 1;
+        }
+
+        if day == today {
+            entry[0].0 += cost;
+            entry[0].1 += 1;
+        }
+    }
+
+    let render = |index: usize| -> Vec<Value> {
+        ["measured", "priced", "local", "subscription", "estimate"]
+            .iter()
+            .map(|kind| {
+                let (usd, turns) = totals.get(kind).map_or((0.0, 0), |entry| entry[index]);
+
+                json!({ "kind": kind, "usd": usd, "turns": turns })
+            })
+            .collect()
+    };
+
+    json!({ "today": render(0), "month": render(1) })
+}
+
 /// The cost panel's numbers: spend by day for 30 days, by model, by chat and by project, what was saved
 /// against the baseline (measured turns only), and the budgets.
 pub fn summary(store: &Store) -> Value {
@@ -400,6 +445,7 @@ pub fn summary(store: &Store) -> Value {
     let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
 
     json!({
+        "bySource": by_source(&rows, &today),
         "days": by_day.iter().map(|(day, usd)| json!({ "day": day, "usd": usd })).collect::<Vec<_>>(),
         "models": by_model.iter().map(|(model, (usd, input, output, turns))| json!({ "model": model, "usd": usd, "inputTokens": input, "outputTokens": output, "turns": turns })).collect::<Vec<_>>(),
         "projects": by_project.iter().map(|(root, usd)| json!({ "root": root, "usd": usd })).collect::<Vec<_>>(),
@@ -417,6 +463,27 @@ pub fn summary(store: &Store) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_cost_by_source_keeps_measured_priced_and_estimated_apart_for_today_and_the_month() {
+        let rows = vec![
+            json!({ "day": "2026-10-18", "costUsd": 0.10, "costSource": "measured" }),
+            json!({ "day": "2026-10-18", "costUsd": 0.02, "costSource": "priced" }),
+            json!({ "day": "2026-10-03", "costUsd": 0.50, "costSource": "priced" }),
+            json!({ "day": "2026-10-18", "costUsd": 0.0, "costSource": "subscription" }),
+            json!({ "day": "2026-10-18", "costUsd": 0.07, "costSource": "none" }),
+            json!({ "day": "2026-09-30", "costUsd": 9.0, "costSource": "measured" }),
+        ];
+        let split = by_source(&rows, "2026-10-18");
+        let get = |when: &str, kind: &str| split[when].as_array().unwrap().iter().find(|row| row["kind"] == kind).unwrap().clone();
+
+        assert_eq!(get("today", "measured")["usd"], 0.10);
+        assert_eq!(get("today", "priced")["turns"], 1);
+        assert_eq!(get("month", "priced")["usd"], 0.52);
+        assert_eq!(get("month", "measured")["usd"], 0.10, "last month's measured spend is not this month's");
+        assert_eq!(get("today", "estimate")["usd"], 0.07, "an unlabelled figure is an estimate, and says so");
+        assert_eq!(get("today", "subscription")["usd"], 0.0);
+    }
 
     #[test]
     fn the_catalogue_prices_models_and_local_ones_are_free() {

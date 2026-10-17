@@ -1,8 +1,10 @@
-import { Building2, Moon, Network, PanelLeft, PanelRight, Plug, Search, Settings, SquarePen, Sun } from 'lucide-react';
+import { Building2, History, Moon, Network, PanelLeft, PanelRight, Plug, Search, Settings, SquarePen, Sun } from 'lucide-react';
 
 import { setTheme as applyTheme, type Theme } from '../../lib/theme';
 import { strings } from '../../strings';
 import { useKernelUi } from '../../store/kernelUi';
+import { usePrefsStore } from '../../store/prefs';
+import { useRightPanelStore } from '../../store/rightPanel';
 import { useLayoutStore } from '../../store/layout';
 import { anchorBelow, useOverlayStore } from '../../store/overlays';
 import { anyProviderNeedsAuth, useProviderStore } from '../../store/providers';
@@ -80,6 +82,19 @@ export function NavRail() {
       />
       <IconButton id="openAgency" icon={Building2} label={strings.kernel.agency.title} size={40} iconSize={18} className="rail-btn" onClick={() => useKernelUi.getState().openAgency()} />
       {/* 2.0's three: the servers a project's turns can go to, the agents on the board, and the Inbox. */}
+      {/* Phase 4.6: the Time Machine is one press away - it opens the right panel on its tab for the open chat. */}
+      <IconButton
+        id="openTimeMachine"
+        icon={History}
+        label={strings.rail.timeMachine}
+        size={40}
+        iconSize={18}
+        className="rail-btn"
+        onClick={() => {
+          useLayoutStore.getState().showRight();
+          useRightPanelStore.getState().setActiveTab('timemachine', usePrefsStore.getState().activeTab);
+        }}
+      />
       <IconButton id="openOps" icon={Network} label={strings.kernel.ops.title} size={40} iconSize={18} className="rail-btn" onClick={() => useKernelUi.getState().openOps()} />
 
       <span className="flex-1" />

@@ -1115,7 +1115,15 @@ export interface CostBudgets {
   month?: number | null;
 }
 
+export interface CostBySource {
+  kind: 'measured' | 'priced' | 'local' | 'subscription' | 'estimate';
+  usd: number;
+  turns: number;
+}
+
 export interface CostSummary {
+  /** Today and this calendar month, each split by where the figure came from (Phase 4.7); the kinds are never merged. */
+  bySource?: { today: CostBySource[]; month: CostBySource[] };
   days: { day: string; usd: number }[];
   models: { model: string; usd: number; inputTokens: number; outputTokens: number; turns: number }[];
   projects: { root: string; usd: number }[];

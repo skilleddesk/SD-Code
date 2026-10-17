@@ -98,6 +98,7 @@ const english = {
   /** 0.19: the navigation rail down the window's left edge. */
   rail: {
     label: 'Navigation',
+    timeMachine: 'Time Machine - every change, one click back',
   },
   sidebar: {
     newChat: 'New chat',
