@@ -113,6 +113,19 @@ impl Drop for ClientGuard {
     }
 }
 
+/// One turn, counted for as long as it runs - the idle watcher reads the count.
+///
+/// Without it the daemon left eight seconds after the last window closed *while a turn was still working*:
+/// the turn died in the middle of a build or a test run, and the person came back to a chat that says it is
+/// working and nothing happening (or, after the restart, "Interrupted"). "SDC pore atke jay" was this.
+pub struct TurnGuard(Arc<DaemonState>);
+
+impl Drop for TurnGuard {
+    fn drop(&mut self) {
+        self.0.turn_finished();
+    }
+}
+
 pub struct DaemonState {
     pub store: Arc<Store>,
     pub events: Arc<EventLog>,
@@ -128,6 +141,9 @@ pub struct DaemonState {
     /// How many connections are open right now. The idle watcher reads it, so a daemon the app started
     /// can leave when the app does - including the case where the app was killed rather than closed.
     pub clients: Arc<AtomicUsize>,
+    /// How many turns are running right now. The idle watcher reads it too: a window that closes while a
+    /// turn works does not end the work.
+    pub turns: Arc<AtomicUsize>,
     /// Set by `host.shutdown`, or by the idle watcher once its grace has passed. The run loop polls it
     /// so a *request* can end the process rather than a signal, which is the only way a client that
     /// only has a socket can ask for it.
@@ -176,6 +192,7 @@ impl DaemonState {
             console: Arc::new(ConsoleBridge::new()),
             fanout: Fanout::new(),
             clients: Arc::new(AtomicUsize::new(0)),
+            turns: Arc::new(AtomicUsize::new(0)),
             stopping: Arc::new(AtomicBool::new(false)),
             anywhere: Arc::new(crate::anywhere::runtime::Anywhere::default()),
         }))
@@ -186,8 +203,9 @@ impl DaemonState {
 /// Turns a previous daemon left running (1.0): a new daemon runs none yet, so a turn still `running` in the
 /// store was cut off when SDC closed - and it stayed `running` for good. Measured on the owner's machine: a
 /// turn started at 15:00 still said running hours and restarts later, so the sidebar's spinner never stopped.
-/// Each one is closed the way a Stop closes a turn - `Interrupted`, its chat idle - with what it had said kept
-/// as its answer, and the events say so, so every window draws the same.
+/// Each one is closed the way a Stop closes a turn - `Interrupted`, its chat idle and no amber `!` left on it -
+/// with what it had said kept as its answer, the note the next model needs after it, and the events saying so,
+/// so every window draws the same.
 fn close_interrupted_turns(store: &Arc<Store>, events: &Arc<EventLog>) {
     use crate::sdcp::events::event;
 
@@ -201,10 +219,21 @@ fn close_interrupted_turns(store: &Arc<Store>, events: &Arc<EventLog>) {
             .collect();
         let summary = "Interrupted · SDC was closed while this turn ran";
 
-        let _ = store.finish_turn(&turn_id, &said, summary, "idle");
+        /* The same sentence `sdcp::methods` writes for a turn the person stopped, so the next model reads
+           half-done work as half done and picks it up instead of starting the task over. */
+        const NOTE: &str = "[SDC: this turn did NOT finish - SDC was closed while it ran. Everything listed above \
+really happened and is on disk. When asked to continue, pick up from the last step above: do not redo finished \
+steps, and do not start the task again.]";
+
+        let answer = if said.trim().is_empty() { NOTE.to_string() } else { format!("{said}\n\n{NOTE}") };
+
+        let _ = store.finish_turn(&turn_id, &answer, summary, "idle");
         let _ = store.update_session(&session_id, None, Some("idle"), None, None, None);
+        /* The chat may have been waiting on a permission card when the daemon went: an amber `!` on a chat
+           with nothing behind it is the same lie as a spinner on one. */
+        let _ = store.clear_attention(&session_id);
         events.append(event::turn_completed(&turn_id, summary, "", Some(false)), Some(session_id.clone()), Some(turn_id.clone()));
-        events.append(event::session_updated(serde_json::json!({ "sessionId": session_id, "state": "idle" })), Some(session_id), None);
+        events.append(event::session_updated(serde_json::json!({ "sessionId": session_id, "state": "idle", "attention": null })), Some(session_id), None);
         events.compact_turn(&turn_id);
     }
 }
@@ -229,6 +258,24 @@ impl DaemonState {
         self.client_joined();
 
         ClientGuard(self.clone())
+    }
+
+    /// One turn, counted while it runs. `--idle-exit` is the app's "leave when I do": a turn the person
+    /// started before closing the window is still theirs, so the daemon waits for it (2.0.5).
+    pub fn turn_guard(self: &Arc<Self>) -> TurnGuard {
+        self.turns.fetch_add(1, Ordering::SeqCst);
+
+        TurnGuard(self.clone())
+    }
+
+    /// How many turns are running. Read by the idle watcher - a `--idle-exit` daemon waits for work that
+    /// the person started before they closed the window.
+    pub fn turns_running(&self) -> usize {
+        self.turns.load(Ordering::SeqCst)
+    }
+
+    fn turn_finished(&self) {
+        self.turns.fetch_sub(1, Ordering::SeqCst);
     }
 
     /// A new id with this prefix, never handed out before (`h12`, `n13`, `turn-14`, …). See
@@ -284,9 +331,16 @@ pub enum StopReason {
 /// Waits until this daemon should stop.
 ///
 /// Two things end the wait: `host.shutdown` set the flag, or `idle_exit` seconds passed with no
-/// connection. `idle_exit: 0` means "never" - the behaviour of a daemon a human started by hand, who
-/// closes the terminal when they are done with it. The app passes a number, so the daemon it started
-/// leaves when the app does, including the case where the app was killed rather than closed.
+/// connection **and no turn running**. `idle_exit: 0` means "never" - the behaviour of a daemon a human
+/// started by hand, who closes the terminal when they are done with it. The app passes a number, so the
+/// daemon it started leaves when the app does, including the case where the app was killed rather than
+/// closed.
+///
+/// A running turn holds it here (2.0.5). Counted as "nobody is talking to us", it left eight seconds after
+/// the window closed *in the middle of the work*: the build the person had started died with the process,
+/// and what they found on coming back was a chat that still said working - "kaj korte korte atke jay" as the
+/// report had it, with a killed turn and a restarted daemon behind it. A turn is bounded by its own timeouts,
+/// so waiting for it cannot hold the daemon for ever.
 pub async fn watch(state: &Arc<DaemonState>, idle_exit: u64) -> StopReason {
     let mut idle_for = 0_u64;
 
@@ -301,7 +355,7 @@ pub async fn watch(state: &Arc<DaemonState>, idle_exit: u64) -> StopReason {
         }
 
         if idle_exit > 0 {
-            if state.clients() == 0 {
+            if state.clients() == 0 && state.turns_running() == 0 {
                 idle_for += 1;
 
                 if idle_for >= idle_exit {
@@ -426,6 +480,55 @@ mod tests {
         let waited = tokio::time::timeout(std::time::Duration::from_secs(3), watch(&state, 0)).await;
 
         assert!(waited.is_err(), "idle_exit 0 must mean \"never\"");
+    }
+
+    /// The bug behind "kaj korte korte atke jay" (2.0.5): no window connected, a turn still working, and the
+    /// daemon left eight seconds later - the build the person had started died with the process, and what they
+    /// came back to was a chat that said working with nothing behind it. A running turn now holds the daemon
+    /// here, and the count leaving when the turn ends is what lets it go.
+    #[tokio::test]
+    async fn the_watcher_waits_for_a_turn_the_person_started_before_closing_the_window() {
+        let state = state();
+        let turn = state.turn_guard();
+
+        assert_eq!(state.turns_running(), 1);
+
+        let waited = tokio::time::timeout(std::time::Duration::from_secs(3), watch(&state, 1)).await;
+
+        assert!(waited.is_err(), "the watcher left in the middle of a turn");
+
+        drop(turn);
+
+        assert_eq!(state.turns_running(), 0);
+        assert_eq!(watch(&state, 1).await, StopReason::Idle(1), "with the turn over, the grace is the grace again");
+    }
+
+    /// A turn the daemon was running when it stopped stayed `running` for good: the chat drew a spinner for
+    /// hours over work nobody was doing, and an amber `!` on a card nobody could answer any more.
+    #[test]
+    fn a_turn_the_last_daemon_was_running_is_closed_when_the_next_one_starts() {
+        let state = state();
+        let store = &state.store;
+
+        store.ensure_host("local", "Local", "local", "connected").expect("the local host");
+        store.insert_session("s1", "local", "A chat", "hello", None).expect("a chat");
+        store.start_turn("turn-1", "s1", 1, "native_api", "llama", "balanced", "build it").expect("a turn");
+        store.update_session("s1", None, None, Some("awaiting_approval"), None, None).expect("a waiting chat");
+
+        close_interrupted_turns(store, &state.events);
+
+        let turns = store.turns("s1").expect("the chat's turns");
+        let lost = turns.iter().find(|turn| turn["turnId"] == "turn-1").expect("the turn");
+        let answer = lost["answer"].as_str().unwrap_or_default();
+
+        assert_eq!(lost["state"], "idle", "a turn nobody runs is not running: {lost}");
+        assert!(answer.starts_with("[SDC: this turn did NOT finish"), "the next model has to know: {lost}");
+        assert!(answer.contains("do not redo finished steps"), "and what to do about it: {lost}");
+
+        let chat = &store.sessions_for_host("local").expect("the sidebar's rows")[0];
+
+        assert_eq!(chat["state"], "idle", "the chat must not look busy with nothing running: {chat}");
+        assert_eq!(chat["attention"], serde_json::Value::Null, "and nothing is waiting on the person: {chat}");
     }
 }
 

@@ -282,6 +282,10 @@ async fn run_turn(
 
     crate::trust::kill::begin(&plan.turn_id, "turn", Some(&plan.session_id), &plan.prompt_text.chars().take(80).collect::<String>());
 
+    /* Counted as running until this function returns, on any road out - a `--idle-exit` daemon does not
+       leave in the middle of a turn because the window was closed (`lib.rs::watch`, 2.0.5). */
+    let _turn = state.turn_guard();
+
     /* The engine runs on its own task and writes into a channel; this loop reads it and pushes each
       event out while the engine is still talking.
     *
@@ -532,7 +536,14 @@ async fn run_turn(
                 );
             }
             crate::engines::EngineEvent::Permission { permission_id, title, sub, action, target, risk, explain } => {
-                /* The agent is blocked on this question until `permission.resolve` answers it (agent::gate). */
+                /* The agent is blocked on this question until `permission.resolve` answers it (agent::gate),
+                   so from here the turn is the person's to move: the chat says so rather than looking busy. */
+                note_waiting(&state.store, &plan.session_id, Some("awaiting_approval"), &*out);
+                card_sessions()
+                    .lock()
+                    .unwrap_or_else(|poison| poison.into_inner())
+                    .insert(permission_id.clone(), plan.session_id.clone());
+
                 out.push(
                     event::permission_requested(json!({
                         "permissionId": permission_id,
@@ -570,6 +581,9 @@ async fn run_turn(
                 conversation = Some(id);
             }
             crate::engines::EngineEvent::Question { question_id, question, options } => {
+                /* `ask_user` waits on the person exactly as a permission card does. */
+                note_waiting(&state.store, &plan.session_id, Some("awaiting_approval"), &*out);
+
                 out.push(
                     event::question_asked(&plan.session_id, &plan.turn_id, &question_id, &question, &options),
                     session.clone(),
@@ -688,6 +702,11 @@ async fn run_turn(
 
     let _ = state.store.finish_turn(&plan.turn_id, &recorded, summary, state_name);
 
+    /* The turn is over, so the chat is nobody's to answer for any more. `permission.resolve` clears the mark
+       the moment a card is answered; this is the road for a turn that ended past an unanswered one - stopped,
+       failed, or the window quit - which otherwise kept an amber `!` on a chat with nothing behind it. */
+    note_waiting(&state.store, &plan.session_id, None, &*out);
+
     /*
      * The chat's memory after the turn (0.13). A `/compact` answer becomes the summary every later turn
      * starts from, and the CLI conversations end with it - that is the point of compacting. Otherwise a
@@ -769,6 +788,42 @@ async fn run_turn(
         session,
         None,
     );
+}
+
+/// Says what the chat is doing when the doing is *waiting on the person*: a permission card, an `ask_user`
+/// question. Master spec §12 has such a chat float to the top of its host with an amber `!`; without it the
+/// window drew it exactly like a working chat, which is what "SDC is stuck for hours" turned out to be -
+/// one stored turn spent 5 h 20 m on a single card while its chat still said `running`.
+///
+/// `None` is the same road back: the person answered, or the turn ended without them.
+fn note_waiting(store: &crate::store::Store, session_id: &str, reason: Option<&str>, out: &dyn Notifier) {
+    let changed = match reason {
+        Some(reason) => store.update_session(session_id, None, None, Some(reason), None, None).is_ok(),
+        None => store.clear_attention(session_id).unwrap_or(false),
+    };
+
+    /* Nothing marked and nothing to take off: say nothing. A turn that never waited on the person - which is
+       most of them - must not push an extra event for it. */
+    if changed {
+        out.push(event::session_updated(json!({ "sessionId": session_id, "attention": reason })), None, None);
+    }
+}
+
+/// Which chat each permission card belongs to. `permission.resolve` names a card and nothing else, and the
+/// amber `!` has to come off the chat the moment the card is answered - not minutes later, when the turn the
+/// answer set going finally ends.
+fn card_sessions() -> &'static std::sync::Mutex<std::collections::HashMap<String, String>> {
+    static CARDS: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, String>>> = std::sync::OnceLock::new();
+
+    CARDS.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+/// The chat a card was asked in, once - the answer decides it, so the note does not outlive its use.
+fn take_card_session(permission_id: &str) -> Option<String> {
+    card_sessions()
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner())
+        .remove(permission_id)
 }
 
 /// The kernel stops a running turn (0.12): the cancel mark first, so the loop drops whatever the engine
@@ -2126,5 +2181,112 @@ mod tests {
 
         assert!(said.starts_with("All five tests pass."), "{said}");
         assert!(said.contains("- Run npm test - exit 0 · 400ms"), "{said}");
+    }
+
+    /// Master spec §12: a chat waiting on the person is not a chat that is working. The stored turn that
+    /// brought this home spent 5 h 20 m on one permission card while its chat still read `running`, so the
+    /// sidebar said "working" to a person who was the one holding it up.
+    #[test]
+    fn a_chat_waiting_on_the_person_says_so_and_says_when_it_stops() {
+        let state = DaemonState::bootstrap(Some(std::path::PathBuf::from(":memory:"))).expect("a daemon");
+        let recorder = std::sync::Arc::new(crate::sdcp::notifications::RecordingNotifier::new());
+        let out: &dyn Notifier = &*recorder;
+
+        state.store.ensure_host("local", "Local", "local", "connected").expect("the local host");
+        state.store.insert_session("s1", "local", "A chat", "hello", None).expect("a chat");
+
+        note_waiting(&state.store, "s1", Some("awaiting_approval"), out);
+
+        assert_eq!(state.store.sessions_for_host("local").expect("rows")[0]["attention"], "awaiting_approval");
+        assert_eq!(recorder.kinds(), vec!["SessionUpdated"]);
+
+        note_waiting(&state.store, "s1", None, out);
+
+        assert_eq!(
+            state.store.sessions_for_host("local").expect("rows")[0]["attention"],
+            Value::Null,
+            "the amber ! comes off with the answer, not with the turn"
+        );
+
+        let last = recorder.events().pop().expect("an event");
+
+        assert_eq!(last["attention"], Value::Null, "the window is told too: {last}");
+    }
+
+    /// The wiring behind the two above, in a live turn: the loop marks the chat the moment an engine asks for
+    /// a card, keeps the card's chat (so `permission.resolve` can take the mark off at once), and clears it
+    /// when the turn is over.
+    #[tokio::test]
+    async fn a_permission_card_in_a_live_turn_marks_the_chat_and_the_turn_end_clears_it() {
+        struct Asking;
+
+        #[async_trait::async_trait]
+        impl crate::engines::Engine for Asking {
+            fn id(&self) -> &'static str {
+                "asking"
+            }
+
+            async fn start(&self, _prompt: Prompt, sink: &EventSink) {
+                sink.send(crate::engines::EngineEvent::Permission {
+                    permission_id: "perm-7".to_string(),
+                    title: "Run the suite?".to_string(),
+                    sub: String::new(),
+                    action: "run".to_string(),
+                    target: "cargo test".to_string(),
+                    risk: "SAFE".to_string(),
+                    explain: String::new(),
+                });
+                sink.send(crate::engines::EngineEvent::Delta("ok".to_string()));
+                sink.send(crate::engines::EngineEvent::Done { summary: "Done".to_string(), meta: String::new(), pass: Some(true) });
+            }
+
+            async fn cancel(&self, _turn_id: &str) -> bool {
+                false
+            }
+
+            fn status(&self, _turn_id: &str) -> EngineStatus {
+                EngineStatus::Running
+            }
+        }
+
+        let state = DaemonState::bootstrap(Some(std::path::PathBuf::from(":memory:"))).expect("a daemon");
+
+        state.store.ensure_host("local", "Local", "local", "connected").expect("the local host");
+        state.store.insert_session("s1", "local", "A chat", "hello", None).expect("a chat");
+
+        let recorder = std::sync::Arc::new(crate::sdcp::notifications::RecordingNotifier::new());
+        let out: Arc<dyn Notifier> = recorder.clone();
+        let plan = RunPlan {
+            session_id: "s1".to_string(),
+            turn_id: "turn-card".to_string(),
+            engine_id: "asking".to_string(),
+            prompt_text: "hi".to_string(),
+            model: "sonnet".to_string(),
+            provider: None,
+            history: Vec::new(),
+            project_root: None,
+            remote: None,
+            self_checkpointing: false,
+            autonomy: Default::default(),
+            ..Default::default()
+        };
+
+        run_turn(state.clone(), Arc::new(Asking), plan, out).await;
+
+        let kinds = recorder.kinds();
+        let card = kinds.iter().position(|kind| kind == "PermissionRequested").expect("the card");
+
+        assert_eq!(kinds[card - 1], "SessionUpdated", "the chat is marked when the card is asked: {kinds:?}");
+        assert!(
+            recorder.events().iter().any(|event| event["attention"] == "awaiting_approval" && event["sessionId"] == "s1"),
+            "the window is told which chat it is waiting on: {:?}",
+            recorder.kinds()
+        );
+        assert_eq!(take_card_session("perm-7"), Some("s1".to_string()), "the card knows the chat it was asked in");
+        assert_eq!(
+            state.store.sessions_for_host("local").expect("rows")[0]["attention"],
+            Value::Null,
+            "the turn ended, so nothing is waiting on the person any more"
+        );
     }
 }

@@ -13,8 +13,14 @@ import { readdir, rm, stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-/** What is never walked: a build that has to look at every file in node_modules is slower than the build itself. */
-const SKIP = new Set(['node_modules', '.git']);
+/** What is never walked: a Rust `target` tree is a hundred thousand files, and walking it here cost nine minutes on this
+ * external volume - the build looks hung to whoever is watching it. What Tauri's build script does need is
+ * `ALSO` below: the generated permissions folder is inside it, and one `._default.toml` there fails the whole build
+ * ("stream did not contain valid UTF-8"). */
+const SKIP = new Set(['node_modules', '.git', 'target']);
+
+/** The one place inside a build tree that still has to be walked - small, and the only one Tauri reads as text. */
+const ALSO = ['app/src-tauri/target/release/build', 'app/src-tauri/target/debug/build'];
 
 let removed = 0;
 
@@ -50,4 +56,21 @@ async function strip(directory, depth) {
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 await strip(root, 0);
+
+/* And the one build folder Tauri reads as text (§`ALSO`). `COPYFILE_DISABLE=1` in `package.json` stops the ones this
+ * build would write itself, so what is left is only what an earlier build left behind. Only the Tauri crate's generated
+ * permissions are walked: the rest of a build tree is never read as text, and walking it is what took minutes. */
+for (const inside of ALSO) {
+  let crates = [];
+  try {
+    crates = await readdir(join(root, inside));
+  } catch {
+    continue;
+  }
+
+  for (const crate of crates.filter((name) => name.startsWith('tauri-'))) {
+    await strip(join(root, inside, crate, 'out', 'permissions'), 0);
+  }
+}
+
 process.stdout.write(`apple-double: ${removed} stray \`._\` file(s) removed\n`);

@@ -1294,6 +1294,22 @@ impl Store {
         Ok(())
     }
 
+    /// Takes the amber `!` off a chat. `update_session` follows the "a `None` column is left alone" rule
+    /// that a rename needs, so it cannot say "this chat is waiting on nobody any more": this is that.
+    /// `false` when there was nothing to take off - the turn loop then says nothing, so a turn that never
+    /// waited on anybody pushes no extra event.
+    pub fn clear_attention(&self, id: &str) -> Result<bool> {
+        let now = chrono::Utc::now().to_rfc3339();
+        let connection = self.connection.lock().unwrap();
+
+        let cleared = connection.execute(
+            "UPDATE sessions SET attention = NULL, updated_at = ?2 WHERE id = ?1 AND attention IS NOT NULL",
+            params![id, now],
+        )?;
+
+        Ok(cleared > 0)
+    }
+
     /// `session.close`: the chat and everything hanging off it - children first.
     ///
     /// `foreign_keys` is ON, and a turn, a checkpoint, a rewind entry and a permission row each reference

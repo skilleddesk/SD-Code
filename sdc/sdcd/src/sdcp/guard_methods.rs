@@ -64,6 +64,12 @@ impl Daemon {
 
         out.push(event::permission_resolved(&permission_id, &decision), None, None);
 
+        /* The card is answered, so the chat that was waiting on it is working again: the amber `!` comes off
+           now, not when the turn the answer set going is over. */
+        if let Some(session_id) = take_card_session(&permission_id) {
+            note_waiting(self.store(), &session_id, None, out);
+        }
+
         Ok(json!({ "decision": decision, "delivered": delivered }))
     }
 

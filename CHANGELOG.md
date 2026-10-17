@@ -15,6 +15,37 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [3.0.2] — the work carries on when the window closes, and a chat waiting on you says so
+
+Two faults, both found in the owner's own database, both reported as "maje maje atke jasse, kaj na kore hold
+hoye thakse onk time" — SDC stopping in the middle of things and then sitting there.
+
+- **A daemon does not leave in the middle of a turn any more.** The app starts `sdcd` with `--idle-exit 8`, and the
+  idle watcher counted "no window connected" as "nothing to stay for": if the app's connection dropped — a quit, a
+  killed window, the Mac sleeping, a socket reset — the daemon exited eight seconds later *with a turn still
+  running*, and the build or suite the person had started died with the process. What they came back to was a chat
+  that still said working, or after the restart one that said "Interrupted". Measured while fixing it: the daemon
+  whose work this was had been alive 38 seconds. `DaemonState` now counts running turns (`turn_guard`,
+  `turns_running`), `run_turn` holds one from its first line to its last road out, and `watch` waits for them;
+  after the last turn ends the ordinary grace applies, so a daemon the app started still leaves when the app does.
+  A turn is bounded by its own timeouts, so waiting for one cannot hold the daemon for ever. Test:
+  `the_watcher_waits_for_a_turn_the_person_started_before_closing_the_window`.
+- **A chat waiting on the person says it is waiting, not working.** `sessions.attention` was in the schema, in the
+  protocol and in the window (the amber `!`, floated to the top of its host — master spec §12) — but nothing in the
+  daemon ever wrote it. In the store, one turn spent **5 h 20 m** on a single permission card and another **7 h 36
+  m** on another, while both chats still read `running`: the sidebar said "working" to the person who was the one
+  holding it up. Now a permission card or an `ask_user` marks its chat `awaiting_approval`; `permission.resolve`
+  and `question.answer` take the mark off at once (a card remembers the chat it was asked in), and a turn that
+  ends with a card unanswered clears it too, so the badge never outlives its card. Tests:
+  `a_chat_waiting_on_the_person_says_so_and_says_when_it_stops` and, through a live turn,
+  `a_permission_card_in_a_live_turn_marks_the_chat_and_the_turn_end_clears_it`.
+- **A turn the last daemon was running is closed properly at the next start.** It was closed before
+  (`close_interrupted_turns`), but without the note the next model needs, and without taking the amber `!` off a
+  chat whose card nobody could answer any more: now the stored answer carries the same
+  "[SDC: this turn did NOT finish …]" sentence a stopped turn carries, and the chat leaves `running` with no `!`.
+
+`cargo test --lib`: 1,050 pass. `cargo clippy --all-targets -D warnings`: clean.
+
 ## [3.0.1] — a computer with only Ollama runs SDC on its local model by itself
 
 - **A local model is measured by itself (P0-9 completed).** The `models.probe` switch was declared in 3.0.0 but nothing read it, so a local model was only ever measured by `sdcd probe` - the P0-9 report said so, and P0-10 never wired it. Now, after a model's first turn on Ollama (Agent or Chat), the daemon measures it once in the background with the quick plan (2k/4k/8k windows, 6 tool calls, 4 JSON answers) when no profile exists for its current digest, quantisation and runtime, or only a provisional one does; the turn never waits for it, and a failed probe is not retried every turn. The class (`S`/`M`/`L`) then appears in the model list. Switch `v3.models.probe`, now **on**. Still not run against a live Ollama on this Mac (none is installed); the decision (`probe::due`) and the plan are tested.

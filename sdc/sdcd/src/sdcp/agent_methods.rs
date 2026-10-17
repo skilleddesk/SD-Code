@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use serde_json::{json, Value};
 
-use super::Daemon;
+use super::{note_waiting, Daemon};
 use crate::sdcp::envelope::{Envelope, ErrorObject};
 use crate::sdcp::events::event;
 use crate::sdcp::notifications::Notifier;
@@ -63,6 +63,11 @@ impl Daemon {
         let turn_id = envelope.opt_str("turnId").unwrap_or_default();
 
         out.push(event::question_answered(&turn_id, &question_id, &answer), envelope.opt_str("sessionId"), Some(turn_id.clone()));
+
+        /* Answered, so the chat is working again: the amber `!` comes off now (§12), as it does for a card. */
+        if let Some(session_id) = envelope.opt_str("sessionId") {
+            note_waiting(self.store(), &session_id, None, out);
+        }
 
         Ok(json!({ "answered": answered }))
     }
