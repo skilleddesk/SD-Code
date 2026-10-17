@@ -60,6 +60,13 @@ fn main() -> Result<()> {
 
         /* P0-0: `sdcd plan next|status|validate|sync|set` reads the plan files and needs no runtime. */
         /* P0-9: `sdcd probe MODEL` measures an installed Ollama model; needs a running Ollama and no runtime here. */
+        /* Phase 2: `sdcd runtimes` prints what local model runtimes this computer has (nothing is started, nothing is changed). */
+        if all.first().map(String::as_str) == Some("runtimes") {
+            println!("{}", serde_json::to_string_pretty(&sdcd::providers::runtimes::scan_with(&Default::default())).unwrap_or_default());
+
+            std::process::exit(0);
+        }
+
         if all.first().map(String::as_str) == Some("voice") {
             std::process::exit(sdcd::intent::voice::main(&all[1..]));
         }
@@ -228,6 +235,7 @@ async fn run() -> Result<()> {
        way the Inbox's Run button does - an Inbox that only fills when a button is pressed is an empty page,
        which is what `automation.run` alone would have left it. */
     sdcd::v3::run::spawn(state.clone());
+    sdcd::providers::runtimes::spawn_startup_scan();
 
     /* The phone's read-only status page, when the person turned it on. */
     if state.store.setting("status.share").ok().flatten().as_deref() == Some("on") {

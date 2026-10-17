@@ -338,6 +338,7 @@
           "team.set",
           "settings.get",
           "settings.set",
+          "local.scan",
           "voice.model.download",
           "secrets.move",
           "secrets.sweep",
@@ -2333,6 +2334,20 @@
           "result": {
             "key": "string",
             "value": "string"
+          }
+        },
+        "local.scan": {
+          "params": {},
+          "result": {
+            "runtimes": [
+              "object"
+            ],
+            "none": "boolean",
+            "noModels": "boolean",
+            "installHint": "string?",
+            "scannedAt": "string",
+            "ms": "integer",
+            "changed": "boolean"
           }
         },
         "voice.model.download": {

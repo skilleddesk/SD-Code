@@ -25,7 +25,10 @@ export function TuningCard({ tuning }: { tuning: LocalTuning }) {
 
       {tuning.proposals.map((proposal) => (
         <div key={proposal.model} className="mt-[8px]" data-tuning-model={proposal.model}>
-          <p className="m-0">{proposal.fitsOnGpu ? t.fits(proposal.model, proposal.numCtx) : t.spills(proposal.model)}</p>
+          <p className="m-0">{proposal.fitsOnGpu ? t.fits(proposal.model, proposal.numCtx) : proposal.mode === 'gpu+cpu-experts' ? t.fits(proposal.model, proposal.numCtx) : t.spills(proposal.model)}</p>
+          {proposal.mode === 'gpu+cpu-experts' && proposal.offload ? <p className="m-0 mt-[2px] text-text-muted">{t.moeExperts(gb(proposal.offload.gpuBytes), gb(proposal.offload.cpuBytes))}</p> : null}
+          {proposal.mode === 'partial-offload' && proposal.offload ? <p className="m-0 mt-[2px] text-text-muted">{t.partial(gb(proposal.offload.cpuBytes), gb(proposal.offload.gpuBytes))}</p> : null}
+          {proposal.estimate ? <p className="m-0 mt-[2px] text-state-waiting">{t.estimate}</p> : null}
 
           {proposal.env.length === 0 ? null : (
             <>

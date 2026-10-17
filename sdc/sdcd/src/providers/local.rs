@@ -118,7 +118,9 @@ pub fn id_for(base: &str) -> String {
 }
 
 fn agent(timeout: Duration) -> ureq::Agent {
-    ureq::AgentBuilder::new().timeout_connect(timeout).timeout_read(Duration::from_secs(5)).build()
+    /* The read wait follows the caller's patience (a scan asks for under a second; connecting a server by hand waits longer),
+       and never exceeds five seconds: a silent server must not hold a scan. */
+    ureq::AgentBuilder::new().timeout_connect(timeout).timeout_read((timeout * 3).clamp(Duration::from_millis(500), Duration::from_secs(5))).build()
 }
 
 fn get(url: &str, key: Option<&str>, timeout: Duration) -> Result<Value, String> {
@@ -130,7 +132,18 @@ fn get(url: &str, key: Option<&str>, timeout: Duration) -> Result<Value, String>
 
     match request.call() {
         Ok(response) => response.into_string().ok().and_then(|text| serde_json::from_str::<Value>(&text).ok()).ok_or_else(|| format!("{url} answered something that is not a model list")),
-        Err(ureq::Error::Status(code @ (401 | 403), _)) => Err(format!("the server wants a key (HTTP {code}) - add the one it was started with")),
+        Err(ureq::Error::Status(code @ (401 | 403), response)) => {
+            /* A model server that wants a key says so in JSON. An empty 403 is something else: macOS's AirPlay Receiver answers
+               every request on port 5000 with `403` and `Server: AirTunes`, and was listed as a model server that "wants a key". */
+            let server = response.header("server").unwrap_or_default().to_string();
+            let body = response.into_string().unwrap_or_default();
+
+            if server.contains("AirTunes") || body.trim().is_empty() {
+                Err(format!("{url} answered HTTP {code} - it is not a model server"))
+            } else {
+                Err(format!("the server wants a key (HTTP {code}) - add the one it was started with"))
+            }
+        }
         Err(ureq::Error::Status(code, _)) => Err(format!("{url} answered HTTP {code} - is it an OpenAI-compatible server?")),
         Err(error) => Err(format!("nothing answered at {url} ({error})")),
     }
@@ -246,6 +259,17 @@ pub fn add(input: &str, label: Option<&str>, key: Option<&str>) -> Result<Value,
     Ok(json!({ "id": id, "label": label, "base": base, "models": models }))
 }
 
+/// Marks a saved server as one the scan connected by itself (`auto`), so a scan may forget it when it goes away.
+pub fn mark_auto(id: &str, auto: bool) {
+    let mut servers = saved();
+
+    for server in servers.iter_mut().filter(|server| server["id"].as_str() == Some(id)) {
+        server["auto"] = json!(auto);
+    }
+
+    let _ = save_all(&servers);
+}
+
 /// Forgets a server (and its key).
 pub fn remove(id: &str) -> Result<Value, ErrorObject> {
     let servers: Vec<Value> = saved().into_iter().filter(|server| server["id"].as_str() != Some(id)).collect();
@@ -334,6 +358,38 @@ mod tests {
         assert_eq!(context_of(&json!({ "id": "m", "loaded_context_length": 4096 })), Some(4096));
         assert_eq!(context_of(&json!({ "id": "m", "meta": { "n_ctx_train": 131072 } })), Some(131072));
         assert_eq!(context_of(&json!({ "id": "m" })), None);
+    }
+
+    /// Phase 2: an empty 403 (macOS's AirPlay Receiver on port 5000) is not a model server; a JSON 401 is one that wants a key.
+    #[test]
+    fn an_empty_403_is_not_a_model_server_and_a_json_401_is_one_that_wants_a_key() {
+        use std::io::{BufRead, BufReader, Write};
+
+        let serve = |reply: &'static str| {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let port = listener.local_addr().unwrap().port();
+
+            std::thread::spawn(move || {
+                for stream in listener.incoming().take(2).flatten() {
+                    let mut stream = stream;
+                    let mut line = String::new();
+
+                    if BufReader::new(stream.try_clone().unwrap()).read_line(&mut line).is_ok() && !line.is_empty() {
+                        stream.write_all(reply.as_bytes()).unwrap();
+                    }
+                }
+            });
+
+            port
+        };
+        let airplay = serve("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nServer: AirTunes/950.7.1\r\nConnection: close\r\n\r\n");
+        let keyed = serve("HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\nContent-Length: 29\r\nConnection: close\r\n\r\n{\"error\":{\"message\":\"no key\"}}");
+
+        let first = probe(&format!("http://127.0.0.1:{airplay}/v1"), None, Duration::from_millis(500)).unwrap_err();
+        let second = probe(&format!("http://127.0.0.1:{keyed}/v1"), None, Duration::from_millis(500)).unwrap_err();
+
+        assert!(first.contains("not a model server") && !first.contains("wants a key"), "{first}");
+        assert!(second.contains("wants a key"), "{second}");
     }
 
     /// A real OpenAI-compatible server on loopback (one thread, two answers): found, listed, its context read.

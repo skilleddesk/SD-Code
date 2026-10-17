@@ -175,3 +175,85 @@ fn this_machine_can_be_read_without_panicking() {
 
     assert!(hardware.ram_bytes > 0 || hardware.gpu_bytes.is_none() || hardware.gpu_bytes.is_some());
 }
+
+// ---- Phase 2.4: Apple silicon, AMD and Intel fallbacks, mixture-of-experts and CPU offload -----------------------------
+
+fn moe_30b() -> Model {
+    /* a 30B-class MoE at 4 bit: ~18 GB of weights, 48 layers, 4 KV heads of 128 */
+    Model { name: "qwen3-moe:30b".into(), weights_bytes: 18 * GB, shape: Shape { layers: 48, kv_heads: 4, head_dim: 128, max_context: 262_144 } }
+}
+
+#[test]
+fn an_moe_that_does_not_fit_keeps_its_experts_in_ram_and_runs_attention_on_the_gpu() {
+    let proposal = propose_ext(&card(8192), &moe_30b(), &[], &Extra { moe: Some(Moe { experts: 128, used: 8 }), estimate: false });
+
+    assert_eq!(proposal.mode, "gpu+cpu-experts");
+    assert!(proposal.offload.is_some_and(|(gpu, cpu)| gpu < 3 * GB && cpu > 15 * GB), "{:?}", proposal.offload);
+    assert!(proposal.num_ctx >= 2_048);
+    assert!(proposal.notes.iter().any(|note| note.contains("mixture-of-experts") && note.contains("system RAM")), "{:?}", proposal.notes);
+    assert!(Moe { experts: 128, used: 8 }.active_fraction() < 0.2, "only a fraction of the weights is read per token");
+}
+
+#[test]
+fn an_moe_with_too_little_ram_says_so_instead_of_promising_a_speed() {
+    let small_ram = Hardware { ram_bytes: 16 * GB, ..card(8192) };
+    let proposal = propose_ext(&small_ram, &moe_30b(), &[], &Extra { moe: Some(Moe { experts: 128, used: 8 }), estimate: false });
+
+    assert_ne!(proposal.mode, "gpu+cpu-experts");
+    assert!(proposal.notes.iter().any(|note| note.contains("RAM") && note.contains("smaller model")), "{:?}", proposal.notes);
+}
+
+#[test]
+fn a_dense_model_that_does_not_fit_reports_how_much_would_run_on_the_cpu() {
+    let proposal = propose_ext(&card(6144), &qwen_9b(), &[], &Extra::default());
+
+    assert_eq!(proposal.mode, "partial-offload");
+    assert!(proposal.offload.is_some_and(|(gpu, cpu)| gpu > 0 && cpu > 0 && gpu + cpu == qwen_9b().weights_bytes));
+    assert!(proposal.notes.iter().any(|note| note.contains("partial offload")));
+}
+
+#[test]
+fn fallback_hardware_is_always_labelled_an_estimate() {
+    let proposal = propose_ext(&card(8192), &qwen_9b(), &[], &Extra { moe: None, estimate: true });
+
+    assert!(proposal.estimate);
+    assert!(proposal.notes.iter().any(|note| note.starts_with("Estimate:")), "{:?}", proposal.notes);
+    assert_eq!(proposal.to_json()["estimate"], true);
+    assert!(!propose(&card(8192), &qwen_9b(), &[]).estimate, "a card read directly is not an estimate");
+}
+
+#[test]
+fn amd_and_windows_adapters_are_read_and_vendors_told_apart() {
+    let rocm = r#"{"card0": {"Card series": "Radeon RX 7900 XTX", "VRAM Total Memory (B)": "25753026560"}, "card1": {"VRAM Total Memory (B)": "536870912"}}"#;
+
+    assert_eq!(parse_rocm(rocm), Some(("Radeon RX 7900 XTX".to_string(), 25_753_026_560)));
+    assert_eq!(parse_rocm("not json"), None);
+    assert_eq!(parse_windows_adapters("Intel(R) UHD Graphics|134217728;AMD Radeon RX 6700 XT|12868124672"), Some(("AMD Radeon RX 6700 XT".to_string(), 12_868_124_672)));
+    assert_eq!(parse_windows_adapters(""), None);
+    assert_eq!(vendor_of("NVIDIA GeForce RTX 4060"), "nvidia");
+    assert_eq!(vendor_of("AMD Radeon RX 6700 XT"), "amd");
+    assert_eq!(vendor_of("Intel(R) Arc(TM) A770"), "intel");
+    assert!(intel_is_integrated("Intel(R) UHD Graphics 770") && !intel_is_integrated("Intel(R) Arc(TM) A770"));
+}
+
+#[test]
+fn an_moe_is_recognised_from_the_architecture_a_dense_model_is_not() {
+    let moe = json!({ "model_info": { "qwen3moe.expert_count": 128, "qwen3moe.expert_used_count": 8 } });
+    let dense = json!({ "model_info": { "qwen3.block_count": 36 } });
+
+    assert_eq!(moe_from_show(&moe), Some(Moe { experts: 128, used: 8 }));
+    assert_eq!(moe_from_show(&dense), None);
+}
+
+#[test]
+fn this_computers_hardware_names_where_its_numbers_came_from() {
+    let detected = detect_detailed();
+
+    assert!(["nvidia", "apple", "amd", "intel", "none"].contains(&detected.vendor));
+    assert_eq!(detected.hardware, detect());
+
+    if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+        assert_eq!(detected.vendor, "apple");
+        assert!(detected.hardware.unified && !detected.estimate, "Apple silicon is read from the machine, not guessed");
+    }
+}

@@ -151,7 +151,6 @@ fn download(spec: &ModelSpec, url: &str, folder: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::{Read as _, Write as _};
 
     fn serve(body: Vec<u8>) -> String {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();

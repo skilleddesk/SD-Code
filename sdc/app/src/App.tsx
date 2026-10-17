@@ -1,6 +1,9 @@
 ﻿import type { CSSProperties } from 'react';
 import { useEffect } from 'react';
 
+import { startLocalRescan } from './store/localRuntimes';
+import { useOverlayStore } from './store/overlays';
+
 import { MainArea, NavRail, RightPanel, Sidebar, StatusBar, Topbar } from './layout/Shell';
 import { useResponsiveShell } from './layout/useShellLayout';
 import { useKeys } from './hooks/useKeys';
@@ -98,6 +101,8 @@ export function App() {
    * working host turns `offline`, instead of the chat quietly failing to reach it.
    */
   useEffect(() => watchHosts(), []);
+  /* Phase 2: look for local model runtimes at start, on focus, and every few minutes while the Provider Hub is open. */
+  useEffect(() => startLocalRescan(() => useOverlayStore.getState().hubOpen), []);
 
   /* The first launch opens the ten-minute wizard (0.12); after that it is in the palette. */
   useEffect(() => {

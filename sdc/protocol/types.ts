@@ -267,6 +267,7 @@ export type SdcpMethod =
   | 'team.set'
   | 'settings.get'
   | 'settings.set'
+  | 'local.scan'
   | 'voice.model.download'
   | 'secrets.move'
   | 'secrets.sweep'
@@ -1315,9 +1316,14 @@ export interface CliSelfCheck {
  * variables are server-wide and need a restart, so SDC never applies them (`applied` is always false).
  */
 export interface LocalTuning {
-  hardware: { gpu: string | null; gpuBytes: number | null; ramBytes: number; unified: boolean };
+  hardware: { gpu: string | null; gpuBytes: number | null; ramBytes: number; unified: boolean; vendor?: string; estimate?: boolean };
   proposals: {
     model: string;
+    /** `gpu`, `gpu+cpu-experts` (an MoE with its experts in RAM), `partial-offload` or `cpu`. */
+    mode?: 'gpu' | 'gpu+cpu-experts' | 'partial-offload' | 'cpu';
+    /** The memory figure came from a fallback (AMD, Intel, shared memory), not the card itself. */
+    estimate?: boolean;
+    offload?: { gpuBytes: number; cpuBytes: number } | null;
     env: { name: string; value: string }[];
     numCtx: number;
     keepAlive: string;
@@ -2425,6 +2431,7 @@ export interface SdcpMethodMap {
   'team.set': { params: { members?: TeamMember[]; current?: string }; result: TeamState };
   'settings.get': { params: { key: string }; result: { key: string; value: string | null } };
   'settings.set': { params: { key: string; value: string | boolean }; result: { key: string; value: string } };
+  'local.scan': { params: Record<string, never>; result: LocalScan };
   'voice.model.download': { params: { id: string; confirm: boolean }; result: { state: string; id?: string; done?: number; total?: number; error?: string } };
   'secrets.move': { params: { path: string; file: string; line: number }; result: { name: string; file: string; line: number; note: string } };
   'secrets.sweep': { params: { path: string; firstOnly?: boolean }; result: { findings: SecretFinding[]; files: number; truncated: boolean; skipped: boolean } };
@@ -2527,6 +2534,29 @@ export interface LocalModel {
 }
 
 /** An OpenAI-compatible model server found on this computer (0.22, `local.discover`). */
+/** One local model runtime found by `local.scan` (Phase 2). `state` is quiet by design: `silent` and `empty` are not errors. */
+export interface LocalRuntime {
+  id: string;
+  kind: 'ollama' | 'openai-compatible';
+  label: string;
+  base: string;
+  models: { id: string; ctx: number; sizeBytes?: number | null; local?: boolean; probe?: { class: string; status: string } | null }[];
+  state: 'ready' | 'empty' | 'silent' | 'needs-key';
+}
+
+export interface LocalScan {
+  runtimes: LocalRuntime[];
+  /** No runtime of any kind answered: show the calm "nothing found" state. */
+  none: boolean;
+  /** Runtimes answered but none has a model yet. */
+  noModels: boolean;
+  installHint: string | null;
+  scannedAt: string;
+  ms: number;
+  /** The scan connected or forgot a server: the provider list and the model menu were re-read. */
+  changed: boolean;
+}
+
 export interface LocalServer {
   id: string;
   label: string;
