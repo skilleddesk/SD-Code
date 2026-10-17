@@ -47,7 +47,7 @@ hpke = { version = "0.14.1", default-features = false, features = ["x25519", "ae
 # 0.21: SDC installs the tools it needs (Node, the coding CLIs, Ollama, ripgrep, Git) into its own folder, so a
 # fresh machine needs no terminal. The archives are opened here rather than by a system tar, which is missing
 # or too old for .zip / .tar.zst on some machines.
-zip = { version = "2", default-features = false, features = ["deflate"] }
+zip = { version = "9", default-features = false, features = ["deflate"] }
 flate2 = "1"
 tar = "0.4"
 ruzstd = "0.9"

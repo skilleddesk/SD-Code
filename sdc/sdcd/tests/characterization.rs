@@ -33,6 +33,21 @@ fn golden(name: &str, actual: &str) {
     assert_eq!(actual, expected.replace("\r\n", "\n"), "golden `{name}` changed; if intended, rerun with UPDATE_GOLDEN=1 and review the diff");
 }
 
+/// The endpoints in these goldens come from the data directory (a key on the Alibaba *US* region answers at
+/// `dashscope-us`): a golden generated on a machine whose settings say so recorded that, and CI - with an empty data
+/// folder - produced `dashscope-intl`, so the same code failed in one of the two places. A temporary data folder makes the
+/// golden the same everywhere.
+fn isolated_data_dir() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+
+    ONCE.call_once(|| {
+        let dir = std::env::temp_dir().join(format!("sdc-characterization-{}", std::process::id()));
+
+        let _ = std::fs::create_dir_all(&dir);
+        std::env::set_var("SDC_DATA_DIR", dir);
+    });
+}
+
 #[test]
 fn permission_gate() {
     let mut out = String::new();
@@ -110,6 +125,8 @@ fn cost_model() {
 
 #[test]
 fn engine_adapters_wire_parsing() {
+    isolated_data_dir();
+
     let mut out = String::new();
 
     /* native_api (OpenAI and Anthropic dialects) */

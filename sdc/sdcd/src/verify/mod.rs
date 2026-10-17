@@ -965,11 +965,15 @@ mod tests {
         assert_eq!(crate::v3::ablating(&["exec.sandbox"], || sandboxed(line, root.path().to_str().unwrap(), false)), (line.to_string(), None), "switch off = the old line");
 
         let (wrapped, note) = sandboxed(line, root.path().to_str().unwrap(), false);
+        let rules = crate::guard::sandbox::Policy::for_project(root.path());
 
-        if crate::guard::sandbox::guarantees().filesystem == crate::guard::sandbox::Level::None {
-            assert_eq!((wrapped.as_str(), note.is_some()), (line, true), "no sandbox here: the line runs bare and the row says so");
-        } else {
-            assert!(wrapped.contains("npm test --silent") && wrapped != line && note.is_none(), "{wrapped}");
+        /* What happens here is whatever `wrap_line` decides for this machine: macOS and Linux with `bwrap` wrap the line,
+           Linux with only `unshare` wraps it for the network alone, and a machine with no mechanism runs it bare and the
+           row says why. Keying this on the filesystem guarantee alone called the `unshare` case a failure on every Linux
+           runner, where `guarantees()` rightly says the filesystem is not isolated. */
+        match crate::guard::sandbox::wrap_line(line, &rules) {
+            Ok(command) => assert_eq!((wrapped, note.is_none()), (command, true), "a mechanism exists: the line is wrapped, and the row only speaks when there is none"),
+            Err(_) => assert_eq!((wrapped.as_str(), note.is_some()), (line, true), "no sandbox here: the line runs bare and the row says so"),
         }
 
         std::fs::create_dir_all(root.path().join(".sdc")).unwrap();
