@@ -1,4 +1,8 @@
-﻿# SDC — Intelligence Map (প্রজেক্টে যত "বুদ্ধিমত্তা", এজেন্ট ও প্ল্যান আছে)
+﻿> **ARCHIVED (2026-10-18).** Written for version 1.0.0; SDC is now 3.x and several parts below changed or were added
+> (ModelGate, Step Trace, token estimate, secret guard, Reviewer model). Use it as a map of how the v1 intelligence was laid out,
+> not as a statement of what is true today. Current status: [`PLAN-STATUS.md`](PLAN-STATUS.md).
+
+# SDC — Intelligence Map (প্রজেক্টে যত "বুদ্ধিমত্তা", এজেন্ট ও প্ল্যান আছে)
 
 উদ্দেশ্য: এই ফাইলটা Claude-কে দিয়ে আরও বিশ্লেষণ করানোর জন্য। এখানে লেখা আছে SDC-তে কোন কোন "বুদ্ধিমান" অংশ আছে, প্রতিটা কোন ফাইলে থাকে, কী করে, আর কোন প্ল্যান ডকুমেন্টে তার নকশা আছে।
 সব তথ্য কোড ও ডক থেকে নেওয়া (মডিউলের `//!` ডক-কমেন্ট, `docs/*.md`)। যেটা পড়ে যাচাই হয়নি, সেটা "অনুমান" লেখা আছে।

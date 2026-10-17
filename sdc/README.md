@@ -253,7 +253,7 @@ it is reached.
   With **Agent** chosen, a native-API or Ollama model runs inside the daemon's own loop (`sdcd/src/agent`):
   eight tools on the daemon's existing `fs.*` / `shell.run` / `git.*` paths, so it works in a folder on a
   host exactly as it does here; a permission gate that waits for the person (Simple / Pro / Auto); a
-  checkpoint taken synchronously before its first change; 25 steps per turn. It was verified against a real
+  checkpoint taken synchronously before its first change; no fixed step limit (a turn ends when the model finishes, the person stops it, or a budget or policy stops it - `agent::DEFAULT_STEPS`; this line said 25 steps until 3.1). It was verified against a real
   provider: a DeepSeek turn edited a file, ran `npm test` and reported 5 of 5 passing.
   What it deliberately is not: a replacement for `claude` / `codex` / `gemini`. A subscription is only
   usable through its own CLI, and those CLIs are agents already; the switch changes nothing for them. What is
@@ -372,8 +372,7 @@ it is reached.
 2. **A key for one of the six new providers** (Google, xAI, Moonshot, Mistral, Qwen, Z.ai), to exercise
    their live list and a chat turn from here; their blocks follow the same OpenAI shape the measured
    providers use, but none of the six has been contacted from this machine.
-3. **A terminal emulator** - `xterm.js` in the window and `-tt` on a host - for full-screen programs; the
-   Terminal tab runs commands and long-running processes today, but it is not a PTY.
+3. **A local pseudo-terminal.** Partly done: the Terminal tab now renders raw terminal bytes in `xterm.js` (`app/src/panels/right/ShellView.tsx`) and a host gets a real TTY through `ssh -tt`; on this computer a command still runs on piped stdio, not a PTY (`sdcd/src/pty`: ConPTY/`openpty` is not wired), so full-screen programs run locally are still limited.
 4. The provider OAuth token exchange, which needs a client registration with each provider.
 5. A screen-reader pass over the palette, the Permission modal and the Time Machine tab.
 6. Code signing for the installers, which needs certificates this repository does not hold.

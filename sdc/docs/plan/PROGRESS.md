@@ -1,3 +1,7 @@
+> **ARCHIVED (2026-10-18).** This file tracked SDC-PLAN-v3 up to v1.x/2.x and its "Current phase" line below is out of
+> date. The live tracker is [`../PLAN-STATUS.md`](../PLAN-STATUS.md); read that first. This file is kept for the history
+> of the v3 items (W/I/L/G/Q numbers) that `PLAN-STATUS.md` does not repeat.
+
 # SDC-v3 — Progress
 
 Source of truth for resuming work on SDC-PLAN-v3. A new session reads this file first.
@@ -103,7 +107,6 @@ Branch naming: `sdc-v3/<ID>`. Numbers come only from `bench/results/` (never typ
 | I7 | Fleet Fan-out | built (switch off by default) | sdc-v3/I7 | `fleet_run` tool: parallel SSH, outputs normalised (times, PIDs, ids, IPs, durations, host names) and clustered, majority sample + diffs; asks before non-read-only commands; canary-first; synthetic A-16: 20 servers −80.4%, 0 hidden diffs (`results/2026-10-14-fleet-synthetic`); switch `v3.fleet` (off: it adds a tool) | real Docker 5/10/20 fleet; `@fleet` chat syntax |
 | I8 | Interlingua | built, off (awaits Q3) | sdc-v3/W4 | one English brief per non-English message: a built-in Banglish/Hinglish dictionary plus the person's own glosses (`kaj (work)`) kept in `.sdc/interlingua.json`; paths, identifiers and options are never translated; an English message is untouched; switch `v3.interlingua` | a paid run; more languages than Banglish/Hinglish |
 | I11 | Self-Improving Knowledge Core (umbrella over L0–L5) | done | sdc-v3/W4 | one door for every learned fact: two sightings from separate turns, no instruction-shaped text, no contradiction with what is admitted, right size; admitted items are kept with their evidence, refusals with their reason; `rollback` takes back what proves wrong; nightly pass over the day's candidates; A-18 test: 50 poisoned proposals → 50 blocked, the one honest fact stands; switch `v3.knowledge_core` (on). Also refuses text carrying a redacted secret's placeholder (2026-10-16). Note: `nightly()` exists but nothing calls it and nothing writes `candidates.jsonl` - `propose` already counts every sighting at once, so no knowledge waits for it | wiring the model profiles (Q2) through the same door; a UI for what SDC learned |
-| I12 | (definition to confirm with owner — not described in the master prompt) | blocked | — | — | owner defines |
 | PAR | Parallel agents in worktrees + Agents board | done (Workbench ▸ Agents) | sdc-v3/parallel | `v3::parallel`: an agent gets its own checkout of the project's own repository (`git worktree add --detach`, kept under the daemon's per-project directory, never inside the person's folder), an id from the request's first words, and a card in `.sdc/agents/` (request, worktree, started, state, note); `board` lists them newest first, `finish` ends one, and taking a card off the board never deletes the work; protocol `agents.board`; tests: two agents never share a name or a directory, and the worktree is a real checkout | nothing: a card is never deleted with its worktree, and `parallel.max` (3) is the only cap |
 | AUTO | Automations + Inbox | done (Workbench ▸ Inbox) | sdc-v3/automations | `v3::automations`: automations in `.sdc/automations.toml` (a name, a request, `every = 6h` or `at = 09:30` local), `due` decides what has come round, the answer is written into `.sdc/inbox/<instant>-<name>.md` with its own front matter, and the last run of each is remembered in `.sdc/inbox/.state.json`; a schedule SDC cannot read is refused with a message instead of never running; protocol `inbox.list`; a disabled automation is still the person's | nothing: the clock is `v3::run::spawn` in the daemon, through the same `automation.run` the Inbox presses |
 | L4 | Contextual-bandit router | built, off (awaits Q3) | sdc-v3/W4 | `v3::bandit`: per kind of request (question / read / search / change) each model's record is kept (did the turn finish, and what did it cost), an untried arm is tried first and UCB1 picks after that; recorded in `.sdc/bandit.json`, wired where the router picks the model (switch `v3.bandit`, off - a token/cost technique until Q3 passes) | a UI that shows the ranking; the bandit choosing the thinking effort too |
@@ -118,13 +121,13 @@ Branch naming: `sdc-v3/<ID>`. Numbers come only from `bench/results/` (never typ
 
 | ID | Item | Status | Branch | Numbers | Next action |
 |---|---|---|---|---|---|
-| Q1 | (not described in the master prompt — to confirm) | blocked | — | — | owner defines |
 | Q3 | Acceptance rule per (model × technique): McNemar p ≥ 0.1, drop ≤ 1 pt, saving CI > 0 | todo | sdc-v3/W1 | — | implemented in the bench gate |
 
-## G-items without a description in the master prompt
+## Removed items
 
-G28, G29, G30, G31, G32, G33, G38, G40 — `blocked` until the owner supplies their definition (the full
-Bengali plan `docs/plan/SDC-PLAN-v3.md` is not in the repository).
+Ten items that were never defined (I12, Q1, G28, G29, G30, G31, G32, G33, G38, G40) sat here as `blocked` ("owner
+defines"). They had no description, no tests and no code, so they are removed from the tracker (2026-10-18) rather than
+carried as permanent blockers. If the owner defines one, it is added back as a new row with its own definition.
 
 ## Phase 7 — Final proof
 
