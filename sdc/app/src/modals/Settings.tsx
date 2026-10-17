@@ -28,7 +28,10 @@ import { useAppStore } from '../store/store';
 import { toast } from '../store/toast';
 import { useOverlayStore, type SettingsTab } from '../store/overlays';
 import { BTN, BTN_PRIMARY, BTN_SECONDARY } from '../panels/ui/button';
+import { AdvancedTab } from './AdvancedTab';
 import { AgentsTab } from './AgentsTab';
+import { ProfileCard } from './ProfileCard';
+import { useFeatures } from '../store/features';
 import { storedSettings, storeSetting } from '../lib/settings';
 import { Modal } from './Modal';
 import { LanguageTab, TeamTab, UpdatesTab } from '../kernel/SettingsTabs';
@@ -109,6 +112,7 @@ export function Settings() {
     ...(storedSettings() as Record<string, RowValue>),
   }));
 
+  const uiMode = useFeatures((state) => state.mode);
   const host = localHost(hosts);
 
   const flip = (id: string): void => {
@@ -145,7 +149,7 @@ export function Settings() {
         className="flex w-[200px] shrink-0 flex-col gap-[2px] border-r border-border-subtle bg-bg-raised p-[10px] max-700:w-[64px]"
         aria-label={strings.topbar.settings.title}
       >
-        {strings.settings.nav.map((item) => {
+        {strings.settings.nav.filter((item) => item.id !== 'advanced' || uiMode === 'pro').map((item) => {
           const Icon = TAB_ICON[item.icon] ?? SlidersHorizontal;
           const selected = item.id === tab;
 
@@ -234,10 +238,12 @@ export function Settings() {
         {tab === 'team' ? <TeamTab /> : null}
         {tab === 'updates' ? <UpdatesTab /> : null}
 
+        {tab === 'safety' ? <ProfileCard /> : null}
         {tab === 'safety' ? <AgentSettings /> : null}
         {tab === 'research' ? <ResearchSettings /> : null}
         {tab === 'anywhere' ? <AnywhereSettings /> : null}
         {tab === 'agents' ? <AgentsTab /> : null}
+        {tab === 'advanced' ? <AdvancedTab /> : null}
 
         {tab === 'safety' ? (
           <button
@@ -252,7 +258,7 @@ export function Settings() {
           </button>
         ) : null}
 
-        {tab !== 'keymap' && tab !== 'about' && tab !== 'backup' && tab !== 'language' && tab !== 'team' && tab !== 'updates' && tab !== 'research' && tab !== 'anywhere' && tab !== 'agents' ? (
+        {tab !== 'keymap' && tab !== 'about' && tab !== 'backup' && tab !== 'language' && tab !== 'team' && tab !== 'updates' && tab !== 'research' && tab !== 'anywhere' && tab !== 'agents' && tab !== 'advanced' ? (
           <GroupTable
             table={tableFor(tab)}
             values={values}

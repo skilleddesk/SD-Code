@@ -267,6 +267,8 @@ export type SdcpMethod =
   | 'team.set'
   | 'settings.get'
   | 'settings.set'
+  | 'features.preset'
+  | 'features.list'
   | 'rotation.escalate'
   | 'rotation.set'
   | 'rotation.get'
@@ -712,6 +714,25 @@ export interface VoiceStatus {
   installHint: string | null;
   models: { id: string; file: string; bytes: number; note: string; installed: boolean; source: string }[];
   download: { state: 'idle' | 'downloading' | 'done' | 'failed'; id?: string; done?: number; total?: number; error?: string };
+}
+
+/** One switch of the ~40, as Settings → Advanced lists it (Phase 4.4). `active: false` means it is on or off but does nothing yet - `inactiveReason` says why. */
+export interface FeatureRow {
+  name: string;
+  on: boolean;
+  default: boolean;
+  /** A token technique stays off until it passes the bench's Q3 rule for a model; no preset turns one on. */
+  tokenTechnique: boolean;
+  what: string;
+  active: boolean;
+  inactiveReason: string | null;
+}
+
+export interface FeaturesView {
+  features: FeatureRow[];
+  /** `safe`, `balanced`, `economical`, or `custom` when switches were set by hand. */
+  preset: string;
+  maxQuality: boolean;
 }
 
 /** Price hint for a model: dollars per million tokens, and for a typical step (6k in, 1k out). `known: false` when the catalogue has no price. */
@@ -2490,6 +2511,8 @@ export interface SdcpMethodMap {
   'team.set': { params: { members?: TeamMember[]; current?: string }; result: TeamState };
   'settings.get': { params: { key: string }; result: { key: string; value: string | null } };
   'settings.set': { params: { key: string; value: string | boolean }; result: { key: string; value: string } };
+  'features.preset': { params: { preset: "safe" | "balanced" | "economical" }; result: FeaturesView };
+  'features.list': { params: Record<string, never>; result: FeaturesView };
   'rotation.escalate': { params: { sessionId: string; confirm?: boolean; autonomy?: string }; result: EscalateAnswer };
   'rotation.set': { params: { rows: RotationRowInput[]; global?: RotationGlobal }; result: RotationView };
   'rotation.get': { params: Record<string, never>; result: RotationView };

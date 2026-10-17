@@ -88,6 +88,8 @@ impl Daemon {
             /* 0.22: any OpenAI-compatible model server, not only Ollama - found on this computer, or added by address. */
             "local.discover" => Ok(crate::providers::local::discover()),
             "local.scan" => Ok(crate::providers::runtimes::scan()),
+            "features.list" => Ok(self.features_list()),
+            "features.preset" => self.features_preset(envelope),
             "local.add" => crate::providers::local::add(&envelope.require_str("url")?, envelope.opt_str("label").as_deref(), envelope.opt_str("key").as_deref()),
             "local.remove" => crate::providers::local::remove(&envelope.require_str("id")?),
             /* 0.21: the person is typing - open the provider connection the turn will use. */
@@ -605,6 +607,31 @@ impl Daemon {
     /// The settings the daemon itself reads (the language alerts are written in, the agency's email and
     /// style guide, the Intent Engine's reply style, low-bandwidth mode). Anything else is refused, so this
     /// cannot become a way around the methods that check what they write.
+    /// `features.list`: every switch with its state and kind, the preset the settings amount to, and Max quality.
+    fn features_list(&self) -> Value {
+        let read = |key: &str| self.store().setting(key).ok().flatten();
+
+        json!({
+            "features": crate::v3::status(),
+            "preset": crate::v3::preset::current(&read),
+            "maxQuality": read("v3.maxQuality").is_some_and(|value| value.trim().eq_ignore_ascii_case("on")),
+        })
+    }
+
+    /// `features.preset`: Safe, Balanced or Economical - writes the switches the preset names, clears the rest of them.
+    fn features_preset(&self, envelope: &Envelope) -> Result<Value, ErrorObject> {
+        let name = envelope.require_str("preset")?;
+        let preset = crate::v3::preset::Preset::parse(&name).ok_or_else(|| ErrorObject::bad_request("preset must be safe, balanced or economical"))?;
+
+        for (key, value) in crate::v3::preset::settings(preset) {
+            self.store().set_setting(&key, &value).map_err(ErrorObject::internal)?;
+        }
+
+        crate::v3::configure(self.store());
+
+        Ok(self.features_list())
+    }
+
     fn settings_set(&self, envelope: &Envelope) -> Result<Value, ErrorObject> {
         let key = envelope.require_str("key")?;
         let allowed = [

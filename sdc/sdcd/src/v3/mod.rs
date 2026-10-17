@@ -25,6 +25,7 @@ pub mod lessons;
 pub mod memory;
 pub mod ledger_diff;
 pub mod outline;
+pub mod preset;
 pub mod parallel;
 pub mod plan;
 pub mod router;

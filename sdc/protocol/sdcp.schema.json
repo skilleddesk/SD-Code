@@ -338,6 +338,8 @@
           "team.set",
           "settings.get",
           "settings.set",
+          "features.preset",
+          "features.list",
           "rotation.escalate",
           "rotation.set",
           "rotation.get",
@@ -2337,6 +2339,28 @@
           "result": {
             "key": "string",
             "value": "string"
+          }
+        },
+        "features.preset": {
+          "params": {
+            "preset": "string"
+          },
+          "result": {
+            "features": [
+              "object"
+            ],
+            "preset": "string",
+            "maxQuality": "boolean"
+          }
+        },
+        "features.list": {
+          "params": {},
+          "result": {
+            "features": [
+              "object"
+            ],
+            "preset": "string",
+            "maxQuality": "boolean"
           }
         },
         "rotation.escalate": {

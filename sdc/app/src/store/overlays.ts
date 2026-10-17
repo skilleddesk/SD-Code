@@ -27,6 +27,7 @@ export type SettingsTab =
   | 'keymap'
   | 'safety'
   | 'agents'
+  | 'advanced'
   | 'research'
   | 'anywhere'
   | 'notifications'

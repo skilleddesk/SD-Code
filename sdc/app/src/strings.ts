@@ -1518,6 +1518,30 @@ const english = {
    * spec section 2.7 wants it) and `modals/Settings.tsx` renders it. The Keymap tab is the one
    * exception - it reads the command registry, so the two can never disagree (spec section 9.1).
    */
+  /** Simple / Pro, the three profiles and Settings → Advanced (Phase 4.4). */
+  profiles: {
+    mode: 'Mode',
+    simple: 'Simple',
+    pro: 'Pro',
+    simpleHelp: 'Simple shows the everyday settings. Nothing is removed - Pro adds an Advanced tab with every switch.',
+    proHelp: 'Pro adds the Advanced tab: every switch, its state, and what it does.',
+    profile: 'Profile',
+    safe: 'Safe',
+    balanced: 'Balanced',
+    economical: 'Economical',
+    custom: 'Custom - some switches were set by hand',
+    safeHelp: 'Safe: everything that protects stays on; automatic helpers that could surprise you (router, cascade, bandit, automations, fleet) are off; token-saving techniques are off.',
+    balancedHelp: 'Balanced: SDC as shipped - every switch at its default.',
+    economicalHelp: 'Economical: Balanced, with the money-saving helpers (router, cascade, learning, budget) switched on.',
+    q3: 'No profile turns a token-saving technique on. A technique is on for a model only when the bench shows it lowers the pass rate by no more than one point.',
+    advancedTitle: 'Advanced',
+    advancedDesc: 'Every switch SDC has. Changing one is safe; Reset by choosing a profile above.',
+    unavailable: 'The switches could not be read from the daemon.',
+    technique: 'token technique',
+    inactive: 'inactive',
+    changed: 'changed',
+    techniqueNote: 'Stays off for a model until it passes the bench (Q3). Max quality (the Safe profile) turns all of these off.',
+  },
   /** Settings → Agents (Phase 3): the Rotation Chain, and the manual Escalate. */
   agents: {
     title: 'Agents',
@@ -1573,6 +1597,7 @@ const english = {
       { id: 'keymap', label: 'Keymap', icon: 'keyboard' },
       { id: 'safety', label: 'Safety', icon: 'shield' },
       { id: 'agents', label: 'Agents', icon: 'bot' },
+      { id: 'advanced', label: 'Advanced', icon: 'sliders' },
       { id: 'research', label: 'Research', icon: 'globe' },
       { id: 'anywhere', label: 'SDC Anywhere', icon: 'smartphone' },
       { id: 'notifications', label: 'Notifications', icon: 'bell' },
