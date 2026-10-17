@@ -44,6 +44,10 @@ hoye thakse onk time" — SDC stopping in the middle of things and then sitting 
   chat whose card nobody could answer any more: now the stored answer carries the same
   "[SDC: this turn did NOT finish …]" sentence a stopped turn carries, and the chat leaves `running` with no `!`.
 
+- **An interrupted syscall is tried again instead of failing the agent's browser.** Linux CI went red on
+  `an I/O error: Interrupted system call (os error 4)` out of the DevTools connect while the browser was fine - a
+  `SIGCHLD` from another test. `retried()` makes the page list and the connect up to five times, only for EINTR.
+
 `cargo test --lib`: 1,050 pass. `cargo clippy --all-targets -D warnings`: clean.
 
 ## [3.0.1] — a computer with only Ollama runs SDC on its local model by itself

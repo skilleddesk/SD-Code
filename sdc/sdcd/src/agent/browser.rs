@@ -85,6 +85,27 @@ pub struct Browser {
     last_used: Instant,
 }
 
+/// A syscall the OS interrupted (EINTR — a SIGCHLD from another process, a profiler, a debugger) is not a failure:
+/// the same call is simply made again. Linux CI failed a browser test this way — `an I/O error: Interrupted system
+/// call (os error 4)` out of the DevTools connect — while the browser itself was fine, and a killed test run is
+/// exactly how a red build gets explained away.
+fn retried<T>(mut attempt: impl FnMut() -> Result<T, String>) -> Result<T, String> {
+    let mut last = String::new();
+
+    for attempt_number in 0..5 {
+        match attempt() {
+            Ok(value) => return Ok(value),
+            Err(error) if error.contains("Interrupted system call") => {
+                last = error;
+                std::thread::sleep(std::time::Duration::from_millis(50 * (attempt_number + 1)));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+
+    Err(last)
+}
+
 impl Browser {
     /// Starts a browser with a page of `width`×`height`.
     pub fn launch(width: u32, height: u32) -> Result<Self, String> {
@@ -149,21 +170,23 @@ impl Browser {
             std::thread::sleep(Duration::from_millis(100));
         };
 
-        let pages: Value = ureq::get(&format!("http://127.0.0.1:{port}/json/list"))
-            .timeout(Duration::from_secs(10))
-            .call()
-            .map_err(|error| format!("the browser's page list: {error}"))?
-            .into_string()
-            .ok()
-            .and_then(|text| serde_json::from_str(&text).ok())
-            .unwrap_or(Value::Null);
+        let pages: Value = retried(|| {
+            ureq::get(&format!("http://127.0.0.1:{port}/json/list"))
+                .timeout(Duration::from_secs(10))
+                .call()
+                .map_err(|error| format!("the browser's page list: {error}"))
+                .and_then(|response| response.into_string().map_err(|error| format!("the browser's page list: {error}")))
+        })
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or(Value::Null);
         let url = pages
             .as_array()
             .and_then(|pages| pages.iter().find(|page| page["type"] == "page"))
             .and_then(|page| page["webSocketDebuggerUrl"].as_str())
             .ok_or("the browser has no page to drive")?
             .to_string();
-        let (socket, _) = tungstenite::connect(url.as_str()).map_err(|error| format!("connecting to the page: {error}"))?;
+        let (socket, _) = retried(|| tungstenite::connect(url.as_str()).map_err(|error| format!("connecting to the page: {error}")))?;
 
         if let MaybeTlsStream::Plain(stream) = socket.get_ref() {
             let _ = stream.set_read_timeout(Some(Duration::from_secs(45)));
