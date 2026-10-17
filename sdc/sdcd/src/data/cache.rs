@@ -1,4 +1,4 @@
-//! `~/.sdc/cache/` (P0-5): content already paid for, kept so it is not paid for twice.
+//! `cache/` in the data directory (P0-5): content already paid for, kept so it is not paid for twice.
 //!
 //! Content is stored under the digest of the content, so two paths with the same bytes are one entry and the same
 //! bytes never cost a model call twice. The store has a **size cap** and evicts by **least recently used**.

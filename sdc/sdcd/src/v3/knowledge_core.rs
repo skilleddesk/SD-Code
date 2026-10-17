@@ -334,6 +334,37 @@ pub fn nightly(root: &Path) -> (usize, usize) {
     (admitted_count, refused_count)
 }
 
+/// When the nightly pass last ran for a project (unix seconds), kept beside the candidates.
+pub const NIGHTLY_MARK: &str = ".sdc/knowledge/nightly.last";
+
+/// A day, less an hour: the clock calls this every tick, and the pass runs once per day per project.
+const NIGHTLY_EVERY: i64 = 23 * 3600;
+
+/// The scheduler's entry (called from `v3::run`'s clock for every project): runs [`nightly`] when a day has passed since
+/// the last pass and there is something to decide. Answers the pass's counts when it ran.
+pub fn nightly_if_due(root: &Path, now: i64) -> Option<(usize, usize)> {
+    if !crate::v3::on("knowledge_core") || !root.join(CANDIDATES).exists() {
+        return None;
+    }
+
+    let mark = root.join(NIGHTLY_MARK);
+    let last = std::fs::read_to_string(&mark).ok().and_then(|text| text.trim().parse::<i64>().ok()).unwrap_or(0);
+
+    if now - last < NIGHTLY_EVERY {
+        return None;
+    }
+
+    let counts = nightly(root);
+
+    if let Some(parent) = mark.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+
+    let _ = std::fs::write(&mark, now.to_string());
+
+    Some(counts)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -447,6 +478,21 @@ mod tests {
 
         assert_eq!((admitted, refused), (1, 0), "the twice-seen one is admitted; the once-seen one is not decided yet");
         assert!(std::fs::read_to_string(root.join(CANDIDATES)).unwrap().contains("rm -rf"));
+    }
+
+    /// Phase 0.5(b): the pass is reached from the scheduler's clock - once a day, only when there are candidates.
+    #[test]
+    fn the_clock_runs_the_nightly_pass_once_a_day() {
+        let root = root("nightly-clock");
+
+        assert_eq!(nightly_if_due(&root, 1_000_000), None, "no candidates, nothing to decide");
+
+        std::fs::create_dir_all(root.join(".sdc/knowledge")).unwrap();
+        std::fs::write(root.join(CANDIDATES), serde_json::json!({ "kind": "lesson", "text": "x" }).to_string()).unwrap();
+
+        assert!(nightly_if_due(&root, 1_000_000).is_some(), "first time: it runs");
+        assert_eq!(nightly_if_due(&root, 1_000_000 + 3600), None, "an hour later: not again");
+        assert!(nightly_if_due(&root, 1_000_000 + 24 * 3600).is_some(), "a day later: again");
     }
 }
 

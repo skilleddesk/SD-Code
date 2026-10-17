@@ -1,4 +1,4 @@
-//! `~/.sdc/rotation.toml` (P0-5): the model chain, and the rules that follow it.
+//! `rotation.toml` in the data directory (`crate::paths::data_dir()`: `~/Library/Application Support/sdc` on macOS, `%APPDATA%\\sdc` on Windows, `~/.local/share/sdc` on Linux) (P0-5): the model chain, and the rules that follow it.
 //!
 //! ```toml
 //! # The chain, in the order SDC may try it.

@@ -2,11 +2,11 @@
 //!
 //! | file | scope | who writes it | what it decides |
 //! |---|---|---|---|
-//! | `~/.sdc/rotation.toml` | this computer | the person, by hand | the model chain, and the rules that follow it |
+//! | `rotation.toml` in the data directory (`crate::paths::data_dir()`: `~/Library/Application Support/sdc` on macOS, `%APPDATA%\sdc` on Windows, `~/.local/share/sdc` on Linux) | this computer | the person, by hand | the model chain, and the rules that follow it |
 //! | `<project>/.sdc/policy.toml` | this project | the person, by hand | what an agent may do here, and whether the project is private |
 //! | `<project>/.sdc/audit/sent.jsonl` | this project | SDC, append-only | what left this computer, to which model, and what was removed first |
-//! | `~/.sdc/cache/` | this computer | SDC | context already paid for, so it is not paid for twice |
-//! | `~/.sdc/sdc.db` | this computer | SDC | hosts, sessions, the journal, the trust ledger |
+//! | `cache/` in the data directory | this computer | SDC | context already paid for, so it is not paid for twice |
+//! | `sdc.db` in the data directory | this computer | SDC | hosts, sessions, the journal, the trust ledger |
 //!
 //! # Precedence
 //!
@@ -32,7 +32,8 @@ pub mod sent;
 
 use std::path::{Path, PathBuf};
 
-/// This computer's SDC folder: `~/.sdc` on macOS and Linux, `%USERPROFILE%\.sdc`-style elsewhere.
+/// This computer's SDC folder - always [`crate::paths::data_dir`] (`~/Library/Application Support/sdc` on macOS, `%APPDATA%\sdc` on Windows,
+/// `~/.local/share/sdc` on Linux). There is no second root: `~/.sdc` only exists on the servers SDC connects to.
 pub fn home() -> Option<PathBuf> {
     crate::paths::data_dir().ok()
 }

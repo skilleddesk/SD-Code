@@ -115,8 +115,24 @@ pub fn spawn(state: Arc<DaemonState>) {
 
             last = Instant::now();
             run_due(&state);
+            nightly_pass(&state);
         }
     });
+}
+
+/// The clock's other job (Phase 0.5b): every project with knowledge candidates gets the nightly pass once a day.
+/// Answers how many projects ran it, which is what the tests read.
+pub fn nightly_pass(state: &Arc<DaemonState>) -> usize {
+    let now = chrono::Utc::now().timestamp();
+
+    state
+        .store
+        .projects()
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|project| project["root"].as_str())
+        .filter(|root| crate::v3::knowledge_core::nightly_if_due(std::path::Path::new(root), now).is_some())
+        .count()
 }
 
 /// One turn of the clock: every project whose folder has automations, and every automation of it that is due.
@@ -265,6 +281,25 @@ mod tests {
     /// What the clock is for: an automation that is due is picked up without anyone pressing Run. This one's
     /// engine is not connected, so the run is refused - and still counted as tried, because the alternative is
     /// a daemon asking the same broken question every minute for as long as the reason lasts.
+    /// Phase 0.5(b): the clock reaches `knowledge_core::nightly` for a registered project that has candidates.
+    #[test]
+    fn the_clock_runs_the_nightly_knowledge_pass_for_a_registered_project() {
+        let daemon = state();
+        let folder = std::env::temp_dir().join(format!("sdcd-nightly-{}", std::process::id()));
+
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(folder.join(".sdc/knowledge")).expect("a project folder");
+        std::fs::write(folder.join(crate::v3::knowledge_core::CANDIDATES), "{\"kind\":\"lesson\",\"text\":\"once seen\"}\n").expect("a candidate");
+        daemon.store.ensure_host("local", "Local", "local", "connected").expect("the local host");
+        daemon.store.add_project("p-night", "local", &folder.to_string_lossy(), "somewhere").expect("a project row");
+
+        assert_eq!(nightly_pass(&daemon), 1);
+        assert_eq!(nightly_pass(&daemon), 0, "not again within the day");
+        assert!(folder.join(crate::v3::knowledge_core::NIGHTLY_MARK).exists());
+
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
     #[test]
     fn the_clock_takes_up_an_automation_that_is_due() {
         let daemon = state();

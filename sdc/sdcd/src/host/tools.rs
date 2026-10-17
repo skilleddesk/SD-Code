@@ -71,15 +71,9 @@ pub fn tool(id: &str) -> Option<&'static Tool> {
     TOOLS.iter().find(|tool| tool.id == id)
 }
 
-/// `<tools>`: `SDC_TOOLS_DIR` when set (tests, portable installs), else the user's local data folder.
+/// `<tools>`: decided by [`crate::paths::tools_dir`] (`SDC_TOOLS_DIR`, else the platform's local data folder).
 pub fn root() -> PathBuf {
-    if let Some(custom) = std::env::var_os("SDC_TOOLS_DIR").filter(|value| !value.is_empty()) {
-        return PathBuf::from(custom);
-    }
-
-    let base = if cfg!(windows) { dirs::data_local_dir() } else { dirs::data_dir() };
-
-    base.unwrap_or_else(std::env::temp_dir).join("sdc-tools")
+    crate::paths::tools_dir()
 }
 
 /// The folders under `root` that hold programs, in the order they are searched. All of them go on `PATH`

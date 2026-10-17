@@ -88,12 +88,27 @@ for (const match of eventUnionBody.matchAll(/\| (\w+Event)/g)) {
   }
 }
 
-/** The arms the daemon actually answers - including `"a" | "b" =>` pairs, which are one arm and two names. */
+/** The arms the daemon actually answers - including `"a" | "b" =>` pairs, which are one arm and two names.
+ *
+ * Every method is `domain.name`, so only dotted names count. Before 3.1 the pattern took any quoted word before `=>`,
+ * which counted eight plain string arms (`"edit"`/`"run"` plan kinds, `"ollama"` backend, `"approve"`/`"decline"`/
+ * `"deny"`/... decisions) as methods: the "191 answered vs 183 named" gap was those eight, not hidden endpoints. */
 const dispatched = new Set(
-  [...methods_rs.matchAll(/^\s+((?:"[a-z][a-zA-Z.]*"(?:\s*\|\s*)?)+)\s*=>/gm)].flatMap((arm) =>
-    [...arm[1].matchAll(/"([a-z][a-zA-Z.]*)"/g)].map((name) => name[1]),
+  [...methods_rs.matchAll(/^\s+((?:"[a-z][a-zA-Z]*\.[a-zA-Z.]*"(?:\s*\|\s*)?)+)\s*=>/gm)].flatMap((arm) =>
+    [...arm[1].matchAll(/"([a-z][a-zA-Z]*\.[a-zA-Z.]*)"/g)].map((name) => name[1]),
   ),
 );
+
+/* The counts must match exactly: a method the daemon answers and the schema does not name is an undocumented endpoint. */
+for (const method of dispatched) {
+  if (!schemaMethods.has(method)) {
+    problems.push(`the daemon answers \`${method}\` and the schema does not name it (add it, remove it, or make it internal)`);
+  }
+}
+
+if (dispatched.size !== schemaMethods.size) {
+  problems.push(`the daemon answers ${dispatched.size} methods and the schema names ${schemaMethods.size}; they must match`);
+}
 
 for (const method of schemaMethods) {
   if (!typeMethods.has(method)) {

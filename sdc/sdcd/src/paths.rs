@@ -49,6 +49,19 @@ fn test_data_dir() -> PathBuf {
     DIR.get_or_init(|| std::env::temp_dir().join(format!("sdc-test-data-{}", std::process::id()))).clone()
 }
 
+/// `…/sdc-tools` - the Node, npm and coding CLIs SDC installs for the person (0.21): `SDC_TOOLS_DIR` when set (tests,
+/// portable installs), else the platform's local data folder. Next to the data directory, not inside it: a reset of the
+/// data must not remove the programs. Decided here so that **no other file asks the platform for a folder** (Phase 0.8).
+pub fn tools_dir() -> PathBuf {
+    if let Some(custom) = std::env::var_os("SDC_TOOLS_DIR").filter(|value| !value.is_empty()) {
+        return PathBuf::from(custom);
+    }
+
+    let base = if cfg!(windows) { dirs::data_local_dir() } else { dirs::data_dir() };
+
+    base.unwrap_or_else(std::env::temp_dir).join("sdc-tools")
+}
+
 /// Where the daily copies of the database are kept (0.15.5): **outside** the data folder, so a folder that
 /// is removed - by an uninstaller, by hand - does not take its copies with it. On Windows
 /// `%LOCALAPPDATA%\sdc-backups`, which is neither the install folder nor `%APPDATA%\sdc`.
@@ -171,6 +184,47 @@ pub const DEFAULT_PORT: u16 = 7811;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Phase 0.8: the platform's folders are asked for in this file and nowhere else, so two code paths can never decide on
+    /// different roots. (`home_dir` is not a data root: it is how SDC finds *other* programs' folders and hides the person's
+    /// name in a crash report; those two uses are listed.)
+    #[test]
+    fn only_this_file_asks_the_platform_for_a_data_folder() {
+        fn walk(dir: &Path, hits: &mut Vec<String>) {
+            for entry in std::fs::read_dir(dir).unwrap().flatten() {
+                let path = entry.path();
+
+                if path.is_dir() {
+                    walk(&path, hits);
+                } else if path.extension().is_some_and(|extension| extension == "rs") && !path.ends_with("src/paths.rs") {
+                    let text = std::fs::read_to_string(&path).unwrap_or_default();
+                    let production = text.split("#[cfg(test)]\nmod ").next().unwrap_or_default();
+
+                    for needle in ["dirs::data_dir", "dirs::data_local_dir", "dirs::config_dir", "dirs::cache_dir", "dirs::state_dir", "dirs::config_local_dir", "dirs::document_dir"] {
+                        if production.lines().any(|line| line.contains(needle) && !line.trim_start().starts_with("//")) {
+                            hits.push(format!("{} uses {needle}", path.display()));
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut hits = Vec::new();
+
+        walk(&Path::new(env!("CARGO_MANIFEST_DIR")).join("src"), &mut hits);
+
+        assert!(hits.is_empty(), "route these through crate::paths: {hits:?}");
+    }
+
+    #[test]
+    fn the_rotation_file_the_tools_and_the_backups_are_all_decided_here() {
+        let data = data_dir().unwrap();
+
+        assert_eq!(crate::data::home(), Some(data.clone()));
+        assert_eq!(crate::data::rotation::path(&data), data.join("rotation.toml"));
+        assert_eq!(crate::host::tools::root(), tools_dir());
+        assert_ne!(backup_dir().unwrap(), data, "the copies live outside the folder they protect");
+    }
 
     #[test]
     fn a_sockets_name_carries_its_port() {
