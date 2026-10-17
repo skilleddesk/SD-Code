@@ -9,7 +9,7 @@ import { useRightPanelStore } from '../store/rightPanel';
 import {
   changeFolder,
   closeFolder,
-  defaultReviewer,
+  runVerifyChosen,
   forceKillTurn,
   interruptTurn,
   openFolder,
@@ -17,7 +17,6 @@ import {
   resolvePermission,
   redoRewind,
   rewindTo,
-  runVerify,
   startTurn,
 } from '../store/intents';
 import { nameOf } from '../lib/picker';
@@ -127,9 +126,7 @@ function runVerifyForActiveChat(): void {
     return;
   }
 
-  const author = [...useAppStore.getState().turns].reverse().find((turn) => turn.sessionId === sessionId);
-
-  void runVerify({ sessionId, reviewer: defaultReviewer(author === undefined ? null : author) });
+  void runVerifyChosen({ sessionId });
 }
 
 /** Alt+E: the next engine that has a connected provider behind it (the menu's own rule). */

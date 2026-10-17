@@ -696,7 +696,8 @@ export interface VerifyIssue {
 export interface VerifyReview {
   engine: string;
   model: string;
-  status: 'pending' | 'running' | 'done' | 'skipped' | 'failed';
+  /** `off`: the person has chosen no Reviewer model, so no model read the change (Phase 0.10). */
+  status: 'pending' | 'running' | 'done' | 'skipped' | 'failed' | 'off';
   verdict?: 'pass' | 'issues' | 'unreadable' | null;
   summary?: string;
   issues?: VerifyIssue[];

@@ -13,7 +13,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { VerifyCheck, VerifyIssue } from '../../../../protocol/types';
 import { baseName, inFolder } from '../../lib/paths';
 import { strings } from '../../strings';
-import { defaultReviewer, openFile, reviewerOptions, runVerify, type ReviewerOption } from '../../store/intents';
+import { defaultReviewer, loadChosenReviewer, openFile, reviewerOptions, runVerify, saveChosenReviewer, type ReviewerOption } from '../../store/intents';
 import { useFilesStore } from '../../store/files';
 import { useModelStore } from '../../store/model';
 import { useSessionsStore } from '../../store/sessions';
@@ -53,9 +53,34 @@ export function VerifyTab() {
   /* The reviewers on offer are the connected providers - re-read when either list changes. */
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const options = useMemo(() => reviewerOptions(), [providers, catalog]);
-  const [chosen, setChosen] = useState<string | null>(null);
-  const reviewer: ReviewerOption | null =
-    options.find((option) => key(option) === chosen) ?? defaultReviewer(author) ?? null;
+  /* Phase 0.10: the Reviewer is the person's own choice, kept in the setting `models.reviewer`. None chosen = the AI review
+     is off - the app never picks a model to read the code (the Manual Pin contract). */
+  const [chosen, setChosen] = useState<ReviewerOption | null>(null);
+  const reviewer: ReviewerOption | null = chosen;
+  /* `defaultReviewer` reads the stores itself; `options` is here so the suggestion is recomputed when they change. */
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const suggestion = useMemo(() => defaultReviewer(author), [author, options]);
+
+  useEffect(() => {
+    let alive = true;
+
+    void loadChosenReviewer().then((saved) => {
+      if (alive) {
+        setChosen(saved);
+      }
+    });
+
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const choose = (value: string): void => {
+    const next = options.find((option) => key(option) === value) ?? null;
+
+    setChosen(next);
+    void saveChosenReviewer(next);
+  };
   const running = run?.state === 'running';
 
   const start = (reviewFailing = false): void => {
@@ -77,6 +102,9 @@ export function VerifyTab() {
       </div>
 
       <div className="verify-footer flex flex-col gap-[8px] border-t border-border-subtle p-[12px]">
+        <p className="text-[11px] leading-[1.5] text-text-muted" data-testid="verify-builder">
+          {strings.rightPanel.verify.builder}: {author === null ? strings.rightPanel.verify.builderNone : author.model === '' ? author.engine : author.model}
+        </p>
         <label className="flex flex-col gap-[4px] text-[10px] font-semibold uppercase tracking-[.1em] text-text-muted" htmlFor="verify-reviewer">
           {strings.rightPanel.verify.reviewer}
           {/* The wrapper paints the box; the select stays transparent (the smoke gate's rule). Its options
@@ -86,19 +114,27 @@ export function VerifyTab() {
             id="verify-reviewer"
             className="h-full w-full bg-transparent px-[8px] text-[12px] font-normal normal-case tracking-normal text-text-primary outline-none [&>option]:bg-bg-overlay"
             value={reviewer === null ? '' : key(reviewer)}
-            disabled={options.length === 0}
-            onChange={(event) => setChosen(event.target.value)}
+            onChange={(event) => choose(event.target.value)}
           >
-            {options.length === 0 ? <option value="">{strings.rightPanel.verify.noReviewer}</option> : null}
+            <option value="">{strings.rightPanel.verify.reviewerOff}</option>
             {options.map((option) => (
               <option key={key(option)} value={key(option)}>
                 {option.label}
-                {author !== null && option.engine === author.engine && option.model === author.model ? ' (wrote it)' : ''}
+                {author !== null && option.engine === author.engine && option.model === author.model ? ` ${strings.rightPanel.verify.wroteIt}` : ''}
               </option>
             ))}
+            {reviewer !== null && !options.some((option) => key(option) === key(reviewer)) ? (
+              <option value={key(reviewer)}>{reviewer.label}</option>
+            ) : null}
           </select>
           </span>
         </label>
+        {reviewer === null ? (
+          <p className="text-[11px] leading-[1.5] text-state-waiting" role="status" data-testid="verify-review-off">
+            {strings.rightPanel.verify.reviewOffHint}
+            {suggestion === null ? '' : ` ${strings.rightPanel.verify.suggested(suggestion.label)}`}
+          </p>
+        ) : null}
 
         <button
           type="button"

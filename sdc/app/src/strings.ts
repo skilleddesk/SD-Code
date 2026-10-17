@@ -879,6 +879,12 @@ const english = {
       reviewTitle: 'Review by another AI',
       reviewer: 'Reviewer',
       noReviewer: 'No reviewer: connect a second provider to get an AI review',
+      builder: 'Builder (wrote the change)',
+      builderNone: 'no change yet',
+      reviewerOff: 'No reviewer - AI review is off',
+      wroteIt: '(wrote it)',
+      reviewOffHint: 'AI review is off: you have not chosen a Reviewer model, so no model reads your code here. Checks and scans still run. Choose a Reviewer above to turn the review on - SDC never picks one for you.',
+      suggested: (label: string): string => `Suggestion: ${label} (a different model than the one that wrote it).`,
       noChecks: 'No checks found in this folder.',
       status: { pending: 'waiting', running: 'running', pass: 'passed', fail: 'failed' } as const,
       reviewStatus: {
@@ -887,6 +893,7 @@ const english = {
         done: '',
         skipped: '',
         failed: 'could not review',
+        off: 'off',
       } as const,
       verdict: {
         pass: 'No issues',

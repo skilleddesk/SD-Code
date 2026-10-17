@@ -5,7 +5,7 @@ import type { AuditEntry, LedgerCheck } from '../../../protocol/types';
 import { currentLocale } from '../i18n';
 import { openOutside } from '../lib/external';
 import { strings } from '../strings';
-import { rewindTo, runVerify, defaultReviewer } from '../store/intents';
+import { rewindTo, runVerifyChosen } from '../store/intents';
 import { measured, usd } from '../store/kernel';
 import { exportProof, loadAudit } from '../store/kernelIntents';
 import { useSessionsStore } from '../store/sessions';
@@ -123,7 +123,7 @@ export function ProofTab() {
             <button
               type="button"
               className={BTN_SM + ' ' + BTN_SECONDARY + ' self-start'}
-              onClick={() => void runVerify({ sessionId, turnId: turn.id, reviewer: defaultReviewer(turn) })}
+              onClick={() => void runVerifyChosen({ sessionId, turnId: turn.id })}
             >
               {k.verifyNow}
             </button>

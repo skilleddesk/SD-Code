@@ -610,7 +610,7 @@ impl Daemon {
             "ui.language", "agency.email", "agency.styleGuide", "intent.replyStyle", "net.lowBandwidth", "update.channel", "crash.optIn",
             /* 0.16.1: the local model's context, and Settings → Research. A search service's key is not a
                setting - it goes to the keychain through `research.key.set`. */
-            "ollama.contextTokens", "research.searchProvider", "research.searxngUrl", "research.maxSearches", "research.maxPages",
+            "ollama.contextTokens", crate::guard::reviewer::SETTING, "research.searchProvider", "research.searxngUrl", "research.maxSearches", "research.maxPages",
             "research.maxMinutes", "research.localWebOnly", "research.synthesisModel", "research.synthesisProvider",
         ];
 

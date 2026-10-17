@@ -2693,10 +2693,9 @@ export function reviewerOptions(): ReviewerOption[] {
 }
 
 /**
- * The reviewer to use when the person has not picked one: **a different engine** than the one that wrote
- * the change, because a model reviewing its own work shares its own blind spots. The same engine with a
- * different model is the second choice; the same model is offered last, and only when nothing else is
- * connected.
+ * A *suggestion* for the Reviewer: a different engine than the one that wrote the change, because a model reviewing
+ * its own work shares its own blind spots. It is only ever shown as a suggestion (Phase 0.10) - the Manual Pin contract
+ * says the app never picks a model for the person, so a Verify run uses the Reviewer the person chose, or none.
  */
 export function defaultReviewer(author: { engine: string; model: string } | null): ReviewerOption | null {
   const options = reviewerOptions();
@@ -2711,6 +2710,53 @@ export function defaultReviewer(author: { engine: string; model: string } | null
     options[0] ??
     null
   );
+}
+
+/** The setting that holds the person's Reviewer model (`models.reviewer`, JSON; empty means no reviewer: review off). */
+export const REVIEWER_SETTING = 'models.reviewer';
+
+/** The Reviewer the person chose, or null when they chose none (the AI review is then off). */
+export async function loadChosenReviewer(): Promise<ReviewerOption | null> {
+  try {
+    const { value } = await sdcpCall('settings.get', { key: REVIEWER_SETTING });
+
+    if (value === null || value.trim() === '') {
+      return null;
+    }
+
+    const parsed = JSON.parse(value) as { engine?: string; model?: string; provider?: string };
+
+    if (typeof parsed.engine !== 'string' || parsed.engine === '') {
+      return null;
+    }
+
+    const model = parsed.model ?? '';
+    const provider = parsed.provider ?? '';
+
+    return (
+      reviewerOptions().find((option) => option.provider === provider && option.model === model) ?? {
+        engine: parsed.engine,
+        model,
+        provider,
+        label: model === '' ? parsed.engine : model,
+      }
+    );
+  } catch {
+    return null;
+  }
+}
+
+/** Saves the Reviewer the person picked; null turns the AI review off. */
+export async function saveChosenReviewer(option: ReviewerOption | null): Promise<void> {
+  await sdcpCall('settings.set', {
+    key: REVIEWER_SETTING,
+    value: option === null ? '' : JSON.stringify({ engine: option.engine, provider: option.provider, model: option.model }),
+  });
+}
+
+/** Verify with the Reviewer the person chose (none: checks and scans only, and the tab says the review is off). */
+export async function runVerifyChosen(input: { sessionId: string; turnId?: string; reviewFailing?: boolean }): Promise<string | null> {
+  return runVerify({ ...input, reviewer: await loadChosenReviewer() });
 }
 
 /**

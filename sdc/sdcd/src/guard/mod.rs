@@ -17,5 +17,6 @@ pub mod context;
 pub mod daemon;
 pub mod modelgate;
 pub mod osnorm;
+pub mod reviewer;
 pub mod runner;
 pub mod sandbox;

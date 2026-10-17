@@ -20,7 +20,7 @@ const sdcpCall = vi.hoisted(() => vi.fn());
 
 vi.mock('../lib/sdcp', () => ({ sdcpCall }));
 
-const { validName, renamePath, deletePath, createFolder, searchFolder, defaultReviewer, runVerify, autonomyFor, sendPrompt, interruptTurn, chooseModel, closeDiff, closeFolder, forkSession, loadCliRecipe, loadGitStatus, saveFile, emptySessionOn, hostMentionedIn, projectMentionedIn, newChatOnHost, openDiff, openFolderIn, loadDirectory, toggleDirectory, openFile, closeFile, addHost, hostKey, trustHost, reconnectHost, listRemoteDirectory, runDoctor, runCommand, runInBackground, pollBackground, stopBackground, openTerminalForHost, installHostKey } = await import('./intents');
+const { loadChosenReviewer, saveChosenReviewer, runVerifyChosen, validName, renamePath, deletePath, createFolder, searchFolder, defaultReviewer, runVerify, autonomyFor, sendPrompt, interruptTurn, chooseModel, closeDiff, closeFolder, forkSession, loadCliRecipe, loadGitStatus, saveFile, emptySessionOn, hostMentionedIn, projectMentionedIn, newChatOnHost, openDiff, openFolderIn, loadDirectory, toggleDirectory, openFile, closeFile, addHost, hostKey, trustHost, reconnectHost, listRemoteDirectory, runDoctor, runCommand, runInBackground, pollBackground, stopBackground, openTerminalForHost, installHostKey } = await import('./intents');
 const { useTerminalStore } = await import('./terminal');
 const { tabForSession } = await import('./rightPanel');
 const { engineForProvider, useModelStore } = await import('./model');
@@ -1494,6 +1494,58 @@ describe('verify', () => {
       reviewer: { engine: 'gemini', model: 'gemini-3-pro', provider: 'gemini' },
     }));
     expect(tabForSession(useRightPanelStore.getState(), 's1')).toBe('verify');
+  });
+});
+
+/** Phase 0.10: Builder and Reviewer are two explicit choices; with no Reviewer chosen the AI review is off. */
+describe('the Reviewer model is the person\'s own choice', () => {
+  beforeEach(() => {
+    sdcpCall.mockReset();
+    useModelStore.setState({
+      catalog: [
+        { id: 'sonnet', providerId: 'claude', providerLabel: 'Claude', tier: 'balanced', ctx: 0, cost: '', name: 'Claude Sonnet', source: 'bundled' },
+        { id: 'gemini-3-pro', providerId: 'gemini', providerLabel: 'Gemini', tier: 'deep', ctx: 0, cost: '', name: 'Gemini 3 Pro', source: 'live' },
+      ],
+    });
+    useAppStore.setState({
+      providers: [
+        { id: 'claude', name: 'Claude', kind: 'api-key', status: 'connected', detail: '', account: null, logo: 'claude', initial: 'C' },
+        { id: 'gemini', name: 'Gemini', kind: 'api-key', status: 'connected', detail: '', account: null, logo: 'gemini', initial: 'G' },
+      ] as never,
+      turns: [],
+      checkpoints: [],
+    });
+  });
+
+  it('sends no reviewer - the AI review is off - when none was chosen, even though two providers are connected', async () => {
+    sdcpCall.mockImplementation(async (method: string) => (method === 'settings.get' ? { key: 'models.reviewer', value: null } : { verifyId: 'verify-9' }));
+
+    await expect(loadChosenReviewer()).resolves.toBeNull();
+    await runVerifyChosen({ sessionId: 's1' });
+
+    const call = sdcpCall.mock.calls.find(([method]) => method === 'verify.run');
+
+    expect(call?.[1]).not.toHaveProperty('reviewer');
+  });
+
+  it('sends the chosen reviewer and nothing else', async () => {
+    sdcpCall.mockImplementation(async (method: string) =>
+      method === 'settings.get' ? { key: 'models.reviewer', value: JSON.stringify({ engine: 'gemini', provider: 'gemini', model: 'gemini-3-pro' }) } : { verifyId: 'verify-9' },
+    );
+
+    await runVerifyChosen({ sessionId: 's1' });
+
+    expect(sdcpCall).toHaveBeenCalledWith('verify.run', expect.objectContaining({ reviewer: { engine: 'gemini', model: 'gemini-3-pro', provider: 'gemini' } }));
+  });
+
+  it('saves a choice as the setting, and null as an empty value (review off)', async () => {
+    sdcpCall.mockResolvedValue({});
+
+    await saveChosenReviewer({ engine: 'gemini', model: 'gemini-3-pro', provider: 'gemini', label: 'x' });
+    await saveChosenReviewer(null);
+
+    expect(sdcpCall).toHaveBeenNthCalledWith(1, 'settings.set', { key: 'models.reviewer', value: JSON.stringify({ engine: 'gemini', provider: 'gemini', model: 'gemini-3-pro' }) });
+    expect(sdcpCall).toHaveBeenNthCalledWith(2, 'settings.set', { key: 'models.reviewer', value: '' });
   });
 });
 

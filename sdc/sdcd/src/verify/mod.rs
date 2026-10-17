@@ -75,6 +75,8 @@ pub struct Request {
     pub root: String,
     pub remote: Option<crate::ssh::Ssh>,
     pub reviewer: Option<Reviewer>,
+    /// Why there is no AI review, when the person has chosen no Reviewer model (Phase 0.10): shown as it is.
+    pub review_off: Option<String>,
     pub review_failing: bool,
     /// The confirmed Intent Contract's conditions: the reviewer says for each whether the change meets it.
     pub acceptance: Vec<String>,
@@ -488,9 +490,11 @@ pub async fn run(state: Arc<DaemonState>, out: Arc<dyn Notifier>, request: Reque
         state: "running",
         pass: None,
         checks: Vec::new(),
-        review: request.reviewer.as_ref().map(|reviewer| {
-            json!({ "engine": reviewer.engine, "model": reviewer.model, "status": "pending" })
-        }),
+        review: match (&request.reviewer, &request.review_off) {
+            (Some(reviewer), _) => Some(json!({ "engine": reviewer.engine, "model": reviewer.model, "status": "pending" })),
+            (None, Some(why)) => Some(json!({ "engine": "", "model": "", "status": "off", "summary": why })),
+            (None, None) => None,
+        },
         note: String::new(),
         scans: json!({ "state": "pending" }),
         verdict: None,

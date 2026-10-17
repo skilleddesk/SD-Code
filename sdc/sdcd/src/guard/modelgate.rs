@@ -54,12 +54,14 @@ pub enum Purpose {
     ResearchFinal,
     /// The Duel reviewer - only when the person picked one.
     DuelReviewer,
+    /// Verify's AI review - only the Reviewer model the person chose (`models.reviewer`, Phase 0.10).
+    Reviewer,
 }
 
 impl Purpose {
     /// The purposes a person can switch on in Settings and so may name a different model for.
     pub fn is_user_exception(self) -> bool {
-        matches!(self, Purpose::ResearchFinal | Purpose::DuelReviewer)
+        matches!(self, Purpose::ResearchFinal | Purpose::DuelReviewer | Purpose::Reviewer)
     }
 }
 
@@ -116,6 +118,12 @@ impl Gate {
         Self { mode: mode_for(provider, chain_has_rows, project_local_only), pinned: normal(provider, model), exceptions: Vec::new(), enforcing: crate::v3::on("models.contract") }
     }
 
+    /// A gate that enforces whatever `models.contract` says, for a call made outside a turn (Verify's review): nothing is
+    /// pinned, so only a named exception gets through.
+    pub fn contract(provider: Option<&str>, model: &str, chain_has_rows: bool, project_local_only: bool) -> Self {
+        Self::new(provider, model, chain_has_rows, project_local_only)
+    }
+
     /// A gate that permits everything (no turn registered, or the switch off).
     pub fn open() -> Self {
         Self { mode: Mode::Pinned, pinned: (String::new(), String::new()), exceptions: Vec::new(), enforcing: false }
@@ -140,7 +148,7 @@ impl Gate {
         }
 
         match purpose {
-            Purpose::Main | Purpose::ResearchFinal | Purpose::DuelReviewer => true,
+            Purpose::Main | Purpose::ResearchFinal | Purpose::DuelReviewer | Purpose::Reviewer => true,
             Purpose::Chain => self.mode == Mode::LocalRotation,
             Purpose::SubAgentFast | Purpose::Router | Purpose::Cascade | Purpose::Failover | Purpose::Ladder | Purpose::PlannerExecutor | Purpose::Bandit => false,
         }

@@ -4,7 +4,7 @@ import { CircleCheckBig, CircleX, LoaderCircle, ScanSearch, ThumbsDown, ThumbsUp
 import { useState } from 'react';
 
 import { strings } from '../../strings';
-import { defaultReviewer, runVerify } from '../../store/intents';
+import { runVerifyChosen } from '../../store/intents';
 import { toast } from '../../store/toast';
 import type { TurnFooterData, TurnVerifyData } from './types';
 
@@ -125,9 +125,9 @@ export function TurnFooter({ footer, verify = null, lines = null }: TurnFooterPr
  * `Verify with…` (v4, docs/ROADMAP-v4.md §3 #6): one click runs this turn's checks and has another AI
  * review its change; once a run exists the chip shows its outcome, and a click runs it again.
  */
-function VerifyChip({ sessionId, turnId, author, result }: NonNullable<TurnFooterProps['verify']>) {
+function VerifyChip({ sessionId, turnId, result }: NonNullable<TurnFooterProps['verify']>) {
   const run = (): void => {
-    void runVerify({ sessionId, turnId, reviewer: defaultReviewer(author) });
+    void runVerifyChosen({ sessionId, turnId });
   };
   const base =
     'verify-chip inline-flex h-[24px] items-center gap-[6px] rounded-full border px-[10px] text-[11px] font-medium transition-colors duration-fast';

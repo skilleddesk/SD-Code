@@ -420,7 +420,7 @@ impl Daemon {
         let since = envelope
             .opt_str("since")
             .filter(|sha| sha.len() == 40 && sha.chars().all(|character| character.is_ascii_hexdigit()));
-        let reviewer = envelope.params.get("reviewer").and_then(|reviewer| {
+        let requested = envelope.params.get("reviewer").and_then(|reviewer| {
             let engine = reviewer["engine"].as_str().filter(|engine| !engine.is_empty())?;
 
             Some(crate::verify::Reviewer {
@@ -429,6 +429,10 @@ impl Daemon {
                 provider: reviewer["provider"].as_str().filter(|id| !id.is_empty()).map(str::to_string),
             })
         });
+        /* Phase 0.10: the review is by the Reviewer model the person chose, or it is off - never a model the app picked. */
+        let chosen = self.store().setting(crate::guard::reviewer::SETTING).ok().flatten().and_then(|text| crate::guard::reviewer::parse(&text));
+        let resolution = crate::guard::reviewer::resolve(requested, chosen, crate::v3::on("models.contract"));
+        let (reviewer, review_off) = (resolution.reviewer, (resolution.mode == "off").then_some(resolution.note));
         let verify_id = self.state.fresh_id("verify-");
         let request = crate::verify::Request {
             verify_id: verify_id.clone(),
@@ -439,6 +443,7 @@ impl Daemon {
             root,
             remote: self.remote_for(envelope)?,
             reviewer,
+            review_off,
             review_failing: envelope.params.get("reviewFailing").and_then(Value::as_bool).unwrap_or(false),
             /* The conditions the person agreed to: sent by the window, or read from the turn's Intent Contract. */
             acceptance: {
