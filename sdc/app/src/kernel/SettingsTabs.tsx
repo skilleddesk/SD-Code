@@ -16,6 +16,7 @@ import {
   saveGlossaryTerm,
   saveTeam,
   shareStatus,
+  downloadVoiceModel,
   voiceStatus,
 } from '../store/kernelIntents';
 import { useSessionsStore } from '../store/sessions';
@@ -47,6 +48,115 @@ function Row({ label, help, children }: { label: string; help?: string; children
         {help === undefined ? null : <div className="mt-[2px] text-[11.5px] text-text-muted">{help}</div>}
       </div>
       <div className="shrink-0">{children}</div>
+    </div>
+  );
+}
+
+/**
+ * Dictation, honestly (Phase 1.3): the chain in plain words, what is missing and how to get it, the spoken-language choice, and
+ * the speech-model download - which asks first, shows the size and where it comes from, and draws its progress.
+ */
+function VoiceDetails({ voice, onChange }: { voice: Awaited<ReturnType<typeof voiceStatus>>; onChange: (next: Awaited<ReturnType<typeof voiceStatus>>) => void }) {
+  const v = strings.kernel.voice;
+  const [language, setLanguage] = useState<string>(() => String(storedSettings()['voice-language'] ?? 'auto'));
+  const [asking, setAsking] = useState<string | null>(null);
+  const downloading = voice?.download.state === 'downloading';
+
+  useEffect(() => {
+    if (!downloading) {
+      return undefined;
+    }
+
+    const timer = window.setInterval(() => void voiceStatus().then(onChange), 700);
+
+    return () => window.clearInterval(timer);
+  }, [downloading, onChange]);
+
+  if (voice === null) {
+    return null;
+  }
+
+  const percent = voice.download.total ? Math.min(100, Math.floor(((voice.download.done ?? 0) / voice.download.total) * 100)) : 0;
+  const mb = (bytes: number): number => Math.round(bytes / 1_000_000);
+
+  return (
+    <div className="border-b border-border-subtle py-[10px] text-[11.5px] text-text-muted" data-voice-details="">
+      <p className="m-0">{v.chain}</p>
+      <p className="m-0 mt-[4px]">
+        {voice.programMissing ? v.localProgramMissing : voice.modelMissing ? v.localModelMissing : v.localReady(voice.program ?? '', voice.model?.split(/[\\/]/).pop() ?? '')}
+        {voice.programMissing && voice.installHint !== null ? ` ${voice.installHint}` : ''}
+      </p>
+      <p className="m-0 mt-[4px]">{voice.online.length === 0 ? v.onlineNone : v.onlineList(voice.online.join(', '))}</p>
+
+      <div className="mt-[8px] flex items-center gap-[8px]">
+        <label className="text-text-primary" htmlFor="voice-language">
+          {v.language}
+        </label>
+        <select
+          id="voice-language"
+          className={inputClass}
+          value={language}
+          onChange={(event) => {
+            setLanguage(event.target.value);
+            storeSetting('voice-language', event.target.value);
+          }}
+        >
+          <option value="auto">{v.languageAuto}</option>
+          {['bn', 'en', 'ar', 'de', 'hi', 'ur', 'es', 'fr', 'pt', 'id', 'zh'].map((code) => (
+            <option key={code} value={code}>
+              {code}
+            </option>
+          ))}
+        </select>
+      </div>
+      <p className="m-0 mt-[4px]">{v.languageHelp}</p>
+
+      <div className="mt-[8px] flex flex-col gap-[6px]">
+        {voice.models.map((model) => (
+          <div key={model.id} className="flex items-center gap-[8px]">
+            <span className="text-text-primary">{model.id}</span>
+            <span className="min-w-0 flex-1">{model.note}</span>
+            {model.installed ? (
+              <Badge tone="success">{v.installed}</Badge>
+            ) : asking === model.id ? (
+              <span className="flex items-center gap-[6px]">
+                <button
+                  type="button"
+                  className={BTN + ' ' + BTN_PRIMARY + ' ' + BTN_SM}
+                  onClick={() => {
+                    setAsking(null);
+                    void downloadVoiceModel(model.id).then(() => voiceStatus().then(onChange));
+                  }}
+                >
+                  {v.downloadYes}
+                </button>
+                <button type="button" className={BTN + ' ' + BTN_SECONDARY + ' ' + BTN_SM} onClick={() => setAsking(null)}>
+                  {v.downloadNo}
+                </button>
+              </span>
+            ) : (
+              <button type="button" className={BTN + ' ' + BTN_SECONDARY + ' ' + BTN_SM} disabled={downloading} onClick={() => setAsking(model.id)}>
+                {v.download(model.id, mb(model.bytes))}
+              </button>
+            )}
+          </div>
+        ))}
+        {asking !== null ? (
+          <p className="m-0 text-state-waiting" role="status">
+            {v.downloadAsk(asking, mb(voice.models.find((model) => model.id === asking)?.bytes ?? 0), voice.models[0]?.source ?? '')}
+          </p>
+        ) : null}
+        {downloading ? (
+          <div role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent} aria-label={v.downloading(percent)}>
+            <div className="h-[6px] w-full overflow-hidden rounded-full bg-bg-input">
+              <div className="h-full bg-accent" style={{ width: `${percent}%` }} />
+            </div>
+            <span>{v.downloading(percent)}</span>
+          </div>
+        ) : null}
+        {voice.download.state === 'done' ? <p className="m-0 text-state-success">{v.downloadDone}</p> : null}
+        {voice.download.state === 'failed' ? <p className="m-0 text-state-error">{v.downloadFailed(voice.download.error ?? '')}</p> : null}
+      </div>
     </div>
   );
 }
@@ -123,7 +233,7 @@ export function LanguageTab() {
       <Row label={k.voice} help={voice === null ? k.voiceUnknown : voice.available ? (voice.local ? k.voiceLocal(voice.program ?? '') : k.voiceOnline(voice.online.join(', '))) : (voice.hint ?? k.voiceNone)}>
         <Badge tone={voice?.available === true ? 'success' : 'warning'}>{voice?.available === true ? k.ready : k.notReady}</Badge>
       </Row>
-
+      <VoiceDetails voice={voice} onChange={setVoice} />
       <div className="mt-[18px]">
         <div className="text-[12.5px] font-medium text-text-primary">{k.glossary}</div>
         <p className="mt-[2px] text-[11.5px] text-text-muted">{k.glossaryHelp(glossary?.scope ?? 'global')}</p>

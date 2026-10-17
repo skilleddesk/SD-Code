@@ -338,6 +338,7 @@
           "team.set",
           "settings.get",
           "settings.set",
+          "voice.model.download",
           "secrets.move",
           "secrets.sweep",
           "update.check",
@@ -2045,7 +2046,12 @@
           "params": {},
           "result": {
             "available": "boolean",
-            "local": "boolean"
+            "local": "boolean",
+            "programMissing": "boolean",
+            "modelMissing": "boolean",
+            "installHint": "string?",
+            "models": ["object"],
+            "download": "object"
           }
         },
         "voice.transcribe": {
@@ -2327,6 +2333,19 @@
           "result": {
             "key": "string",
             "value": "string"
+          }
+        },
+        "voice.model.download": {
+          "params": {
+            "id": "string",
+            "confirm": "boolean"
+          },
+          "result": {
+            "state": "string",
+            "id": "string?",
+            "done": "integer?",
+            "total": "integer?",
+            "error": "string?"
           }
         },
         "secrets.move": {

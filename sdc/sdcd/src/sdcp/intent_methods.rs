@@ -54,6 +54,9 @@ impl Daemon {
                 Ok(json!({ "scope": scope, "terms": self.store().glossary(&scope).map_err(ErrorObject::internal)? }))
             }
             "voice.status" => Ok(intent::voice::status()),
+            "voice.model.download" => intent::voice_model::start(&envelope.require_str("id")?, envelope.opt_bool("confirm")).map_err(|message| {
+                if message.starts_with("permission_required") { ErrorObject::new("permission_required", message) } else { ErrorObject::bad_request(message) }
+            }),
             "voice.transcribe" => self.voice_transcribe(envelope, out),
             _ => self.dispatch_ops(envelope, out),
         }

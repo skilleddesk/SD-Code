@@ -267,6 +267,7 @@ export type SdcpMethod =
   | 'team.set'
   | 'settings.get'
   | 'settings.set'
+  | 'voice.model.download'
   | 'secrets.move'
   | 'secrets.sweep'
   | 'update.check'
@@ -692,6 +693,21 @@ export interface VerifyIssue {
   severity: 'high' | 'medium' | 'low';
   message: string;
   fix: string;
+}
+
+/** What dictation can do on this computer (`voice.status`): the local program and model, the cloud transcribers with a key, and a model download in progress. */
+export interface VoiceStatus {
+  local: boolean;
+  program: string | null;
+  model: string | null;
+  online: string[];
+  available: boolean;
+  hint: string | null;
+  programMissing: boolean;
+  modelMissing: boolean;
+  installHint: string | null;
+  models: { id: string; file: string; bytes: number; note: string; installed: boolean; source: string }[];
+  download: { state: 'idle' | 'downloading' | 'done' | 'failed'; id?: string; done?: number; total?: number; error?: string };
 }
 
 /** One place a secret sits in a folder (Phase 0.4): where and what, never the value. */
@@ -2377,7 +2393,7 @@ export interface SdcpMethodMap {
   'intent.stats': { params: Record<string, never>; result: { parsed: number; confirmed: number; corrected: number; cancelled: number } };
   'glossary.list': { params: { sessionId?: string; scope?: string }; result: { scope: string; terms: GlossaryTerm[] } };
   'glossary.set': { params: { sessionId?: string; scope?: string; term: string; meaning?: string }; result: { scope: string; terms: GlossaryTerm[] } };
-  'voice.status': { params: Record<string, never>; result: { local: boolean; program: string | null; model: string | null; online: string[]; available: boolean; hint: string | null } };
+  'voice.status': { params: Record<string, never>; result: VoiceStatus };
   'voice.transcribe': { params: { audio: string; mime?: string; language?: string; sessionId?: string; interim?: boolean }; result: { requestId: string } };
   'site.list': { params: Record<string, never>; result: { sites: SiteRecord[] } };
   'site.detect': { params: { hostId?: string; root: string }; result: { config: Record<string, unknown> } };
@@ -2409,6 +2425,7 @@ export interface SdcpMethodMap {
   'team.set': { params: { members?: TeamMember[]; current?: string }; result: TeamState };
   'settings.get': { params: { key: string }; result: { key: string; value: string | null } };
   'settings.set': { params: { key: string; value: string | boolean }; result: { key: string; value: string } };
+  'voice.model.download': { params: { id: string; confirm: boolean }; result: { state: string; id?: string; done?: number; total?: number; error?: string } };
   'secrets.move': { params: { path: string; file: string; line: number }; result: { name: string; file: string; line: number; note: string } };
   'secrets.sweep': { params: { path: string; firstOnly?: boolean }; result: { findings: SecretFinding[]; files: number; truncated: boolean; skipped: boolean } };
   'update.check': { params: { channel?: 'stable' | 'beta' }; result: UpdateInfo };

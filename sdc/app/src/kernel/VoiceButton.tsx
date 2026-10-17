@@ -1,6 +1,8 @@
 import { LoaderCircle, Mic, Square } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
+import { micProblem } from '../lib/mic';
+import { storedSettings } from '../lib/settings';
 import { strings } from '../strings';
 import { transcribe } from '../store/kernelIntents';
 import { useAppStore } from '../store/store';
@@ -104,7 +106,7 @@ function join(chunks: readonly Float32Array[]): Float32Array {
 
 /** One transcription, answered by the daemon's `VoiceTranscribed` event. */
 async function hear(samples: Float32Array, rate: number, sessionId: string | undefined, interim: boolean): Promise<{ text: string; engine: string | null; local: boolean; error: string | null } | null> {
-  const id = await transcribe(base64(toWav(samples, rate)), 'audio/wav', undefined, sessionId, interim);
+  const id = await transcribe(base64(toWav(samples, rate)), 'audio/wav', chosenLanguage(), sessionId, interim);
 
   if (id === null) {
     return null;
@@ -135,6 +137,13 @@ async function hear(samples: Float32Array, rate: number, sessionId: string | und
   });
 }
 
+/** The spoken language the person chose in Settings (`auto` = let the transcriber detect it). */
+function chosenLanguage(): string | undefined {
+  const value = storedSettings()['voice-language'];
+
+  return typeof value === 'string' && value !== '' && value !== 'auto' ? value : undefined;
+}
+
 /** A phrase being recorded: its samples, whether anyone spoke in it, and when they last did. */
 interface Phrase {
   chunks: Float32Array[];
@@ -161,8 +170,9 @@ export function VoiceButton({ onText, onLive, onStart, sessionId }: { onText: (t
 
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } });
-    } catch {
-      toast(strings.kernel.voice.noMicrophone);
+    } catch (error) {
+      /* The reason, not a shrug: a blocked permission and a missing microphone need different fixes (Phase 1.1). */
+      toast(micProblem(error));
       return;
     }
 

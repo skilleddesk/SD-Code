@@ -78,7 +78,7 @@ impl Daemon {
         let line = envelope.opt_i64("line").filter(|line| *line >= 1).ok_or_else(|| ErrorObject::bad_request("`line` is required"))? as usize;
 
         crate::trust::sweep::move_to_keychain(&root, &file, line, |name, value| crate::auth::keychain::set(name, value).map_err(|error| error.message.clone()))
-            .map_err(|message| ErrorObject::bad_request(message))
+            .map_err(ErrorObject::bad_request)
     }
 
     pub(super) fn permission_request(&self, envelope: &Envelope, out: &dyn Notifier) -> Result<Value, ErrorObject> {

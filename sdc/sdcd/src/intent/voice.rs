@@ -2,7 +2,7 @@
 //!
 //! Local first, because a person's voice is theirs: **whisper.cpp** (`whisper-cli`) or OpenAI's
 //! `whisper` command, when installed, with a model file under `<data>/whisper/` (or `SDC_WHISPER_MODEL`).
-//! When there is none, a connected provider that transcribes - Groq, Alibaba (Qwen3-ASR), then OpenAI - is used, and the
+//! When there is none, a connected provider that transcribes - Groq, Google (Gemini), Alibaba (Qwen3-ASR), then OpenAI - is used, each tried in turn,, and the
 //! answer says which one heard it, so a person always knows whether their voice left the machine.
 //!
 //! The window records 16 kHz mono WAV (it encodes the PCM itself), which is what whisper.cpp reads
@@ -14,9 +14,10 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 
-/// The model file whisper.cpp should use: `SDC_WHISPER_MODEL`, else the first `*.bin` under
-/// `<data>/whisper/`.
-fn whisper_model() -> Option<PathBuf> {
+/// The model file whisper.cpp should use: `SDC_WHISPER_MODEL`, else an installed `*.bin` under `<data>/whisper/` - for a
+/// language the small models handle well (English, German, French, Spanish...) the smallest, otherwise the largest
+/// (measured: only the large models read Arabic and Bengali; docs/VOICE.md).
+fn whisper_model_for(language: Option<&str>) -> Option<PathBuf> {
     if let Ok(path) = std::env::var("SDC_WHISPER_MODEL") {
         let path = PathBuf::from(path);
 
@@ -26,15 +27,23 @@ fn whisper_model() -> Option<PathBuf> {
     }
 
     let directory = crate::paths::data_dir().ok()?.join("whisper");
-    let mut models: Vec<PathBuf> = std::fs::read_dir(directory)
+    let mut models: Vec<(u64, PathBuf)> = std::fs::read_dir(directory)
         .ok()?
         .filter_map(Result::ok)
         .map(|entry| entry.path())
         .filter(|path| path.extension().is_some_and(|extension| extension == "bin"))
+        .map(|path| (path.metadata().map(|meta| meta.len()).unwrap_or(0), path))
         .collect();
 
     models.sort();
-    models.into_iter().next()
+
+    let small_is_enough = matches!(language, Some("en" | "de" | "fr" | "es" | "pt" | "it" | "nl"));
+
+    if small_is_enough { models.into_iter().next() } else { models.into_iter().next_back() }.map(|(_, path)| path)
+}
+
+fn whisper_model() -> Option<PathBuf> {
+    whisper_model_for(None)
 }
 
 /// What this machine can do: `{local, program, model, online: [providers]}` - the voice button's tooltip
@@ -42,7 +51,8 @@ fn whisper_model() -> Option<PathBuf> {
 pub fn status() -> Value {
     let program = ["whisper-cli", "whisper-cpp", "whisper"].into_iter().find(|program| crate::host::program::resolve(program).is_some());
     let model = whisper_model();
-    let online: Vec<&str> = ["groq", "qwen", "openai-api"]
+    let model_path = model.clone();
+    let online: Vec<&str> = CLOUD_ORDER
         .into_iter()
         .filter(|id| crate::auth::keychain::get(&crate::providers::key_ref(id)).is_some())
         .collect();
@@ -57,13 +67,29 @@ pub fn status() -> Value {
         "program": program,
         "model": model.map(|path| path.display().to_string()),
         "online": online,
+        "programMissing": program.is_none(),
+        "modelMissing": model_path.is_none() && program != Some("whisper"),
+        "installHint": if program.is_none() { json!(program_hint()) } else { Value::Null },
+        "models": crate::intent::voice_model::catalogue(),
+        "download": crate::intent::voice_model::progress(),
         "available": local || !online.is_empty(),
         "hint": if local || !online.is_empty() {
             Value::Null
         } else {
-            json!("Voice needs a transcriber: connect Alibaba Cloud (Qwen), Groq (a free key) or OpenAI in the Provider Hub - nothing to install. (Fully offline voice uses whisper.cpp with a model in SDC's data folder under whisper/, when you have it.)")
+            json!("Voice needs a transcriber: connect Groq (a free key), Google Gemini (a free key), Alibaba Cloud (Qwen) or OpenAI in the Provider Hub - nothing to install. (Fully offline voice uses whisper.cpp with a model in SDC's data folder under whisper/, when you have it.)")
         },
     })
+}
+
+/// How to get the whisper.cpp program on this operating system (SDC downloads the model, not the program).
+fn program_hint() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "Install the program once: `brew install whisper-cpp` (it provides `whisper-cli`). SDC then downloads the speech model itself, after you say yes."
+    } else if cfg!(windows) {
+        "Install the program once: download `whisper-bin-x64.zip` from github.com/ggml-org/whisper.cpp/releases and put `whisper-cli.exe` on your PATH. SDC then downloads the speech model itself, after you say yes."
+    } else {
+        "Install the program once: build whisper.cpp (github.com/ggml-org/whisper.cpp) or install your distribution's `whisper-cpp` package so `whisper-cli` is on your PATH. SDC then downloads the speech model itself, after you say yes."
+    }
 }
 
 /// One connection pool for every transcription (1.0): live captions send a request every second or two while
@@ -74,34 +100,151 @@ fn shared_agent() -> ureq::Agent {
     AGENT.get_or_init(|| ureq::AgentBuilder::new().timeout_connect(Duration::from_secs(10)).timeout_read(Duration::from_secs(90)).build()).clone()
 }
 
+/// The cloud transcribers in the order they are tried, by provider id (the keychain name is `providers::key_ref(id)`).
+/// Groq's Whisper large-v3 has a free tier; Google's Gemini API lists `gemini-3.5-transcribe` as free of charge; Alibaba's
+/// Qwen3-ASR and OpenAI's whisper-1 follow, for the keys a person already has. Evidence and dates: `docs/VOICE.md`.
+const CLOUD_ORDER: [&str; 4] = ["groq", "google", "qwen", "openai-api"];
+
+/// Where each cloud transcriber is asked. A struct so a test can point it at a local mock server.
+#[derive(Clone)]
+pub struct Endpoints {
+    pub groq: String,
+    pub gemini: String,
+    pub openai: String,
+}
+
+impl Default for Endpoints {
+    fn default() -> Self {
+        Self {
+            groq: "https://api.groq.com/openai/v1/audio/transcriptions".into(),
+            gemini: "https://generativelanguage.googleapis.com".into(),
+            openai: "https://api.openai.com/v1/audio/transcriptions".into(),
+        }
+    }
+}
+
+/// One step of the chain, as the person is told about it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Attempt {
+    pub engine: String,
+    pub local: bool,
+    /// `None`: it heard something. `Some(why)`: it could not, in words.
+    pub error: Option<String>,
+}
+
 /// Transcribes one recording. `language` is a hint (`bn`, `ar`, …) or `None` for automatic.
 pub fn transcribe(audio: &[u8], mime: &str, language: Option<&str>) -> Result<Value, String> {
+    let keys: Vec<(&str, String)> = CLOUD_ORDER
+        .iter()
+        .filter_map(|id| crate::auth::keychain::get(&crate::providers::key_ref(id)).map(|key| (*id, key)))
+        .collect();
+
+    transcribe_with(&Endpoints::default(), &keys, true, audio, mime, language)
+}
+
+/// The provider chain (Phase 1.3): local whisper.cpp first, then every cloud transcriber the person has a key for, **each
+/// tried in turn** - a refused key (403), a missing model file or a broken network moves on to the next instead of ending
+/// the dictation. The answer says which engine heard it and whether it left the machine; when nothing could, the error
+/// lists every attempt and why, never a bare "failed".
+pub fn transcribe_with(endpoints: &Endpoints, keys: &[(&str, String)], try_local: bool, audio: &[u8], mime: &str, language: Option<&str>) -> Result<Value, String> {
     if audio.len() < 1000 {
         return Err("The recording is too short to hear anything in it.".to_string());
     }
 
-    if let Some(result) = local(audio, mime, language) {
-        return result;
+    let mut tried: Vec<Attempt> = Vec::new();
+
+    if try_local {
+        if let Some(result) = local(audio, mime, language) {
+            match result {
+                Ok(heard) if !heard["text"].as_str().unwrap_or_default().trim().is_empty() => return Ok(with_tried(heard, &tried)),
+                Ok(_) => tried.push(Attempt { engine: heard_engine(&result), local: true, error: Some("it heard no words in the recording".into()) }),
+                Err(error) => tried.push(Attempt { engine: "whisper".into(), local: true, error: Some(error) }),
+            }
+        }
     }
 
-    for (provider, url, model) in [
-        ("groq", "https://api.groq.com/openai/v1/audio/transcriptions", "whisper-large-v3-turbo"),
-        /* 0.22: Alibaba's Qwen3-ASR - the key a person already has for DeepSeek, Qwen and Kimi through Model Studio.
-           DeepSeek's own API has no speech-to-text, so this is the way to use that key for voice. It is a chat
-           call with the audio inside it, not an `audio/transcriptions` upload. */
-        ("qwen", "", "qwen3-asr-flash"),
-        ("openai-api", "https://api.openai.com/v1/audio/transcriptions", "whisper-1"),
-    ] {
-        let Some(key) = crate::auth::keychain::get(&crate::providers::key_ref(provider)) else {
-            continue;
+    for (provider, key) in keys {
+        let heard = match *provider {
+            "qwen" => qwen_online(key, audio, mime, language),
+            "google" => gemini_online(&endpoints.gemini, key, audio, mime, language),
+            "groq" => online(&endpoints.groq, key, "whisper-large-v3-turbo", audio, mime, language),
+            "openai-api" => online(&endpoints.openai, key, "whisper-1", audio, mime, language),
+            _ => continue,
         };
 
-        let heard = if provider == "qwen" { qwen_online(&key, audio, mime, language) } else { online(url, &key, model, audio, mime, language) };
-
-        return heard.map(|text| json!({ "text": text, "engine": provider, "local": false }));
+        match heard {
+            Ok(text) if !text.trim().is_empty() => return Ok(with_tried(json!({ "text": text, "engine": provider, "local": false }), &tried)),
+            Ok(_) => tried.push(Attempt { engine: (*provider).to_string(), local: false, error: Some("it heard no words in the recording".into()) }),
+            Err(error) => tried.push(Attempt { engine: (*provider).to_string(), local: false, error: Some(error) }),
+        }
     }
 
-    Err(status()["hint"].as_str().unwrap_or("No transcriber is available.").to_string())
+    if tried.is_empty() {
+        return Err(status()["hint"].as_str().unwrap_or("No transcriber is available.").to_string());
+    }
+
+    Err(format!(
+        "No transcriber could hear this. Tried: {}.",
+        tried.iter().map(|attempt| format!("{} ({})", attempt.engine, attempt.error.as_deref().unwrap_or("no words"))).collect::<Vec<_>>().join("; ")
+    ))
+}
+
+fn heard_engine(result: &Result<Value, String>) -> String {
+    result.as_ref().ok().and_then(|heard| heard["engine"].as_str()).unwrap_or("whisper").to_string()
+}
+
+/// The success answer, with the engines that failed before it (so the window can say "Groq refused, Gemini heard").
+fn with_tried(mut heard: Value, tried: &[Attempt]) -> Value {
+    heard["tried"] = json!(tried.iter().map(|attempt| json!({ "engine": attempt.engine, "local": attempt.local, "error": attempt.error })).collect::<Vec<_>>());
+    heard
+}
+
+/// Google's Gemini API: the recording goes in as inline audio of a `generateContent` call, and the transcript comes back as
+/// the model's text. `gemini-3.5-transcribe` first (free of charge on the Gemini API pricing page, 2026-10-18); a model the
+/// key cannot use (HTTP 404) falls back to `gemini-2.5-flash`, which is free too.
+fn gemini_online(base: &str, key: &str, audio: &[u8], mime: &str, language: Option<&str>) -> Result<String, String> {
+    use base64::Engine;
+
+    let mime = if mime.contains("wav") { "audio/wav" } else if mime.contains("webm") { "audio/webm" } else { "audio/ogg" };
+    let hint = language.filter(|language| *language != "auto" && !language.is_empty()).map(|language| format!(" The language is {language}.")).unwrap_or_default();
+    let body = json!({
+        "contents": [{ "parts": [
+            { "text": format!("Transcribe this audio exactly as spoken, in the language spoken. Do not translate. Do not add comments. Answer with the transcript only.{hint}") },
+            { "inline_data": { "mime_type": mime, "data": base64::engine::general_purpose::STANDARD.encode(audio) } },
+        ] }],
+    });
+    let mut last = String::new();
+
+    for model in ["gemini-3.5-transcribe", "gemini-2.5-flash"] {
+        let url = format!("{}/v1beta/models/{model}:generateContent", base.trim_end_matches('/'));
+
+        match shared_agent().post(&url).set("x-goog-api-key", key).set("content-type", "application/json").send_string(&body.to_string()) {
+            Ok(response) => {
+                let mut text = String::new();
+
+                response.into_reader().take(1_000_000).read_to_string(&mut text).map_err(|error| error.to_string())?;
+
+                let answer: Value = serde_json::from_str(&text).map_err(|_| format!("Gemini answered something that is not JSON: {}", text.chars().take(200).collect::<String>()))?;
+
+                return Ok(gemini_text(&answer));
+            }
+            Err(ureq::Error::Status(404, response)) => last = format!("{model} is not available to this key (HTTP 404): {}", response.into_string().unwrap_or_default().chars().take(160).collect::<String>()),
+            Err(ureq::Error::Status(code, response)) => {
+                return Err(format!("Gemini refused the recording (HTTP {code}): {}", response.into_string().unwrap_or_default().chars().take(300).collect::<String>()));
+            }
+            Err(error) => return Err(format!("Gemini could not be reached: {error}")),
+        }
+    }
+
+    Err(last)
+}
+
+/// The transcript in a `generateContent` answer: every text part of the first candidate.
+pub fn gemini_text(answer: &Value) -> String {
+    answer["candidates"][0]["content"]["parts"]
+        .as_array()
+        .map(|parts| parts.iter().filter_map(|part| part["text"].as_str()).map(str::trim).filter(|text| !text.is_empty()).collect::<Vec<_>>().join(" "))
+        .unwrap_or_default()
 }
 
 fn local(audio: &[u8], mime: &str, language: Option<&str>) -> Option<Result<Value, String>> {
@@ -130,7 +273,7 @@ fn local(audio: &[u8], mime: &str, language: Option<&str>) -> Option<Result<Valu
                 .output()
         })
     } else {
-        let model = whisper_model()?;
+        let model = whisper_model_for(Some(language))?;
 
         crate::host::program::command(program).map(|mut command| {
             command.arg("-m").arg(&model).arg("-f").arg(&file).args(["-l", language, "-nt", "-np"]).output()
@@ -311,6 +454,48 @@ fn online(url: &str, key: &str, model: &str, audio: &[u8], mime: &str, language:
     }
 }
 
+/// `sdcd voice status` and `sdcd voice FILE.wav [--lang bn] [--no-local]`: the same chain the app uses, from a terminal - how a person
+/// (or a test) finds out why dictation does not work, with the engine, whether it left the machine, and every failed attempt.
+/// A key is never printed.
+pub fn main(args: &[String]) -> i32 {
+    if args.first().map(String::as_str) == Some("status") || args.is_empty() {
+        println!("{}", serde_json::to_string_pretty(&status()).unwrap_or_default());
+
+        return 0;
+    }
+
+    let file = &args[0];
+    let language = args.iter().position(|arg| arg == "--lang").and_then(|at| args.get(at + 1)).map(String::as_str);
+    let try_local = !args.iter().any(|arg| arg == "--no-local");
+    let Ok(audio) = std::fs::read(file) else {
+        eprintln!("cannot read {file}");
+
+        return 2;
+    };
+    let keys: Vec<(&str, String)> = CLOUD_ORDER.iter().filter_map(|id| crate::auth::keychain::get(&crate::providers::key_ref(id)).map(|key| (*id, key))).collect();
+    let started = std::time::Instant::now();
+
+    match transcribe_with(&Endpoints::default(), &keys, try_local, &audio, "audio/wav", language) {
+        Ok(heard) => {
+            println!("engine: {} (local: {})", heard["engine"].as_str().unwrap_or("?"), heard["local"]);
+
+            for attempt in heard["tried"].as_array().into_iter().flatten() {
+                println!("  failed first: {} - {}", attempt["engine"].as_str().unwrap_or("?"), attempt["error"].as_str().unwrap_or("?"));
+            }
+
+            println!("seconds: {:.1}", started.elapsed().as_secs_f32());
+            println!("text: {}", heard["text"].as_str().unwrap_or_default());
+
+            0
+        }
+        Err(error) => {
+            println!("FAILED: {error}");
+
+            1
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -343,6 +528,98 @@ mod tests {
         assert_eq!(qwen_native_body("d", None)["input"]["messages"][0]["content"][0]["audio"], "d");
         assert_eq!(qwen_native_body("d", Some("bn"))["parameters"]["asr_options"]["language"], "bn");
         assert_eq!(qwen_native_text(&json!({ "output": { "choices": [{ "message": { "content": [{ "text": " hi " }] } }] } })), "hi");
+    }
+
+    /// A one-shot HTTP server: answers the given `(status, body)` pairs in order and records each request's first line.
+    fn mock(replies: Vec<(u16, &'static str)>) -> (String, std::thread::JoinHandle<Vec<String>>) {
+        use std::io::{Read, Write};
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let handle = std::thread::spawn(move || {
+            let mut seen = Vec::new();
+
+            for (status, body) in replies {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut buffer = vec![0u8; 65536];
+                let mut total = 0;
+
+                /* read until the headers are complete and the declared body has arrived */
+                loop {
+                    let n = stream.read(&mut buffer[total..]).unwrap();
+                    total += n;
+                    let text = String::from_utf8_lossy(&buffer[..total]).to_string();
+
+                    if let Some(split) = text.find("\r\n\r\n") {
+                        let length = text.lines().find_map(|line| line.to_ascii_lowercase().strip_prefix("content-length:").map(|v| v.trim().parse::<usize>().unwrap_or(0))).unwrap_or(0);
+
+                        if total >= split + 4 + length || n == 0 {
+                            break;
+                        }
+                    } else if n == 0 {
+                        break;
+                    }
+                }
+
+                seen.push(String::from_utf8_lossy(&buffer[..total]).lines().next().unwrap_or_default().to_string());
+                let reply = format!("HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+                stream.write_all(reply.as_bytes()).unwrap();
+            }
+
+            seen
+        });
+
+        (base, handle)
+    }
+
+    fn audio() -> Vec<u8> {
+        vec![1u8; 4000]
+    }
+
+    #[test]
+    fn a_refused_key_moves_on_to_the_next_transcriber_and_the_answer_says_who_failed() {
+        let (base, server) = mock(vec![(403, r#"{"error":"not allowed"}"#), (200, r#"{"candidates":[{"content":{"parts":[{"text":" লগইন পেজ খুলুন "}]}}]}"#)]);
+        let endpoints = Endpoints { groq: format!("{base}/groq"), gemini: base.clone(), openai: format!("{base}/openai") };
+        let keys = vec![("groq", "k1".to_string()), ("google", "k2".to_string())];
+        let heard = transcribe_with(&endpoints, &keys, false, &audio(), "audio/wav", Some("bn")).unwrap();
+
+        assert_eq!(heard["text"], "লগইন পেজ খুলুন");
+        assert_eq!(heard["engine"], "google");
+        assert_eq!(heard["local"], false);
+        assert_eq!(heard["tried"][0]["engine"], "groq");
+        assert!(heard["tried"][0]["error"].as_str().unwrap().contains("403"));
+
+        let seen = server.join().unwrap();
+
+        assert!(seen[0].contains("/groq") && seen[1].contains("gemini-3.5-transcribe:generateContent"), "{seen:?}");
+    }
+
+    #[test]
+    fn when_every_transcriber_fails_the_error_lists_each_attempt() {
+        let (base, server) = mock(vec![(401, "{}"), (404, "{}"), (404, "{}")]);
+        let endpoints = Endpoints { groq: format!("{base}/groq"), gemini: base.clone(), openai: String::new() };
+        let keys = vec![("groq", "k1".to_string()), ("google", "k2".to_string())];
+        let error = transcribe_with(&endpoints, &keys, false, &audio(), "audio/wav", None).unwrap_err();
+
+        assert!(error.contains("groq (") && error.contains("401") && error.contains("google ("), "{error}");
+
+        let seen = server.join().unwrap();
+
+        assert!(seen[2].contains("gemini-2.5-flash"), "an unavailable model falls back to the next: {seen:?}");
+    }
+
+    #[test]
+    fn with_no_transcriber_the_hint_says_what_to_connect() {
+        let endpoints = Endpoints::default();
+        let error = transcribe_with(&endpoints, &[], false, &audio(), "audio/wav", None).unwrap_err();
+
+        assert!(error.contains("Voice needs a transcriber") || error.contains("whisper"), "{error}");
+    }
+
+    #[test]
+    fn a_gemini_answer_is_read_from_its_text_parts() {
+        assert_eq!(gemini_text(&json!({ "candidates": [{ "content": { "parts": [{ "text": "a" }, { "text": " b " }] } }] })), "a b");
+        assert_eq!(gemini_text(&json!({})), "");
     }
 
     #[test]

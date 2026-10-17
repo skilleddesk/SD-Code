@@ -224,6 +224,17 @@ export async function voiceStatus() {
   }
 }
 
+/** Starts the speech-model download. Only called after the person pressed Yes (the daemon refuses without `confirm`). */
+export async function downloadVoiceModel(id: string): Promise<boolean> {
+  try {
+    await sdcpCall('voice.model.download', { id, confirm: true });
+
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function transcribe(audio: string, mime: string, language: string | undefined, sessionId?: string, interim = false): Promise<string | null> {
   return (
     await call(

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Without this key macOS never shows the microphone prompt and getUserMedia fails silently (SDC 3.0.3's voice bug). -->
+  <key>NSMicrophoneUsageDescription</key>
+  <string>SDC listens only while you press the microphone button, to turn your speech into text for your prompt.</string>
+</dict>
+</plist>
