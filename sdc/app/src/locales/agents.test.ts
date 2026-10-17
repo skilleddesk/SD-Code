@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { PACKS } from '../src/locales';
-import { strings } from '../src/strings';
+import { PACKS } from './index';
+import { strings } from '../strings';
 
 /**
  * Settings → Agents and the Escalate dialog (Phase 3): the tab is in the list, and every word of it exists in Bengali (the owner's language) as
