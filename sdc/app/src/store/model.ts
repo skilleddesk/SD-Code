@@ -125,6 +125,22 @@ export const FALLBACK_MODELS: Record<EngineId, readonly ModelDefinition[]> = {
   native_api: [],
 };
 
+/**
+ * Which contract the chosen model runs under (P0-10), as the badge shows it. A cloud, API or CLI model is **Pinned**:
+ * every call of the turn is that model. A local model is **Local Rotation** when the computer's Rotation Chain has an
+ * enabled row, and **Local-only** when it has none. (A project can force Local-only through `.sdc/policy.toml`; the
+ * daemon enforces that whatever this badge says, and the receipt names the mode a turn really ran in.)
+ */
+export type ModelMode = 'pinned' | 'local-rotation' | 'local-only';
+
+export function modelMode(providerId: string | null, enabledChainRows: number): ModelMode {
+  if (providerId !== 'ollama') {
+    return 'pinned';
+  }
+
+  return enabledChainRows > 0 ? 'local-rotation' : 'local-only';
+}
+
 /** One row of the daemon's catalogue, as `models.list` answers it. */
 export interface CatalogModel {
   id: string;
@@ -625,6 +641,8 @@ export interface ModelState {
    * shows those in the menu, and the rest of its list behind `Older versions…`.
    */
   inUse: { modelId: string; providerId: string | null }[];
+  /** How many rows of the Rotation Chain are enabled on this computer (P0-10) - what tells Local Rotation from Local-only. */
+  rotationRows: number;
   /** Each chat's own model, by session id. A chat that has none yet uses the four fields above. */
   chats: Record<string, ModelChoice>;
   /**
@@ -665,6 +683,7 @@ export interface ModelActions {
   /** Fold a `models.list` answer in - called on boot and whenever the dropdown opens. */
   setCatalog: (models: readonly CatalogModel[]) => void;
   setInUse: (inUse: readonly { modelId: string; providerId: string | null }[]) => void;
+  setRotationRows: (rows: number) => void;
   /** One row of the dropdown: engine, provider, model and tier together. */
   choose: (choice: { engine: EngineId; providerId: string; model: string; tier: Tier }, sessionId?: string | null) => void;
   /**
@@ -700,6 +719,7 @@ const initialModelState: ModelState = {
   providerId: remembered.last === null ? 'claude' : remembered.last.providerId,
   catalog: [],
   inUse: [],
+  rotationRows: 0,
   chats: remembered.chats,
   dropdownOpen: null,
   queued: [],
@@ -762,6 +782,10 @@ export const useModelStore = create<ModelState & ModelActions>()((set, get) => (
 
   setInUse: (inUse) => {
     set({ inUse: [...inUse] });
+  },
+
+  setRotationRows: (rows) => {
+    set({ rotationRows: rows });
   },
 
   choose: ({ engine, providerId, model, tier }, sessionId) => {

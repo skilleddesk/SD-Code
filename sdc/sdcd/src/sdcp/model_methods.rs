@@ -860,6 +860,12 @@ impl Daemon {
 /// P0-9: a local model that has been probed carries its class (S/M/L, `?` when only provisional) so the selector can
 /// show it. Reads the profile files only - listing models never calls the runtime.
 fn with_probe_classes(mut listed: Value) -> Value {
+    /* P0-10: how many rows of the Rotation Chain are enabled on this computer - what the mode badge needs to tell
+       Local Rotation (a chain) from Local-only (none). */
+    let enabled = crate::data::home().map(|home| crate::data::rotation::load(&home).0.usable().len()).unwrap_or(0);
+
+    listed["rotation"] = json!({ "enabledRows": enabled });
+
     if let Some(rows) = listed["models"].as_array_mut() {
         for row in rows.iter_mut().filter(|row| row["providerId"] == "ollama") {
             if let Some(profile) = row["id"].as_str().and_then(|id| crate::sme::probe::latest("ollama", id)) {

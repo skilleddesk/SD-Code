@@ -288,7 +288,7 @@ pub(crate) fn probe_input_tokens(provider: &str, model: &str, text: &str) -> Res
     let target = target(Backend::Api, &prompt)?;
     let messages = [dialect::user_message(text)];
 
-    ask_model(Backend::Api, &target, "Reply with the single word OK.", &messages, &[], &EventSink::discarding(), &|| false).map(|reply| reply.input_tokens)
+    ask_model(Backend::Api, &target, ("", crate::guard::modelgate::Purpose::Main), "Reply with the single word OK.", &messages, &[], &EventSink::discarding(), &|| false).map(|reply| reply.input_tokens)
 }
 
 /// The catalogue's `"$4 / $20"` for a model, as numbers.
@@ -543,7 +543,11 @@ pub fn run(
 }
 
 /// One model call: the request, the stream, the assembled reply.
-fn ask_model(backend: Backend, target: &Target, system: &str, messages: &[Value], specs: &[dialect::ToolSpec], sink: &EventSink, stopped: &dyn Fn() -> bool) -> Result<Reply, String> {
+fn ask_model(backend: Backend, target: &Target, turn: (&str, crate::guard::modelgate::Purpose), system: &str, messages: &[Value], specs: &[dialect::ToolSpec], sink: &EventSink, stopped: &dyn Fn() -> bool) -> Result<Reply, String> {
+    /* P0-10, the Pin Guard: every model call of a turn asks the turn's gate first. A call to a model the person did not
+       choose never reaches the network. */
+    crate::guard::modelgate::of(turn.0).permit(turn.1, None, &target.model).map_err(|violation| violation.to_string())?;
+
     let mut body = dialect::body(target.dialect, &target.model, system, messages, specs, target.thinking);
 
     /* Effort (0.14) reaches only the models that take it: OpenAI's reasoning models. Another model sent an
@@ -926,7 +930,7 @@ fn sub_agent(
     let mut messages = vec![dialect::user_message(job)];
     let (mut input, mut output) = (0u64, 0u64);
     /* 0.21: explore with the provider's fast model; the turn's own model is the fallback. */
-    let fast = fast_target(backend, target, parent.provider.as_deref());
+    let fast = if crate::guard::modelgate::of(&parent.turn_id).allows(crate::guard::modelgate::Purpose::SubAgentFast) { fast_target(backend, target, parent.provider.as_deref()) } else { None };
     let mut on_fast = fast.is_some();
     /* v3 W1: a sub-agent's requests join the turn's ledger. Its job was written by the model, not the person,
        so the first message counts as context. */
@@ -959,7 +963,7 @@ fn sub_agent(
         let active = if on_fast { fast.as_ref().unwrap_or(target) } else { target };
         let shape = shape_of(&messages, &specs);
         let asked_at = std::time::Instant::now();
-        let reply = match ask_model(backend, active, &system, &messages, &specs, &EventSink::discarding(), &stopped) {
+        let reply = match ask_model(backend, active, (&parent.turn_id, if on_fast { crate::guard::modelgate::Purpose::SubAgentFast } else { crate::guard::modelgate::Purpose::Main }), &system, &messages, &specs, &EventSink::discarding(), &stopped) {
             Ok(reply) => {
                 ledger(sub_step, &active.model, shape, &reply, asked_at);
                 reply
@@ -1246,6 +1250,18 @@ fn review_note(workspace: &Workspace, changed: &HashSet<String>) -> Option<Strin
     ))
 }
 
+/// The gate of a turn (P0-10): the person's model, whether a Rotation Chain has an enabled row, whether the project is
+/// local-only, and the exceptions the person wrote down themselves.
+fn turn_gate(backend: Backend, target: &Target, prompt: &Prompt, policy: &crate::trust::policy::Policy) -> crate::guard::modelgate::Gate {
+    let chain_has_rows = crate::data::home().map(|home| crate::data::rotation::load(&home).0).is_some_and(|rotation| !rotation.usable().is_empty());
+
+    /* The pin is the model the person's choice resolved to - `target` is built from the prompt, so in a turn the two are
+       the same model; a local backend is the `ollama` provider whatever the prompt called it. */
+    let provider = if backend == Backend::Ollama { Some("ollama") } else { prompt.provider.as_deref() };
+
+    crate::guard::modelgate::Gate::new(provider, &target.model, chain_has_rows, policy.privacy_local())
+}
+
 /// The loop over a resolved endpoint - separate from `run` so a test can point it at a loopback
 /// server and watch a whole turn: files written, commands run, the answer, the footer.
 #[allow(clippy::too_many_arguments)]
@@ -1261,6 +1277,10 @@ fn drive(
 ) {
     let turn_id = prompt.turn_id.clone();
     let stopped = || crate::engines::cancel::requested(&turn_id);
+    /* P0-10: the turn's gate - the model the person chose, and what that choice allows. Registered once for the turn;
+       everything that calls a model for it (the loop, a sub-agent, the research answer) finds it by the turn's id. */
+    let gate = turn_gate(backend, target, prompt, policy);
+    let _gate_held = crate::guard::modelgate::register(&turn_id, gate.clone());
     /* 1.0: effort "auto" on DeepSeek V4 is SDC's choice, not the model's `high`: `low` for everything but a
        large many-part task. Measured on the same fixed task (5 bugs, 13 tests): `high` 266 s, `low` 159 s, both
        with every test passing. A person who picks an effort gets exactly that. */
@@ -1275,7 +1295,7 @@ fn drive(
     /* v3 L4: with `v3.bandit` the plain rule is replaced by what actually happened for this kind of request. */
     let routed_request = prompt.text.rsplit("[The person's message]").next().unwrap_or(&prompt.text).to_string();
     let bandit_kind = crate::v3::bandit::kind_of(&routed_request);
-    let bandit = crate::v3::on("bandit");
+    let bandit = crate::v3::on("bandit") && gate.allows(crate::guard::modelgate::Purpose::Bandit);
     let tuned = if bandit {
         /* The arms are the model the person chose and the fast one, when they named one. */
         let main = tuned.model.clone();
@@ -1303,7 +1323,7 @@ fn drive(
         tuned
     };
     /* v3 W6: a plainly light request goes to the fast model the person named; everything else stays here. */
-    let tuned = if crate::v3::on("router") {
+    let tuned = if crate::v3::on("router") && gate.allows(crate::guard::modelgate::Purpose::Router) {
         crate::v3::router::route(tuned, prompt.text.rsplit("[The person's message]").next().unwrap_or(&prompt.text), &|provider, model| {
             let mut fast = prompt.clone();
 
@@ -1339,6 +1359,11 @@ fn drive(
     };
     /* A model that writes the final answer from what this one gathered (Settings → Research), opt-in. */
     let synthesis = research_session.as_ref().and(research_config.synthesis.clone());
+    /* The one model change the person asked for in Settings -> Research: named on the gate, so it is the only other
+       model this turn may call, and only for the final answer. */
+    if let Some((provider, model)) = &synthesis {
+        crate::guard::modelgate::allow_exception(&turn_id, crate::guard::modelgate::Purpose::ResearchFinal, Some(provider), model);
+    }
     /* The project's own MCP servers (0.12; on a host too since 0.13): their tools join the agent's for this turn. */
     let (mut mcp, warnings) = if research_session.is_some() {
         (None, Vec::new())
@@ -1731,7 +1756,7 @@ fn drive(
         let step_specs: &[dialect::ToolSpec] = if out_of_time { &[] } else { &specs };
         let shape = (ledger_on || receipt_on).then(|| crate::bench::ledger::shape(&system, step_specs, &messages, history_len, map_chars));
         let asked_at = std::time::Instant::now();
-        let asked = ask_model(backend, target, &system, &messages, step_specs, &notes_sink(said_something), &stopped);
+        let asked = ask_model(backend, target, (&turn_id, crate::guard::modelgate::Purpose::Main), &system, &messages, step_specs, &notes_sink(said_something), &stopped);
 
         model_time += asked_at.elapsed();
 
@@ -1795,7 +1820,7 @@ fn drive(
             Err(reason) => {
                 /* v3 I9: the provider failed for good - the task continues on the next model of `v3.failoverOrder`,
                    from a capsule of its state rather than this provider's conversation. */
-                if backend == Backend::Api && research_session.is_none() {
+                if backend == Backend::Api && research_session.is_none() && gate.allows(crate::guard::modelgate::Purpose::Failover) {
                     let mut tried = crate::v3::failover::tried(&turn_id);
                     let outermost = tried.is_empty();
 
@@ -2255,7 +2280,7 @@ fn drive(
         }
 
         /* v3 I3: the draft model is stuck - the strong one takes the task over from a capsule of the state. */
-        if crate::v3::on("cascade") && research_session.is_none() && crate::v3::cascade::stuck(&steps) {
+        if crate::v3::on("cascade") && gate.allows(crate::guard::modelgate::Purpose::Cascade) && research_session.is_none() && crate::v3::cascade::stuck(&steps) {
             if let Some((provider, model)) = crate::v3::cascade::strong().filter(|(provider, _)| prompt.provider.as_deref() != Some(provider.as_str())) {
                 let failed = steps.iter().rev().find(|step| !step.ok).map(|step| format!("`{}` failed: {}", step.target, step.note)).unwrap_or_else(|| "it kept failing".to_string());
                 let text = crate::v3::cascade::handover(
@@ -2361,7 +2386,7 @@ fn synthesize(
             conversation
         };
 
-        ask_model(backend, &synth, &research::synthesis_prompt(language), &conversation, &[], sink, stopped)
+        ask_model(backend, &synth, (&prompt.turn_id, crate::guard::modelgate::Purpose::ResearchFinal), &research::synthesis_prompt(language), &conversation, &[], sink, stopped)
     });
 
     match attempt {
@@ -3315,7 +3340,9 @@ mod end_to_end {
 
         let recorder = crate::engines::Recorder::new();
 
-        drive(Backend::Api, &fake(first_url), &workspace, Options { autonomy: Autonomy::Auto, max_steps: 6, auto_check: false, research: None }, None, &Default::default(), &prompt, &recorder.sink());
+        /* The failover is what the contract switches off under a pin, so this proof of the failover itself runs with the
+           contract off - which is also the proof that switch off is every earlier version's behaviour. */
+        crate::v3::ablating(&["models.contract"], || drive(Backend::Api, &fake(first_url), &workspace, Options { autonomy: Autonomy::Auto, max_steps: 6, auto_check: false, research: None }, None, &Default::default(), &prompt, &recorder.sink()));
         crate::v3::failover::set_order_for_test(Vec::new());
 
         let (_, handed) = (first.join().unwrap(), second.join().unwrap());
@@ -3487,7 +3514,7 @@ mod end_to_end {
         let prompt = prompt_in(&root, "turn-cascade", "make the orders tests pass", "local-test");
         let recorder = crate::engines::Recorder::new();
 
-        drive(Backend::Api, &fake(draft_url, "draft-model"), &workspace, Options { autonomy: Autonomy::Auto, max_steps: 8, auto_check: false, research: None }, None, &Default::default(), &prompt, &recorder.sink());
+        crate::v3::ablating(&["models.contract"], || drive(Backend::Api, &fake(draft_url, "draft-model"), &workspace, Options { autonomy: Autonomy::Auto, max_steps: 8, auto_check: false, research: None }, None, &Default::default(), &prompt, &recorder.sink()));
         crate::v3::cascade::set_strong_for_test(None);
         FAKE_TARGETS.with(|targets| targets.borrow_mut().clear());
 
@@ -3819,11 +3846,11 @@ mod end_to_end {
         let recorder = crate::engines::Recorder::new();
         let stopped = || false;
 
-        let guarded = ask_model(Backend::Ollama, &target, "system", huge.as_array().unwrap(), &[], &recorder.sink(), &stopped);
+        let guarded = ask_model(Backend::Ollama, &target, ("", crate::guard::modelgate::Purpose::Main), "system", huge.as_array().unwrap(), &[], &recorder.sink(), &stopped);
 
         assert!(guarded.as_ref().is_err_and(|reason| reason.starts_with("ContextOverflow")), "{guarded:?}");
 
-        let unguarded = crate::v3::ablating(&["local.runtime_guard"], || ask_model(Backend::Ollama, &target, "system", huge.as_array().unwrap(), &[], &recorder.sink(), &|| true));
+        let unguarded = crate::v3::ablating(&["local.runtime_guard"], || ask_model(Backend::Ollama, &target, ("", crate::guard::modelgate::Purpose::Main), "system", huge.as_array().unwrap(), &[], &recorder.sink(), &|| true));
 
         assert!(unguarded.as_ref().is_err_and(|reason| !reason.starts_with("ContextOverflow")), "with the switch off the request is not refused by the guard: {unguarded:?}");
     }
@@ -3839,7 +3866,7 @@ mod end_to_end {
         let target = local_target(&url, 4_096);
         let messages = serde_json::json!([{ "role": "user", "content": "hello" }]);
         let recorder = crate::engines::Recorder::new();
-        let result = ask_model(Backend::Ollama, &target, "system", messages.as_array().unwrap(), &[], &recorder.sink(), &|| false);
+        let result = ask_model(Backend::Ollama, &target, ("", crate::guard::modelgate::Purpose::Main), "system", messages.as_array().unwrap(), &[], &recorder.sink(), &|| false);
 
         server.join().unwrap();
 
@@ -3857,6 +3884,119 @@ mod end_to_end {
         assert_eq!(target.url, ollama_native::URL);
         assert!(!target.url.contains("/v1"));
         assert!(target.local_context.is_some_and(|ctx| ctx > 0), "num_ctx is always sent");
+    }
+
+    /// A loopback address that must never be called: nothing accepts on it, and `untouched` says whether anyone tried.
+    fn forbidden_provider() -> (String, impl Fn() -> bool) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/v1/chat/completions", listener.local_addr().unwrap());
+
+        listener.set_nonblocking(true).unwrap();
+
+        (url, move || matches!(listener.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock))
+    }
+
+    fn fake_target(url: String, model: &str) -> Target {
+        Target {
+            url,
+            headers: vec![("content-type".to_string(), "application/json".to_string())],
+            dialect: Dialect::OpenAi,
+            model: model.to_string(),
+            price: None,
+            thinking: false,
+            effort: None,
+            local_context: None,
+            local_window: false,
+        }
+    }
+
+    /// P0-10 (Manual Pin): the person chose one model. A failover order, a cascade's strong model and a router's fast
+    /// model are all configured - and none of them is ever called, whichever way the turn goes. Each forbidden
+    /// address is a listener nobody accepts on; `untouched()` is false if anything so much as connected.
+    #[test]
+    fn a_pinned_turn_never_calls_another_model_whatever_is_configured() {
+        let root = std::env::temp_dir().join(format!("sdc-pin-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        let workspace = Workspace::new(root.to_str().unwrap(), None);
+        let (backup_url, backup_untouched) = forbidden_provider();
+
+        FAKE_TARGETS.with(|targets| targets.borrow_mut().insert("backup".to_string(), fake_target(backup_url.clone(), "backup-model")));
+        crate::v3::failover::set_order_for_test(vec![("backup".to_string(), "backup-model".to_string())]);
+        crate::v3::cascade::set_strong_for_test(Some(("backup".into(), "backup-model".into())));
+        crate::v3::router::set_fast_for_test(Some(("backup".into(), "backup-model".into())));
+
+        let options = || Options { autonomy: Autonomy::Auto, max_steps: 8, auto_check: false, research: None };
+
+        /* 1. The provider refuses (a 401): the failover would hand the task on. Pinned, the failure is the answer. */
+        let refused = {
+            let body = serde_json::json!({ "error": { "message": "Incorrect API key provided" } }).to_string();
+
+            format!("HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len())
+        };
+        let (url, server) = raw_provider(vec![refused]);
+        let mut prompt = prompt_in(&root, "turn-pin-failover", "make half.txt and finish the job", "pinned-model");
+
+        prompt.provider = Some("primary".into());
+
+        let recorder = crate::engines::Recorder::new();
+
+        drive(Backend::Api, &fake_target(url, "pinned-model"), &workspace, options(), None, &Default::default(), &prompt, &recorder.sink());
+        server.join().unwrap();
+
+        assert!(recorder.events().iter().any(|event| matches!(event, EngineEvent::Failed(_))), "the refusal reaches the person; nothing takes over");
+
+        /* 2. A draft that keeps failing the same step: the cascade would hand over to the strong model. */
+        let missing = call("c1", "read_file", serde_json::json!({ "path": "nothing-here.txt" }));
+        let (url, server) = raw_provider(vec![ok(missing.clone()), ok(missing.clone()), ok(missing), ok(chunk(serde_json::json!({ "content": "I could not find it." })) + "data: [DONE]\n\n")]);
+        let prompt = prompt_in(&root, "turn-pin-cascade", "make the orders tests pass", "pinned-model");
+        let recorder = crate::engines::Recorder::new();
+
+        drive(Backend::Api, &fake_target(url, "pinned-model"), &workspace, options(), None, &Default::default(), &prompt, &recorder.sink());
+
+        let asked = server.join().unwrap();
+
+        assert!(asked.iter().all(|body| body["model"] == "pinned-model"), "every request names the pinned model: {:?}", asked.iter().map(|body| body["model"].clone()).collect::<Vec<_>>());
+
+        /* 3. A plainly light question: the router would send it to the fast model. */
+        let (url, server) = provider(vec![chunk(serde_json::json!({ "content": "It means X." })) + "data: [DONE]\n\n"]);
+        let prompt = prompt_in(&root, "turn-pin-router", "what does this error mean?", "pinned-model");
+
+        drive(Backend::Api, &fake_target(url, "pinned-model"), &workspace, options(), None, &Default::default(), &prompt, &crate::engines::Recorder::new().sink());
+
+        let asked = server.join().unwrap();
+
+        assert!(asked.iter().all(|body| body["model"] == "pinned-model"));
+
+        crate::v3::failover::set_order_for_test(Vec::new());
+        crate::v3::cascade::set_strong_for_test(None);
+        crate::v3::router::set_fast_for_test(None);
+        FAKE_TARGETS.with(|targets| targets.borrow_mut().clear());
+
+        assert!(backup_untouched(), "the other model was never so much as connected to");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// P0-10: the gate itself, on the agent's own funnel - a call for a model other than the turn's is refused before
+    /// anything is sent (a `PinViolationError`), and is allowed again when the contract switch is off.
+    #[test]
+    fn a_forced_foreign_call_raises_pin_violation_and_the_switch_removes_the_gate() {
+        let _held = crate::guard::modelgate::register("turn-forced", crate::guard::modelgate::Gate::new(Some("deepseek"), "deepseek-chat", false, false));
+        let (url, untouched) = forbidden_provider();
+        let foreign = fake_target(url, "gpt-5-nano");
+        let messages = serde_json::json!([{ "role": "user", "content": "hi" }]);
+        let recorder = crate::engines::Recorder::new();
+        let refused = ask_model(Backend::Api, &foreign, ("turn-forced", crate::guard::modelgate::Purpose::Main), "system", messages.as_array().unwrap(), &[], &recorder.sink(), &|| true);
+
+        assert!(refused.as_ref().is_err_and(|reason| reason.starts_with("PinViolationError")), "{refused:?}");
+        assert!(untouched(), "and nothing was sent");
+
+        /* The same call with the contract off passes the gate (and is then stopped by the test's own `stopped`). */
+        let off = crate::v3::ablating(&["models.contract"], || crate::guard::modelgate::Gate::new(Some("deepseek"), "deepseek-chat", false, false));
+
+        assert!(off.permit(crate::guard::modelgate::Purpose::Main, None, "gpt-5-nano").is_ok());
     }
 
     /// A SearXNG server on loopback that answers every search with the same two pages.

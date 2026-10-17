@@ -607,6 +607,15 @@ const english = {
       /** The dropdown's search field (0.9.0). */
       search: 'Search models…',
       noMatches: (query: string): string => `Nothing matches “${query}”`,
+      /** The contract the chosen model runs under (P0-10): the badge beside the model button. */
+      mode: {
+        pinned: 'Pinned',
+        localRotation: (rows: number): string => `Local Rotation (${rows})`,
+        localOnly: 'Local-only',
+        pinnedHint: 'Every step of every turn runs on this model, and nothing switches it.',
+        localRotationHint: 'Each step tries this local model first; only a step it cannot do goes to your Rotation Chain, in your order.',
+        localOnlyHint: 'Everything runs on this computer. A step it cannot do stops and says so.',
+      },
       /** A measured local model's class beside its name (P0-9): S small, M medium, L large; `?` = measured on an earlier version. */
       probeClass: (label: string, contextTokens: number): string => `class ${label} · ${Math.round(contextTokens / 1024)}K context`,
       groupTitles: {

@@ -15,7 +15,7 @@ Status: `todo` · `in-progress` · `blocked` · `done`.
 | P0-7 | UI guide and visual baseline | 0 | P0-3 | done | n/a | sdc/docs/reports/P0-7.md | UI-GUIDE (73 tokens) + 4-view pixel visual regression; axe 0 violations |
 | P0-8 | Local Runtime Guard | 0 | P0-3 | done | local.runtime_guard | sdc/docs/reports/P0-8.md | count before send, ContextOverflow, prompt_eval_count judged, switch; live Ollama check left to the owner |
 | P0-9 | Model identity and capability probe | 0 | P0-8 | done | models.probe | sdc/docs/reports/P0-9.md | identity key + capability probe + class badge (en/bn); live Ollama probe left to the owner |
-| P0-10 | Model-selection contract and Pin Guard | 0 | P0-5, P0-9 | todo | models.contract (default ON after tests) |  |  |
+| P0-10 | Model-selection contract and Pin Guard | 0 | P0-5, P0-9 | done | models.contract (default ON after tests) | sdc/docs/reports/P0-10.md | ModelGate + Pin Guard (7+2 tests), mode badge en/bn, protocol:check fixed for the P0-3 split |
 | P0-11 | Bench rules, hard tier and small-model bench | 0 | P0-9 | todo | n/a |  |  |
 | P0-12 | Speed baseline and Step Trace | 0 | P0-11 | todo | trace.steps |  |  |
 | P0-13 | Output compressor, OS normalizer, command runner | 0 | P0-3 | done | tools.compress, tools.osnorm, tools.runner | sdc/docs/reports/P0-13.md | compressor contract (property test), per-OS normaliser, deadline+group-kill runner; 41 guard tests |

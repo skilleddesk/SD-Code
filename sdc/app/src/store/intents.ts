@@ -217,7 +217,9 @@ export interface ModelsView {
     cost: string;
     source: 'live' | 'cache' | 'bundled';
     fetchedAt?: string | null;
+    probe?: { class: string; status: 'probed' | 'provisional'; effectiveContext: number; toolCallReliability: number };
   }[];
+  rotation?: { enabledRows: number };
   snapshot: string;
   refreshed: boolean;
   notes: string[];
@@ -241,10 +243,11 @@ export interface InUseModel {
  */
 export async function refreshCatalog(): Promise<void> {
   try {
-    const { models, inUse } = (await sdcpCall('models.list', {})) as ModelsView;
+    const { models, inUse, rotation } = (await sdcpCall('models.list', {})) as ModelsView;
 
     useModelStore.getState().setCatalog(models.map((row) => ({ ...row, tier: tierFromName(row.tier) })));
     useModelStore.getState().setInUse(inUse ?? []);
+    useModelStore.getState().setRotationRows(rotation?.enabledRows ?? 0);
   } catch {
     /* A window with no daemon keeps its fallback list; the boot toast has already explained why. */
   }

@@ -4,7 +4,7 @@
 //!
 //! - the daemon's door: per-client tokens, `Host` and `Origin` checks, rate limiting (P0-6) - **here now**
 //! - the Local Runtime Guard: what a local runtime is really asked to carry (P0-8) - **here now**, `guard::context`
-//! - the Pin Guard: a pinned model stays pinned (P0-10) - `crate::v3::modelgate`, `crate::v3::effort`
+//! - the Pin Guard: a pinned model stays pinned (P0-10) - **here now**, `guard::modelgate`
 //! - the step, budget and cost guards (P1-3, P1-5) - `crate::trust::policy`, `crate::trust::cost`
 //! - the Output Compressor and the OS-normaliser for commands (P0-13)
 //! - the sandbox policy a command runs under (P0-14)
@@ -15,5 +15,6 @@
 pub mod compress;
 pub mod context;
 pub mod daemon;
+pub mod modelgate;
 pub mod osnorm;
 pub mod runner;

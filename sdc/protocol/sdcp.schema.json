@@ -1359,7 +1359,8 @@
             "selected": "object",
             "inUse": [
               "object"
-            ]
+            ],
+            "rotation": "object"
           }
         },
         "models.select": {

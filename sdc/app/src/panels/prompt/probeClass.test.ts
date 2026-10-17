@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { bn } from '../src/locales/bn';
-import { strings } from '../src/strings';
+import { bn } from '../../locales/bn';
+import { strings } from '../../strings';
 
 describe('the model class label (P0-9)', () => {
   it('reads in English and in Bengali, with a ? for a provisional measurement', () => {

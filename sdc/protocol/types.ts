@@ -2052,6 +2052,8 @@ export interface SdcpMethodMap {
         /** Where the row came from: the provider just now, the last live answer, or the bundle. */
         source: 'live' | 'cache' | 'bundled';
         fetchedAt?: string | null;
+        /** A local model that has been measured (P0-9): its class and what was measured. */
+        probe?: { class: string; status: 'probed' | 'provisional'; effectiveContext: number; toolCallReliability: number };
       }[];
       /** The day the bundled catalogue was last curated. */
       snapshot: string;
@@ -2061,6 +2063,8 @@ export interface SdcpMethodMap {
       selected: { modelId: string | null; providerId: string | null };
       /** The models in use (0.12.4): more than one, oldest first. */
       inUse: { modelId: string; providerId: string | null }[];
+      /** The Rotation Chain on this computer (P0-10): how many rows are enabled. The mode badge reads it. */
+      rotation: { enabledRows: number };
     };
   };
   /** Choose a model and put it in use - or, with `remove`, take it out of use without switching. */

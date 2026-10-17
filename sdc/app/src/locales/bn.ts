@@ -34,6 +34,14 @@ export const bn: StringsPack = {
     steerSend: 'চলমান কাজে যোগ করুন',
     steerPlaceholder: 'কাজ চলার মাঝেই কিছু যোগ করুন - পরের ধাপে সেটা মাথায় নেবে…',
     model: {
+      mode: {
+        pinned: 'পিন করা',
+        localRotation: (rows: number): string => `লোকাল রোটেশন (${rows})`,
+        localOnly: 'শুধু লোকাল',
+        pinnedHint: 'প্রতিটি টার্নের প্রতিটি ধাপ এই মডেলেই চলে, কিছুই এটা বদলায় না।',
+        localRotationHint: 'প্রতিটি ধাপ আগে এই লোকাল মডেলে; যে ধাপ সে পারে না শুধু সেটা আপনার সাজানো Rotation Chain-এ যায়।',
+        localOnlyHint: 'সবকিছু এই কম্পিউটারেই চলে। যা পারে না, সেখানে থেমে জানায়।',
+      },
       probeClass: (label: string, contextTokens: number): string => `ক্লাস ${label} · ${Math.round(contextTokens / 1024)}K context`,
     },
   },

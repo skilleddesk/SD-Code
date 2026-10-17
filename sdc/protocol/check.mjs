@@ -21,7 +21,7 @@
 //   3. every method the *daemon* dispatches (`"x.y" =>` arms) is in both.
 //
 // Exit code 0 means they agree; 1 lists what differs.
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -31,8 +31,13 @@ const root = join(here, '..');
 const schema = JSON.parse(readFileSync(join(here, 'sdcp.schema.json'), 'utf8'));
 const types = readFileSync(join(here, 'types.ts'), 'utf8');
 /* The dispatch spans methods.rs and, since 0.12, its three child modules (the kernel, the Intent Engine, the agency). */
-const methods_rs = ['methods.rs', 'kernel.rs', 'intent_methods.rs', 'ops_methods.rs', 'agent_methods.rs', 'anywhere_methods.rs']
-  .map((file) => readFileSync(join(root, 'sdcd', 'src', 'sdcp', file), 'utf8'))
+/* Every module of `sdcp/`, not a list of them: P0-3 split methods.rs into six more (host, workspace, file, model, guard,
+   fleet) and a fixed list made this check report 40-odd "no arm" methods that were only in another file. */
+const sdcpDir = join(root, 'sdcd', 'src', 'sdcp');
+const methods_rs = readdirSync(sdcpDir)
+  .filter((file) => file.endsWith('.rs') && !file.startsWith('._'))
+  .sort()
+  .map((file) => readFileSync(join(sdcpDir, file), 'utf8'))
   .join('\n');
 
 const schemaMethods = new Set(schema.$defs.methodNames.items?.enum ?? schema.$defs.methodNames.enum);

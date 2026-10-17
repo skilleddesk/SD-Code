@@ -2,7 +2,8 @@ import { ChevronDown } from 'lucide-react';
 import { useEffect, useRef } from 'react';
 
 import { useChatModel } from '../../store/chatModel';
-import { tierLabel, useModelStore, type Tier } from '../../store/model';
+import { modelMode, tierLabel, useModelStore, type Tier } from '../../store/model';
+import { strings } from '../../strings';
 import { ModelDropdown } from './ModelDropdown';
 import { tierIcon } from './modelIcons';
 
@@ -32,7 +33,7 @@ const TIER_TONE: Record<Tier, string> = {
 
 export function ModelSelector({ sessionId }: { sessionId: string | null }) {
   /* The chat this box belongs to - each chat has its own model (0.16.1). */
-  const { tier, engine, model } = useChatModel(sessionId);
+  const { tier, engine, model, providerId } = useChatModel(sessionId);
   const key = sessionId ?? '';
   const dropdownOpen = useModelStore((state) => state.dropdownOpen === key);
   const closeDropdown = useModelStore((state) => state.closeDropdown);
@@ -66,6 +67,11 @@ export function ModelSelector({ sessionId }: { sessionId: string | null }) {
   }, [dropdownOpen, closeDropdown]);
 
   const Icon = tierIcon(tier);
+  const rotationRows = useModelStore((state) => state.rotationRows);
+  const mode = modelMode(providerId, rotationRows);
+  const modeText = strings.prompt.model.mode;
+  const modeLabel = mode === 'pinned' ? modeText.pinned : mode === 'local-rotation' ? modeText.localRotation(rotationRows) : modeText.localOnly;
+  const modeHint = mode === 'pinned' ? modeText.pinnedHint : mode === 'local-rotation' ? modeText.localRotationHint : modeText.localOnlyHint;
 
   return (
     <div className="model-selector relative" ref={rootRef}>
@@ -99,6 +105,13 @@ export function ModelSelector({ sessionId }: { sessionId: string | null }) {
 
         {/* The model is the headline; the tier and the engine are how it runs, in a quieter voice. */}
         <span className="mmodel min-w-0 truncate font-medium text-text-primary">{model}</span>
+        <span
+          className="mmode shrink-0 rounded-full border border-border-subtle px-[6px] text-[10px] leading-[16px] text-text-muted"
+          data-model-mode={mode}
+          title={modeHint}
+        >
+          {modeLabel}
+        </span>
         <span className="mlabel sr-only">
           {tierLabel(tier)} · <span className="mengine">{engine}</span>
         </span>
