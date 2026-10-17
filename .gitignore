@@ -143,6 +143,10 @@ desktop.ini
 # scripts plus an Edge user-data profile. A browser profile is browsing state
 # (cookies, history, autofill) and must never be published, so the whole
 # directory is ignored rather than the profile inside it.
+# macOS writes an AppleDouble `._name` beside every file on a drive without extended attributes: it is the
+# Finder's metadata and must never reach a build or a repository.
+._*
+
 _verify/
 
 # ---------------------------------------------------------------------------
