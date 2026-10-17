@@ -6,7 +6,7 @@ const repo = 'skilleddesk/SD-Code';
 
 function api(path) {
   try {
-    const raw = execFileSync('curl.exe', ['-sS', `https://api.github.com/repos/${repo}${path}`], { encoding: 'utf8' });
+    const raw = execFileSync(process.platform === 'win32' ? 'curl.exe' : 'curl', ['-sS', `https://api.github.com/repos/${repo}${path}`], { encoding: 'utf8' });
 
     return { ok: true, body: JSON.parse(raw) };
   } catch (error) {
