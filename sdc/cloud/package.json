@@ -1,7 +1,7 @@
 {
   "name": "@sdc/cloud",
   "private": true,
-  "version": "3.0.2",
+  "version": "3.0.3",
   "type": "module",
   "description": "SDC Anywhere relay: a Cloudflare Worker, one Durable Object per daemon, and D1. It forwards ciphertext and holds no plaintext.",
   "scripts": {

@@ -501,6 +501,109 @@ pub fn open_stream(
     Ok(Box::new(body_lines(reader, head.chunked)))
 }
 
+/// How long a local model may say nothing before its first byte (the model loading from disk, the prompt read on a
+/// slow card), and between two bytes once it has started. Past either, the call fails with a sentence instead of
+/// holding the turn - and the Stop button - for ever.
+pub const LOCAL_SILENCE_FIRST: std::time::Duration = std::time::Duration::from_secs(600);
+pub const LOCAL_SILENCE_AFTER: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// A socket that waits for a slow local model without waiting for ever.
+///
+/// The plain-HTTP road to Ollama set no timeout at all, so a server that stopped answering (stuck loading, out of
+/// graphics memory, Mac asleep and woken) left the agent blocked in `read` with nothing able to wake it: the turn
+/// stayed "working", and Stop was only looked at *between* lines. The socket now wakes every second; each wake asks
+/// whether the turn was stopped, and ends the call once the silence outlasts its limit. Nothing is lost on a wake:
+/// the loop is below the line reader, so a half-read line is never abandoned.
+pub struct Patient<R: Read> {
+    inner: R,
+    turn_id: String,
+    first: std::time::Duration,
+    after: std::time::Duration,
+    spoke: bool,
+    last: std::time::Instant,
+    /// Set when the call ended because of the silence, so the caller can say so instead of "connection dropped".
+    pub silent: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl<R: Read> Patient<R> {
+    pub fn new(inner: R, turn_id: &str, first: std::time::Duration, after: std::time::Duration) -> Self {
+        Self { inner, turn_id: turn_id.to_string(), first, after, spoke: false, last: std::time::Instant::now(), silent: Default::default() }
+    }
+}
+
+impl<R: Read> Read for Patient<R> {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        use std::io::ErrorKind::{Interrupted, TimedOut, WouldBlock};
+
+        loop {
+            match self.inner.read(buffer) {
+                Ok(read) => {
+                    self.spoke |= read > 0;
+                    self.last = std::time::Instant::now();
+
+                    return Ok(read);
+                }
+                Err(error) if error.kind() == Interrupted => continue,
+                Err(error) if matches!(error.kind(), WouldBlock | TimedOut) => {
+                    /* Not `Interrupted`: the standard line reader retries that kind for ever. */
+                    if crate::engines::cancel::requested(&self.turn_id) {
+                        return Err(std::io::Error::new(std::io::ErrorKind::ConnectionAborted, "stopped"));
+                    }
+
+                    if self.last.elapsed() > if self.spoke { self.after } else { self.first } {
+                        self.silent.store(true, std::sync::atomic::Ordering::SeqCst);
+
+                        return Err(std::io::Error::new(TimedOut, "silent"));
+                    }
+                }
+                Err(error) => return Err(error),
+            }
+        }
+    }
+}
+
+/// [`open_stream`] for a local server on plain HTTP, with the turn's patience: a connect that cannot hang, and a
+/// body read through [`Patient`]. The second value says whether the call ended because the server went silent.
+pub fn open_stream_patient(
+    url: &str,
+    headers: &[(String, String)],
+    body: &str,
+    turn_id: &str,
+) -> Result<(Box<dyn std::io::BufRead + Send>, std::sync::Arc<std::sync::atomic::AtomicBool>), String> {
+    use std::net::ToSocketAddrs;
+
+    let rest = url.strip_prefix("http://").ok_or_else(|| format!("{url}: only http:// endpoints are read patiently"))?;
+    let (authority, path) = match rest.split_once('/') {
+        Some((authority, path)) => (authority, format!("/{path}")),
+        None => (rest, "/".to_string()),
+    };
+    let host = authority.split(':').next().unwrap_or(authority);
+    let address = authority.to_socket_addrs().map_err(|error| format!("{authority}: {error}"))?.next().ok_or_else(|| format!("{authority}: no address"))?;
+    let mut socket = TcpStream::connect_timeout(&address, std::time::Duration::from_secs(5)).map_err(|error| format!("{authority}: {error}"))?;
+    let mut request = format!("POST {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\nContent-Length: {}\r\n", body.len());
+
+    for (name, value) in headers {
+        request.push_str(&format!("{name}: {value}\r\n"));
+    }
+
+    request.push_str("\r\n");
+    request.push_str(body);
+
+    socket.write_all(request.as_bytes()).map_err(|error| error.to_string())?;
+    socket.set_read_timeout(Some(std::time::Duration::from_secs(1))).map_err(|error| error.to_string())?;
+
+    let patient = Patient::new(socket, turn_id, LOCAL_SILENCE_FIRST, LOCAL_SILENCE_AFTER);
+    let silent = patient.silent.clone();
+    let mut reader = std::io::BufReader::new(patient);
+    let head = read_head(&mut reader).map_err(|error| if silent.load(std::sync::atomic::Ordering::SeqCst) { "silent".to_string() } else { error.to_string() })?;
+
+    if head.status != 0 && !(200..300).contains(&head.status) {
+        return Err(rejection(head.status, &read_all(reader)));
+    }
+
+    Ok((Box::new(body_lines(reader, head.chunked)), silent))
+}
+
 /// Reads an SSE body to its end, pushing every event as the line it came on arrives.
 ///
 /// A body that ends without `[DONE]` is still a finished answer: the OpenAI-compatible providers close
@@ -1441,5 +1544,107 @@ mod tests {
         let stopped: Result<(), String> = with_retries(&|| true, |_, _, _| {}, || Err("timed out".to_string()));
 
         assert_eq!(stopped, Err("stopped".to_string()));
+    }
+}
+
+#[cfg(test)]
+mod patient_tests {
+    use super::*;
+    use std::io::{BufRead, Read};
+    use std::net::TcpListener;
+    use std::time::Duration;
+
+    /// A server that accepts and never writes: the stuck Ollama.
+    fn mute_server() -> (std::net::SocketAddr, std::thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let held = std::thread::spawn(move || {
+            let _connection = listener.accept().map(|(socket, _)| socket);
+
+            std::thread::sleep(Duration::from_secs(3));
+        });
+
+        (address, held)
+    }
+
+    fn connected(address: std::net::SocketAddr) -> TcpStream {
+        let socket = TcpStream::connect(address).unwrap();
+
+        socket.set_read_timeout(Some(Duration::from_millis(40))).unwrap();
+
+        socket
+    }
+
+    #[test]
+    fn a_server_that_goes_silent_ends_the_call_instead_of_holding_it() {
+        let (address, _held) = mute_server();
+        let mut patient = Patient::new(connected(address), "turn-patient-silent", Duration::from_millis(200), Duration::from_millis(200));
+        let started = std::time::Instant::now();
+        let error = patient.read(&mut [0u8; 8]).unwrap_err();
+
+        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+        assert!(patient.silent.load(std::sync::atomic::Ordering::SeqCst), "the caller can tell silence from a dropped connection");
+        assert!(started.elapsed() < Duration::from_secs(2));
+    }
+
+    /// The limiter has two limits: once the server has spoken, the shorter `after` applies, not the long `first`.
+    #[test]
+    fn once_the_server_has_spoken_the_shorter_silence_limit_applies() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+
+            socket.write_all(b"x").unwrap();
+            std::thread::sleep(Duration::from_secs(3));
+        });
+        let mut patient = Patient::new(connected(address), "turn-patient-after", Duration::from_secs(60), Duration::from_millis(200));
+        let mut byte = [0u8; 1];
+        let started = std::time::Instant::now();
+
+        assert_eq!(patient.read(&mut byte).unwrap(), 1);
+        assert!(!patient.silent.load(std::sync::atomic::Ordering::SeqCst));
+
+        let error = patient.read(&mut byte).unwrap_err();
+
+        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+        assert!(patient.silent.load(std::sync::atomic::Ordering::SeqCst));
+        assert!(started.elapsed() < Duration::from_secs(2), "the 60 s first-byte limit must not apply after the first byte");
+        drop(patient);
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn stop_is_heard_while_the_server_says_nothing() {
+        let (address, _held) = mute_server();
+        let mut patient = Patient::new(connected(address), "turn-patient-stop", Duration::from_secs(60), Duration::from_secs(60));
+
+        crate::engines::cancel::request("turn-patient-stop");
+
+        let error = patient.read(&mut [0u8; 8]).unwrap_err();
+
+        assert_eq!(error.to_string(), "stopped");
+        assert!(!patient.silent.load(std::sync::atomic::Ordering::SeqCst));
+        assert_ne!(error.kind(), std::io::ErrorKind::Interrupted, "std's line reader would retry that kind for ever");
+    }
+
+    #[test]
+    fn a_slow_server_is_waited_for_and_no_line_is_lost() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+
+            socket.write_all(b"data: {\"a\"").unwrap();
+            std::thread::sleep(Duration::from_millis(300));
+            socket.write_all(b":1}\n").unwrap();
+        });
+        let patient = Patient::new(connected(address), "turn-patient-slow", Duration::from_secs(5), Duration::from_secs(5));
+        let mut line = String::new();
+
+        std::io::BufReader::new(patient).read_line(&mut line).unwrap();
+        server.join().unwrap();
+
+        assert_eq!(line, "data: {\"a\":1}\n", "a pause inside a line does not split it");
     }
 }

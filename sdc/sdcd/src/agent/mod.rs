@@ -676,11 +676,28 @@ fn ask_model(backend: Backend, target: &Target, turn: (&str, crate::guard::model
             |retry, wait, reason| card.notice(retry, wait, reason),
             || {
                 let sent_at = std::time::Instant::now();
-                let lines = crate::engines::native_api::open_stream(&target.url, &target.headers, body)?;
+                /* A local model is read with patience (a socket that wakes, a limit on silence); an API as before. */
+                let quiet = |seconds: u64| {
+                    /* Not worded like a dropped connection: asking a stuck server again and again is what held the turn. */
+                    format!(
+                        "Ollama stopped answering `{}` (nothing arrived for {seconds} s). It may be stuck loading the model or out of graphics memory: quit Ollama and open it again, or pick a smaller model; then send \"continue\".",
+                        target.model
+                    )
+                };
+                let (lines, silent) = if target.local_context.is_some() {
+                    crate::engines::native_api::open_stream_patient(&target.url, &target.headers, body, turn.0)
+                        .map(|(lines, silent)| (lines, Some(silent)))
+                        .map_err(|reason| if reason == "silent" { quiet(crate::engines::native_api::LOCAL_SILENCE_FIRST.as_secs()) } else { reason })?
+                } else {
+                    (crate::engines::native_api::open_stream(&target.url, &target.headers, body)?, None)
+                };
                 let timed: Box<dyn std::io::BufRead + Send> = Box::new(FirstByte { inner: lines, started: sent_at, first: first_byte.clone() });
                 let lines = if target.local_context.is_some() { ollama_native::as_sse(timed) } else { timed };
 
-                dialect::read_reply(target.dialect, lines, sink, stopped)
+                dialect::read_reply(target.dialect, lines, sink, stopped).map_err(|reason| match silent {
+                    Some(silent) if silent.load(std::sync::atomic::Ordering::SeqCst) => quiet(crate::engines::native_api::LOCAL_SILENCE_AFTER.as_secs()),
+                    _ => reason,
+                })
             },
         )
     };

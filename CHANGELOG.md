@@ -15,6 +15,10 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [3.0.3] — a local model that stops answering no longer holds the turn
+
+- **Fixed: an Agent turn on a local model could wait for ever.** The plain-HTTP road to Ollama set no timeout of any kind - not on connecting, not on reading - and the Stop button was only looked at *between* lines, so a server that went quiet (stuck loading the model, out of graphics memory, the Mac asleep and woken) left the turn "working" with nothing able to wake it. The socket now wakes every second (`engines::native_api::Patient`): it asks whether the turn was stopped, and ends the call when the silence outlasts its limit - 600 s before the first byte (loading the model, reading a long prompt on a slow card), 120 s once it has started. The turn then says, in words, that Ollama stopped answering and what to do (quit and reopen Ollama, pick a smaller model, send "continue"); it is not retried eight times, which would have held the turn eight times as long. A pause *inside* a line loses nothing. Sub-agents use the same road. Needs no API key: the local road never asked for one. Three tests (silence ends the call, Stop is heard while the server is mute, a slow server's line is not split).
+
 ## [3.0.2] — the work carries on when the window closes, and a chat waiting on you says so
 
 Two faults, both found in the owner's own database, both reported as "maje maje atke jasse, kaj na kore hold
