@@ -3,6 +3,7 @@ import { SDCP_VERSION } from '../../../protocol/types';
 import { useState, type ReactNode } from 'react';
 import {
   Bell,
+  Bot,
   DatabaseBackup,
   Globe,
   Download,
@@ -27,6 +28,7 @@ import { useAppStore } from '../store/store';
 import { toast } from '../store/toast';
 import { useOverlayStore, type SettingsTab } from '../store/overlays';
 import { BTN, BTN_PRIMARY, BTN_SECONDARY } from '../panels/ui/button';
+import { AgentsTab } from './AgentsTab';
 import { storedSettings, storeSetting } from '../lib/settings';
 import { Modal } from './Modal';
 import { LanguageTab, TeamTab, UpdatesTab } from '../kernel/SettingsTabs';
@@ -71,6 +73,7 @@ const TAB_ICON: Record<string, LucideIcon> = {
   info: Info,
   globe: Globe,
   smartphone: Smartphone,
+  bot: Bot,
 };
 
 type RowValue = boolean | string;
@@ -234,6 +237,7 @@ export function Settings() {
         {tab === 'safety' ? <AgentSettings /> : null}
         {tab === 'research' ? <ResearchSettings /> : null}
         {tab === 'anywhere' ? <AnywhereSettings /> : null}
+        {tab === 'agents' ? <AgentsTab /> : null}
 
         {tab === 'safety' ? (
           <button
@@ -248,7 +252,7 @@ export function Settings() {
           </button>
         ) : null}
 
-        {tab !== 'keymap' && tab !== 'about' && tab !== 'backup' && tab !== 'language' && tab !== 'team' && tab !== 'updates' && tab !== 'research' && tab !== 'anywhere' ? (
+        {tab !== 'keymap' && tab !== 'about' && tab !== 'backup' && tab !== 'language' && tab !== 'team' && tab !== 'updates' && tab !== 'research' && tab !== 'anywhere' && tab !== 'agents' ? (
           <GroupTable
             table={tableFor(tab)}
             values={values}

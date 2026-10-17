@@ -1362,13 +1362,16 @@ fn review_note(workspace: &Workspace, changed: &HashSet<String>) -> Option<Strin
 /// The gate of a turn (P0-10): the person's model, whether a Rotation Chain has an enabled row, whether the project is
 /// local-only, and the exceptions the person wrote down themselves.
 fn turn_gate(backend: Backend, target: &Target, prompt: &Prompt, policy: &crate::trust::policy::Policy) -> crate::guard::modelgate::Gate {
-    let chain_has_rows = crate::data::home().map(|home| crate::data::rotation::load(&home).0).is_some_and(|rotation| !rotation.usable().is_empty());
+    let rotation = crate::data::home().map(|home| crate::data::rotation::load(&home).0).unwrap_or_default();
+    /* The chain as this project may use it (a `local-only` project drops every remote row), in the person's order. */
+    let rows: Vec<crate::data::rotation::Row> = rotation.usable().into_iter().filter(|row| !policy.privacy_local() || crate::data::rotation::is_local(&row.model)).cloned().collect();
 
     /* The pin is the model the person's choice resolved to - `target` is built from the prompt, so in a turn the two are
        the same model; a local backend is the `ollama` provider whatever the prompt called it. */
     let provider = if backend == Backend::Ollama { Some("ollama") } else { prompt.provider.as_deref() };
+    let named: Vec<(Option<&str>, &str)> = rows.iter().filter_map(|row| row.model.split_once(':').map(|(provider, model)| (Some(provider), model))).collect();
 
-    crate::guard::modelgate::Gate::new(provider, &target.model, chain_has_rows, policy.privacy_local())
+    crate::guard::modelgate::Gate::new(provider, &target.model, !rows.is_empty(), policy.privacy_local()).with_chain(&named)
 }
 
 /// The loop over a resolved endpoint - separate from `run` so a test can point it at a loopback

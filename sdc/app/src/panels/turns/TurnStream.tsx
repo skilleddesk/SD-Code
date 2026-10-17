@@ -2,6 +2,7 @@ import { ChevronRight } from 'lucide-react';
 
 import { strings } from '../../strings';
 import { toast } from '../../store/toast';
+import { useModelStore } from '../../store/model';
 import { FlowWork } from './FlowWork';
 import { ErrorCard } from './ErrorCard';
 import { PlanCard } from './PlanCard';
@@ -75,6 +76,8 @@ export function TurnStream({ turns, collapsed = null, sessionId }: TurnStreamPro
 
 /** One `.turn`: the user's message, the meta line, then whatever the engine produced. */
 function TurnBlock({ turn, sessionId, latest }: { turn: Turn; sessionId: string; latest: boolean }) {
+  const rotationRows = useModelStore((state) => state.rotationRows);
+
   return (
     <div className="turn mb-[30px]">
       <UserMessage message={turn.user} />
@@ -109,7 +112,7 @@ function TurnBlock({ turn, sessionId, latest }: { turn: Turn; sessionId: string;
       {/* The answer sits between the work and the totals: thinking, the tool cards the answer came
           out of, then what the engine actually said - and the error card above it, because a failed
           turn has an explanation where its answer would be. */}
-      {turn.error ? <ErrorCard error={turn.error} /> : null}
+      {turn.error ? <ErrorCard error={turn.error} canEscalate={latest && turn.author.engine === 'ollama' && rotationRows > 0} /> : null}
 
       {/* A `/research` answer's numbered sources (0.16.1): what every [n] in it points at. */}
       {turn.sources !== undefined && turn.sources.length > 0 ? <SourcesList sources={turn.sources} /> : null}

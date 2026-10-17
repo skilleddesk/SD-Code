@@ -11,6 +11,7 @@ import { AddHost } from './modals/AddHost';
 import { Connect } from './modals/Connect';
 import { HostSwitcherPopover } from './modals/HostSwitcherPopover';
 import { Permission } from './modals/Permission';
+import { EscalateDialog } from './modals/EscalateDialog';
 import { SecretSweep } from './modals/SecretSweep';
 import { ProviderHub } from './modals/ProviderHub';
 import { NewProject } from './modals/NewProject';
@@ -161,6 +162,7 @@ export function App() {
       <MemoryDialog />
       <Onboarding />
       <SecretSweep />
+      <EscalateDialog />
       {/* Last of the dialogs: a turn waiting for an approval must never sit under another dialog. */}
       <Permission />
 

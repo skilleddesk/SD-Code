@@ -267,6 +267,9 @@ export type SdcpMethod =
   | 'team.set'
   | 'settings.get'
   | 'settings.set'
+  | 'rotation.escalate'
+  | 'rotation.set'
+  | 'rotation.get'
   | 'local.scan'
   | 'voice.model.download'
   | 'secrets.move'
@@ -709,6 +712,62 @@ export interface VoiceStatus {
   installHint: string | null;
   models: { id: string; file: string; bytes: number; note: string; installed: boolean; source: string }[];
   download: { state: 'idle' | 'downloading' | 'done' | 'failed'; id?: string; done?: number; total?: number; error?: string };
+}
+
+/** Price hint for a model: dollars per million tokens, and for a typical step (6k in, 1k out). `known: false` when the catalogue has no price. */
+export interface CostHint {
+  known: boolean;
+  inPer1M?: number;
+  outPer1M?: number;
+  perStep?: number;
+}
+
+export interface RotationRowInput {
+  model: string;
+  enabled: boolean;
+  allowedSteps?: string[];
+  maxCostPerStep?: number;
+  maxRepairRetries?: number;
+}
+
+export interface RotationRow extends RotationRowInput {
+  index: number;
+  local: boolean;
+  allowedSteps: string[];
+  maxCostPerStep: number;
+  maxRepairRetries: number;
+  cost: CostHint;
+}
+
+export interface RotationGlobal {
+  dailyUsd: number;
+  monthlyUsd: number;
+  askBeforeCloud: boolean;
+  /** How many steps in a row may go to a model that is not local. */
+  offloadLimit: number;
+}
+
+/** `rotation.toml` as the Agents tab edits it (Phase 3). `warning` is set when the file on disk did not parse (the chain then reads as empty). */
+export interface RotationView {
+  rows: RotationRow[];
+  global: RotationGlobal;
+  warning: string | null;
+  path: string;
+}
+
+/** `rotation.escalate`: with `confirm` false, what would be sent; with it true, the turn that was started. */
+export interface EscalateAnswer {
+  sent: boolean;
+  model: string;
+  position: number;
+  of: number;
+  capsule?: string;
+  files?: string[];
+  redactions?: string[];
+  tokens?: number;
+  estimateUsd?: number | null;
+  costKnown?: boolean;
+  turnId?: string;
 }
 
 /** One place a secret sits in a folder (Phase 0.4): where and what, never the value. */
@@ -2431,6 +2490,9 @@ export interface SdcpMethodMap {
   'team.set': { params: { members?: TeamMember[]; current?: string }; result: TeamState };
   'settings.get': { params: { key: string }; result: { key: string; value: string | null } };
   'settings.set': { params: { key: string; value: string | boolean }; result: { key: string; value: string } };
+  'rotation.escalate': { params: { sessionId: string; confirm?: boolean; autonomy?: string }; result: EscalateAnswer };
+  'rotation.set': { params: { rows: RotationRowInput[]; global?: RotationGlobal }; result: RotationView };
+  'rotation.get': { params: Record<string, never>; result: RotationView };
   'local.scan': { params: Record<string, never>; result: LocalScan };
   'voice.model.download': { params: { id: string; confirm: boolean }; result: { state: string; id?: string; done?: number; total?: number; error?: string } };
   'secrets.move': { params: { path: string; file: string; line: number }; result: { name: string; file: string; line: number; note: string } };

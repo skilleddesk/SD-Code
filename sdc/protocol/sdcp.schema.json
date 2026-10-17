@@ -338,6 +338,9 @@
           "team.set",
           "settings.get",
           "settings.set",
+          "rotation.escalate",
+          "rotation.set",
+          "rotation.get",
           "local.scan",
           "voice.model.download",
           "secrets.move",
@@ -2334,6 +2337,46 @@
           "result": {
             "key": "string",
             "value": "string"
+          }
+        },
+        "rotation.escalate": {
+          "params": {
+            "sessionId": "string",
+            "confirm": "boolean?",
+            "autonomy": "string?"
+          },
+          "result": {
+            "sent": "boolean",
+            "model": "string",
+            "position": "integer",
+            "of": "integer"
+          }
+        },
+        "rotation.set": {
+          "params": {
+            "rows": [
+              "object"
+            ],
+            "global": "object?"
+          },
+          "result": {
+            "rows": [
+              "object"
+            ],
+            "global": "object",
+            "warning": "string?",
+            "path": "string"
+          }
+        },
+        "rotation.get": {
+          "params": {},
+          "result": {
+            "rows": [
+              "object"
+            ],
+            "global": "object",
+            "warning": "string?",
+            "path": "string"
           }
         },
         "local.scan": {

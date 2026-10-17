@@ -88,6 +88,12 @@ impl Daemon {
     pub(super) fn engine_start(&self, envelope: &Envelope, out: Arc<dyn Notifier>) -> Result<Value, ErrorObject> {
         let session_id = envelope.opt_str("sessionId").unwrap_or_else(|| "s1".into());
         let engine_id = envelope.opt_str("engine").unwrap_or_else(|| "claude_code".into());
+
+        /* Phase 3.5: a regular turn ends the escalation count of the step before it; an escalation turn itself does not. */
+        if !envelope.opt_bool("escalation") {
+            super::rotation_methods::note_regular_turn(&session_id);
+        }
+
         let model = envelope
             .opt_str("model")
             .unwrap_or_else(|| crate::duel::model_for(&engine_id).to_string());

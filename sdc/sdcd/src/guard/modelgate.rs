@@ -95,6 +95,9 @@ pub struct Gate {
     pinned: (String, String),
     /// The exceptions the person wrote down, with the model each one names.
     pub exceptions: Vec<(Purpose, (String, String))>,
+    /// The Rotation Chain's models in the person's order (`None`: not told - every `Purpose::Chain` call is let through, as before the
+    /// chain was passed to the gate). `Some(list)` is enforced: a chain call to a model that is not in the list is refused.
+    chain: Option<Vec<(String, String)>>,
     /// False when `models.contract` is off: then everything is permitted, as in every earlier version.
     enforcing: bool,
 }
@@ -115,7 +118,7 @@ pub fn mode_for(provider: Option<&str>, chain_has_rows: bool, project_local_only
 
 impl Gate {
     pub fn new(provider: Option<&str>, model: &str, chain_has_rows: bool, project_local_only: bool) -> Self {
-        Self { mode: mode_for(provider, chain_has_rows, project_local_only), pinned: normal(provider, model), exceptions: Vec::new(), enforcing: crate::v3::on("models.contract") }
+        Self { mode: mode_for(provider, chain_has_rows, project_local_only), pinned: normal(provider, model), exceptions: Vec::new(), chain: None, enforcing: crate::v3::on("models.contract") }
     }
 
     /// A gate that enforces whatever `models.contract` says, for a call made outside a turn (Verify's review): nothing is
@@ -126,7 +129,7 @@ impl Gate {
 
     /// A gate that permits everything (no turn registered, or the switch off).
     pub fn open() -> Self {
-        Self { mode: Mode::Pinned, pinned: (String::new(), String::new()), exceptions: Vec::new(), enforcing: false }
+        Self { mode: Mode::Pinned, pinned: (String::new(), String::new()), exceptions: Vec::new(), chain: None, enforcing: false }
     }
 
     pub fn with_exception(mut self, purpose: Purpose, provider: Option<&str>, model: &str) -> Self {
@@ -135,6 +138,23 @@ impl Gate {
         }
 
         self
+    }
+
+    /// Tells the gate which models the Rotation Chain names, in order (enabled rows only). From then on a `Purpose::Chain` call is
+    /// permitted only to one of them - and the chain has an order: [`Gate::chain_model`].
+    pub fn with_chain(mut self, rows: &[(Option<&str>, &str)]) -> Self {
+        self.chain = Some(rows.iter().map(|(provider, model)| normal(*provider, model)).collect());
+
+        self
+    }
+
+    /// The model at position `index` of the chain (0 is the first the person listed).
+    pub fn chain_model(&self, index: usize) -> Option<(String, String)> {
+        self.chain.as_ref()?.get(index).cloned()
+    }
+
+    pub fn chain_len(&self) -> usize {
+        self.chain.as_ref().map_or(0, Vec::len)
     }
 
     pub fn pinned_model(&self) -> &str {
@@ -162,7 +182,7 @@ impl Gate {
 
         let wanted = normal(provider, model);
         let fine = same(&wanted, &self.pinned)
-            || (purpose == Purpose::Chain && self.mode == Mode::LocalRotation)
+            || (purpose == Purpose::Chain && self.mode == Mode::LocalRotation && self.chain.as_ref().is_none_or(|list| list.iter().any(|row| same(row, &wanted))))
             || self.exceptions.iter().any(|(allowed, named)| *allowed == purpose && same(named, &wanted));
 
         if fine {
@@ -319,5 +339,47 @@ mod tests {
         drop(held);
 
         assert!(of("turn-gate-test").permit(Purpose::Main, Some("openai-api"), "gpt-5").is_ok(), "released");
+    }
+}
+
+#[cfg(test)]
+mod chain_tests {
+    use super::*;
+
+    fn rotation_gate() -> Gate {
+        Gate { enforcing: true, ..Gate::new(Some("ollama"), "qwen3.5:9b", true, false) }.with_chain(&[(Some("deepseek"), "deepseek-chat"), (Some("anthropic-api"), "claude-sonnet-5-5")])
+    }
+
+    /// Phase 3.6: with a chain on the gate, a call to a model that is not in the chain is refused - whatever its purpose.
+    #[test]
+    fn only_the_models_the_person_listed_are_reachable_and_in_their_order() {
+        let gate = rotation_gate();
+
+        assert!(gate.permit(Purpose::Chain, Some("deepseek"), "deepseek-chat").is_ok());
+        assert!(gate.permit(Purpose::Chain, Some("anthropic-api"), "claude-sonnet-5-5").is_ok());
+        assert!(gate.permit(Purpose::Chain, Some("openai-api"), "gpt-5").is_err(), "a model nobody listed");
+        assert!(gate.permit(Purpose::Chain, Some("deepseek"), "deepseek-v4-pro").is_err(), "another model of a listed provider");
+        assert!(gate.permit(Purpose::Router, Some("deepseek"), "deepseek-chat").is_err(), "a listed model, but not as a router's choice");
+        assert!(gate.permit(Purpose::Main, Some("deepseek"), "deepseek-chat").is_err(), "the chain is not the main model");
+        assert_eq!(gate.chain_model(0), Some(("deepseek".into(), "deepseek-chat".into())));
+        assert_eq!(gate.chain_model(1).unwrap().1, "claude-sonnet-5-5");
+        assert_eq!(gate.chain_model(2), None, "after the last entry there is no one else to ask");
+    }
+
+    #[test]
+    fn a_disabled_entry_is_simply_not_on_the_gate() {
+        let gate = Gate { enforcing: true, ..Gate::new(Some("ollama"), "qwen3.5:9b", true, false) }.with_chain(&[(Some("anthropic-api"), "claude-sonnet-5-5")]);
+
+        assert!(gate.permit(Purpose::Chain, Some("deepseek"), "deepseek-chat").is_err());
+        assert_eq!(gate.chain_len(), 1);
+    }
+
+    #[test]
+    fn a_pinned_cloud_model_never_reaches_a_chain_even_if_a_chain_is_on_file() {
+        let pinned = Gate { enforcing: true, ..Gate::new(Some("deepseek"), "deepseek-chat", true, false) }.with_chain(&[(Some("anthropic-api"), "claude-sonnet-5-5")]);
+
+        assert_eq!(pinned.mode, Mode::Pinned);
+        assert!(pinned.permit(Purpose::Chain, Some("anthropic-api"), "claude-sonnet-5-5").is_err());
+        assert!(!pinned.allows(Purpose::Chain));
     }
 }

@@ -2,6 +2,7 @@ import { TriangleAlert, WandSparkles } from 'lucide-react';
 
 import { strings } from '../../strings';
 import { fixWithAgent } from '../../store/intents';
+import { requestEscalate } from '../../store/escalate';
 
 import { useSessionsStore } from '../../store/sessions';
 import { toast } from '../../store/toast';
@@ -22,9 +23,11 @@ import type { ErrorCardData } from './types';
  */
 export interface ErrorCardProps {
   error: ErrorCardData;
+  /** Phase 3.5: this failed step ran on a local model and the person has a Rotation Chain, so Escalate may be offered. */
+  canEscalate?: boolean;
 }
 
-export function ErrorCard({ error }: ErrorCardProps) {
+export function ErrorCard({ error, canEscalate = false }: ErrorCardProps) {
   const { activeTab } = useSessionsStore();
 
   /**
@@ -67,6 +70,11 @@ export function ErrorCard({ error }: ErrorCardProps) {
           <WandSparkles size={12} aria-hidden="true" />
           {strings.turns.error.fix}
         </button>
+        {canEscalate && activeTab !== null ? (
+          <button type="button" className={BTN + ' ' + BTN_SECONDARY} onClick={() => void requestEscalate(activeTab)} data-action="escalate">
+            {strings.turns.error.escalate}
+          </button>
+        ) : null}
         <button
           type="button"
           className={BTN + ' ' + BTN_SECONDARY}

@@ -22,6 +22,9 @@ impl Daemon {
             "rewind.redo" => self.rewind_redo(envelope, &*out),
 
             /* First-open secret sweep (Phase 0.4) ---------------------------------------------- */
+            "rotation.get" => self.rotation_get(),
+            "rotation.set" => self.rotation_set(envelope),
+            "rotation.escalate" => self.rotation_escalate(envelope, out),
             "secrets.sweep" => self.secrets_sweep(envelope),
             "secrets.move" => self.secrets_move(envelope),
 
@@ -343,6 +346,31 @@ mod tests {
         let again = call(&daemon, "secrets.sweep", json!({ "path": path, "firstOnly": true })).unwrap();
 
         assert_eq!(again["skipped"], true, "a folder is swept on first open only");
+
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    #[test]
+    fn the_chain_reads_without_a_file_and_a_local_only_project_cannot_escalate() {
+        let state = crate::DaemonState::bootstrap(Some(std::path::PathBuf::from(":memory:"))).expect("a daemon");
+        let daemon = Daemon::new(state.clone());
+        let read = call(&daemon, "rotation.get", json!({})).unwrap();
+
+        assert!(read["rows"].is_array() && read["global"]["askBeforeCloud"].is_boolean() && read["path"].as_str().unwrap().ends_with("rotation.toml"), "{read}");
+
+        let folder = std::env::temp_dir().join(format!("sdcd-escalate-{}", std::process::id()));
+
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(folder.join(".sdc")).unwrap();
+        std::fs::write(folder.join(".sdc/policy.toml"), "privacy = \"local-only\"\n").unwrap();
+        state.store.ensure_host("local", "Local", "local", "connected").unwrap();
+        state.store.add_project("p-esc", "local", &folder.to_string_lossy(), "x").unwrap();
+        state.store.insert_session("s-esc", "local", "A chat", "hello", Some("p-esc")).unwrap();
+
+        let refused = call(&daemon, "rotation.escalate", json!({ "sessionId": "s-esc", "confirm": true })).expect_err("local-only: nothing may leave");
+
+        assert_eq!(refused.code, "permission_denied", "{refused:?}");
+        assert!(crate::data::sent::read(&folder).0.is_empty(), "and nothing was recorded as sent");
 
         let _ = std::fs::remove_dir_all(&folder);
     }

@@ -54,6 +54,8 @@ mod file_methods;
 mod model_methods;
 #[path = "guard_methods.rs"]
 mod guard_methods;
+#[path = "rotation_methods.rs"]
+mod rotation_methods;
 #[path = "fleet_methods.rs"]
 mod fleet_methods;
 

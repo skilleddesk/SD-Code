@@ -166,6 +166,81 @@ pub fn read(home: &Path) -> Read {
     }
 }
 
+/// The most rows a chain may have: a chain is something a person reads and orders by hand.
+pub const MAX_ROWS: usize = 12;
+
+/// Checks a rotation a person (or the Agents tab) wants to save. The same rules for both, so a file the app wrote always reads back.
+pub fn validate(rotation: &Rotation) -> Result<(), String> {
+    if rotation.chain.len() > MAX_ROWS {
+        return Err(format!("A chain may have at most {MAX_ROWS} models."));
+    }
+
+    let mut seen = std::collections::HashSet::new();
+
+    for (index, row) in rotation.chain.iter().enumerate() {
+        let model = row.model.trim();
+        let number = index + 1;
+
+        match model.split_once(':') {
+            Some((provider, name)) if !provider.is_empty() && !name.trim().is_empty() && !model.contains(char::is_whitespace) => {}
+            _ => return Err(format!("Entry {number}: the model must be written as provider:model, for example deepseek:deepseek-chat.")),
+        }
+
+        if !seen.insert(model.to_ascii_lowercase()) {
+            return Err(format!("Entry {number}: {model} is already in the chain."));
+        }
+
+        if !row.max_cost_per_step.is_finite() || row.max_cost_per_step < 0.0 || row.max_cost_per_step > 100.0 {
+            return Err(format!("Entry {number}: the cost limit per step must be between 0 and 100 dollars."));
+        }
+
+        if row.max_repair_retries > 10 {
+            return Err(format!("Entry {number}: at most 10 retries."));
+        }
+    }
+
+    let global = &rotation.global;
+
+    for (name, value) in [("daily", global.daily_usd), ("monthly", global.monthly_usd)] {
+        if !value.is_finite() || value < 0.0 {
+            return Err(format!("The {name} dollar limit cannot be negative."));
+        }
+    }
+
+    if global.offload_limit > 1000 {
+        return Err("The offload limit is at most 1000 steps.".into());
+    }
+
+    Ok(())
+}
+
+/// Writes `rotation.toml` after validating it: the new text goes beside the file and is renamed over it (a crash leaves the old file
+/// or the new one), and the file it replaces is kept as `rotation.toml.bak`.
+pub fn save(home: &Path, rotation: &Rotation) -> Result<(), String> {
+    validate(rotation)?;
+
+    let text = toml::to_string_pretty(rotation).map_err(|error| error.to_string())?;
+    /* The text must read back as the same rotation, or it is not written. */
+    let back: Rotation = toml::from_str(&text).map_err(|error| error.to_string())?;
+
+    if &back != rotation {
+        return Err("The chain could not be written faithfully; nothing was saved.".into());
+    }
+
+    std::fs::create_dir_all(home).map_err(|error| format!("{}: {error}", home.display()))?;
+
+    let file = path(home);
+    let partial = home.join(format!("{FILE}.partial"));
+
+    std::fs::write(&partial, format!("# Written by SDC (Settings -> Agents). The order of the [[chain]] rows is the order models are offered.\n{text}")).map_err(|error| error.to_string())?;
+
+    if file.exists() {
+        let _ = std::fs::copy(&file, home.join(format!("{FILE}.bak")));
+    }
+
+    std::fs::rename(&partial, &file).map_err(|error| error.to_string())
+}
+
 /// The rotation to use, plus the one-line warning to show if the file was broken.
 pub fn load(home: &Path) -> (Rotation, Option<String>) {
     match read(home) {
@@ -309,5 +384,66 @@ offload_limit = 8
         assert!(global.ask_before_cloud);
         assert_eq!(global.offload_limit, 0, "no allowance is the safe reading of a file that says nothing");
         assert_eq!(global.daily_usd, 0.0, "and 0 here means no cap, which is the existing meaning of 0");
+    }
+}
+
+#[cfg(test)]
+mod save_tests {
+    use super::*;
+
+    fn row(model: &str) -> Row {
+        Row { model: model.into(), enabled: true, allowed_steps: Vec::new(), max_cost_per_step: 0.05, max_repair_retries: 1 }
+    }
+
+    #[test]
+    fn a_saved_chain_reads_back_exactly_and_keeps_its_order_and_a_backup() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = Rotation { chain: vec![row("deepseek:deepseek-chat"), row("anthropic-api:claude-sonnet-5-5")], global: Global { offload_limit: 3, ..Global::default() } };
+
+        save(dir.path(), &first).unwrap();
+
+        let (back, warning) = load(dir.path());
+
+        assert_eq!(warning, None);
+        assert_eq!(back, first);
+        assert_eq!(back.chain[0].model, "deepseek:deepseek-chat", "the order is the person's order");
+
+        let second = Rotation { chain: vec![row("anthropic-api:claude-sonnet-5-5")], ..first.clone() };
+
+        save(dir.path(), &second).unwrap();
+
+        assert_eq!(load(dir.path()).0, second);
+        assert!(dir.path().join("rotation.toml.bak").exists(), "the file it replaced is kept");
+    }
+
+    #[test]
+    fn a_chain_that_would_not_read_back_or_make_sense_is_refused_and_nothing_is_written() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut bad = Rotation { chain: vec![row("no-provider-here")], ..Rotation::default() };
+
+        assert!(save(dir.path(), &bad).unwrap_err().contains("provider:model"));
+
+        bad.chain = vec![row("a:b"), row("A:B")];
+        assert!(save(dir.path(), &bad).unwrap_err().contains("already in the chain"));
+
+        bad.chain = vec![Row { max_cost_per_step: -1.0, ..row("a:b") }];
+        assert!(save(dir.path(), &bad).is_err());
+
+        bad.chain = (0..13).map(|n| row(&format!("p:m{n}"))).collect();
+        assert!(save(dir.path(), &bad).unwrap_err().contains("at most"));
+
+        assert!(!path(dir.path()).exists(), "a refused save writes nothing");
+    }
+
+    #[test]
+    fn a_broken_file_is_reported_and_never_crashes_the_load() {
+        let dir = tempfile::tempdir().unwrap();
+
+        std::fs::write(path(dir.path()), "[[chain]]\nmodel = \n").unwrap();
+
+        let (rotation, warning) = load(dir.path());
+
+        assert!(rotation.is_empty());
+        assert!(warning.is_some_and(|text| text.contains("is not valid")));
     }
 }
