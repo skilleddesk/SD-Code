@@ -1,4 +1,4 @@
-import type { FsEntry, PermissionDecision, PermissionRisk, TierName } from '../../../protocol/types';
+import type { FsEntry, LocalTuning, PermissionDecision, PermissionRisk, TierName } from '../../../protocol/types';
 import { nameOf, pickFolder } from '../lib/picker';
 import { sdcpCall } from '../lib/sdcp';
 import { isSdcpError } from '../lib/transport';
@@ -2113,7 +2113,7 @@ export async function authorizeSubscription(id: string): Promise<boolean> {
 }
 
 /** Flow 3: the Local (Ollama) flow's two doctor rows. */
-export async function connectLocal(): Promise<{ daemon: boolean; models: string[]; detail?: string } | null> {
+export async function connectLocal(): Promise<{ daemon: boolean; models: string[]; detail?: string; tuning?: LocalTuning | null } | null> {
   try {
     return await sdcpCall('provider.local.doctor', {});
   } catch (error) {

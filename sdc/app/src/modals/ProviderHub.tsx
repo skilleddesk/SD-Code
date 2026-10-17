@@ -1,4 +1,6 @@
 import { useState, type ReactNode } from 'react';
+
+import type { LocalTuning } from '../../../protocol/types';
 import {
   CircleCheckBig,
   CirclePlus,
@@ -34,6 +36,7 @@ import { toast } from '../store/toast';
 import { BTN, BTN_PRIMARY, BTN_SECONDARY } from '../panels/ui/button';
 import { Modal } from './Modal';
 import { LocalServers } from './LocalServers';
+import { TuningCard } from './TuningCard';
 import { InstallButton } from '../panels/ui/InstallButton';
 import { sdcpCall } from '../lib/sdcp';
 import { INSTALLABLE, installTool, toolSize } from '../store/tools';
@@ -334,6 +337,8 @@ function Flow({ flow, onDone }: { flow: FlowState; onDone: () => void }) {
   const [label, setLabel] = useState('');
   const [state, setState] = useState<'idle' | 'busy' | 'ok' | 'fail'>('idle');
   const [detail, setDetail] = useState('');
+  /* P0-16: the tuning proposal the local doctor returned - shown, never applied. */
+  const [tuning, setTuning] = useState<LocalTuning | null>(null);
 
   /* The `host.doctor` rows the daemon returned for this machine. Empty until a run: the card then
      says so rather than printing an optimistic one of its own. */
@@ -394,6 +399,7 @@ function Flow({ flow, onDone }: { flow: FlowState; onDone: () => void }) {
       const up = result?.daemon === true;
 
       setState(up ? 'ok' : 'fail');
+      setTuning(result?.tuning ?? null);
       /* 1.0: a Connect that failed said nothing at all - the person saw the button do "nothing". */
       setDetail(up ? strings.hub.testOk(result?.models.length ?? 0) : (result?.detail ?? strings.hub.testEmpty));
       void runDoctor('local');
@@ -504,6 +510,8 @@ function Flow({ flow, onDone }: { flow: FlowState; onDone: () => void }) {
           )}
 
           <ConnTest state={state} detail={detail} />
+
+          {tuning === null || tuning.proposals.length === 0 ? null : <TuningCard tuning={tuning} />}
 
           <div className="mt-[16px] flex gap-[8px]">
             <button type="button" className={BTN + ' ' + BTN_SECONDARY} onClick={onDone}>

@@ -1836,6 +1836,26 @@ fn drive(
 
         model_time += asked_at.elapsed();
 
+        /* P0-16: a local model whose speed suddenly halves, or that is not entirely on the GPU, is said so once. */
+        if let (Ok(reply), Some(_), true) = (&asked, target.local_context, crate::v3::on("local.autotune")) {
+            let rate = crate::trace::Step::rate(reply.output_tokens, reply.ttft_ms, asked_at.elapsed().as_millis() as u64);
+            let warning = crate::sme::tuner::watch().lock().ok().and_then(|mut watch| if reply.output_tokens >= 20 { watch.observe(rate) } else { None });
+
+            if let Some(warning) = warning {
+                sink.send(EngineEvent::Delta(format!("_({warning})_\n\n")));
+            }
+
+            /* The other sign, read once per turn after the model is loaded: `ollama ps` says how much of it is on the GPU. */
+            if step == 1 {
+                let ps: Option<Value> = crate::engines::ollama::call("/api/ps", None).ok().and_then(|text| serde_json::from_str(&text).ok());
+                let unified = crate::sme::tuner::detect().unified;
+
+                if let Some(note) = ps.and_then(|ps| crate::sme::tuner::gpu_share(&ps, &target.model)).and_then(|share| crate::sme::tuner::spill_warning(share, unified)) {
+                    sink.send(EngineEvent::Delta(format!("_({note})_\n\n")));
+                }
+            }
+        }
+
         /* P0-12: one trace row per model call of the loop. The mode is the gate's, the cost the catalogue's price. */
         if let Ok(reply) = &asked {
             let wall_ms = asked_at.elapsed().as_millis() as u64;

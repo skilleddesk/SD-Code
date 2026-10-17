@@ -169,6 +169,16 @@ export const bn: StringsPack = {
     },
   },
   hub: {
+    tuning: {
+      title: 'এই কম্পিউটারের জন্য টিউনিং',
+      proposalOnly: 'শুধু প্রস্তাব। SDC আপনার Ollama server নিজে বদলায় না; এগুলো নিজে সেট করে Ollama restart করুন।',
+      fits: (model: string, ctx: number): string => `${model}: ${ctx.toLocaleString()} token পর্যন্ত context পুরোটা GPU-তে থাকে।`,
+      spills: (model: string): string => `${model}: এই card-এ পুরোটা GPU-তে ধরে না - CPU-তে নেমে ধীর চলবে।`,
+      env: 'Ollama server-এ সেট করুন',
+      restart: 'এগুলো কাজ করতে Ollama restart লাগবে।',
+      gpu: (name: string, gb: string): string => `GPU: ${name} (${gb} GB)`,
+      noGpu: 'কোনো GPU পাওয়া যায়নি।',
+    },
     localServers: {
       title: 'অন্য লোকাল মডেল সার্ভার (Ollama লাগবে না)',
       help: 'LM Studio, llama.cpp / llamafile, LocalAI, vLLM, SGLang, Jan, KoboldCpp, text-generation-webui, GPT4All, বা আপনার নিজের চালানো মডেল - OpenAI API বোঝে এমন যেকোনো সার্ভার। SDC নিজেই এই কম্পিউটারে খুঁজে নেয়; নেটওয়ার্কের অন্য কম্পিউটার তার ঠিকানা দিয়ে যোগ করা যায়। কোনো key লাগে না।',

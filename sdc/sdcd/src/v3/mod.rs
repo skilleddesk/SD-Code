@@ -90,6 +90,7 @@ pub const FEATURES: &[Feature] = &[
     Feature { name: "trace.steps", default_on: true, token_technique: false, what: "P0-12: every model call is traced - model, mode, tokens, time to first token, tokens per second, wall time, verify, cost - from a background writer, so recording never slows a step" },
     Feature { name: "exec.sandbox", default_on: true, token_technique: false, what: "P0-14: the checks Verify runs (tests, smoke, scripts) run in the platform sandbox - no writes outside the project, no network unless the project allows it, CPU and file limits; Windows has no isolation and says so" },
     Feature { name: "edit.transaction", default_on: true, token_technique: false, what: "P0-14: a step's edits are applied in a shadow copy, verified there, and committed to the real tree all at once or not at all" },
+    Feature { name: "local.autotune", default_on: true, token_technique: false, what: "P0-16: the Provider Hub shows a proposal for the Ollama server (flash attention, a q8_0 KV cache, the largest context that keeps the model on the GPU) and warns when a local model spills to the CPU; nothing is ever applied by itself" },
     Feature { name: "parallel", default_on: true, token_technique: false, what: "PAR: several agents at once, each in its own git worktree, on one board" },
 ];
 

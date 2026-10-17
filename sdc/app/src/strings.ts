@@ -1118,6 +1118,17 @@ const english = {
   },
 
   hub: {
+    /** The local-model tuning proposal (P0-16): what this computer can carry, never applied by SDC itself. */
+    tuning: {
+      title: 'Tuning for this computer',
+      proposalOnly: 'A proposal only. SDC never changes your Ollama server; set these yourself and restart Ollama.',
+      fits: (model: string, ctx: number): string => `${model}: up to ${ctx.toLocaleString()} tokens of context stay fully on the GPU.`,
+      spills: (model: string): string => `${model}: this card is too small to keep it all on the GPU - it will spill to the CPU and run slowly.`,
+      env: 'Set on the Ollama server',
+      restart: 'Ollama must be restarted for these to take effect.',
+      gpu: (name: string, gb: string): string => `GPU: ${name} (${gb} GB)`,
+      noGpu: 'No GPU detected.',
+    },
     /** 0.22: local model servers other than Ollama. */
     localServers: {
       title: 'Other local model servers (no Ollama needed)',

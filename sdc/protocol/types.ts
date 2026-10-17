@@ -1282,6 +1282,25 @@ export interface CliSelfCheck {
   sentence: string;
 }
 
+/**
+ * What the Hardware Auto-Tuner proposes for the local Ollama server (P0-16). A proposal only: the two environment
+ * variables are server-wide and need a restart, so SDC never applies them (`applied` is always false).
+ */
+export interface LocalTuning {
+  hardware: { gpu: string | null; gpuBytes: number | null; ramBytes: number; unified: boolean };
+  proposals: {
+    model: string;
+    env: { name: string; value: string }[];
+    numCtx: number;
+    keepAlive: string;
+    fitsOnGpu: boolean;
+    needsRestart: boolean;
+    notes: string[];
+    applied: false;
+  }[];
+  note: string;
+}
+
 /** One line of a turn's receipt: a model (under one purpose) and what its steps cost. */
 export interface ReceiptRow {
   modelKey: string;
@@ -2231,7 +2250,7 @@ export interface SdcpMethodMap {
   };
   'provider.local.doctor': {
     params: Record<string, never>;
-    result: { daemon: boolean; endpoint: string; models: string[] };
+    result: { daemon: boolean; endpoint: string; models: string[]; detail?: string; installed?: boolean; tuning?: LocalTuning | null };
   };
   'provider.registry.list': {
     params: Record<string, never>;

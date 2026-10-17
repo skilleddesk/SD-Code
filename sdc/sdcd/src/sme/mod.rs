@@ -9,8 +9,10 @@
 //! - the Cut-off Guard: detect a reply that was cut off mid-thought and ask again (P1-11)
 //! - the Bangla/Banglish spec brief (P1-14)
 //! - the Capability Probe and model identity (P0-9) - **here now**, `sme::probe`
+//! - the Hardware Auto-Tuner and the VRAM Arbiter (P0-16) - **here now**, `sme::tuner`
 //!
 //! Empty on purpose until those tasks land, so adding them does not mean rearranging the agent again.
 
 pub mod ollama_probe;
 pub mod probe;
+pub mod tuner;

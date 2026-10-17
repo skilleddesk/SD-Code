@@ -838,9 +838,13 @@ pub fn local_doctor() -> Value {
     let running = crate::engines::ollama::daemon_running();
     let models = if running { crate::engines::ollama::list_models() } else { Vec::new() };
 
+    /* P0-16: what this machine can carry, as a proposal the person reads - never applied. */
+    let tuning = if running && crate::v3::on("local.autotune") { crate::sme::tuner::tuning_for_ollama(&models) } else { Value::Null };
+
     json!({
         "daemon": running,
         "endpoint": format!("http://{}", crate::engines::ollama::ENDPOINT),
+        "tuning": tuning,
         "models": models,
         "detail": if running { "running" } else if crate::host::program::resolve("ollama").is_some() { "installed · would not start" } else { "not installed · Settings → Environment → Install" },
         "installed": crate::host::program::resolve("ollama").is_some(),
