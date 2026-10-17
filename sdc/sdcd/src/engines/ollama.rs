@@ -393,6 +393,9 @@ impl Engine for Ollama {
         /* The socket read blocks for as long as the model talks, so it runs on the blocking pool -
         and the answer travels out through the sink while this future is still pending. */
         let _ = tokio::task::spawn_blocking(move || chat(&body, &sink)).await;
+
+        /* P0-9: measured once, after the answer, as in Agent mode. */
+        crate::sme::probe::after_use(&model);
     }
 
     async fn cancel(&self, _turn_id: &str) -> bool {

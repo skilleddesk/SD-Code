@@ -26,7 +26,9 @@ import { MemoryDialog } from './kernel/MemoryDialog';
 import { onboardedAlready, useKernelUi } from './store/kernelUi';
 import { connectDaemon, watchBackground, watchDaemon, watchHosts } from './store/intents';
 import { useLayoutStore, workspaceClassName } from './store/layout';
+import { useModelStore } from './store/model';
 import { usePrefixHint } from './store/prefs';
+import { useProviderStore } from './store/providers';
 import { useRightPanelStore } from './store/rightPanel';
 
 /**
@@ -102,6 +104,16 @@ export function App() {
       useKernelUi.getState().openOnboarding();
     }
   }, []);
+
+  /*
+   * A fresh install runs on what this computer has: until a model is picked, the built-in default (Claude
+   * Code) gives way to a connected provider - Ollama's local model first - as soon as both the provider
+   * cards and the catalogue are in.
+   */
+  const providers = useProviderStore((state) => state.providers);
+  const catalog = useModelStore((state) => state.catalog);
+
+  useEffect(() => useModelStore.getState().preferConnected(providers), [providers, catalog]);
 
   const layout = useLayoutStore();
   const rightPanelWidth = useRightPanelStore((state) => state.width);

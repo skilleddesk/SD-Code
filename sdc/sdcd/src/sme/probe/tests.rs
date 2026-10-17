@@ -240,3 +240,33 @@ fn printed_tool_calls_and_schema_answers_are_recognised() {
     assert!(!follows_person_schema(r#"{"name":"A","age":"3","tags":[]}"#));
     assert!(!follows_person_schema("no json"));
 }
+
+#[test]
+fn a_model_is_due_for_measuring_until_its_current_identity_is_probed() {
+    let mut model = scripted(1_000_000);
+    let probed = run(&mut model, &small_plan(), "2026-10-17").unwrap();
+    let provisional = Profile { status: Status::Provisional, ..probed.clone() };
+
+    assert!(due(None), "never measured");
+    assert!(due(Some(&provisional)), "measured on an earlier file or runtime");
+    assert!(!due(Some(&probed)), "measured on this one");
+}
+
+#[test]
+fn the_background_probe_is_the_quick_plan_and_is_on_by_default() {
+    let quick = quick_plan();
+
+    assert_eq!(quick.contexts, vec![2_048, 4_096, 8_192]);
+    assert!(quick.tool_trials < Plan::default().tool_trials && quick.schema_trials < Plan::default().schema_trials);
+    assert_eq!(quick.seed, Plan::default().seed);
+    assert!(crate::v3::FEATURES.iter().any(|feature| feature.name == "models.probe" && feature.default_on));
+}
+
+/// The limiter behind `after_use`: the set is process-wide and tests run in parallel, so each name here is its own.
+#[test]
+fn a_model_is_asked_about_once_per_run_and_each_model_has_its_own_turn() {
+    assert!(first_ask("limiter-test-a:1b"), "the first turn on a model asks");
+    assert!(!first_ask("limiter-test-a:1b"), "the second does not, even if the first probe failed");
+    assert!(first_ask("limiter-test-b:1b"), "another model is not held back by the first");
+    assert!(!first_ask("limiter-test-b:1b"));
+}

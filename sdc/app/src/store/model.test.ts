@@ -11,6 +11,7 @@ import {
   nextEngine,
   parseModelId,
   type CatalogModel,
+  type ModelState,
 } from './model';
 
 function row(id: string, providerId = 'anthropic-api', tier: CatalogModel['tier'] = 'balanced'): CatalogModel {
@@ -269,5 +270,51 @@ describe('each chat keeps its own model', () => {
     expect(useModelStore.getState().dropdownOpen).toBe('n-a');
     useModelStore.getState().toggleDropdown('n-a');
     expect(useModelStore.getState().dropdownOpen).toBeNull();
+  });
+});
+
+describe('a fresh install runs on what the computer has', () => {
+  const fresh: Partial<ModelState> = { picked: false, engine: 'claude_code', providerId: 'claude', model: 'sonnet', tier: 'balanced', inUse: [] };
+  const local = row('qwen3.5:9b', 'ollama', 'balanced');
+
+  it('moves the untouched default to the local model when only Ollama is connected', () => {
+    useModelStore.setState({ ...fresh, catalog: [row('sonnet', 'claude'), local] });
+    useModelStore.getState().preferConnected(connected('ollama'));
+
+    expect(useModelStore.getState()).toMatchObject({ engine: 'native_api', providerId: 'ollama', model: 'qwen3.5:9b' });
+  });
+
+  it('prefers the local model over another connected provider', () => {
+    useModelStore.setState({ ...fresh, catalog: [row('deepseek-chat', 'deepseek'), local] });
+    useModelStore.getState().preferConnected(connected('deepseek', 'ollama'));
+
+    expect(useModelStore.getState().providerId).toBe('ollama');
+  });
+
+  it('never moves a pick, nor a default that is connected', () => {
+    useModelStore.setState({ ...fresh, picked: true, catalog: [local] });
+    useModelStore.getState().preferConnected(connected('ollama'));
+    expect(useModelStore.getState().model).toBe('sonnet');
+
+    useModelStore.setState({ ...fresh, catalog: [row('sonnet', 'claude'), local] });
+    useModelStore.getState().preferConnected(connected('claude', 'ollama'));
+    expect(useModelStore.getState().model).toBe('sonnet');
+  });
+
+  it('keeps the default when nothing is connected', () => {
+    useModelStore.setState({ ...fresh, catalog: [local] });
+    useModelStore.getState().preferConnected([]);
+
+    expect(useModelStore.getState().model).toBe('sonnet');
+  });
+
+  it('repairs a vanished model inside its own provider, never with another provider\'s', () => {
+    useModelStore.setState({ ...fresh, model: 'gone', catalog: [] });
+    useModelStore.getState().setCatalog([local, row('opus', 'claude')]);
+    expect(useModelStore.getState().model).toBe('opus');
+
+    useModelStore.setState({ ...fresh, model: 'gone', catalog: [] });
+    useModelStore.getState().setCatalog([local]);
+    expect(useModelStore.getState().model).toBe('gone');
   });
 });

@@ -643,6 +643,11 @@ export interface ModelState {
   inUse: { modelId: string; providerId: string | null }[];
   /** How many rows of the Rotation Chain are enabled on this computer (P0-10) - what tells Local Rotation from Local-only. */
   rotationRows: number;
+  /**
+   * Whether a person has ever picked a model in this window or an earlier launch. Until then the choice is
+   * only the built-in default, and `preferConnected` may move it to a model this computer can run.
+   */
+  picked: boolean;
   /** Each chat's own model, by session id. A chat that has none yet uses the four fields above. */
   chats: Record<string, ModelChoice>;
   /**
@@ -684,6 +689,12 @@ export interface ModelActions {
   setCatalog: (models: readonly CatalogModel[]) => void;
   setInUse: (inUse: readonly { modelId: string; providerId: string | null }[]) => void;
   setRotationRows: (rows: number) => void;
+  /**
+   * A fresh install's default made runnable: while nobody has picked a model and the default's provider is
+   * not connected, the window's choice moves to a connected one - a local model first (the plan's
+   * local-first rule), otherwise the first connected group the menu shows. Never overrides a pick.
+   */
+  preferConnected: (providers: readonly { id: string; name: string; status: string }[]) => void;
   /** One row of the dropdown: engine, provider, model and tier together. */
   choose: (choice: { engine: EngineId; providerId: string; model: string; tier: Tier }, sessionId?: string | null) => void;
   /**
@@ -720,6 +731,7 @@ const initialModelState: ModelState = {
   catalog: [],
   inUse: [],
   rotationRows: 0,
+  picked: remembered.last !== null,
   chats: remembered.chats,
   dropdownOpen: null,
   queued: [],
@@ -776,8 +788,11 @@ export const useModelStore = create<ModelState & ModelActions>()((set, get) => (
     const state = get();
     const catalog = [...models];
     const known = catalog.some((model) => model.id === state.model);
+    /* The repair stays inside the choice's own provider: the first row of the whole catalogue could be
+       another provider's model, which the current engine cannot run. */
+    const repair = catalog.find((model) => model.providerId === state.providerId)?.id;
 
-    set(known || catalog.length === 0 ? { catalog } : { catalog, model: catalog[0]?.id ?? state.model });
+    set(known || repair === undefined ? { catalog } : { catalog, model: repair });
   },
 
   setInUse: (inUse) => {
@@ -786,6 +801,27 @@ export const useModelStore = create<ModelState & ModelActions>()((set, get) => (
 
   setRotationRows: (rows) => {
     set({ rotationRows: rows });
+  },
+
+  preferConnected: (providers) => {
+    const state = get();
+    const connected = (id: string | null): boolean =>
+      providers.some((provider) => provider.id === id && provider.status === 'connected');
+
+    if (state.picked || connected(state.providerId)) {
+      return;
+    }
+
+    const { groups } = groupCatalog(state.catalog, providers, state.inUse);
+    const group = groups.find((candidate) => candidate.providerId === 'ollama') ?? groups[0];
+    const first = group?.models[0];
+
+    if (group === undefined || first === undefined) {
+      return;
+    }
+
+    /* Not remembered: it is still the default, only one that runs here. */
+    set({ engine: group.engine, providerId: group.providerId, model: first.id, tier: first.tier });
   },
 
   choose: ({ engine, providerId, model, tier }, sessionId) => {
@@ -889,7 +925,7 @@ function remember(state: ModelState, sessionId: string | null | undefined, choic
 
   saveChats(chats, choice);
 
-  return { ...choice, chats, dropdownOpen: null };
+  return { ...choice, chats, dropdownOpen: null, picked: true };
 }
 
 /** The tier's display label - `Balanced`, not `balanced` (spec section 7.6). */

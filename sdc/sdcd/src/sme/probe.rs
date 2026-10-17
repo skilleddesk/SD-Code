@@ -418,6 +418,57 @@ pub fn label(profile: &Profile) -> String {
     }
 }
 
+/// The quick plan: three windows, fewer trials - what a probe that runs by itself after a turn uses, so it holds the
+/// graphics card for seconds rather than minutes. `sdcd probe` without `--quick` is the full measurement.
+pub fn quick_plan() -> Plan {
+    Plan { contexts: vec![2_048, 4_096, 8_192], tool_trials: 6, schema_trials: 4, outputs: vec![128, 512], ..Plan::default() }
+}
+
+/// Whether a model needs measuring: no profile on file for its identity as it is now, or only one for an earlier
+/// file or runtime.
+pub fn due(stored: Option<&Profile>) -> bool {
+    stored.is_none_or(|profile| profile.status != Status::Probed)
+}
+
+/// The once-per-model limiter of [`after_use`]: true the first time a model is asked about in this daemon run, false
+/// every time after.
+fn first_ask(model: &str) -> bool {
+    static ASKED: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<String>>> = std::sync::OnceLock::new();
+
+    ASKED.get_or_init(Default::default).lock().map(|mut asked| asked.insert(model.to_string())).unwrap_or(false)
+}
+
+/// Switch `models.probe`: after a turn on a local model, measures that model in the background when it has never been
+/// measured, or its file or runtime changed since. Once per model per daemon run, so a probe that fails (the server
+/// went away) is not retried on every turn; nothing happens while the switch is off.
+pub fn after_use(model: &str) {
+    if !crate::v3::on("models.probe") || model.trim().is_empty() || !first_ask(model) {
+        return;
+    }
+
+    let model = model.to_string();
+
+    std::thread::spawn(move || {
+        let mut runner = super::ollama_probe::OllamaRunner { model: model.clone() };
+        let Ok(key) = runner.identity() else {
+            return;
+        };
+
+        if !due(lookup(&key).as_ref()) {
+            return;
+        }
+
+        match run(&mut runner, &quick_plan(), &chrono::Utc::now().to_rfc3339()) {
+            Ok(profile) => {
+                if let Err(error) = save(&profile) {
+                    eprintln!("sdcd: the probe of {model} could not save its profile: {error}");
+                }
+            }
+            Err(error) => eprintln!("sdcd: the probe of {model} failed: {error}"),
+        }
+    });
+}
+
 /// `sdcd probe MODEL [--seed N] [--quick]`: measures an installed Ollama model and stores the profile. The only
 /// entry point that talks to a live runtime; everything it decides is in [`run`].
 pub fn main(args: &[String]) -> i32 {
@@ -433,10 +484,7 @@ pub fn main(args: &[String]) -> i32 {
     }
 
     if args.iter().any(|arg| arg == "--quick") {
-        plan.contexts = vec![2_048, 4_096, 8_192];
-        plan.tool_trials = 6;
-        plan.schema_trials = 4;
-        plan.outputs = vec![128, 512];
+        plan = Plan { seed: plan.seed, ..quick_plan() };
     }
 
     let mut runner = super::ollama_probe::OllamaRunner { model: model.clone() };

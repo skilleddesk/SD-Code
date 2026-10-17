@@ -547,6 +547,11 @@ pub fn run(
     };
 
     drive(backend, &target, &workspace, options, checkpoint, policy, &prompt, sink);
+
+    /* P0-9: a local model nobody has measured yet is measured once, after its first turn, so the turn never waits for it. */
+    if backend == Backend::Ollama {
+        crate::sme::probe::after_use(&target.model);
+    }
 }
 
 /// A stream that remembers when its first byte arrived (P0-12: the time to first token of a model call).
