@@ -304,7 +304,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let cache = Cache::with_cap(dir.path(), 0);
 
-        for byte in [b'a', b'b', b'c'] {
+        for byte in *b"abc" {
             cache.put(&[byte; 100]).unwrap();
         }
 
@@ -328,8 +328,10 @@ mod tests {
 
     #[test]
     fn the_default_is_a_cap_and_the_order_survives_a_restart() {
-        assert_eq!(Cache::new(Path::new("/tmp")).cap(), DEFAULT_CAP);
-        assert!(DEFAULT_CAP > 0, "an uncapped cache is a full disk with a date on it");
+        let cache = Cache::new(Path::new("/tmp"));
+
+        assert_eq!(cache.cap(), DEFAULT_CAP);
+        assert!(cache.cap() > 0, "an uncapped cache is a full disk with a date on it");
 
         /* The order is in a file, not in memory: a second `Cache` on the same folder reads the same answer. */
         let dir = tempfile::tempdir().unwrap();

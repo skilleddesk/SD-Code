@@ -323,15 +323,18 @@ pub fn close(store: &Store, turn_id: &str, session_id: &str, outcome: &str) {
     }
 }
 
+/// One `job_events` row as `rebuild` reads it: `kind, call_id, tool, payload, schema, step_id, origin`.
+type EventRow = (String, Option<String>, Option<String>, String, i64, String, String);
+
 /// The conversation of a journaled turn, as the loop had it at the moment it stopped.
 pub fn rebuild(store: &Store, turn_id: &str) -> Option<(Value, Resume)> {
-    let rows: Vec<(String, Option<String>, Option<String>, String, i64, String, String)> = {
+    let rows: Vec<EventRow> = {
         let connection = store.connection.lock().ok()?;
         let mut statement = connection
             .prepare("SELECT kind, call_id, tool, payload, schema, step_id, origin FROM job_events WHERE turn_id = ?1 ORDER BY id")
             .ok()?;
 
-        let rows: Vec<(String, Option<String>, Option<String>, String, i64, String, String)> = statement
+        let rows: Vec<EventRow> = statement
             .query_map(params![turn_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?)))
             .ok()?
             .flatten()

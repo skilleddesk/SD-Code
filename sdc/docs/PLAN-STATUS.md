@@ -22,7 +22,7 @@ Status: `todo` · `in-progress` · `blocked` · `done`.
 | P0-14 | Sandbox Runner and Step Transaction | 0 | P0-13, P0-4 | done | exec.sandbox, edit.transaction | sdc/docs/reports/P0-14.md | Sandbox Runner (macOS proven, Windows gap stated) + Step Transaction (kill at 14 instants, never a mixture) |
 | P0-15 | Proof-of-Work badge and receipt | 0 | P0-12 | done | ui.proof_badge | sdc/docs/reports/P0-15.md | Proof-of-Work badge + receipt from the Step Trace (totals equal trace), en/bn, component visual fixture |
 | P0-16 | Hardware Auto-Tuner and VRAM Arbiter | 0 | P0-9 | done | local.autotune | sdc/docs/reports/P0-16.md | Auto-Tuner proposal (8GB card -> ~31k ctx on GPU, never applied), spill warnings, VRAM Arbiter |
-| P0-17 | Phase 0 release and Gate 0 | 0 | P0-0, P0-1, P0-2, P0-3, P0-4, P0-5, P0-6, P0-7, P0-8, P0-9, P0-10, P0-11, P0-12, P0-13, P0-14, P0-15, P0-16 | todo | n/a |  |  |
+| P0-17 | Phase 0 release and Gate 0 | 0 | P0-0, P0-1, P0-2, P0-3, P0-4, P0-5, P0-6, P0-7, P0-8, P0-9, P0-10, P0-11, P0-12, P0-13, P0-14, P0-15, P0-16 | in-progress | n/a |  | Gate 0 audit running; release 3.0.0 in progress |
 | P1-1 | Code Graph and zero-model queries | 1 | Gate 0 | todo | graph.v1 |  |  |
 | P1-2 | Step Runtime | 1 | P1-1, P0-14, Gate 0 | todo | runtime.steps |  |  |
 | P1-3 | Small Model Profile and budgeter | 1 | P0-9, Gate 0 | todo | sme.budget |  |  |

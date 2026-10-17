@@ -1,0 +1,29 @@
+{
+  "label": "gate0-pin",
+  "results": [
+    {
+      "agent": "sdc",
+      "model": "deepseek:deepseek-chat",
+      "noise": {
+        "flaky_tasks": 0,
+        "run_pass_rates": [
+          1.0
+        ],
+        "spread": 0.0,
+        "tasks": 40
+      },
+      "pass_rate": 1.0,
+      "passed": 40,
+      "runs": 40,
+      "usd": 0.06460678
+    }
+  ],
+  "rules": {
+    "min_runs": 3,
+    "seed": 20261017,
+    "temperature": null
+  },
+  "runs_per_task": 1,
+  "schema": 1,
+  "tier": "full"
+}

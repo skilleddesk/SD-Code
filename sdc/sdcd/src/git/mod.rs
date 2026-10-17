@@ -22,32 +22,53 @@ use crate::sdcp::envelope::ErrorObject;
 /// the project never grows a `.git` of its own. The user's own repository - if there is one - is
 /// neither read nor written.
 pub fn run(work_tree: &Path, args: &[&str]) -> Result<String, ErrorObject> {
-    /* 0.22: SDC installs Git itself on first start; until it is there, say so rather than run a stub. */
-    if !crate::host::tools::has_working_git() {
-        return Err(ErrorObject::internal("Git is still being installed by SDC (Settings → Environment shows its progress); checkpoints start working the moment it is done."));
+    Shadow::of(work_tree)?.run(args)
+}
+
+/// One shadow repository, resolved **once** for a whole operation.
+///
+/// Every command of an operation (`add -A` and then `commit`, or `add -A` and then `read-tree`) has to run against the
+/// same repository. Resolving it per command means that a data directory which is momentarily different - it comes from
+/// the environment, and a thread that moves it moves it for everyone - stages the tree in one repository and commits it in
+/// another: a fresh repository then commits an *empty* tree, and a restore from that empty commit wipes the project. So an
+/// operation opens one [`Shadow`] and runs all of its commands through it.
+pub struct Shadow {
+    pub git_dir: PathBuf,
+    pub work_tree: PathBuf,
+}
+
+impl Shadow {
+    /// Opens (or creates) the shadow repository of `work_tree`.
+    pub fn of(work_tree: &Path) -> Result<Self, ErrorObject> {
+        /* 0.22: SDC installs Git itself on first start; until it is there, say so rather than run a stub. */
+        if !crate::host::tools::has_working_git() {
+            return Err(ErrorObject::internal("Git is still being installed by SDC (Settings → Environment shows its progress); checkpoints start working the moment it is done."));
+        }
+
+        Ok(Self { git_dir: ensure_repository(work_tree)?.join(".git"), work_tree: work_tree.to_path_buf() })
     }
 
-    let shadow = ensure_repository(work_tree)?;
-    let git_dir = shadow.join(".git");
+    /// Runs one git command against this repository, with the project as its work tree.
+    pub fn run(&self, args: &[&str]) -> Result<String, ErrorObject> {
+        let output = Command::new("git")
+            /* A commit needs an identity; the daemon's is not the user's, on purpose. */
+            .args(["-c", "user.name=sdcd", "-c", "user.email=sdcd@localhost"])
+            .arg(format!("--git-dir={}", self.git_dir.display()))
+            .arg(format!("--work-tree={}", self.work_tree.display()))
+            .args(args)
+            .output()
+            .map_err(|error| ErrorObject::internal(format!("git is not available: {error}")))?;
 
-    let output = Command::new("git")
-        /* A commit needs an identity; the daemon's is not the user's, on purpose. */
-        .args(["-c", "user.name=sdcd", "-c", "user.email=sdcd@localhost"])
-        .arg(format!("--git-dir={}", git_dir.display()))
-        .arg(format!("--work-tree={}", work_tree.display()))
-        .args(args)
-        .output()
-        .map_err(|error| ErrorObject::internal(format!("git is not available: {error}")))?;
+        if !output.status.success() {
+            return Err(ErrorObject::internal(format!(
+                "git {} failed: {}",
+                args.join(" "),
+                String::from_utf8_lossy(&output.stderr).trim()
+            )));
+        }
 
-    if !output.status.success() {
-        return Err(ErrorObject::internal(format!(
-            "git {} failed: {}",
-            args.join(" "),
-            String::from_utf8_lossy(&output.stderr).trim()
-        )));
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
     }
-
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
 /// Runs one git command *inside a repository directory* (no work tree) - what `init` and `worktree`
@@ -97,10 +118,12 @@ pub fn ensure_repository(project_root: &Path) -> Result<PathBuf, ErrorObject> {
 /// A checkpoint: everything staged, one commit, and the commit's sha - which is what
 /// `git.checkpoint` answers with and what a `CheckpointSaved` event records.
 pub fn checkpoint(project_root: &Path, message: &str) -> Result<String, ErrorObject> {
-    run(project_root, &["add", "-A"])?;
-    run(project_root, &["commit", "--quiet", "--allow-empty", "-m", message])?;
+    let shadow = Shadow::of(project_root)?;
 
-    Ok(run(project_root, &["rev-parse", "HEAD"])?.trim().to_string())
+    shadow.run(&["add", "-A"])?;
+    shadow.run(&["commit", "--quiet", "--allow-empty", "-m", message])?;
+
+    Ok(shadow.run(&["rev-parse", "HEAD"])?.trim().to_string())
 }
 
 /// Does the project have a git repository **of its own** (here or above it)?
@@ -166,8 +189,10 @@ pub fn diff(project_root: &Path, since: Option<&str>) -> Result<String, ErrorObj
 /// removing what the commit does not have. Ignored files (`node_modules`) are not in the index and are
 /// left alone; the project's own `.git` is never touched.
 pub fn restore(project_root: &Path, sha: &str) -> Result<(), ErrorObject> {
-    run(project_root, &["add", "-A"])?;
-    run(project_root, &["read-tree", "-u", "--reset", sha])?;
+    let shadow = Shadow::of(project_root)?;
+
+    shadow.run(&["add", "-A"])?;
+    shadow.run(&["read-tree", "-u", "--reset", sha])?;
 
     Ok(())
 }
@@ -175,16 +200,21 @@ pub fn restore(project_root: &Path, sha: &str) -> Result<(), ErrorObject> {
 /// What changed in the folder since a shadow commit, new files included (see `ssh::ops::shadow_changes`,
 /// the same rule on a host). Only the shadow's index is written; the project's own repository is not.
 pub fn changes_since(project_root: &Path, sha: &str) -> Result<String, ErrorObject> {
-    run(project_root, &["add", "-N", "--", ":/"])?;
-    run(project_root, &["diff", sha])
+    let shadow = Shadow::of(project_root)?;
+
+    shadow.run(&["add", "-N", "--", ":/"])?;
+
+    shadow.run(&["diff", sha])
 }
 
 /// Which files changed since a shadow commit, new ones included: `[(status, path)]` with git's letters
 /// (`A` added, `M` modified, `D` deleted, `R` renamed). The Time Machine's before/after list.
 pub fn files_since(project_root: &Path, sha: &str) -> Result<Vec<(String, String)>, ErrorObject> {
-    run(project_root, &["add", "-N", "--", ":/"])?;
+    let shadow = Shadow::of(project_root)?;
 
-    Ok(parse_name_status(&run(project_root, &["diff", "--name-status", sha])?))
+    shadow.run(&["add", "-N", "--", ":/"])?;
+
+    Ok(parse_name_status(&shadow.run(&["diff", "--name-status", sha])?))
 }
 
 /// `git diff --name-status` output as `(status, path)` pairs; a rename keeps its new path.
@@ -204,8 +234,11 @@ pub fn parse_name_status(text: &str) -> Vec<(String, String)> {
 pub fn file_diff(project_root: &Path, sha: &str, path: &str) -> Result<String, ErrorObject> {
     let path = clean_relative(path)?;
 
-    run(project_root, &["add", "-N", "--", &path])?;
-    run(project_root, &["diff", sha, "--", &path])
+    let shadow = Shadow::of(project_root)?;
+
+    shadow.run(&["add", "-N", "--", &path])?;
+
+    shadow.run(&["diff", sha, "--", &path])
 }
 
 /// Puts **one file** back as a shadow commit recorded it - the rest of the folder is not touched.
@@ -214,10 +247,11 @@ pub fn file_diff(project_root: &Path, sha: &str, path: &str) -> Result<String, E
 /// for it. Returns `restored` or `removed`.
 pub fn restore_file(project_root: &Path, sha: &str, path: &str) -> Result<&'static str, ErrorObject> {
     let path = clean_relative(path)?;
-    let existed = run(project_root, &["cat-file", "-e", &format!("{sha}:{path}")]).is_ok();
+    let shadow = Shadow::of(project_root)?;
+    let existed = shadow.run(&["cat-file", "-e", &format!("{sha}:{path}")]).is_ok();
 
     if existed {
-        run(project_root, &["checkout", sha, "--", &path])?;
+        shadow.run(&["checkout", sha, "--", &path])?;
 
         return Ok("restored");
     }
@@ -353,5 +387,36 @@ mod tests {
         assert_eq!(branch, "");
         assert_eq!(dirty, 0);
         assert!(diff(project.path(), Some(&sha)).unwrap().contains("export const a = 2;"));
+    }
+
+    /// P0-17's fix, pinned: a [`Shadow`] runs every command in the repository it was opened with.
+    ///
+    /// The bug this replaces: each command resolved the shadow repository again from the data directory, so a data
+    /// directory that moved between two commands of one operation - it comes from the environment - staged the tree in one
+    /// repository and committed it in another, and a fresh repository commits an *empty* tree. Restoring that commit
+    /// emptied the project; the rewind test caught it as a folder that came back with no files in it.
+    #[test]
+    fn a_shadow_runs_its_commands_in_the_repository_it_was_opened_with() {
+        let project = tempfile::tempdir().unwrap();
+
+        std::fs::write(project.path().join("a.txt"), "one\n").unwrap();
+
+        let repo = tempfile::tempdir().unwrap().keep();
+
+        assert!(run_here(&repo, &["init", "--quiet"]).is_ok());
+
+        let shadow = Shadow { git_dir: repo.join(".git"), work_tree: project.path().to_path_buf() };
+        let elsewhere = tempfile::tempdir().unwrap().keep();
+
+        assert!(run_here(&elsewhere, &["init", "--quiet"]).is_ok());
+
+        shadow.run(&["add", "-A"]).unwrap();
+        shadow.run(&["commit", "--quiet", "--allow-empty", "-m", "before"]).unwrap();
+
+        let sha = shadow.run(&["rev-parse", "HEAD"]).unwrap().trim().to_string();
+
+        assert!(run_here(&repo, &["--git-dir", ".git", "cat-file", "-e", &sha]).is_ok(), "the commit is in the repository the operation opened");
+        assert!(run_here(&elsewhere, &["--git-dir", ".git", "cat-file", "-e", &sha]).is_err(), "and in no other one");
+        assert_eq!(shadow.run(&["ls-tree", "-r", "--name-only", &sha]).unwrap().trim(), "a.txt", "the tree is the project's, not an empty one");
     }
 }

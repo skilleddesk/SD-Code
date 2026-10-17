@@ -180,12 +180,17 @@ fn is_local(model_key: &str) -> bool {
     model_key.starts_with("ollama:") || model_key.starts_with("local:") || model_key.starts_with("vllm:")
 }
 
+/// A model under one purpose, as a receipt row is keyed.
+type ReceiptKey = (String, String, String);
+/// What the steps of that row add up to: steps, tokens in, tokens out, wall ms, and cost (no price -> `None`).
+type ReceiptSum = (u64, u64, u64, u64, Option<f64>);
+
 /// The receipt of a turn, **computed from its Step Trace rows and nothing else**, so it cannot disagree with the trace:
 /// one row per model (and purpose), what each cost in tokens, time and money, whether it was local or a Rotation Chain
 /// step, and the totals. A cost is `null` for a model with no price (a subscription, a local model), never a made-up zero.
 pub fn receipt(store: &Store, turn_id: &str) -> Value {
     let connection = store.connection.lock().unwrap_or_else(|poison| poison.into_inner());
-    let mut rows: std::collections::BTreeMap<(String, String, String), (u64, u64, u64, u64, Option<f64>)> = std::collections::BTreeMap::new();
+    let mut rows: std::collections::BTreeMap<ReceiptKey, ReceiptSum> = std::collections::BTreeMap::new();
 
     if let Ok(mut statement) = connection.prepare("SELECT model_key, mode, purpose, tokens_in, tokens_out, wall_ms, cost_usd FROM step_trace WHERE task_id = ?1 ORDER BY id") {
         let found = statement.query_map(params![turn_id], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, i64>(3)? as u64, row.get::<_, i64>(4)? as u64, row.get::<_, i64>(5)? as u64, row.get::<_, Option<f64>>(6)?)));

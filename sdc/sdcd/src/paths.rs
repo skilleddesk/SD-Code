@@ -20,16 +20,33 @@ use anyhow::{Context, Result};
 
 /// `…/sdc` - the daemon's data directory. Created on first use.
 pub fn data_dir() -> Result<PathBuf> {
-    /* `SDC_DATA_DIR` moves the whole data directory: for tests that must not touch the real one, and for a
-       portable install on a stick. Unset, the platform's own location is used. */
+    /* `SDC_DATA_DIR` moves the whole data directory: for a portable install on a stick. Unset, the platform's own location
+       is used - except under `cargo test`, where it is one folder for the whole test process ([`test_data_dir`]): a test
+       must never write in the person's real data folder, and every test thread has to see the *same* folder, because a
+       thread that resolves a path inside a data directory another thread has just pointed somewhere else is how a shadow
+       repository comes to be created in a folder that no longer exists. */
     let dir = match std::env::var_os("SDC_DATA_DIR").filter(|value| !value.is_empty()) {
         Some(custom) => PathBuf::from(custom),
+        #[cfg(test)]
+        None => test_data_dir(),
+        #[cfg(not(test))]
         None => dirs::data_dir().context("no platform data directory for this user")?.join("sdc"),
     };
 
     std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
 
     Ok(dir)
+}
+
+/// The data folder of a test run: one per process, created on first use and **never removed**. Several test threads
+/// resolve paths in it while others are still writing, so it has to outlive every one of them - a folder that disappears
+/// under a running `git` is a `git init: unable to get current working directory` and, worse, a repository whose commits
+/// are gone.
+#[cfg(test)]
+fn test_data_dir() -> PathBuf {
+    static DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+    DIR.get_or_init(|| std::env::temp_dir().join(format!("sdc-test-data-{}", std::process::id()))).clone()
 }
 
 /// Where the daily copies of the database are kept (0.15.5): **outside** the data folder, so a folder that

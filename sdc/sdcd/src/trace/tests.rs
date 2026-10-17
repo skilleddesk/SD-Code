@@ -140,6 +140,7 @@ fn a_model_with_no_baseline_is_said_not_silently_passed() {
     assert!(verdict.lines.iter().any(|line| line.contains("no baseline")));
 }
 
+#[allow(clippy::too_many_arguments)]
 fn traced(store: &Store, task: &str, step: u32, model: &str, mode: &str, purpose: &str, tokens: (u64, u64), wall_ms: u64, cost: Option<f64>) {
     insert(store, &Step { task_id: task.into(), step_id: format!("{task}.s{step}"), session_id: "s".into(), step, model_key: model.into(), mode: mode.into(), purpose: purpose.into(), tokens_in: tokens.0, tokens_out: tokens.1, wall_ms, cost_usd: cost, ..Step::default() }, "2026").unwrap();
 }

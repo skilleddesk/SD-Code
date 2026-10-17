@@ -890,9 +890,6 @@ mod probe_class_tests {
     #[test]
     fn a_probed_local_model_carries_its_class_and_nothing_else_does() {
         let _guard = crate::sme::probe::DATA_DIR_LOCK.lock().unwrap_or_else(|poison| poison.into_inner());
-        let dir = tempfile::tempdir().unwrap();
-
-        std::env::set_var("SDC_DATA_DIR", dir.path());
 
         let key = ModelKey { provider: "ollama".into(), model: "qwen3.5:9b".into(), digest: "sha256:aa".into(), quantization: "Q4_K_M".into(), runtime: "0.12".into() };
 

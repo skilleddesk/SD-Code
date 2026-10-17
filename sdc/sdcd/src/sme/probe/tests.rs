@@ -197,9 +197,6 @@ fn the_probe_sends_nothing_of_the_persons() {
 #[test]
 fn changing_any_part_of_the_identity_makes_the_stored_profile_provisional() {
     let _guard = DATA_DIR_LOCK.lock().unwrap_or_else(|poison| poison.into_inner());
-    let dir = tempfile::tempdir().unwrap();
-
-    std::env::set_var("SDC_DATA_DIR", dir.path());
 
     let mut model = scripted(1_000_000);
     let plan = Plan { contexts: vec![2_048, 16_384], ..small_plan() };

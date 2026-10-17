@@ -607,6 +607,7 @@ fn thinking_tokens_of(message: &Value) -> u64 {
 }
 
 /// One model call: the request, the stream, the assembled reply.
+#[allow(clippy::too_many_arguments)]
 fn ask_model(backend: Backend, target: &Target, turn: (&str, crate::guard::modelgate::Purpose), system: &str, messages: &[Value], specs: &[dialect::ToolSpec], sink: &EventSink, stopped: &dyn Fn() -> bool) -> Result<Reply, String> {
     /* P0-10, the Pin Guard: every model call of a turn asks the turn's gate first. A call to a model the person did not
        choose never reaches the network. */
