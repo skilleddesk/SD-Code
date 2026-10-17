@@ -552,6 +552,22 @@ fn ask_model(backend: Backend, target: &Target, system: &str, messages: &[Value]
         body["reasoning_effort"] = serde_json::json!(if level == "max" { "high" } else { level });
     }
 
+    /* P0-8, the Local Runtime Guard: the request is counted before it is sent. A prompt that does not fit the window
+       is never sent - Ollama would answer 200 and drop the start of it, a cloud API would refuse it - the caller gets
+       `ContextOverflow` and splits the work. A local model's window is the `num_ctx` it is asked for; a cloud
+       model's is the one its catalogue row documents, and a model with none documented is not judged. */
+    let window = target.local_context.or_else(|| crate::guard::context::documented_window(&target.model));
+    let mut expected_tokens = None;
+
+    if let (Some(window), true) = (window, crate::v3::on("local.runtime_guard")) {
+        let reserve = crate::guard::context::max_output(&body, window);
+
+        match crate::guard::context::check(&body, window, reserve) {
+            Ok(estimated) => expected_tokens = Some((estimated, window)),
+            Err(overflow) => return Err(overflow.to_string()),
+        }
+    }
+
     /* A local model gets Ollama's own request, with the context size in it (0.16.1). */
     if let Some(num_ctx) = target.local_context {
         body = ollama_native::body(body, num_ctx);
@@ -609,6 +625,23 @@ fn ask_model(backend: Backend, target: &Target, system: &str, messages: &[Value]
     }
 
     card.close(reply.is_ok());
+
+    /* P0-8: what the runtime says it read is set against what was sent. A count that filled the window means the start
+       of the prompt may be gone, and an answer to a cut prompt is not trusted. (A count below ours proves nothing: the
+       runtime may have reused a cached prefix.) */
+    if let (Ok(done), Some((estimated, window)), Some(_)) = (&reply, expected_tokens, target.local_context) {
+        use crate::guard::context::{judge, Judgement};
+
+        match judge(estimated, done.input_tokens, window) {
+            Judgement::FilledWindow => {
+                return Err(format!("the runtime read {} tokens against a window of {window}: the start of the prompt may have been cut, so this answer is not trusted", done.input_tokens));
+            }
+            /* The runtime read more than SDC counted but less than the window: nothing was cut, and the Step Trace
+               (P0-12) is where the gap is recorded. */
+            Judgement::Underestimated | Judgement::Consistent => {}
+        }
+    }
+
     reply.map_err(|reason| unreachable(backend, &target.model, &reason))
 }
 
@@ -3759,6 +3792,71 @@ mod end_to_end {
         assert!(matches!(events.last(), Some(EngineEvent::Done { summary, .. }) if summary == "Done"));
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    fn local_target(url: &str, num_ctx: u64) -> Target {
+        Target {
+            url: url.to_string(),
+            headers: vec![("content-type".to_string(), "application/json".to_string())],
+            dialect: Dialect::OpenAi,
+            model: "qwen3.5:9b".to_string(),
+            price: None,
+            thinking: false,
+            effort: None,
+            local_context: Some(num_ctx),
+            local_window: false,
+        }
+    }
+
+    /// P0-8: a prompt twice the window is refused *before* anything is sent - the address here has no server, so a
+    /// request that went out would fail with a connection error instead of `ContextOverflow`. With the switch off the
+    /// guard is gone and the old behaviour (send it) is back, which is how the switch is proven to be the only
+    /// difference.
+    #[test]
+    fn a_prompt_twice_the_window_is_never_sent_and_the_switch_restores_the_old_road() {
+        let target = local_target("http://127.0.0.1:1/api/chat", 2_048);
+        let huge = serde_json::json!([{ "role": "user", "content": "GOAL: PINEAPPLE\n".to_string() + &"filler ".repeat(6_000) }]);
+        let recorder = crate::engines::Recorder::new();
+        let stopped = || false;
+
+        let guarded = ask_model(Backend::Ollama, &target, "system", huge.as_array().unwrap(), &[], &recorder.sink(), &stopped);
+
+        assert!(guarded.as_ref().is_err_and(|reason| reason.starts_with("ContextOverflow")), "{guarded:?}");
+
+        let unguarded = crate::v3::ablating(&["local.runtime_guard"], || ask_model(Backend::Ollama, &target, "system", huge.as_array().unwrap(), &[], &recorder.sink(), &|| true));
+
+        assert!(unguarded.as_ref().is_err_and(|reason| !reason.starts_with("ContextOverflow")), "with the switch off the request is not refused by the guard: {unguarded:?}");
+    }
+
+    /// P0-8: the runtime says it read as many tokens as the window holds - the signature of a prompt cut at the front -
+    /// and that answer is not trusted.
+    #[test]
+    fn an_answer_read_through_a_full_window_is_marked_invalid() {
+        let (url, server) = raw_provider(vec![ndjson(&[
+            serde_json::json!({ "message": { "role": "assistant", "content": "an answer to half a prompt" }, "done": false }),
+            serde_json::json!({ "message": { "role": "assistant", "content": "" }, "done": true, "done_reason": "stop", "prompt_eval_count": 4_096, "eval_count": 5 }),
+        ])]);
+        let target = local_target(&url, 4_096);
+        let messages = serde_json::json!([{ "role": "user", "content": "hello" }]);
+        let recorder = crate::engines::Recorder::new();
+        let result = ask_model(Backend::Ollama, &target, "system", messages.as_array().unwrap(), &[], &recorder.sink(), &|| false);
+
+        server.join().unwrap();
+
+        assert!(result.as_ref().is_err_and(|reason| reason.contains("may have been cut")), "{result:?}");
+    }
+
+    /// P0-8: Ollama is reached on its native `/api/chat` with an explicit context, never on the OpenAI-compatible `/v1`
+    /// road that cannot carry `num_ctx`.
+    #[test]
+    fn ollama_is_never_reached_through_v1() {
+        let root = std::env::temp_dir();
+        let prompt = prompt_in(&root, "turn-native-road", "hi", "qwen3.5:9b");
+        let target = target(Backend::Ollama, &prompt).expect("a local target");
+
+        assert_eq!(target.url, ollama_native::URL);
+        assert!(!target.url.contains("/v1"));
+        assert!(target.local_context.is_some_and(|ctx| ctx > 0), "num_ctx is always sent");
     }
 
     /// A SearXNG server on loopback that answers every search with the same two pages.

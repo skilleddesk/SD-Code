@@ -13,7 +13,7 @@ Status: `todo` · `in-progress` · `blocked` · `done`.
 | P0-5 | Data layer | 0 | P0-3 | done | data.v2 | sdc/docs/reports/P0-5.md | rotation.toml + sent.jsonl + capped LRU cache + tested precedence; 28 data tests |
 | P0-6 | Daemon security | 0 | P0-3 | done | daemon.secure | sdc/docs/reports/P0-6.md | per-client token, Host/Origin checks, rate limit, no CORS; verified live with curl (200/403 matrix) |
 | P0-7 | UI guide and visual baseline | 0 | P0-3 | done | n/a | sdc/docs/reports/P0-7.md | UI-GUIDE (73 tokens) + 4-view pixel visual regression; axe 0 violations |
-| P0-8 | Local Runtime Guard | 0 | P0-3 | todo | local.runtime_guard |  |  |
+| P0-8 | Local Runtime Guard | 0 | P0-3 | done | local.runtime_guard | sdc/docs/reports/P0-8.md | count before send, ContextOverflow, prompt_eval_count judged, switch; live Ollama check left to the owner |
 | P0-9 | Model identity and capability probe | 0 | P0-8 | todo | models.probe |  |  |
 | P0-10 | Model-selection contract and Pin Guard | 0 | P0-5, P0-9 | todo | models.contract (default ON after tests) |  |  |
 | P0-11 | Bench rules, hard tier and small-model bench | 0 | P0-9 | todo | n/a |  |  |

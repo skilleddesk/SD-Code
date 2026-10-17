@@ -17,6 +17,7 @@ working build is a trap rather than a history. The entries below are kept for th
 
 ## [Unreleased]
 
+- **P0-8 Local Runtime Guard.** A request is counted before it is sent (`guard::context`, deliberately over-counting) and one that does not fit the model's window is refused with `ContextOverflow` so the caller splits the work, instead of being sent for Ollama to drop its start without a word. The same check covers every cloud model whose window the catalogue documents. After the reply, a `prompt_eval_count` that fills the window marks the answer invalid. Switch `v3.local.runtime_guard` (on); off = the old road. Not run against a live Ollama here: the proof is in tests (a 2x-window prompt never leaves, a sentinel at the start, `/api/chat` only).
 - **P0-7 UI guide and visual baseline.** `sdc/docs/UI-GUIDE.md` (73 tokens, components, strings) extracted from the code, and `pnpm --filter @sdc/app smoke:visual`: the built window photographed at desktop and phone width, dark and light, compared pixel by pixel with `app/tests/visual/*.png` (a changed screen fails; two runs of one build differ by 0.000%). Covers the screen the app opens on; screens that need a daemon get their own view when they get a way to be reached.
 - **P0-13 Output compressor, OS-normaliser, command runner.** Three modules in `src/guard/`, where P0-3 said they
   would go. `compress` has a contract rather than a heuristic: **a line that matches a failure signal is never
