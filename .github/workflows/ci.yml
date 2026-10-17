@@ -50,12 +50,12 @@ jobs:
 
       - name: Test
         working-directory: sdc/sdcd
-        run: cargo test --no-fail-fast
+        run: cargo test --locked --no-fail-fast
 
       - name: Clippy
         if: matrix.os == 'ubuntu-latest'
         working-directory: sdc/sdcd
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --locked --all-targets -- -D warnings
 
       - name: Seal and open cost (informational)
         if: matrix.os == 'ubuntu-latest'
@@ -153,7 +153,7 @@ jobs:
 
       - name: Build the daemon the end-to-end suite starts
         working-directory: sdc/sdcd
-        run: cargo build
+        run: cargo build --locked
 
       - name: End to end (real sdcd, real Worker, real Chrome)
         working-directory: sdc/web
