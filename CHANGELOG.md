@@ -17,6 +17,7 @@ working build is a trap rather than a history. The entries below are kept for th
 
 ## [Unreleased]
 
+- **P0-7 UI guide and visual baseline.** `sdc/docs/UI-GUIDE.md` (73 tokens, components, strings) extracted from the code, and `pnpm --filter @sdc/app smoke:visual`: the built window photographed at desktop and phone width, dark and light, compared pixel by pixel with `app/tests/visual/*.png` (a changed screen fails; two runs of one build differ by 0.000%). Covers the screen the app opens on; screens that need a daemon get their own view when they get a way to be reached.
 - **P0-13 Output compressor, OS-normaliser, command runner.** Three modules in `src/guard/`, where P0-3 said they
   would go. `compress` has a contract rather than a heuristic: **a line that matches a failure signal is never
   dropped**, whatever the byte budget, and the number of dropped lines is reported - a property test over 200 random

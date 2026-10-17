@@ -19,7 +19,8 @@
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "strip:appledouble": "node scripts/strip-appledouble.mjs",
-    "tauri:build": "node scripts/strip-appledouble.mjs && pnpm daemon:package && COPYFILE_DISABLE=1 tauri build"
+    "tauri:build": "node scripts/strip-appledouble.mjs && pnpm daemon:package && COPYFILE_DISABLE=1 tauri build",
+    "smoke:visual": "node scripts/visual-bundle.mjs"
   },
   "dependencies": {
     "@codemirror/commands": "^6.11.1",
