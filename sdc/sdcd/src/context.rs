@@ -61,21 +61,9 @@ pub fn live_turns(store: &Store, session_id: &str, exclude: &str) -> Vec<TurnRec
         .collect()
 }
 
-/// A rough token count: about four bytes a token for Latin text, and about one token per character of
-/// Bengali, Devanagari and other scripts (their UTF-8 is three bytes a character, and tokenizers split
-/// them finely). Rough on purpose - it decides when to fold, not what to bill.
+/// The token count the fold decisions use: the daemon's one estimate ([`crate::tokens::estimate`], Phase 0.9).
 pub fn tokens_of(text: &str) -> u64 {
-    let (mut ascii, mut other) = (0u64, 0u64);
-
-    for c in text.chars() {
-        if c.is_ascii() {
-            ascii += 1;
-        } else {
-            other += 1;
-        }
-    }
-
-    ascii / 4 + other + 1
+    crate::tokens::estimate(text)
 }
 
 /// How many tokens the model holds: the catalogue's `ctx` for the model, or what the CLI's models have.

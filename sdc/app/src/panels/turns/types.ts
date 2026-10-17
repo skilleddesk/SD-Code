@@ -259,6 +259,8 @@ export interface LiveBarData {
 export interface TurnStatsData {
   startedAt: string;
   chars: number;
+  /** Tokens by the one script-aware estimate (`lib/tokens.ts`), not `chars / 4`. */
+  tokens: number;
   thinkingMs: number;
   thinkingSince: string | null;
   tools: number;

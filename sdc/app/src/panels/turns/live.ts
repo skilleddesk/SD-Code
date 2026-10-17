@@ -1,3 +1,4 @@
+import { estimateTokens, estimateTokensOfChars } from '../../lib/tokens';
 import { strings } from '../../strings';
 import type { CheckpointView, TurnView, VerifyView } from '../../store/types';
 import type { CollapsedSummaryData, LiveBarData, TimelineItem, ToolCardData, Turn, TurnCheckpointData } from './types';
@@ -83,6 +84,8 @@ export function toTurns(
               startedAt: turn.startedAt,
               /* What a file being written adds counts too (0.14.2): the pace read ~1 tok/s while it wrote 6k characters. */
               chars: turn.text.length + turn.thinking.length + (turn.draft?.chars ?? 0),
+              /* Phase 0.9: tokens by the one estimate (script-aware), not chars / 4 - Bengali is ~4x that. */
+              tokens: estimateTokens(turn.text) + estimateTokens(turn.thinking) + estimateTokensOfChars(turn.draft?.chars ?? 0),
               thinkingMs: turn.thinkingMs,
               thinkingSince: turn.thinkingSince,
               tools: turn.tools.length,

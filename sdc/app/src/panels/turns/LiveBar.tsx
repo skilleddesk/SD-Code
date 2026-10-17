@@ -38,7 +38,7 @@ export function LiveBar({
   const phaseMs = Number.isFinite(since) ? Math.max(0, now - since) : 0;
   const started = Date.parse(stats.startedAt);
   const elapsedMs = Number.isFinite(started) ? Math.max(0, now - started) : 0;
-  const tokens = Math.round(stats.chars / 4);
+  const tokens = stats.tokens;
   const pace = elapsedMs > 1000 ? Math.round(tokens / (elapsedMs / 1000)) : 0;
   const totals = [
     strings.turns.thinking.seconds(elapsedMs),

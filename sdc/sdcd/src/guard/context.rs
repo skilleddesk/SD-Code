@@ -45,20 +45,10 @@ pub enum Judgement {
     FilledWindow,
 }
 
-/// An upper-biased token count of one text: a token is at most three ASCII bytes, and a non-ASCII character
-/// (Bengali, CJK, an emoji) is counted as two tokens. Real tokenizers do better; that is the margin.
+/// An upper-biased token count of one text: the daemon's one estimate ([`crate::tokens::estimate`], Phase 0.9), which never
+/// undercounts a real tokenizer (the guard's rule) and no longer counts a Bengali character as two tokens.
 pub fn estimate_text(text: &str) -> u64 {
-    let (mut ascii, mut other) = (0u64, 0u64);
-
-    for c in text.chars() {
-        if c.is_ascii() {
-            ascii += 1;
-        } else {
-            other += 1;
-        }
-    }
-
-    ascii.div_ceil(3) + other * 2
+    crate::tokens::estimate(text)
 }
 
 /// The tokens of a whole request body (OpenAI or Anthropic shaped, or Ollama's native): every message, every
@@ -141,10 +131,11 @@ mod tests {
 
     #[test]
     fn the_estimate_never_undercounts_a_real_tokenizer() {
-        /* English prose is about 4 bytes a token and code about 3; the estimate takes 3. Bengali is about 1 a
-           character; the estimate takes 2. */
-        assert!(estimate_text(&"hello world ".repeat(100)) >= 1200 / 4);
-        assert!(estimate_text("বাংলা ভাষা") >= 8);
+        /* Real counts (tiktoken, 2026-10-18): "hello world " x100 is 201 tokens on both cl100k and o200k, and "বাংলা ভাষা"
+           is 12 on cl100k (4 on o200k). The estimate is the daemon's one ([`crate::tokens`]); the shared fixtures there
+           check it on longer samples in eleven scripts. */
+        assert!(estimate_text(&"hello world ".repeat(100)) >= 201);
+        assert!(estimate_text("বাংলা ভাষা") >= 12);
         assert!(estimate_text("") == 0);
     }
 

@@ -81,25 +81,14 @@ pub fn price_of(provider: Option<&str>, model: &str) -> Option<(f64, f64)> {
         })
 }
 
-/// Tokens in a text, roughly: about four characters per token for Latin script, about two for the
-/// scripts a tokenizer splits finer (Bengali, Devanagari, Arabic, CJK). An estimate, and labelled one.
+/// Tokens in a text: the daemon's one estimate ([`crate::tokens::estimate`], Phase 0.9). An estimate, and labelled one.
 pub fn tokens_in(text: &str) -> u64 {
-    let (mut latin, mut other) = (0u64, 0u64);
-
-    for character in text.chars() {
-        if character.is_ascii() {
-            latin += 1;
-        } else {
-            other += 1;
-        }
-    }
-
-    latin / 4 + other / 2 + 1
+    crate::tokens::estimate(text)
 }
 
 /// What a turn will probably cost, before it runs.
 pub fn estimate(engine: &str, provider: Option<&str>, model: &str, prompt: &str, history_chars: usize, agent: bool) -> Value {
-    let input = tokens_in(prompt) + history_chars as u64 / 4 + 1500;
+    let input = tokens_in(prompt) + crate::tokens::estimate_chars(history_chars) + 1500;
     /* An agent calls the model once per step and re-sends the conversation each time; eight steps is the
        median of the turns in this build's own logs. A chat answers once. */
     let steps: u64 = if agent || matches!(engine, "claude_code" | "codex" | "gemini") { 8 } else { 1 };

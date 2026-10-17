@@ -499,7 +499,7 @@ function NowLine({ turn, now }: { turn: Turn; now: number }) {
   const live = turn.live;
   const started = Date.parse(turn.stats?.startedAt ?? turn.startedAt);
   const elapsed = Number.isFinite(started) ? Math.max(0, now - started) : 0;
-  const tokens = Math.round((turn.stats?.chars ?? 0) / 4);
+  const tokens = turn.stats?.tokens ?? 0;
   const verbs = strings.turns.flow.verbs;
   const seed = turn.id.length + turn.id.charCodeAt(turn.id.length - 1);
   const musing = verbs[(seed + Math.floor(elapsed / 4000)) % verbs.length] ?? strings.turns.flow.thinking;

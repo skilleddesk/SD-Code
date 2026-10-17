@@ -1,0 +1,89 @@
+{
+ "about": "Real token counts (tiktoken cl100k_base and o200k_base, measured 2026-10-18) for short samples in several scripts. `estimate` is what protocol/tokens (Rust sdcd/src/tokens.rs and app/src/lib/tokens.ts) must return: the Rust and TypeScript tests both read this file, so the two estimators cannot drift apart, and both assert estimate >= max(cl100k, o200k) (never undercounts).",
+ "samples": [
+  {
+   "name": "bengali",
+   "text": "আমি আমার প্রকল্পের জন্য একটি নতুন ফিচার তৈরি করতে চাই যা ব্যবহারকারীদের লগইন করতে সাহায্য করবে। দয়া করে টেস্টগুলো চালান এবং যা ভেঙে গেছে তা ঠিক করুন।",
+   "cl100k": 184,
+   "o200k": 45,
+   "estimate": 202
+  },
+  {
+   "name": "arabic",
+   "text": "أريد إنشاء ميزة جديدة لمشروعي تساعد المستخدمين على تسجيل الدخول. من فضلك شغّل الاختبارات وأصلح ما تعطل.",
+   "cl100k": 73,
+   "o200k": 32,
+   "estimate": 86
+  },
+  {
+   "name": "german",
+   "text": "Ich möchte für mein Projekt eine neue Funktion erstellen, die den Benutzern beim Anmelden hilft. Bitte führe die Tests aus und behebe, was kaputt gegangen ist.",
+   "cl100k": 41,
+   "o200k": 36,
+   "estimate": 42
+  },
+  {
+   "name": "english",
+   "text": "I want to build a new feature for my project that helps users log in. Please run the tests and fix whatever broke.",
+   "cl100k": 25,
+   "o200k": 25,
+   "estimate": 32
+  },
+  {
+   "name": "hindi",
+   "text": "मैं अपने प्रोजेक्ट के लिए एक नई सुविधा बनाना चाहता हूँ जो उपयोगकर्ताओं को लॉगिन करने में मदद करे। कृपया परीक्षण चलाएं और जो टूटा है उसे ठीक करें।",
+   "cl100k": 151,
+   "o200k": 41,
+   "estimate": 191
+  },
+  {
+   "name": "chinese",
+   "text": "我想为我的项目构建一个新功能，帮助用户登录。请运行测试并修复出错的地方。",
+   "cl100k": 32,
+   "o200k": 26,
+   "estimate": 47
+  },
+  {
+   "name": "code",
+   "text": "fn main() { let x: Vec<u32> = (0..10).map(|n| n * 2).collect(); println!(\"{:?}\", x); }",
+   "cl100k": 35,
+   "o200k": 35,
+   "estimate": 45
+  },
+  {
+   "name": "russian",
+   "text": "Я хочу создать новую функцию для моего проекта, которая поможет пользователям входить в систему. Пожалуйста, запустите тесты и исправьте всё, что сломалось.",
+   "cl100k": 59,
+   "o200k": 37,
+   "estimate": 82
+  },
+  {
+   "name": "hebrew",
+   "text": "אני רוצה ליצור תכונה חדשה לפרויקט שלי שתעזור למשתמשים להתחבר. אנא הרץ את הבדיקות ותקן מה שנשבר.",
+   "cl100k": 90,
+   "o200k": 36,
+   "estimate": 99
+  },
+  {
+   "name": "thai",
+   "text": "ฉันต้องการสร้างฟีเจอร์ใหม่สำหรับโปรเจกต์ของฉันที่ช่วยให้ผู้ใช้เข้าสู่ระบบ กรุณารันการทดสอบและแก้ไขสิ่งที่พัง",
+   "cl100k": 97,
+   "o200k": 43,
+   "estimate": 175
+  },
+  {
+   "name": "greek",
+   "text": "Θέλω να δημιουργήσω μια νέα λειτουργία για το έργο μου που θα βοηθά τους χρήστες να συνδέονται.",
+   "cl100k": 77,
+   "o200k": 30,
+   "estimate": 86
+  },
+  {
+   "name": "mixed_bn_en",
+   "text": "এই ফাংশনটা fix করো: fn read_config() -> Result<Config, Error> এবং cargo test চালাও।",
+   "cl100k": 48,
+   "o200k": 26,
+   "estimate": 55
+  }
+ ]
+}

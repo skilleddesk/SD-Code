@@ -78,6 +78,7 @@ pub mod sme;
 pub mod ssh;
 pub mod status;
 pub mod store;
+pub mod tokens;
 pub mod trace;
 pub mod trust;
 pub mod understand;

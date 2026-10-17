@@ -597,18 +597,28 @@ impl FirstByte {
     }
 }
 
-/// About how many tokens of reasoning a reply carried: its thinking blocks, or `reasoning_content`, at four characters
-/// a token. An estimate, labelled as one in the trace.
+/// About how many tokens of reasoning a reply carried: its thinking blocks, or `reasoning_content`, by the daemon's one
+/// estimate. An estimate, labelled as one in the trace.
 fn thinking_tokens_of(message: &Value) -> u64 {
-    let mut chars = message["reasoning_content"].as_str().map_or(0, |text| text.chars().count()) + message["reasoning"].as_str().map_or(0, |text| text.chars().count());
+    let mut text = String::new();
 
-    for block in message["content"].as_array().into_iter().flatten() {
-        if block["type"] == "thinking" {
-            chars += block["thinking"].as_str().map_or(0, |text| text.chars().count());
+    for key in ["reasoning_content", "reasoning"] {
+        if let Some(part) = message[key].as_str() {
+            text.push_str(part);
         }
     }
 
-    (chars / 4) as u64
+    for block in message["content"].as_array().into_iter().flatten() {
+        if block["type"] == "thinking" {
+            text.push_str(block["thinking"].as_str().unwrap_or_default());
+        }
+    }
+
+    if text.is_empty() {
+        0
+    } else {
+        crate::tokens::estimate(&text)
+    }
 }
 
 /// One model call: the request, the stream, the assembled reply.
