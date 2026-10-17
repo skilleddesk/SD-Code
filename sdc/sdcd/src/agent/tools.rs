@@ -713,6 +713,41 @@ fn read_file(context: &mut ToolContext, call_id: &str, path: &str) -> Outcome {
 
     match context.workspace.read(path) {
         Ok((text, truncated)) => {
+            /* Phase 0.3: a secret in the content, or a name that says one, is asked about before any model sees the
+               file; once the person allows it, the model still gets the text with the values masked. */
+            /* A file the policy marks secret is withheld whole by the privacy filter; there is nothing to ask. */
+            let marked = context.policy.secret(path, Some(context.workspace.root())).is_some();
+            let found = if marked { Vec::new() } else { crate::trust::secretguard::scan(path, &text) };
+            let named = if marked { None } else { crate::trust::secretguard::sensitive_name(path) };
+
+            let text = if found.is_empty() && named.is_none() {
+                text
+            } else {
+                let detail = if found.is_empty() {
+                    format!("The file name says `{}`; no secret value was recognised in it.", named.clone().unwrap_or_default())
+                } else {
+                    format!("Found {}.", crate::trust::secretguard::describe(&found))
+                };
+
+                if let Some(refused) = ask_always(
+                    context,
+                    &format!("Read a file that may hold a secret: {path}"),
+                    &detail,
+                    path,
+                    "Nothing has been sent to a model. If you allow it, the model gets the file with every secret value masked (only its length is kept).",
+                ) {
+                    completed(context, call_id, false, "withheld", None);
+
+                    return refused;
+                }
+
+                if crate::v3::on("redact") {
+                    /* the vault's placeholder: the model can still write the file back with the real value */
+                    crate::trust::secretguard::mask_with(&text, &found, |value| crate::v3::redact::hide(context.session_id, value))
+                } else {
+                    crate::trust::secretguard::mask(&text, &found)
+                }
+            };
             let lines = text.lines().count();
 
             /* v3 I2: a long file's outline first (switch `v3.skeleton`); the agent reads the part it needs. */
@@ -2056,6 +2091,49 @@ mod tests {
 
         assert!(outcome.is_error);
         assert!(std::fs::read_to_string(root.join("wp-config.php")).unwrap().contains("DB_NAME"), "the file was not changed");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Phase 0.3: a file whose content holds a secret is asked about before the model sees it; allowed, the model
+    /// gets the text with the value masked; declined, it gets nothing of the file.
+    #[test]
+    fn a_file_with_a_secret_inside_is_asked_about_and_reaches_the_model_masked() {
+        let (root, workspace) = folder("content-guard");
+        let recorder = Recorder::new();
+        let sink = recorder.sink();
+        let fake = "FAKEvalue9Zq4Xw7Lm2Pt8";
+
+        std::fs::write(root.join("notes.txt"), format!("deploy host: example.org\npassword={fake}\n")).unwrap();
+
+        let answer = |decision: &'static str, id: &'static str| {
+            std::thread::spawn(move || {
+                let deadline = std::time::Instant::now() + Duration::from_secs(5);
+
+                while !gate::resolve(id, decision) {
+                    assert!(std::time::Instant::now() < deadline, "the secret question was never asked");
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+            })
+        };
+
+        let mut context = context(&workspace, &sink, Autonomy::Auto);
+        let allowing = answer("allow", "perm-turn-t-1");
+        let allowed = execute(&mut context, &call("read_file", json!({ "path": "notes.txt" })));
+
+        allowing.join().unwrap();
+
+        assert!(!allowed.is_error, "{}", allowed.content);
+        assert!(allowed.content.contains("deploy host") && allowed.content.contains("password=") && (allowed.content.contains("[masked by SDC") || allowed.content.contains("‹secret:")), "{}", allowed.content);
+        assert!(!allowed.content.contains(fake), "the value never reaches the model");
+
+        let declining = answer("deny", "perm-turn-t-2");
+        let declined = execute(&mut context, &call("read_file", json!({ "path": "notes.txt" })));
+
+        declining.join().unwrap();
+
+        assert!(declined.is_error);
+        assert!(!declined.content.contains(fake) && !declined.content.contains("deploy host"));
 
         let _ = std::fs::remove_dir_all(&root);
     }

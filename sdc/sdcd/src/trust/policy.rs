@@ -464,6 +464,20 @@ fn segment_match(pattern: &str, text: &str) -> bool {
 mod tests {
     use super::*;
 
+    /// Phase 0.2: this repository's own `.sdc/policy.toml` parses, and protects what it says it protects.
+    #[test]
+    fn the_work_folders_own_policy_parses_and_protects_the_trust_code_and_the_workflows() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.sdc/policy.toml");
+        let policy = Policy::parse(&std::fs::read_to_string(path).expect("the repo's .sdc/policy.toml"), POLICY_FILE);
+
+        assert_eq!(policy.error, None);
+        assert!(policy.protected("sdc/sdcd/src/trust/policy.rs", None).is_some());
+        assert!(policy.protected(".github/workflows/release.yml", None).is_some());
+        assert!(policy.protected(".sdc/policy.toml", None).is_some());
+        assert!(policy.secret("pass.txt", None).is_some() && policy.secret("config/.env", None).is_some());
+        assert!(policy.secret("sdc/sdcd/src/main.rs", None).is_none());
+    }
+
     #[test]
     fn the_defaults_protect_secrets_keys_backups_and_wordpress_credentials() {
         let policy = Policy::default();

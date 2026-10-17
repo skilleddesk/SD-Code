@@ -1,0 +1,21 @@
+# SDC's own work folder policy (Phase 0.2). Lists extend the built-in defaults.
+production = false
+max_files_per_turn = 25
+
+# Content of these files never goes to any model.
+secret_paths = [
+  ".env", ".env.*", "*.pem", "*.key", "*.p12", "*.pfx", "*.jks", "*.keystore",
+  "**/secrets/**", "**/*secret*", "**/*credential*", "**/*apikey*", "**/*api_key*",
+  "**/pass.txt", "**/githubapi.*", "**/*api.txt",
+]
+
+# An AI must not change these without a person saying so.
+protected_paths = [
+  "sdc/sdcd/src/trust/**",
+  ".sdc/policy.toml",
+  ".github/workflows/**",
+  "sdc/app/src-tauri/tauri.conf.json",
+  "sdc/app/src-tauri/capabilities/**",
+  "sdc/app/src-tauri/*.entitlements",
+  "scripts/release*",
+]

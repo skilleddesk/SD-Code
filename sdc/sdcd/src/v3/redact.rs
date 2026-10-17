@@ -130,6 +130,18 @@ pub fn scrub(session: &str, text: &str) -> (String, usize) {
     (out, merged.len())
 }
 
+/// Puts one secret value in the chat's vault and answers its placeholder - for a guard that found a secret by
+/// another rule (Phase 0.3) and still wants the model's later write to carry the real value back.
+pub fn hide(session: &str, secret: &str) -> String {
+    let mut vaults = vaults().lock().unwrap_or_else(|poison| poison.into_inner());
+    let vault = vaults.entry(session.to_string()).or_default();
+    let next = vault.by_value.len() + 1;
+    let number = *vault.by_value.entry(secret.to_string()).or_insert(next);
+
+    vault.by_number.insert(number, secret.to_string());
+    placeholder(number)
+}
+
 fn restore_text(vault: &Vault, text: &str) -> String {
     static PLACEHOLDER: OnceLock<Regex> = OnceLock::new();
 

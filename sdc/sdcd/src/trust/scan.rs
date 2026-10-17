@@ -258,6 +258,28 @@ pub fn rule_counts() -> (usize, usize) {
     (SECRET_RULES.len(), SAST_RULES.len())
 }
 
+/// The first secret on one line: the byte range of its value and what it is. Placeholders are skipped as in `secrets`.
+pub fn secret_span(line: &str) -> Option<(usize, usize, String)> {
+    for (rule, regex) in secret_regexes() {
+        let Some(found) = regex.captures(line) else {
+            continue;
+        };
+        let value = found.get(1).or_else(|| found.get(0))?;
+
+        if rule.id == "assigned-secret" && placeholder(value.as_str()) {
+            continue;
+        }
+
+        if rule.id == "openai-key" && line.contains("sk-ant-") {
+            continue;
+        }
+
+        return Some((value.start(), value.end(), rule.what.to_string()));
+    }
+
+    None
+}
+
 /// A text a tool is about to write, scanned as if it were one whole new file - so the agent is warned
 /// before a key lands on disk, not after.
 pub fn secrets_in_text(file: &str, text: &str) -> Vec<Value> {

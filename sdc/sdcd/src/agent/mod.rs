@@ -3349,7 +3349,26 @@ mod end_to_end {
         let mut prompt = prompt_in(&root, "turn-redact-e2e", "copy the key line of config.txt into copy.txt", "local-test");
 
         prompt.session_id = "chat-redact-e2e".into();
+
+        /* Phase 0.3: reading a file with a key in it asks the person first; this person says yes. */
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let answering = {
+            let stop = stop.clone();
+
+            std::thread::spawn(move || {
+                while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                    for call in 0..12 {
+                        gate::resolve(&format!("perm-turn-redact-e2e-{call}"), "allow");
+                    }
+
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+            })
+        };
+
         drive(Backend::Api, &target, &workspace, Options { autonomy: Autonomy::Auto, max_steps: 6, auto_check: false, research: None }, None, &Default::default(), &prompt, &crate::engines::Recorder::new().sink());
+        stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        answering.join().unwrap();
 
         let bodies = server.join().unwrap();
 

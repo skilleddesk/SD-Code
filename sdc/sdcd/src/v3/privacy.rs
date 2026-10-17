@@ -50,8 +50,13 @@ pub fn filter(policy: &Policy, root: &str, calls: &[ToolUse], results: &mut [Too
 
                 sent.extend(kept.iter().map(|line| line_path(line).to_string()).filter(|path| !path.is_empty() && !path.starts_with('[')));
 
+                let found = crate::trust::secretguard::scan("", &kept.join("\n"));
+                let text = if found.is_empty() { kept.join("\n") } else { crate::trust::secretguard::mask(&kept.join("\n"), &found) };
+
                 if kept.len() < before {
-                    result.1 = format!("{}\n[SDC privacy: {} line(s) from files marked secret were left out.]", kept.join("\n"), before - kept.len());
+                    result.1 = format!("{text}\n[SDC privacy: {} line(s) from files marked secret were left out.]", before - kept.len());
+                } else if !found.is_empty() {
+                    result.1 = text;
                 }
             }
             "run_command" | "start_process" => {
@@ -63,6 +68,13 @@ pub fn filter(policy: &Policy, root: &str, calls: &[ToolUse], results: &mut [Too
                     policy.secret(word, Some(root)).map(|pattern| (word.to_string(), pattern))
                 }) {
                     result.1 = format!("[SDC privacy: this command names {path}, which is marked secret (`{pattern}`); its output is not sent to a model. It ran; check the outcome another way or ask the person.]");
+                } else {
+                    /* Phase 0.3: `cat pass.txt` is not a way round the read guard - a secret value in the output is masked. */
+                    let found = crate::trust::secretguard::scan("", &result.1);
+
+                    if !found.is_empty() {
+                        result.1 = crate::trust::secretguard::mask(&result.1, &found);
+                    }
                 }
             }
             _ => {}

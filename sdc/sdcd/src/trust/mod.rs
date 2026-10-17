@@ -23,4 +23,5 @@ pub mod ledger;
 pub mod policy;
 pub mod proof;
 pub mod scan;
+pub mod secretguard;
 pub mod score;
