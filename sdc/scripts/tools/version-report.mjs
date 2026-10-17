@@ -13,8 +13,10 @@
  */
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
-const root = new URL('../../../', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1');
+/* fileURLToPath, not `.pathname`: a folder with a space in it (`External SD`) arrives as `%20`. */
+const root = fileURLToPath(new URL('../../../', import.meta.url));
 const at = (path) => `${root}${path}`;
 
 /** The five files `bump-version.mjs` writes, with the pattern that finds the version in each. */
@@ -53,7 +55,10 @@ for (const [lock, crate] of [
 /* The artifacts, when they exist. */
 console.log('\nbuilt:');
 
-for (const binary of ['sdc/sdcd/target/release/sdcd.exe', 'sdc/sdcd/target/debug/sdcd.exe']) {
+/* This machine's own binary: a Windows `sdcd.exe` left in the tree on a Mac cannot be run (ENOEXEC). */
+const exe = process.platform === 'win32' ? '.exe' : '';
+
+for (const binary of [`sdc/sdcd/target/release/sdcd${exe}`, `sdc/sdcd/target/debug/sdcd${exe}`]) {
   if (!existsSync(at(binary))) {
     console.log(`  not built          ${binary}`);
     continue;
@@ -66,7 +71,7 @@ for (const binary of ['sdc/sdcd/target/release/sdcd.exe', 'sdc/sdcd/target/debug
 
 const window = 'sdc/app/src-tauri/target/release/sdc.exe';
 
-if (existsSync(at(window))) {
+if (process.platform === 'win32' && existsSync(at(window))) {
   const info = execFileSync(
     'powershell',
     [
