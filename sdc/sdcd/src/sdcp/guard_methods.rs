@@ -21,6 +21,10 @@ impl Daemon {
             "rewind.apply" => self.rewind_apply(envelope, &*out),
             "rewind.redo" => self.rewind_redo(envelope, &*out),
 
+            /* First-open secret sweep (Phase 0.4) ---------------------------------------------- */
+            "secrets.sweep" => self.secrets_sweep(envelope),
+            "secrets.move" => self.secrets_move(envelope),
+
             /* Duel, console, events ----------------------------------------------------------- */
             "duel.start" => self.duel_start(envelope, &*out),
             "duel.keep" | "duel.discard" => self.duel_keep(envelope, &*out),
@@ -28,6 +32,53 @@ impl Daemon {
             "console.detach" => self.console_detach(envelope),
             _ => self.dispatch_fleet(envelope, out),
         }
+    }
+
+    /// A project's root on this machine, when the path is one the person opened (`project.add`): the sweep reads only those.
+    fn local_project(&self, envelope: &Envelope) -> Result<std::path::PathBuf, ErrorObject> {
+        let path = envelope.require_str("path")?;
+        let wanted = std::path::Path::new(&path).canonicalize().map_err(|_| ErrorObject::bad_request("that folder does not exist on this computer"))?;
+        let known = self.store().projects().map_err(ErrorObject::internal)?.iter().any(|project| {
+            project["hostId"] == "local" && project["root"].as_str().is_some_and(|root| std::path::Path::new(root).canonicalize().is_ok_and(|real| real == wanted))
+        });
+
+        if known {
+            Ok(wanted)
+        } else {
+            Err(ErrorObject::bad_request("open the folder in SDC first; the sweep reads only folders you opened"))
+        }
+    }
+
+    /// `secrets.sweep`: reads an opened folder once, with no model, and lists where secrets already sit. With `firstOnly`
+    /// it answers `skipped` for a folder it has swept before.
+    pub(super) fn secrets_sweep(&self, envelope: &Envelope) -> Result<Value, ErrorObject> {
+        let root = self.local_project(envelope)?;
+        let first_only = envelope.opt_bool("firstOnly");
+        let key = format!("sweep.done.{}", crate::trust::sweep::keychain_name(&root, "", 0));
+
+        if first_only && self.store().setting(&key).ok().flatten().is_some() {
+            return Ok(json!({ "skipped": true, "findings": [], "files": 0, "truncated": false }));
+        }
+
+        let mut answer = crate::trust::sweep::to_json(&crate::trust::sweep::run(&root));
+
+        if first_only {
+            let _ = self.store().set_setting(&key, "1");
+        }
+
+        answer["skipped"] = json!(false);
+
+        Ok(answer)
+    }
+
+    /// `secrets.move`: one found value goes into the OS keychain and leaves a marker in its file.
+    pub(super) fn secrets_move(&self, envelope: &Envelope) -> Result<Value, ErrorObject> {
+        let root = self.local_project(envelope)?;
+        let file = envelope.require_str("file")?;
+        let line = envelope.opt_i64("line").filter(|line| *line >= 1).ok_or_else(|| ErrorObject::bad_request("`line` is required"))? as usize;
+
+        crate::trust::sweep::move_to_keychain(&root, &file, line, |name, value| crate::auth::keychain::set(name, value).map_err(|error| error.message.clone()))
+            .map_err(|message| ErrorObject::bad_request(message))
     }
 
     pub(super) fn permission_request(&self, envelope: &Envelope, out: &dyn Notifier) -> Result<Value, ErrorObject> {
@@ -245,5 +296,54 @@ impl Daemon {
         out.push(applied.to_event_payload(&session_id), Some(session_id), None);
 
         Ok(json!({ "restored": applied.turns, "turn": turn }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn call(daemon: &Daemon, method: &str, params: Value) -> Result<Value, ErrorObject> {
+        let state = daemon.state.clone();
+        let out: Arc<dyn Notifier> = Arc::new(crate::sdcp::notifications::ChannelNotifier::new(state.events.clone(), state.fanout.clone()));
+        let envelope = Envelope {
+            v: crate::SDCP_VERSION.to_string(),
+            id: "t-1".to_string(),
+            method: method.to_string(),
+            params: params.as_object().cloned().unwrap_or_default(),
+            host_id: None,
+        };
+
+        daemon.dispatch(&envelope, out)
+    }
+
+    #[test]
+    fn the_sweep_reads_only_a_folder_the_person_opened_and_the_first_open_only_once() {
+        let state = crate::DaemonState::bootstrap(Some(std::path::PathBuf::from(":memory:"))).expect("a daemon");
+        let daemon = Daemon::new(state.clone());
+        let folder = std::env::temp_dir().join(format!("sdcd-sweep-method-{}", std::process::id()));
+
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(folder.join(".env"), "API_KEY=FAKEvalue9Zq4Xw7Lm2Pt8\n").unwrap();
+
+        let path = folder.to_string_lossy().to_string();
+        let refused = call(&daemon, "secrets.sweep", json!({ "path": path })).expect_err("not opened yet");
+
+        assert_eq!(refused.code, "bad_request");
+
+        state.store.ensure_host("local", "Local", "local", "connected").unwrap();
+        state.store.add_project("p-sweep", "local", &path, "x").unwrap();
+
+        let first = call(&daemon, "secrets.sweep", json!({ "path": path, "firstOnly": true })).unwrap();
+
+        assert_eq!(first["findings"][0]["file"], ".env");
+        assert!(!first.to_string().contains("FAKEvalue"), "no value in the answer");
+
+        let again = call(&daemon, "secrets.sweep", json!({ "path": path, "firstOnly": true })).unwrap();
+
+        assert_eq!(again["skipped"], true, "a folder is swept on first open only");
+
+        let _ = std::fs::remove_dir_all(&folder);
     }
 }

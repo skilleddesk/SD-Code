@@ -20,7 +20,7 @@ const sdcpCall = vi.hoisted(() => vi.fn());
 
 vi.mock('../lib/sdcp', () => ({ sdcpCall }));
 
-const { loadChosenReviewer, saveChosenReviewer, runVerifyChosen, validName, renamePath, deletePath, createFolder, searchFolder, defaultReviewer, runVerify, autonomyFor, sendPrompt, interruptTurn, chooseModel, closeDiff, closeFolder, forkSession, loadCliRecipe, loadGitStatus, saveFile, emptySessionOn, hostMentionedIn, projectMentionedIn, newChatOnHost, openDiff, openFolderIn, loadDirectory, toggleDirectory, openFile, closeFile, addHost, hostKey, trustHost, reconnectHost, listRemoteDirectory, runDoctor, runCommand, runInBackground, pollBackground, stopBackground, openTerminalForHost, installHostKey } = await import('./intents');
+const { sweepFolder, moveSecretToKeychain, loadChosenReviewer, saveChosenReviewer, runVerifyChosen, validName, renamePath, deletePath, createFolder, searchFolder, defaultReviewer, runVerify, autonomyFor, sendPrompt, interruptTurn, chooseModel, closeDiff, closeFolder, forkSession, loadCliRecipe, loadGitStatus, saveFile, emptySessionOn, hostMentionedIn, projectMentionedIn, newChatOnHost, openDiff, openFolderIn, loadDirectory, toggleDirectory, openFile, closeFile, addHost, hostKey, trustHost, reconnectHost, listRemoteDirectory, runDoctor, runCommand, runInBackground, pollBackground, stopBackground, openTerminalForHost, installHostKey } = await import('./intents');
 const { useTerminalStore } = await import('./terminal');
 const { tabForSession } = await import('./rightPanel');
 const { engineForProvider, useModelStore } = await import('./model');
@@ -29,6 +29,7 @@ const { useLayoutStore } = await import('./layout');
 const { usePrefsStore } = await import('./prefs');
 const { useRightPanelStore } = await import('./rightPanel');
 const { useAppStore } = await import('./store');
+const { useSecretSweep } = await import('./secretSweep');
 
 describe('chooseModel', () => {
   beforeEach(() => {
@@ -1494,6 +1495,49 @@ describe('verify', () => {
       reviewer: { engine: 'gemini', model: 'gemini-3-pro', provider: 'gemini' },
     }));
     expect(tabForSession(useRightPanelStore.getState(), 's1')).toBe('verify');
+  });
+});
+
+/** Phase 0.4: the first-open secret sweep shows findings once, and moving one asks the daemon and records the keychain name. */
+describe('the first-open secret sweep', () => {
+  beforeEach(() => {
+    sdcpCall.mockReset();
+    useSecretSweep.getState().close();
+  });
+
+  it('shows what the daemon found and nothing for a clean or already-swept folder', async () => {
+    sdcpCall.mockResolvedValueOnce({ skipped: false, files: 3, truncated: false, findings: [{ file: '.env', line: 2, what: 'a key', byName: false }] });
+    await sweepFolder('/work/app');
+
+    expect(sdcpCall).toHaveBeenCalledWith('secrets.sweep', { path: '/work/app', firstOnly: true });
+    expect(useSecretSweep.getState().findings).toHaveLength(1);
+
+    useSecretSweep.getState().close();
+    sdcpCall.mockResolvedValueOnce({ skipped: true, files: 0, truncated: false, findings: [] });
+    await sweepFolder('/work/app');
+
+    expect(useSecretSweep.getState().root).toBeNull();
+  });
+
+  it('says nothing when the sweep cannot run', async () => {
+    sdcpCall.mockRejectedValueOnce(new Error('no daemon'));
+    await expect(sweepFolder('/work/app')).resolves.toBeUndefined();
+
+    expect(useSecretSweep.getState().root).toBeNull();
+  });
+
+  it('moves a value to the keychain and remembers its name, or shows why it could not', async () => {
+    useSecretSweep.getState().show('/work/app', [{ file: '.env', line: 2, what: 'a key', byName: false }], false);
+    sdcpCall.mockResolvedValueOnce({ name: 'sdc.moved.ab12.env:2', file: '.env', line: 2, note: '' });
+    await moveSecretToKeychain({ file: '.env', line: 2, what: 'a key', byName: false });
+
+    expect(sdcpCall).toHaveBeenCalledWith('secrets.move', { path: '/work/app', file: '.env', line: 2 });
+    expect(useSecretSweep.getState().moved['.env:2']).toBe('sdc.moved.ab12.env:2');
+
+    sdcpCall.mockRejectedValueOnce(new Error('keychain locked'));
+    await moveSecretToKeychain({ file: '.env', line: 5, what: 'a key', byName: false });
+
+    expect(useSecretSweep.getState().failed['.env:5']).toBe('keychain locked');
   });
 });
 

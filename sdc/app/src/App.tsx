@@ -8,6 +8,7 @@ import { AddHost } from './modals/AddHost';
 import { Connect } from './modals/Connect';
 import { HostSwitcherPopover } from './modals/HostSwitcherPopover';
 import { Permission } from './modals/Permission';
+import { SecretSweep } from './modals/SecretSweep';
 import { ProviderHub } from './modals/ProviderHub';
 import { NewProject } from './modals/NewProject';
 import { RemoteFolder } from './modals/RemoteFolder';
@@ -154,6 +155,7 @@ export function App() {
       <PolicyEditor />
       <MemoryDialog />
       <Onboarding />
+      <SecretSweep />
       {/* Last of the dialogs: a turn waiting for an approval must never sit under another dialog. */}
       <Permission />
 

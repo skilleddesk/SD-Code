@@ -267,6 +267,8 @@ export type SdcpMethod =
   | 'team.set'
   | 'settings.get'
   | 'settings.set'
+  | 'secrets.move'
+  | 'secrets.sweep'
   | 'update.check'
   /** 0.21: SDC installs and runs what it needs itself - Node, the coding CLIs, Ollama, ripgrep, Git - so no platform needs a terminal. */
   | 'tool.list'
@@ -690,6 +692,15 @@ export interface VerifyIssue {
   severity: 'high' | 'medium' | 'low';
   message: string;
   fix: string;
+}
+
+/** One place a secret sits in a folder (Phase 0.4): where and what, never the value. */
+export interface SecretFinding {
+  file: string;
+  /** 1-based; 0 when only the file's name says it holds a secret. */
+  line: number;
+  what: string;
+  byName: boolean;
 }
 
 /** The review stage: which engine read the diff, and what it said. */
@@ -2398,6 +2409,8 @@ export interface SdcpMethodMap {
   'team.set': { params: { members?: TeamMember[]; current?: string }; result: TeamState };
   'settings.get': { params: { key: string }; result: { key: string; value: string | null } };
   'settings.set': { params: { key: string; value: string | boolean }; result: { key: string; value: string } };
+  'secrets.move': { params: { path: string; file: string; line: number }; result: { name: string; file: string; line: number; note: string } };
+  'secrets.sweep': { params: { path: string; firstOnly?: boolean }; result: { findings: SecretFinding[]; files: number; truncated: boolean; skipped: boolean } };
   'update.check': { params: { channel?: 'stable' | 'beta' }; result: UpdateInfo };
   'tool.list': { params: Record<string, never>; result: { tools: ToolRow[]; root: string } };
   'tool.install': { params: { id: string; hostId?: string }; result: ToolJob };

@@ -338,6 +338,8 @@
           "team.set",
           "settings.get",
           "settings.set",
+          "secrets.move",
+          "secrets.sweep",
           "update.check",
           "tool.list",
           "tool.install",
@@ -2325,6 +2327,33 @@
           "result": {
             "key": "string",
             "value": "string"
+          }
+        },
+        "secrets.move": {
+          "params": {
+            "path": "string",
+            "file": "string",
+            "line": "integer"
+          },
+          "result": {
+            "name": "string",
+            "file": "string",
+            "line": "integer",
+            "note": "string"
+          }
+        },
+        "secrets.sweep": {
+          "params": {
+            "path": "string",
+            "firstOnly": "boolean?"
+          },
+          "result": {
+            "findings": [
+              "object"
+            ],
+            "files": "integer",
+            "truncated": "boolean",
+            "skipped": "boolean"
           }
         },
         "update.check": {

@@ -541,6 +541,18 @@ const english = {
     needName: 'Give the project a name first',
     needParent: 'Say where the folder should be made',
   },
+  /** The first-open secret sweep (Phase 0.4). */
+  secretSweep: {
+    title: 'Secrets found in this folder',
+    body: (count: number): string =>
+      `SDC looked through this folder once, on this computer, with no AI. ${count} place${count === 1 ? '' : 's'} may hold a password, key or token. Values are never shown here. SDC will ask before the agent reads any of them.`,
+    move: 'Move to keychain',
+    movedTo: (name: string): string => `Moved to your keychain as ${name}`,
+    truncated: 'The folder is large, so the sweep stopped early. There may be more.',
+    rotate: 'Moving a value out of a file does not make it safe if the file was ever committed, sent or shared: regenerate that key on its provider’s website.',
+    close: 'Close',
+    failed: 'Could not move it',
+  },
   folder: {
     /** The chip in the prompt area: `No folder` when the chat has none. */
     none: 'No folder',

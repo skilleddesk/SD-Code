@@ -1,9 +1,10 @@
-import type { FsEntry, LocalTuning, PermissionDecision, PermissionRisk, TierName } from '../../../protocol/types';
+import type { FsEntry, LocalTuning, PermissionDecision, PermissionRisk, SecretFinding, TierName } from '../../../protocol/types';
 import { nameOf, pickFolder } from '../lib/picker';
 import { sdcpCall } from '../lib/sdcp';
 import { isSdcpError } from '../lib/transport';
 import { baseName, inFolder, isUnder, samePath } from '../lib/paths';
 import { strings } from '../strings';
+import { findingId, useSecretSweep } from './secretSweep';
 import { useDaemonStore } from './daemon';
 import { useFilesStore } from './files';
 import { useLayoutStore } from './layout';
@@ -1816,7 +1817,46 @@ export async function openFolderIn(root: string, hostId = 'local'): Promise<stri
   toast(message);
   landIn(sessionId);
 
+  if (hostId === 'local') {
+    void sweepFolder(root);
+  }
+
   return sessionId;
+}
+
+/**
+ * The first-open secret sweep (Phase 0.4): the daemon reads the folder once, with no model, and says where a secret already
+ * sits. Nothing is shown for a folder it has swept before or found clean. It is a courtesy, never a gate: a sweep that cannot
+ * run says nothing and the folder opens as it always did.
+ */
+export async function sweepFolder(root: string): Promise<void> {
+  try {
+    const answer = await sdcpCall('secrets.sweep', { path: root, firstOnly: true });
+
+    if (answer.skipped !== true && Array.isArray(answer.findings) && answer.findings.length > 0) {
+      useSecretSweep.getState().show(root, answer.findings, answer.truncated === true);
+    }
+  } catch {
+    /* silent on purpose */
+  }
+}
+
+/** The sweep's one-click action: this value goes to the OS keychain and leaves a marker in its file. */
+export async function moveSecretToKeychain(finding: SecretFinding): Promise<void> {
+  const { root, markMoved, markFailed } = useSecretSweep.getState();
+  const id = findingId(finding);
+
+  if (root === null) {
+    return;
+  }
+
+  try {
+    const answer = await sdcpCall('secrets.move', { path: root, file: finding.file, line: finding.line });
+
+    markMoved(id, answer.name);
+  } catch (error) {
+    markFailed(id, error instanceof Error ? error.message : strings.secretSweep.failed);
+  }
 }
 
 /**
