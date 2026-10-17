@@ -187,8 +187,9 @@ describe('what the Hub keeps while a request waits', () => {
 
     for (let n = 0; n < 130; n++) daemon.socket.send({ ctl: 'notify', request: `apr_flood-${n}`, expires_at: Date.now() + 600_000 });
     daemon.socket.send({ ctl: 'ping' });
-    await eventually('the Hub to catch up', async () => (await rows(daemon.id)).length >= 100 || undefined);
-    await new Promise((resolve) => setTimeout(resolve, 300));
+    /* Wait for the last one, not for a hundred: on a slow runner a hundred rows arrive while the last few
+       messages are still in flight, and a fixed pause after that is a race (it failed CI on the v3.0.1 tag). */
+    await eventually('the Hub to catch up', async () => (await rows(daemon.id)).some((row) => row.request === 'apr_flood-129') || undefined);
 
     const kept = await rows(daemon.id);
 
