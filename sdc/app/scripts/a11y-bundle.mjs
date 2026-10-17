@@ -35,6 +35,8 @@ const settleMs = Number(process.env.SDC_A11Y_SETTLE_MS ?? 9000);
 /* The colour scheme the browser reports (`light` or `dark`). Unset, it is the machine's own - which is how
    0.12.0 passed here (a dark Windows) and failed on CI's runners (light): run both before trusting a green. */
 const scheme = process.env.SDC_A11Y_SCHEME;
+/* Which screen to audit: unset is the screen the app opens on; `agents` opens Settings → Agents first (Phase 3). */
+const screen = process.env.SDC_A11Y_SCREEN ?? '';
 
 if (!existsSync(join(dist, 'index.html'))) {
   console.error(`a11y: no build at ${dist} - run pnpm build first`);
@@ -60,13 +62,18 @@ const types = {
 
 /* The harness, in the browser. Same single rule as the smoke harness: this is a template literal, so no
    backtick and no `${` of its own - write class names bare. */
-const harness = `<!doctype html>
+const harness = (SCREEN) => `<!doctype html>
 <meta charset="utf-8">
 <title>SDC accessibility audit</title>
 <style>html,body{margin:0;background:#111}iframe{width:1280px;height:900px;border:0}
 pre{color:#eee;font:12px monospace}</style>
 <pre id="a11y-report">pending</pre>
 <script>
+  /* A script error must end as a report, never as a silent 'pending'. */
+  window.addEventListener('error', (event) => {
+    document.querySelector('#a11y-report').textContent = JSON.stringify({ error: 'script error: ' + event.message });
+  });
+
   const frame = document.createElement('iframe');
 
   frame.src = '/';
@@ -80,6 +87,9 @@ pre{color:#eee;font:12px monospace}</style>
     script.onload = () => run(page);
     page.head.append(script);
   });
+
+  const SCREEN = '${SCREEN}';
+  const TAB = '${process.env.SDC_A11Y_TAB ?? ''}';
 
   async function run(page) {
     const api = frame.contentWindow.axe;
@@ -101,13 +111,40 @@ pre{color:#eee;font:12px monospace}</style>
          element to another between runs. Infinite animations (a spinner) are not waited for. */
       await new Promise((resolve) => setTimeout(resolve, 500));
 
+      const mark = (text) => { document.querySelector('#a11y-report').textContent = 'pending ' + text; };
+
+      /* A screen behind a click: close what opened on mount, press Settings, then the tab (Phase 3). */
+      if (SCREEN === 'agents') {
+        mark('closing dialogs');
+        for (let tries = 0; tries < 4 && page.querySelector('[role="dialog"]'); tries += 1) {
+          page.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+          page.querySelector('[role="dialog"] [aria-label="Close"]')?.click();
+          await new Promise((resolve) => setTimeout(resolve, 300));
+        }
+
+        mark('opening settings');
+        page.querySelector('#openSettings')?.click();
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        mark('opening agents');
+        page.querySelector('[data-settings-tab="' + (TAB || 'agents') + '"]')?.click();
+        await new Promise((resolve) => setTimeout(resolve, 700));
+
+        if (!page.querySelector('[data-agents-tab]')) {
+          throw new Error('the Agents tab did not open - nothing was audited');
+        }
+      }
+
       const moving = (page.getAnimations ? page.getAnimations() : []).filter((animation) => {
         const timing = animation.effect && animation.effect.getComputedTiming ? animation.effect.getComputedTiming() : null;
 
         return timing !== null && timing.iterations !== Infinity;
       });
 
-      await Promise.all(moving.map((animation) => animation.finished.catch(() => null)));
+      mark('waiting for ' + moving.length + ' animation(s)');
+      /* Capped: a screen opened by a click can carry an animation that never settles in a headless browser, and an audit that waits
+         for it forever reports nothing (found on Settings, 7 animations). Two seconds is longer than any fade the app plays. */
+      await Promise.race([Promise.all(moving.map((animation) => animation.finished.catch(() => null))), new Promise((resolve) => setTimeout(resolve, 2000))]);
+      mark('running axe');
 
       const results = await api.run(page, {
         resultTypes: ['violations'],
@@ -153,7 +190,7 @@ const server = createServer((request, response) => {
   if (url.pathname === '/__a11y.html') {
     response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
 
-    return void response.end(harness);
+    return void response.end(harness(screen));
   }
 
   if (url.pathname === '/axe.min.js') {
@@ -194,11 +231,12 @@ const child = spawn(
     '--no-default-browser-check',
     '--disable-extensions',
     '--dump-dom',
+    ...(process.env.SDC_A11Y_LOG ? ['--enable-logging=stderr', '--v=0'] : []),
     ...(scheme ? [`--blink-settings=preferredColorScheme=${scheme === 'dark' ? 0 : 1}`] : []),
     `--virtual-time-budget=${settleMs}`,
     `http://127.0.0.1:${port}/__a11y.html`,
   ],
-  { stdio: ['ignore', 'pipe', 'ignore'] },
+  { stdio: ['ignore', 'pipe', process.env.SDC_A11Y_LOG ? 'inherit' : 'ignore'] },
 );
 
 let dom = '';
