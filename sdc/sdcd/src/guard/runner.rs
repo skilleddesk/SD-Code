@@ -229,7 +229,7 @@ mod tests {
 
     #[test]
     fn a_failing_command_says_so_and_keeps_what_it_printed() {
-        let outcome = run(&launch("echo before; exit 3"), &settings(10)).unwrap();
+        let outcome = run(&launch("echo before && exit 3"), &settings(10)).unwrap();
 
         assert_eq!(outcome.ending, Ending::Exited { code: Some(3) });
         assert!(!outcome.succeeded());
@@ -260,6 +260,20 @@ mod tests {
         assert!(started.elapsed() < Duration::from_secs(10), "both children were reached: {:?}", started.elapsed());
     }
 
+    /// A command that prints `line0 … line19999`: far more than any cap holds. Written in the shell this system has -
+    /// `cmd` has no `while`, and `sh` has no `for /L` - so the Windows run tests the same thing the other two do.
+    #[cfg(unix)]
+    const A_WALL_OF_LINES: &str = "i=0; while [ $i -lt 20000 ]; do echo line$i; i=$((i+1)); done";
+    #[cfg(windows)]
+    const A_WALL_OF_LINES: &str = "for /L %i in (1,1,20000) do @echo line%i";
+
+    /// The same, ending with the one line that must survive the compression.
+    #[cfg(unix)]
+    const A_WALL_AND_THEN_AN_ERROR: &str =
+        "i=0; while [ $i -lt 3000 ]; do echo noise$i; i=$((i+1)); done; echo 'error: the build broke'";
+    #[cfg(windows)]
+    const A_WALL_AND_THEN_AN_ERROR: &str = "(for /L %i in (1,1,3000) do @echo noise%i) & echo error: the build broke";
+
     #[test]
     fn the_output_cap_stops_collecting_and_says_it_did() {
         let mut limits = settings(30);
@@ -268,7 +282,7 @@ mod tests {
 
         /* A command that prints far more than the cap. It has to finish, not be killed: the cap is about bytes, not
            about time. */
-        let outcome = run(&launch("i=0; while [ $i -lt 20000 ]; do echo line$i; i=$((i+1)); done"), &limits).unwrap();
+        let outcome = run(&launch(A_WALL_OF_LINES), &limits).unwrap();
 
         assert_eq!(outcome.ending, Ending::Exited { code: Some(0) });
         assert!(outcome.output_capped, "the runner stopped collecting and says so");
@@ -281,7 +295,7 @@ mod tests {
 
         limits.budget = 2_000;
 
-        let outcome = run(&launch("i=0; while [ $i -lt 3000 ]; do echo noise$i; i=$((i+1)); done; echo 'error: the build broke'"), &limits).unwrap();
+        let outcome = run(&launch(A_WALL_AND_THEN_AN_ERROR), &limits).unwrap();
 
         assert!(outcome.output.was_truncated());
         assert!(outcome.output.text.contains("error: the build broke"), "the line that matters is never dropped");

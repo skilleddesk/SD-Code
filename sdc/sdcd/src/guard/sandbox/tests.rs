@@ -27,8 +27,11 @@ fn every_row_of_the_table_is_what_the_platform_can_really_back() {
     assert!(windows.notes[0].contains("do not run code you do not trust"));
 }
 
-#[test]
-fn the_seatbelt_profile_denies_writes_and_the_network_and_names_only_the_allowed_folders() {
+    /* The Seatbelt profile is macOS's own, and it names paths the way the kernel does: a Windows path canonicalizes to
+       `\\?\C:\…` and would match nothing. */
+    #[cfg(unix)]
+    #[test]
+    fn the_seatbelt_profile_denies_writes_and_the_network_and_names_only_the_allowed_folders() {
     let root = tempfile::tempdir().unwrap();
     let profile = macos_profile(&policy(root.path()), Some(Path::new("/Users/someone")));
 
