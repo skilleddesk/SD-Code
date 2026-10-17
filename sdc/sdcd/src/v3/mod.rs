@@ -87,6 +87,7 @@ pub const FEATURES: &[Feature] = &[
     Feature { name: "local.runtime_guard", default_on: true, token_technique: false, what: "P0-8: a prompt is counted before it is sent, and one that does not fit the model's window is split by the caller, never sent to be cut silently" },
     Feature { name: "models.probe", default_on: false, token_technique: false, what: "P0-9: a local model is measured (context, tools, JSON, speed) the first time it is used and again when its file or runtime changes; off, only `sdcd probe` measures" },
     Feature { name: "models.contract", default_on: true, token_technique: false, what: "P0-10: the model the person chose runs every call of the turn; the router, cascade, failover, ladder, planner-executor and bandit are unreachable under a pin (a cloud/API/CLI model) and under local-only; off = every earlier version's behaviour" },
+    Feature { name: "trace.steps", default_on: true, token_technique: false, what: "P0-12: every model call is traced - model, mode, tokens, time to first token, tokens per second, wall time, verify, cost - from a background writer, so recording never slows a step" },
     Feature { name: "parallel", default_on: true, token_technique: false, what: "PAR: several agents at once, each in its own git worktree, on one board" },
 ];
 

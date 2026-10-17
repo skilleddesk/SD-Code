@@ -161,6 +161,7 @@ export type SdcpMethod =
    * rather than asserted.
    */
   | 'models.list'
+  | 'trace.list'
   | 'models.select'
   /**
    * One command, run to completion by the daemon: the **execute** step an agent loop needs, and the
@@ -1280,6 +1281,32 @@ export interface CliSelfCheck {
   sentence: string;
 }
 
+/** One traced model call (P0-12). */
+export interface TraceStep {
+  taskId: string;
+  stepId: string;
+  sessionId: string;
+  step: number;
+  /** `provider:model`. */
+  modelKey: string;
+  /** `pinned`, `local-rotation` or `local-only`: the contract the call ran under (P0-10). */
+  mode: string;
+  purpose: string;
+  tokensIn: number;
+  tokensOut: number;
+  /** An estimate: a provider that reports no reasoning tokens still reasoned. */
+  thinkingTokens: number;
+  /** Milliseconds from the request to the first byte of the reply. */
+  ttftMs: number;
+  tokPerS: number;
+  wallMs: number;
+  /** `PASS`, `FAIL`, ... once Verify has run on the session; null before. */
+  verify: string | null;
+  costUsd: number | null;
+  escalationReason: string | null;
+  at: string;
+}
+
 export interface TimelineBranch {
   id: number;
   turn: number;
@@ -2065,6 +2092,13 @@ export interface SdcpMethodMap {
       inUse: { modelId: string; providerId: string | null }[];
       /** The Rotation Chain on this computer (P0-10): how many rows are enabled. The mode badge reads it. */
       rotation: { enabledRows: number };
+    };
+  };
+  /** The Step Trace (P0-12): the newest model calls, oldest first - what each cost and how long it took. */
+  'trace.list': {
+    params: { sessionId?: string; limit?: number };
+    result: {
+      steps: TraceStep[];
     };
   };
   /** Choose a model and put it in use - or, with `remove`, take it out of use without switching. */

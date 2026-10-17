@@ -682,6 +682,20 @@ const english = {
       verify: 'Verify',
       proof: 'Proof',
       analytics: 'Analytics',
+      trace: 'Trace',
+    },
+    /** The Step Trace tab (P0-12): a timeline of the model calls, newest first. */
+    trace: {
+      title: 'Step Trace',
+      empty: 'No model calls traced yet. Send a message and each step shows up here with its time and tokens.',
+      failed: 'The Step Trace could not be read.',
+      ttft: (ms: number): string => `first token ${ms >= 1000 ? `${(ms / 1000).toFixed(1)} s` : `${ms} ms`}`,
+      wall: (ms: number): string => (ms >= 1000 ? `${(ms / 1000).toFixed(1)} s` : `${ms} ms`),
+      tokens: (input: number, output: number): string => `${input} in · ${output} out`,
+      rate: (perSecond: number): string => `${perSecond.toFixed(1)} tok/s`,
+      thinking: (tokens: number): string => `${tokens} thinking (estimate)`,
+      timelineLabel: 'Time per step: waiting for the first token, then writing',
+      verify: { PASS: 'verified', FAIL: 'failed', UNPROVEN: 'unproven' },
     },
     resize: 'Resize panel',
     /** The tab strip's own name, for the `tablist` role (0.7.10). */

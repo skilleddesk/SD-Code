@@ -241,6 +241,7 @@
           "cli.recipes",
           "models.list",
           "models.select",
+          "trace.list",
           "event.list",
           "event.append",
           "event.subscribe",
@@ -1361,6 +1362,17 @@
               "object"
             ],
             "rotation": "object"
+          }
+        },
+        "trace.list": {
+          "params": {
+            "sessionId": "string?",
+            "limit": "number?"
+          },
+          "result": {
+            "steps": [
+              "object"
+            ]
           }
         },
         "models.select": {

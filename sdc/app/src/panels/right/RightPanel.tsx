@@ -1,4 +1,5 @@
 import {
+  Activity,
   ChartColumn,
   CircleCheckBig,
   Clock,
@@ -29,6 +30,7 @@ import { DuelTab } from './DuelTab';
 import { PreviewTab } from './PreviewTab';
 import { ProofTab } from '../../kernel/ProofTab';
 import { TimeMachineTab } from './TimeMachineTab';
+import { TraceTab } from './TraceTab';
 import { TerminalTab } from './TerminalTab';
 import { VerifyTab } from './VerifyTab';
 
@@ -63,6 +65,7 @@ const TAB_ICON: Record<PanelTabDefinition['icon'], LucideIcon> = {
   check: CircleCheckBig,
   shield: ShieldCheck,
   chart: ChartColumn,
+  activity: Activity,
 };
 
 const VIEWS: Record<PanelTabId, ComponentType> = {
@@ -74,6 +77,7 @@ const VIEWS: Record<PanelTabId, ComponentType> = {
   proof: ProofTab,
   verify: VerifyTab,
   analytics: AnalyticsTab,
+  trace: TraceTab,
 };
 
 export function RightPanel() {

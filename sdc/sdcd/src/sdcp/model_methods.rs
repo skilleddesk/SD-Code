@@ -44,6 +44,8 @@ impl Daemon {
             /* The model catalogue: live, cached or bundled, and never needing a code change. */
             "models.list" => self.models_list(envelope, &*out),
             "models.select" => self.models_select(envelope, &*out),
+            /* P0-12: the Step Trace - the newest model calls with their tokens, times, mode and verify result. */
+            "trace.list" => Ok(json!({ "steps": crate::trace::recent(self.store(), envelope.opt_str("sessionId").as_deref(), envelope.opt_i64("limit").map_or(100, |limit| limit.clamp(1, 500) as usize)) })),
 
             /* Providers ------------------------------------------------------------------------ */
             "provider.list" => Ok(json!({ "providers": providers::list(self.store()) })),

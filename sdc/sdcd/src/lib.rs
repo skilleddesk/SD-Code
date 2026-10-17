@@ -78,6 +78,7 @@ pub mod sme;
 pub mod ssh;
 pub mod status;
 pub mod store;
+pub mod trace;
 pub mod trust;
 pub mod understand;
 pub mod v3;
@@ -162,6 +163,7 @@ impl DaemonState {
         /* v3: the feature switches, and the journal that lets a lost turn be continued (R1/R2). */
         crate::v3::configure(&store);
         crate::v3::journal::install(store.clone());
+        crate::trace::install(store.clone());
 
         let pty = Arc::new(PtyManager::new());
 

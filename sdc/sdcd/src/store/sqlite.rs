@@ -215,6 +215,22 @@ ALTER TABLE job_events ADD COLUMN origin TEXT NOT NULL DEFAULT 'local';
 CREATE INDEX IF NOT EXISTS job_events_origin ON job_events(origin, turn_id);
 "#,
     ),
+    /* P0-12: the Step Trace - one row per model call, what it cost and how long it took, so "where does the time
+       go" and "which model fails which kind of step" are answered from measurements. Written from a background
+       thread (`crate::trace`), so a step is never made slower by its own record. */
+    (
+        "0202-step-trace",
+        r#"
+CREATE TABLE IF NOT EXISTS step_trace (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT NOT NULL, step_id TEXT NOT NULL, session_id TEXT NOT NULL DEFAULT '',
+  step INTEGER NOT NULL, model_key TEXT NOT NULL, mode TEXT NOT NULL, purpose TEXT NOT NULL DEFAULT 'main',
+  tokens_in INTEGER NOT NULL, tokens_out INTEGER NOT NULL, thinking_tokens INTEGER NOT NULL DEFAULT 0,
+  ttft_ms INTEGER NOT NULL DEFAULT 0, tok_per_s REAL NOT NULL DEFAULT 0, wall_ms INTEGER NOT NULL,
+  verify TEXT, cost_usd REAL, escalation_reason TEXT, created_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS step_trace_task ON step_trace(task_id, step);
+CREATE INDEX IF NOT EXISTS step_trace_session ON step_trace(session_id, id);
+"#,
+    ),
 ];
 
 /// The daemon's database handle.

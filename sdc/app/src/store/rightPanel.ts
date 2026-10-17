@@ -17,13 +17,13 @@ import { create } from 'zustand';
  */
 
 /** The seven tabs, in the fixed order of spec sections 7.7-7.12, plus the Terminal (0.7.13). */
-export type PanelTabId = 'preview' | 'console' | 'terminal' | 'timemachine' | 'duel' | 'verify' | 'proof' | 'analytics';
+export type PanelTabId = 'preview' | 'console' | 'terminal' | 'timemachine' | 'duel' | 'verify' | 'proof' | 'analytics' | 'trace';
 
 export interface PanelTabDefinition {
   id: PanelTabId;
   label: string;
   /** Lucide icon name; `RightPanel.tsx` owns the name-to-component map. */
-  icon: 'eye' | 'terminal' | 'chevron' | 'clock' | 'swords' | 'check' | 'shield' | 'chart';
+  icon: 'eye' | 'terminal' | 'chevron' | 'clock' | 'swords' | 'check' | 'shield' | 'chart' | 'activity';
 }
 
 /**
@@ -42,6 +42,8 @@ export const PANEL_TABS: readonly PanelTabDefinition[] = [
   /* 0.12: the turn's proof - what it changed, how it was checked, its Trust score, cost and rollback point. */
   { id: 'proof', label: strings.rightPanel.tabs.proof, icon: 'shield' },
   { id: 'analytics', label: strings.rightPanel.tabs.analytics, icon: 'chart' },
+  /* P0-12: the Step Trace - where each model call's time and tokens went. */
+  { id: 'trace', label: strings.rightPanel.tabs.trace, icon: 'activity' },
 ];
 
 /** The panel folds to 320px and grows to 760px; 400px is the layout default (spec section 7.2). */

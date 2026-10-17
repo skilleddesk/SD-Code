@@ -113,21 +113,38 @@ export function decodePng(buffer) {
   return { width, height, rgba: out };
 }
 
-/** The share of pixels that differ by more than `level` in any channel; `1` when the sizes differ. */
+/**
+ * The toast strip: a browser tab has no daemon, so the app says so in a toast that appears and goes by the clock, and
+ * which one a screenshot catches depends on how fast the machine is. It sits bottom-centre, fixed, up to ~110px tall
+ * and 44px off the bottom; the rows it can occupy are not compared.
+ */
+const TOAST_FROM = 150;
+const TOAST_TO = 30;
+
+/** The share of pixels that differ by more than `level` in any channel (the toast strip excluded); `1` when the sizes differ. */
 export function difference(a, b, level = LEVEL) {
   if (a.width !== b.width || a.height !== b.height) {
     return 1;
   }
 
   let different = 0;
+  let counted = 0;
 
   for (let i = 0; i < a.rgba.length; i += 4) {
+    const row = Math.floor(i / 4 / a.width);
+
+    if (row >= a.height - TOAST_FROM && row < a.height - TOAST_TO) {
+      continue;
+    }
+
+    counted += 1;
+
     if (Math.abs(a.rgba[i] - b.rgba[i]) > level || Math.abs(a.rgba[i + 1] - b.rgba[i + 1]) > level || Math.abs(a.rgba[i + 2] - b.rgba[i + 2]) > level) {
       different += 1;
     }
   }
 
-  return different / (a.width * a.height);
+  return different / counted;
 }
 
 function serve() {

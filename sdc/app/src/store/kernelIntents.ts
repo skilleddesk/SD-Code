@@ -16,6 +16,7 @@ import type {
   TeamMember,
   TeamState,
   TimelineBranch,
+  TraceStep,
   UpdateInfo,
   XrayMap,
 } from '../../../protocol/types';
@@ -145,6 +146,13 @@ export async function restoreFile(checkpointId: string, path: string): Promise<b
   }
 
   return result !== null;
+}
+
+/** The Step Trace (P0-12): the newest model calls of a chat, oldest first; `null` when it could not be read. */
+export async function traceList(sessionId: string | null, limit = 100): Promise<TraceStep[] | null> {
+  const result = await call(() => sdcpCall('trace.list', { ...(sessionId === null ? {} : { sessionId }), limit }), strings.rightPanel.trace.failed);
+
+  return result?.steps ?? null;
 }
 
 export async function timelineBranches(sessionId: string): Promise<TimelineBranch[]> {

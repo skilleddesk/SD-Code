@@ -9,6 +9,7 @@
 //! sdcd bench lang        --models deepseek:deepseek-chat [--label NAME]
 //! sdcd bench search      --root DIR [--repeats 10] [--label NAME] [--cold]
 //! sdcd bench gen-tree    --out DIR [--files 50000]
+//! sdcd bench speed       BASELINE CANDIDATE [--tolerance 0.05]  # the Speed Gate: single-step work <= 5% slower, zero-model = 0 calls
 //! sdcd bench private                                      # where your own (git-ignored) tasks go, and an example
 //! sdcd bench validate    [--tier all]                     # every task fails untouched and passes its reference
 //! sdcd bench resume      [--kills 100] [--label NAME]     # A-19: kill -9 mid-turn, restart, check the work
@@ -149,6 +150,7 @@ pub fn main(args: &[String]) -> i32 {
         "report" => report_cmd(rest),
         "validate" => validate(rest),
         "private" => private_cmd(rest),
+        "speed" => speed_cmd(rest),
         "resume" => resume_cmd(rest),
         "profiles" => profiles_cmd(rest),
         "fleet" => fleet_cmd(rest),
@@ -193,6 +195,42 @@ fn selected(args: &[String], bench: &Path) -> Result<(Vec<Task>, String), String
     }
 
     Ok((tasks, tier))
+}
+
+/// `sdcd bench speed BASELINE CANDIDATE [--tolerance 0.05]`: the Speed Gate (P0-12). Single-step work may not be more
+/// than the tolerance slower than the baseline (median and p90, per model), and a task marked `zero_model` must have
+/// made no model call. Exit code 1 when it fails, so a release can be stopped by it.
+fn speed_cmd(args: &[String]) -> Result<(), String> {
+    let bench = bench_dir(args)?;
+    let names: Vec<&String> = args.iter().filter(|arg| !arg.starts_with("--")).collect();
+    let (Some(base), Some(candidate)) = (names.first(), names.get(1)) else {
+        return Err("usage: sdcd bench speed BASELINE CANDIDATE [--tolerance 0.05]".into());
+    };
+    let tolerance: f64 = flag(args, "--tolerance").and_then(|value| value.parse().ok()).unwrap_or(crate::trace::TOLERANCE);
+    let zero_model: Vec<String> = task::load_all(&bench.join("tasks")).unwrap_or_default().into_iter().filter(|task| task.zero_model).map(|task| task.id).collect();
+    let load = |label: &str| -> Result<Vec<crate::trace::Sample>, String> {
+        Ok(report::load(&results_dir(&bench, label))?
+            .runs
+            .into_iter()
+            .filter(|run| run.skipped.is_none())
+            .map(|run| crate::trace::Sample { zero_model: zero_model.contains(&run.task), task: run.task, model: run.model, wall_s: run.wall_ms as f64 / 1_000.0, steps: run.steps, requests: run.requests })
+            .collect())
+    };
+    let verdict = crate::trace::gate(&load(base)?, &load(candidate)?, tolerance);
+
+    println!("speed gate {base} -> {candidate} (tolerance {:.0}%)", tolerance * 100.0);
+
+    for line in &verdict.lines {
+        println!("  {line}");
+    }
+
+    println!("{}", if verdict.pass { "SPEED GATE: PASS" } else { "SPEED GATE: FAIL" });
+
+    if verdict.pass {
+        Ok(())
+    } else {
+        Err("the speed gate failed".into())
+    }
 }
 
 /// `sdcd bench private`: where the person's own tasks go, and what one looks like. Nothing is written.

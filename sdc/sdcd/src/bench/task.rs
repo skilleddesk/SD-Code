@@ -10,6 +10,7 @@
 //! language = "en"
 //! repeat_of = "edit-02"      # a paired repeat (I4): same work, asked again later
 //! requires = ["docker"]      # skipped (and said so) when the machine lacks it
+//! zero_model = true          # answerable from the Code Graph / git: the Speed Gate demands zero model calls
 //! max_steps = 40
 //! timeout_secs = 600
 //! prompt = "..."
@@ -57,6 +58,9 @@ pub struct Task {
     pub repeat_of: Option<String>,
     #[serde(default)]
     pub requires: Vec<String>,
+    /// A question the Code Graph or git can answer (P1-1): the Speed Gate requires it to make no model call.
+    #[serde(default)]
+    pub zero_model: bool,
     #[serde(default = "default_steps")]
     pub max_steps: u64,
     #[serde(default = "default_timeout")]

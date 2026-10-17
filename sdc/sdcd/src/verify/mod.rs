@@ -427,6 +427,11 @@ struct Run {
 
 impl Run {
     fn push(&self, out: &Arc<dyn Notifier>) {
+        /* P0-12: the verdict of a finished Verify run lands on the session's newest traced step. */
+        if let ("done", Some(verdict)) = (self.state, self.verdict) {
+            crate::trace::record_verify(&self.session_id, verdict);
+        }
+
         out.push(
             event::verify_updated(json!({
                 "verifyId": self.request_id,

@@ -17,7 +17,7 @@ Status: `todo` · `in-progress` · `blocked` · `done`.
 | P0-9 | Model identity and capability probe | 0 | P0-8 | done | models.probe | sdc/docs/reports/P0-9.md | identity key + capability probe + class badge (en/bn); live Ollama probe left to the owner |
 | P0-10 | Model-selection contract and Pin Guard | 0 | P0-5, P0-9 | done | models.contract (default ON after tests) | sdc/docs/reports/P0-10.md | ModelGate + Pin Guard (7+2 tests), mode badge en/bn, protocol:check fixed for the P0-3 split |
 | P0-11 | Bench rules, hard tier and small-model bench | 0 | P0-9 | done | n/a | sdc/docs/reports/P0-11.md | bench rules in code (seed, >=3 runs, noise, summary.json), hard tier + private tasks, 8-task small-model bench validated |
-| P0-12 | Speed baseline and Step Trace | 0 | P0-11 | todo | trace.steps |  |  |
+| P0-12 | Speed baseline and Step Trace | 0 | P0-11 | done | trace.steps | sdc/docs/reports/P0-12.md | Step Trace (<1ms/step) + Speed Gate (fails on injected 10%) + Trace tab; baseline median 3.84s p90 5.86s |
 | P0-13 | Output compressor, OS normalizer, command runner | 0 | P0-3 | done | tools.compress, tools.osnorm, tools.runner | sdc/docs/reports/P0-13.md | compressor contract (property test), per-OS normaliser, deadline+group-kill runner; 41 guard tests |
 | P0-14 | Sandbox Runner and Step Transaction | 0 | P0-13, P0-4 | todo | exec.sandbox, edit.transaction |  |  |
 | P0-15 | Proof-of-Work badge and receipt | 0 | P0-12 | todo | ui.proof_badge |  |  |

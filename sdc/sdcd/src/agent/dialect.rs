@@ -48,6 +48,10 @@ pub struct Reply {
     /// Of `input_tokens`, how many the provider read back from its prompt cache (0.21) - Anthropic's
     /// `cache_read_input_tokens`, OpenAI's and DashScope's `cached_tokens`, DeepSeek's `prompt_cache_hit_tokens`.
     pub cached_tokens: u64,
+    /// Milliseconds from the request to the first byte of the stream (P0-12), set by `ask_model`; 0 when unmeasured.
+    pub ttft_ms: u64,
+    /// An estimate of the reasoning tokens in the reply (a provider that reports none still reasoned).
+    pub thinking_tokens: u64,
 }
 
 /// A tool as the model is told about it.
@@ -590,6 +594,8 @@ impl AnthropicState {
             input_tokens: self.input_tokens,
             output_tokens: self.output_tokens,
             cached_tokens: self.cached_tokens,
+            ttft_ms: 0,
+            thinking_tokens: 0,
         })
     }
 }
@@ -745,6 +751,8 @@ impl OpenAiState {
             input_tokens: self.input_tokens,
             output_tokens: self.output_tokens,
             cached_tokens: self.cached_tokens,
+            ttft_ms: 0,
+            thinking_tokens: 0,
         })
     }
 }

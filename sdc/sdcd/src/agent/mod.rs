@@ -542,6 +542,63 @@ pub fn run(
     drive(backend, &target, &workspace, options, checkpoint, policy, &prompt, sink);
 }
 
+/// A stream that remembers when its first byte arrived (P0-12: the time to first token of a model call).
+struct FirstByte {
+    inner: Box<dyn std::io::BufRead + Send>,
+    started: std::time::Instant,
+    first: std::sync::Arc<std::sync::atomic::AtomicU64>,
+}
+
+impl std::io::Read for FirstByte {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        let read = self.inner.read(buffer)?;
+
+        self.note(read);
+
+        Ok(read)
+    }
+}
+
+impl std::io::BufRead for FirstByte {
+    fn fill_buf(&mut self) -> std::io::Result<&[u8]> {
+        let started = self.started;
+        let first = self.first.clone();
+        let filled = self.inner.fill_buf()?;
+
+        if !filled.is_empty() {
+            let _ = first.compare_exchange(0, started.elapsed().as_millis().max(1) as u64, std::sync::atomic::Ordering::SeqCst, std::sync::atomic::Ordering::SeqCst);
+        }
+
+        Ok(filled)
+    }
+
+    fn consume(&mut self, amount: usize) {
+        self.inner.consume(amount);
+    }
+}
+
+impl FirstByte {
+    fn note(&self, read: usize) {
+        if read > 0 {
+            let _ = self.first.compare_exchange(0, self.started.elapsed().as_millis().max(1) as u64, std::sync::atomic::Ordering::SeqCst, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+}
+
+/// About how many tokens of reasoning a reply carried: its thinking blocks, or `reasoning_content`, at four characters
+/// a token. An estimate, labelled as one in the trace.
+fn thinking_tokens_of(message: &Value) -> u64 {
+    let mut chars = message["reasoning_content"].as_str().map_or(0, |text| text.chars().count()) + message["reasoning"].as_str().map_or(0, |text| text.chars().count());
+
+    for block in message["content"].as_array().into_iter().flatten() {
+        if block["type"] == "thinking" {
+            chars += block["thinking"].as_str().map_or(0, |text| text.chars().count());
+        }
+    }
+
+    (chars / 4) as u64
+}
+
 /// One model call: the request, the stream, the assembled reply.
 fn ask_model(backend: Backend, target: &Target, turn: (&str, crate::guard::modelgate::Purpose), system: &str, messages: &[Value], specs: &[dialect::ToolSpec], sink: &EventSink, stopped: &dyn Fn() -> bool) -> Result<Reply, String> {
     /* P0-10, the Pin Guard: every model call of a turn asks the turn's gate first. A call to a model the person did not
@@ -599,13 +656,16 @@ fn ask_model(backend: Backend, target: &Target, turn: (&str, crate::guard::model
        again rather than ending the turn (0.15.4): nothing of it reached the conversation yet, so asking
        again is the same question, and every step before it is kept. */
     let mut card = crate::engines::native_api::RetryCard::new(sink, "agent", &target.url);
+    let first_byte = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
     let send = |body: &str, card: &mut crate::engines::native_api::RetryCard| {
         crate::engines::native_api::with_retries(
             stopped,
             |retry, wait, reason| card.notice(retry, wait, reason),
             || {
+                let sent_at = std::time::Instant::now();
                 let lines = crate::engines::native_api::open_stream(&target.url, &target.headers, body)?;
-                let lines = if target.local_context.is_some() { ollama_native::as_sse(lines) } else { lines };
+                let timed: Box<dyn std::io::BufRead + Send> = Box::new(FirstByte { inner: lines, started: sent_at, first: first_byte.clone() });
+                let lines = if target.local_context.is_some() { ollama_native::as_sse(timed) } else { timed };
 
                 dialect::read_reply(target.dialect, lines, sink, stopped)
             },
@@ -632,6 +692,12 @@ fn ask_model(backend: Backend, target: &Target, turn: (&str, crate::guard::model
     }
 
     card.close(reply.is_ok());
+
+    /* P0-12: the time to the first byte of the call that answered, and the reasoning it carried. */
+    if let Ok(done) = reply.as_mut() {
+        done.ttft_ms = first_byte.load(std::sync::atomic::Ordering::SeqCst);
+        done.thinking_tokens = thinking_tokens_of(&done.message);
+    }
 
     /* P0-8: what the runtime says it read is set against what was sent. A count that filled the window means the start
        of the prompt may be gone, and an answer to a cut prompt is not trusted. (A count below ours proves nothing: the
@@ -1762,6 +1828,30 @@ fn drive(
         let asked = ask_model(backend, target, (&turn_id, crate::guard::modelgate::Purpose::Main), &system, &messages, step_specs, &notes_sink(said_something), &stopped);
 
         model_time += asked_at.elapsed();
+
+        /* P0-12: one trace row per model call of the loop. The mode is the gate's, the cost the catalogue's price. */
+        if let Ok(reply) = &asked {
+            let wall_ms = asked_at.elapsed().as_millis() as u64;
+
+            crate::trace::record(crate::trace::Step {
+                task_id: turn_id.clone(),
+                step_id: format!("{turn_id}.s{step}"),
+                session_id: prompt.session_id.clone(),
+                step: step as u32,
+                model_key: format!("{}:{}", prompt.provider.as_deref().unwrap_or(if backend == Backend::Ollama { "ollama" } else { "" }), target.model),
+                mode: gate.mode.name().to_string(),
+                purpose: "main".to_string(),
+                tokens_in: reply.input_tokens,
+                tokens_out: reply.output_tokens,
+                thinking_tokens: reply.thinking_tokens,
+                ttft_ms: reply.ttft_ms,
+                tok_per_s: crate::trace::Step::rate(reply.output_tokens, reply.ttft_ms, wall_ms),
+                wall_ms,
+                verify: None,
+                cost_usd: target.price.map(|(input, output)| (reply.input_tokens - reply.cached_tokens.min(reply.input_tokens)) as f64 * input / 1e6 + reply.cached_tokens as f64 * input * 0.1 / 1e6 + reply.output_tokens as f64 * output / 1e6),
+                escalation_reason: None,
+            });
+        }
 
         if let (Some(shape), Ok(reply)) = (shape, &asked) {
             if ledger_on {
@@ -4000,6 +4090,58 @@ mod end_to_end {
         let off = crate::v3::ablating(&["models.contract"], || crate::guard::modelgate::Gate::new(Some("deepseek"), "deepseek-chat", false, false));
 
         assert!(off.permit(crate::guard::modelgate::Purpose::Main, None, "gpt-5-nano").is_ok());
+    }
+
+    /// P0-12: a turn leaves a Step Trace row per model call, with the time to first token, the tokens, the mode it ran
+    /// under and a cost from the catalogue's price - and with the switch off it leaves none.
+    #[test]
+    fn a_turn_leaves_one_trace_row_per_model_call() {
+        let store = crate::trace::test_store();
+        let root = std::env::temp_dir().join(format!("sdc-trace-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("hello.txt"), "hi\n").unwrap();
+
+        let workspace = Workspace::new(root.to_str().unwrap(), None);
+        let (url, server) = provider(vec![
+            call("c1", "read_file", serde_json::json!({ "path": "hello.txt" })),
+            chunk(serde_json::json!({ "content": "It says hi." })) + "data: [DONE]\n\n",
+        ]);
+        let mut target = fake_target(url, "trace-model");
+
+        target.price = Some((1.0, 2.0));
+
+        let mut prompt = prompt_in(&root, "turn-trace-on", "what does hello.txt say?", "trace-model");
+
+        prompt.session_id = "session-trace".into();
+        prompt.provider = Some("tracer".into());
+
+        drive(Backend::Api, &target, &workspace, Options { autonomy: Autonomy::Auto, max_steps: 5, auto_check: false, research: None }, None, &Default::default(), &prompt, &crate::engines::Recorder::new().sink());
+        server.join().unwrap();
+        crate::trace::flush();
+
+        let rows = crate::trace::recent(&store, Some("session-trace"), 10);
+
+        assert_eq!(rows.len(), 2, "two model calls, two rows: {rows:?}");
+        assert_eq!(rows[0]["taskId"], "turn-trace-on");
+        assert_eq!(rows[0]["stepId"], "turn-trace-on.s1");
+        assert_eq!(rows[0]["modelKey"], "tracer:trace-model");
+        assert_eq!(rows[0]["mode"], "pinned");
+        assert!(rows[0]["ttftMs"].as_i64().unwrap() >= 1 && rows[0]["wallMs"].as_i64().unwrap() >= rows[0]["ttftMs"].as_i64().unwrap());
+
+        /* The same turn with the switch off writes nothing. */
+        let (url, server) = provider(vec![chunk(serde_json::json!({ "content": "hi" })) + "data: [DONE]\n\n"]);
+        let mut prompt = prompt_in(&root, "turn-trace-off", "say hi", "trace-model");
+
+        prompt.session_id = "session-trace-off".into();
+
+        crate::v3::ablating(&["trace.steps"], || drive(Backend::Api, &fake_target(url, "trace-model"), &workspace, Options { autonomy: Autonomy::Auto, max_steps: 3, auto_check: false, research: None }, None, &Default::default(), &prompt, &crate::engines::Recorder::new().sink()));
+        server.join().unwrap();
+        crate::trace::flush();
+
+        assert!(crate::trace::recent(&store, Some("session-trace-off"), 10).is_empty());
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// A SearXNG server on loopback that answers every search with the same two pages.
