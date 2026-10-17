@@ -525,6 +525,13 @@ pub fn run(
 
     let workspace = Workspace::new(root, prompt.remote.clone());
 
+    /* P0-14: a step transaction a crash left half-committed is undone before anything else touches the project. */
+    if prompt.remote.is_none() && crate::v3::on("edit.transaction") {
+        for (id, what) in crate::runtime::transaction::recover(std::path::Path::new(root)) {
+            sink.send(EngineEvent::Delta(format!("_(SDC finished a step that was interrupted: {id} - {what:?})_\n\n")));
+        }
+    }
+
     /* 0.21: a local model's turn starts Ollama itself when it is installed and stopped. */
     if backend == Backend::Ollama {
         crate::host::tools::ensure_ollama();

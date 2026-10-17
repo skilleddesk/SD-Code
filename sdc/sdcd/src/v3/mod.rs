@@ -88,6 +88,8 @@ pub const FEATURES: &[Feature] = &[
     Feature { name: "models.probe", default_on: false, token_technique: false, what: "P0-9: a local model is measured (context, tools, JSON, speed) the first time it is used and again when its file or runtime changes; off, only `sdcd probe` measures" },
     Feature { name: "models.contract", default_on: true, token_technique: false, what: "P0-10: the model the person chose runs every call of the turn; the router, cascade, failover, ladder, planner-executor and bandit are unreachable under a pin (a cloud/API/CLI model) and under local-only; off = every earlier version's behaviour" },
     Feature { name: "trace.steps", default_on: true, token_technique: false, what: "P0-12: every model call is traced - model, mode, tokens, time to first token, tokens per second, wall time, verify, cost - from a background writer, so recording never slows a step" },
+    Feature { name: "exec.sandbox", default_on: true, token_technique: false, what: "P0-14: the checks Verify runs (tests, smoke, scripts) run in the platform sandbox - no writes outside the project, no network unless the project allows it, CPU and file limits; Windows has no isolation and says so" },
+    Feature { name: "edit.transaction", default_on: true, token_technique: false, what: "P0-14: a step's edits are applied in a shadow copy, verified there, and committed to the real tree all at once or not at all" },
     Feature { name: "parallel", default_on: true, token_technique: false, what: "PAR: several agents at once, each in its own git worktree, on one board" },
 ];
 

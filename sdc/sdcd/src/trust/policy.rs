@@ -94,6 +94,10 @@ pub struct Policy {
     /// v3 I6: files whose content never goes to any model - not read, not grepped, not embedded (`secret_paths`).
     #[serde(default)]
     pub secret_paths: Vec<String>,
+    /// P0-14: the `ip:port` targets a verification command may reach from the sandbox, besides loopback (`sandbox_network`).
+    /// Empty: the network is off.
+    #[serde(default)]
+    pub sandbox_network: Vec<String>,
     /// Where this policy came from: `default`, or the file's path.
     pub source: String,
     /// The file's own text had a problem; the defaults are in force and this says why.
@@ -113,6 +117,7 @@ impl Default for Policy {
             auto_rollback: false,
             after_edit: Vec::new(),
             secret_paths: Vec::new(),
+            sandbox_network: Vec::new(),
             source: "default".to_string(),
             error: None,
         }
@@ -133,6 +138,7 @@ struct PolicyFile {
     guardian: Option<GuardianFile>,
     hooks: Option<HooksFile>,
     secret_paths: Option<Vec<String>>,
+    sandbox_network: Option<Vec<String>>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -196,6 +202,7 @@ impl Policy {
         extend(&mut policy.always_ask, file.always_ask, replace);
         extend(&mut policy.deny_commands, file.deny_commands, false);
         extend(&mut policy.secret_paths, file.secret_paths, false);
+        policy.sandbox_network = file.sandbox_network.unwrap_or_default().into_iter().map(|target| target.trim().to_string()).filter(|target| !target.is_empty()).collect();
         policy.max_turn_usd = file.max_turn_usd.filter(|usd| *usd > 0.0);
         policy.auto_rollback = file.guardian.and_then(|guardian| guardian.auto_rollback).unwrap_or(false);
         policy.after_edit = match file.hooks.and_then(|hooks| hooks.after_edit) {
@@ -275,6 +282,10 @@ impl Policy {
         text.push_str(&format!("protected_paths = {}\n", list(&extra_protected)));
         text.push_str(&format!("always_ask = {}\n", list(&extra_ask)));
         text.push_str(&format!("deny_commands = {}\n", list(&self.deny_commands)));
+
+        if !self.sandbox_network.is_empty() {
+            text.push_str(&format!("sandbox_network = {}\n", list(&self.sandbox_network)));
+        }
 
         if let Some(usd) = self.max_turn_usd {
             text.push_str(&format!("max_turn_usd = {usd}\n"));

@@ -457,6 +457,26 @@ fn tail(text: &str) -> Vec<String> {
     lines.iter().rev().take(TAIL_LINES).rev().map(|line| line.chars().take(300).collect()).collect()
 }
 
+/// The line to run for a check, and a sentence when it could not be isolated. A remote host is not this machine's to
+/// sandbox, and with the switch off the line is run exactly as before.
+fn sandboxed(line: &str, root: &str, remote: bool) -> (String, Option<String>) {
+    if remote || !crate::v3::on("exec.sandbox") {
+        return (line.to_string(), None);
+    }
+
+    let policy = crate::trust::policy::Policy::load_local(std::path::Path::new(root));
+    let mut rules = crate::guard::sandbox::Policy::for_project(std::path::Path::new(root));
+
+    if !policy.sandbox_network.is_empty() {
+        rules.network = crate::guard::sandbox::Network::Allow(policy.sandbox_network.clone());
+    }
+
+    match crate::guard::sandbox::wrap_line(line, &rules) {
+        Ok(wrapped) => (wrapped, None),
+        Err(reason) => (line.to_string(), Some(format!("ran without isolation: {reason}"))),
+    }
+}
+
 /// The whole run. Blocking stages run on the blocking pool; the reviewer is an engine turn.
 pub async fn run(state: Arc<DaemonState>, out: Arc<dyn Notifier>, request: Request) {
     let posix = request.remote.is_some() || !cfg!(windows);
@@ -516,6 +536,14 @@ pub async fn run(state: Arc<DaemonState>, out: Arc<dyn Notifier>, request: Reque
         run.push(&out);
 
         let line = non_interactive(&check.command, posix);
+        /* P0-14: the check is code the project (or the model) wrote, so it runs where it cannot write outside the project
+           or reach the network. A system that cannot isolate it says so on the check's own row instead of pretending. */
+        let (line, isolation) = sandboxed(&line, &request.root, request.remote.is_some());
+
+        if let Some(note) = isolation {
+            run.checks[index]["isolation"] = json!(note);
+        }
+
         let result = {
             let workspace = workspace.clone();
 
@@ -924,5 +952,33 @@ mod tests {
         assert!(diff.contains("new.txt") && diff.contains("+brand new"), "{diff}");
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// P0-14: with the switch off, or on a remote host, a check is run exactly as before; on this machine with it on, it is
+    /// wrapped in the platform sandbox - and the project's own network allow-list reaches the sandbox policy.
+    #[test]
+    fn a_check_is_sandboxed_only_here_and_only_with_the_switch_on() {
+        let root = tempfile::tempdir().unwrap();
+        let line = "npm test --silent";
+
+        assert_eq!(sandboxed(line, root.path().to_str().unwrap(), true), (line.to_string(), None), "a remote host is not this machine's to sandbox");
+        assert_eq!(crate::v3::ablating(&["exec.sandbox"], || sandboxed(line, root.path().to_str().unwrap(), false)), (line.to_string(), None), "switch off = the old line");
+
+        let (wrapped, note) = sandboxed(line, root.path().to_str().unwrap(), false);
+
+        if crate::guard::sandbox::guarantees().filesystem == crate::guard::sandbox::Level::None {
+            assert_eq!((wrapped.as_str(), note.is_some()), (line, true), "no sandbox here: the line runs bare and the row says so");
+        } else {
+            assert!(wrapped.contains("npm test --silent") && wrapped != line && note.is_none(), "{wrapped}");
+        }
+
+        std::fs::create_dir_all(root.path().join(".sdc")).unwrap();
+        std::fs::write(root.path().join(".sdc/policy.toml"), "sandbox_network = [\"10.0.0.5:5432\"]\n").unwrap();
+
+        let (allowed, _) = sandboxed(line, root.path().to_str().unwrap(), false);
+
+        if cfg!(target_os = "macos") && crate::guard::sandbox::guarantees().network == crate::guard::sandbox::Level::Enforced {
+            assert!(allowed.contains("10.0.0.5:5432"), "the project's allow-list reaches the profile");
+        }
     }
 }

@@ -7,7 +7,7 @@
 //! - the Pin Guard: a pinned model stays pinned (P0-10) - **here now**, `guard::modelgate`
 //! - the step, budget and cost guards (P1-3, P1-5) - `crate::trust::policy`, `crate::trust::cost`
 //! - the Output Compressor and the OS-normaliser for commands (P0-13)
-//! - the sandbox policy a command runs under (P0-14)
+//! - the sandbox policy a command runs under (P0-14) - **here now**, `guard::sandbox`
 //!
 //! The permission gate the person already sees is `crate::agent::gate`; it moves in here when P0-13 and P0-14 give
 //! it neighbours, so that everything allowed to say "no" to a step can be read in one place.
@@ -18,3 +18,4 @@ pub mod daemon;
 pub mod modelgate;
 pub mod osnorm;
 pub mod runner;
+pub mod sandbox;
