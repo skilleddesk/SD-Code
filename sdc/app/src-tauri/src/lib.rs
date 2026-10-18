@@ -20,7 +20,13 @@ use tauri::{Manager, State};
 /// serve the mobile targets without a rewrite.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let app = tauri::Builder::default()
+    let builder = tauri::Builder::default();
+
+    /* Phase 4.1: signed updates, only in a build made with the updater key (`--features updater`). */
+    #[cfg(feature = "updater")]
+    let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+
+    let app = builder
         // What the frontend is allowed to call is decided by `capabilities/default.json`,
         // not here: registering a plugin does not grant its permissions.
         .plugin(tauri_plugin_shell::init())

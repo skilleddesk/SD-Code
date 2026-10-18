@@ -273,6 +273,47 @@ jobs:
           pnpm --filter @sdc/app smoke
           pnpm --filter @sdc/app smoke:a11y
 
+      # Phase 4.1: optional signed auto-update and Windows code signing. Each switches on only when its secret exists, so a repository
+      # without them builds exactly as before (unsigned installers, no updater). What to obtain: docs/RELEASE-SIGNING-bn.md.
+      - name: Optional signing and updater configuration
+        id: extra
+        shell: bash
+        env:
+          UPDATER_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          UPDATER_PUBKEY: ${{ secrets.TAURI_UPDATER_PUBKEY }}
+          WIN_CERT: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WIN_CERT_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          REPO: ${{ github.repository }}
+        run: |
+          args=""
+
+          if [ -n "$UPDATER_KEY" ] && [ -n "$UPDATER_PUBKEY" ]; then
+            cat > sdc/app/src-tauri/tauri.updater.conf.json <<JSON
+          {"bundle":{"createUpdaterArtifacts":true},"plugins":{"updater":{"pubkey":"$UPDATER_PUBKEY","endpoints":["https://github.com/$REPO/releases/latest/download/latest.json"]}}}
+          JSON
+            cat > sdc/app/src-tauri/capabilities/updater.json <<'JSON'
+          {"identifier":"updater","description":"Check for and install signed updates.","windows":["main"],"permissions":["updater:default"]}
+          JSON
+            args="$args --config src-tauri/tauri.updater.conf.json --features updater"
+            echo "TAURI_SIGNING_PRIVATE_KEY=$UPDATER_KEY" >> "$GITHUB_ENV"
+            echo "signed updates are on for this build"
+          else
+            echo "no updater key in the secrets - this build has no auto-update"
+          fi
+
+          if [ "$RUNNER_OS" = "Windows" ] && [ -n "$WIN_CERT" ]; then
+            echo "$WIN_CERT" | base64 --decode > "$RUNNER_TEMP/cert.pfx"
+            thumb=$(powershell -NoProfile -Command "(Import-PfxCertificate -FilePath '$RUNNER_TEMP/cert.pfx' -CertStoreLocation Cert:\CurrentUser\My -Password (ConvertTo-SecureString '$WIN_CERT_PASSWORD' -AsPlainText -Force)).Thumbprint")
+            cat > sdc/app/src-tauri/tauri.windows.sign.conf.json <<JSON
+          {"bundle":{"windows":{"certificateThumbprint":"$thumb","digestAlgorithm":"sha256","timestampUrl":"http://timestamp.digicert.com"}}}
+          JSON
+            args="$args --config src-tauri/tauri.windows.sign.conf.json"
+            rm -f "$RUNNER_TEMP/cert.pfx"
+            echo "Windows installers will be signed"
+          fi
+
+          echo "args=$args" >> "$GITHUB_OUTPUT"
+
       - name: Build and upload into the draft
         id: tauri
         uses: tauri-apps/tauri-action@v0
@@ -285,7 +326,7 @@ jobs:
         with:
           projectPath: sdc/app
           releaseId: ${{ needs.prepare.outputs.release_id }}
-          args: ${{ matrix.target != '' && format('--target {0}', matrix.target) || '' }}
+          args: ${{ matrix.target != '' && format('--target {0}', matrix.target) || '' }} ${{ steps.extra.outputs.args }}
 
       # 0.22: signed provenance for every installer this runner built - who built it, from which commit, with
       # which workflow - recorded in GitHub's attestation store and Sigstore's public log. It does not replace
