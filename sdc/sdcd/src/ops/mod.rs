@@ -16,6 +16,7 @@
 //! itself (a backup, a scan) runs as written; a command a person configured (a deploy step) goes through
 //! the same deny list as every other command.
 
+pub mod brief;
 pub mod deploy;
 pub mod guardian;
 pub mod health;

@@ -116,6 +116,7 @@ pub fn spawn(state: Arc<DaemonState>) {
             last = Instant::now();
             run_due(&state);
             nightly_pass(&state);
+            daily_brief(&state, chrono::Local::now());
         }
     });
 }
@@ -133,6 +134,33 @@ pub fn nightly_pass(state: &Arc<DaemonState>) -> usize {
         .filter_map(|project| project["root"].as_str())
         .filter(|root| crate::v3::knowledge_core::nightly_if_due(std::path::Path::new(root), now).is_some())
         .count()
+}
+
+/// The clock's third job (Phase 4.8): once a day, from 07:00 local time, when the person turned it on (`brief.daily` = `on`), the morning brief
+/// is composed and pushed as a notification (`HealthAlert` on the `brief` pseudo-site, which the window turns into a desktop alert). Answers
+/// whether it ran. Off by default: a notification nobody asked for is a nuisance.
+pub fn daily_brief(state: &Arc<DaemonState>, now: chrono::DateTime<chrono::Local>) -> bool {
+    use chrono::Timelike;
+
+    if state.store.setting("brief.daily").ok().flatten().as_deref() != Some("on") || now.hour() < 7 {
+        return false;
+    }
+
+    let today = now.format("%Y-%m-%d").to_string();
+
+    if state.store.setting("brief.last").ok().flatten().as_deref() == Some(today.as_str()) {
+        return false;
+    }
+
+    let _ = state.store.set_setting("brief.last", &today);
+
+    let lang = state.store.setting("ui.language").ok().flatten().unwrap_or_else(|| "en".into());
+    let brief = crate::ops::brief::morning(&state.store, chrono::Utc::now());
+    let out = ChannelNotifier::new(state.events.clone(), state.fanout.clone());
+
+    out.push(crate::sdcp::events::event::health_alert("brief", "Morning brief", if brief["attention"].as_u64().unwrap_or(0) > 0 { "warn" } else { "info" }, &crate::ops::brief::headline(&brief, &lang)), None, None);
+
+    true
 }
 
 /// One turn of the clock: every project whose folder has automations, and every automation of it that is due.
@@ -298,6 +326,22 @@ mod tests {
         assert!(folder.join(crate::v3::knowledge_core::NIGHTLY_MARK).exists());
 
         let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    #[test]
+    fn the_morning_brief_is_pushed_once_a_day_after_seven_and_only_when_turned_on() {
+        use chrono::TimeZone;
+
+        let daemon = state();
+        let at = |hour| chrono::Local.with_ymd_and_hms(2026, 10, 18, hour, 0, 0).unwrap();
+
+        assert!(!daily_brief(&daemon, at(8)), "off by default");
+
+        daemon.store.set_setting("brief.daily", "on").unwrap();
+
+        assert!(!daily_brief(&daemon, at(6)), "not before 07:00");
+        assert!(daily_brief(&daemon, at(8)), "from 07:00");
+        assert!(!daily_brief(&daemon, at(9)), "once a day");
     }
 
     #[test]

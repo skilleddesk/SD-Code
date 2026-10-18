@@ -134,6 +134,10 @@ export function startAlerts(): void {
       case 'BudgetStop':
         announce('problem', 'notify-stuck', words.problem(chatTitle(entry.sessionId)), event.type === 'BudgetStop' ? words.budget : words.stuck);
         break;
+      case 'HealthAlert':
+        /* Phase 4.8: the morning brief arrives as an alert on the `brief` pseudo-site; a site's own alerts the same way. */
+        announce(event.level === 'info' ? 'done' : 'problem', 'notify-stuck', event.name, event.sentence);
+        break;
       default:
         break;
     }

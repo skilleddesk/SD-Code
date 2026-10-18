@@ -267,6 +267,8 @@ export type SdcpMethod =
   | 'team.set'
   | 'settings.get'
   | 'settings.set'
+  | 'report.client'
+  | 'brief.today'
   | 'telemetry.clear'
   | 'telemetry.send'
   | 'telemetry.set'
@@ -2554,6 +2556,8 @@ export interface SdcpMethodMap {
   'team.set': { params: { members?: TeamMember[]; current?: string }; result: TeamState };
   'settings.get': { params: { key: string }; result: { key: string; value: string | null } };
   'settings.set': { params: { key: string; value: string | boolean }; result: { key: string; value: string } };
+  'report.client': { params: { days?: number; lang?: string }; result: { report: Record<string, unknown>; htmlPath: string; html: string } };
+  'brief.today': { params: { lang?: string; push?: boolean }; result: { brief: Record<string, unknown>; headline: string; htmlPath: string; html: string } };
   'telemetry.clear': { params: Record<string, never>; result: { cleared: number } };
   'telemetry.send': { params: Record<string, never>; result: { sent: TelemetryView["wouldSend"]; status: number } };
   'telemetry.set': { params: { optIn: boolean; endpoint?: string }; result: TelemetryView };

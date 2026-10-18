@@ -338,6 +338,8 @@
           "team.set",
           "settings.get",
           "settings.set",
+          "report.client",
+          "brief.today",
           "telemetry.clear",
           "telemetry.send",
           "telemetry.set",
@@ -2344,6 +2346,29 @@
           "result": {
             "key": "string",
             "value": "string"
+          }
+        },
+        "report.client": {
+          "params": {
+            "days": "integer?",
+            "lang": "string?"
+          },
+          "result": {
+            "report": "object",
+            "htmlPath": "string",
+            "html": "string"
+          }
+        },
+        "brief.today": {
+          "params": {
+            "lang": "string?",
+            "push": "boolean?"
+          },
+          "result": {
+            "brief": "object",
+            "headline": "string",
+            "htmlPath": "string",
+            "html": "string"
           }
         },
         "telemetry.clear": {

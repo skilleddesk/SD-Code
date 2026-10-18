@@ -88,7 +88,11 @@ impl Daemon {
             }
         }
 
-        Ok(crate::trust::shipsafe::run(&root, site.as_deref(), &crate::trust::shipsafe::Registries::default()))
+        let report = crate::trust::shipsafe::run(&root, site.as_deref(), &crate::trust::shipsafe::Registries::default());
+
+        crate::ops::brief::remember_ship(self.store(), &root.to_string_lossy(), &report);
+
+        Ok(report)
     }
 
     /// `secrets.move`: one found value goes into the OS keychain and leaves a marker in its file.

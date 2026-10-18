@@ -88,6 +88,8 @@ impl Daemon {
             /* 0.22: any OpenAI-compatible model server, not only Ollama - found on this computer, or added by address. */
             "local.discover" => Ok(crate::providers::local::discover()),
             "local.scan" => Ok(crate::providers::runtimes::scan()),
+            "brief.today" => self.brief_today(envelope, &*out),
+            "report.client" => self.report_client(envelope),
             "telemetry.status" => Ok(self.telemetry_status()),
             "telemetry.set" => self.telemetry_set(envelope),
             "telemetry.send" => self.telemetry_send(),
@@ -611,6 +613,46 @@ impl Daemon {
     /// The settings the daemon itself reads (the language alerts are written in, the agency's email and
     /// style guide, the Intent Engine's reply style, low-bandwidth mode). Anything else is refused, so this
     /// cannot become a way around the methods that check what they write.
+    /// `brief.today`: the morning brief for every site and project - data, a page on disk, and (with `push`) a notification.
+    fn brief_today(&self, envelope: &Envelope, out: &dyn Notifier) -> Result<Value, ErrorObject> {
+        let lang = envelope.opt_str("lang").or_else(|| self.store().setting("ui.language").ok().flatten()).unwrap_or_else(|| "en".into());
+        let brief = ops::brief::morning(self.store(), chrono::Utc::now());
+        let page = ops::brief::brief_html(&brief, &lang);
+        let directory = crate::paths::data_dir().map_err(ErrorObject::internal)?.join("reports");
+
+        std::fs::create_dir_all(&directory).map_err(ErrorObject::internal)?;
+
+        let path = directory.join(format!("brief-{}.html", chrono::Utc::now().format("%Y-%m-%d")));
+
+        std::fs::write(&path, &page).map_err(ErrorObject::internal)?;
+
+        let headline = ops::brief::headline(&brief, &lang);
+
+        if envelope.opt_bool("push") {
+            out.push(event::health_alert("brief", "Morning brief", if brief["attention"].as_u64().unwrap_or(0) > 0 { "warn" } else { "info" }, &headline), None, None);
+        }
+
+        Ok(json!({ "brief": brief, "headline": headline, "htmlPath": path.display().to_string(), "html": page }))
+    }
+
+    /// `report.client`: the week's work from the Proof Packs, as a page for a client.
+    fn report_client(&self, envelope: &Envelope) -> Result<Value, ErrorObject> {
+        let lang = envelope.opt_str("lang").or_else(|| self.store().setting("ui.language").ok().flatten()).unwrap_or_else(|| "en".into());
+        let days = envelope.opt_i64("days").unwrap_or(7).clamp(1, 90);
+        let log = self.state.events.since(0);
+        let report = ops::brief::client_report(self.store(), &log, chrono::Utc::now(), days);
+        let page = ops::brief::client_html(&report, &lang);
+        let directory = crate::paths::data_dir().map_err(ErrorObject::internal)?.join("reports");
+
+        std::fs::create_dir_all(&directory).map_err(ErrorObject::internal)?;
+
+        let path = directory.join(format!("client-{}.html", chrono::Utc::now().format("%Y-%m-%d")));
+
+        std::fs::write(&path, &page).map_err(ErrorObject::internal)?;
+
+        Ok(json!({ "report": report, "htmlPath": path.display().to_string(), "html": page }))
+    }
+
     pub(super) fn telemetry_enabled(&self) -> bool {
         self.store().setting(crate::telemetry::OPT_IN).ok().flatten().is_some_and(|value| value.trim().eq_ignore_ascii_case("on"))
     }
@@ -699,7 +741,7 @@ impl Daemon {
             "ui.language", "agency.email", "agency.styleGuide", "intent.replyStyle", "net.lowBandwidth", "update.channel", "crash.optIn",
             /* 0.16.1: the local model's context, and Settings → Research. A search service's key is not a
                setting - it goes to the keychain through `research.key.set`. */
-            "ollama.contextTokens", crate::guard::reviewer::SETTING, "research.searchProvider", "research.searxngUrl", "research.maxSearches", "research.maxPages",
+            "ollama.contextTokens", crate::guard::reviewer::SETTING, "brief.daily", "research.searchProvider", "research.searxngUrl", "research.maxSearches", "research.maxPages",
             "research.maxMinutes", "research.localWebOnly", "research.synthesisModel", "research.synthesisProvider",
         ];
 

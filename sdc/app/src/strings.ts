@@ -100,6 +100,7 @@ const english = {
     label: 'Navigation',
     timeMachine: 'Time Machine - every change, one click back',
     shipSafe: 'Ship Safe - check before you go live',
+    brief: 'Morning brief - sites, servers, the agent, cost',
   },
   sidebar: {
     newChat: 'New chat',
@@ -1520,6 +1521,18 @@ const english = {
    * spec section 2.7 wants it) and `modals/Settings.tsx` renders it. The Keymap tab is the one
    * exception - it reads the command registry, so the two can never disagree (spec section 9.1).
    */
+  /** The morning brief and the weekly client report (Phase 4.8). */
+  brief: {
+    title: 'Morning brief',
+    today: 'Today’s brief',
+    client: 'Weekly client report',
+    clientTitle: 'Weekly client report - the work of the last 7 days',
+    working: 'Collecting what SDC recorded…',
+    failed: 'The brief could not be made',
+    daily: 'Send me the brief every morning (from 07:00)',
+    dailyHelp: 'A desktop notification. Off until you turn it on.',
+    open: 'Open the page (to print or save as PDF)',
+  },
   /** Opt-in telemetry (Phase 4.2). */
   telemetry: {
     title: 'Share anonymous usage counts',
