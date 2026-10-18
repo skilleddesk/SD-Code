@@ -10,11 +10,12 @@
 //! |---|---|---|---|---|
 //! | macOS | outside the project and the build tools' own caches (`TOOL_CACHES`): refused | refused (loopback optional) | CPU and file size by `ulimit`; wall time by the runner | `sandbox-exec` with a Seatbelt profile |
 //! | Linux | outside the project: refused (read-only root) | refused (own network namespace) | as above, plus memory by `ulimit -v` | `bwrap` (bubblewrap) when installed, else `unshare -n` for the network alone |
-//! | Windows | **not isolated** | **not isolated** | wall time, whole process tree | the runner's deadline and tree kill only |
+//! | Windows | **not isolated** | **not isolated** | wall time, 256 processes, 4 GiB, kill-on-close, no clipboard/desktop | a Job Object (`winjob`) around every Command Runner child |
 //!
-//! Windows is the honest gap: a lightweight, dependency-free isolation primitive does not exist there short of
-//! AppContainer or Windows Sandbox, and code that could not be compiled or run on this build's machines is not offered
-//! as a guarantee. [`guarantees`] reports `Level::None` for it, and a caller may refuse to run untrusted code there.
+//! Windows is still the honest gap for files and the network: isolating those needs an AppContainer or Windows Sandbox, which
+//! cannot be built and proven without a Windows machine. What 3.1 adds is a Job Object (`winjob`): limits that the kernel enforces
+//! (process count, memory, kill-on-close, UI) - reported as `limits: Enforced`, while [`guarantees`] still reports `Level::None` for
+//! files and network, and a caller may refuse to run untrusted code there.
 
 use std::path::{Path, PathBuf};
 
@@ -122,8 +123,20 @@ pub fn guarantees_for(os: &str, has_sandbox_exec: bool, has_bwrap: bool, has_uns
             notes: vec!["the network is cut, but writes outside the project are NOT refused: install bubblewrap (bwrap) for that".into()],
         },
         "linux" => Guarantees { os: "linux", mechanism: "none (bwrap and unshare not found)", filesystem: Level::None, network: Level::None, limits: Level::Enforced, notes: vec!["only limits apply: install bubblewrap".into()] },
+        "windows" => Guarantees {
+            os: "windows",
+            mechanism: "Job Object (process cap, memory cap, kill-on-close, UI limits)",
+            filesystem: Level::None,
+            network: Level::None,
+            limits: Level::Enforced,
+            notes: vec![
+                "no filesystem or network isolation on this system: do not run code you do not trust".into(),
+                "a command run by the Command Runner is contained in a Job Object: at most 256 processes, 4 GiB of memory, no clipboard or desktop access, and its whole process tree ends with it. It can still write outside the project and use the network".into(),
+                "for real isolation run checks inside WSL2 (install bubblewrap there); SDC does not do that for you yet".into(),
+            ],
+        },
         other => Guarantees {
-            os: if other == "windows" { "windows" } else { "other" },
+            os: "other",
             mechanism: "runner deadline and process-tree kill only",
             filesystem: Level::None,
             network: Level::None,

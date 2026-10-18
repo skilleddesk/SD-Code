@@ -110,6 +110,9 @@ pub fn run(launch: &super::osnorm::Launch, settings: &Settings) -> Result<Outcom
     }
 
     let mut child = command.spawn().map_err(|error| format!("{} could not be started: {error}", launch.display()))?;
+    /* Windows (Phase 4.10): the child and its tree go into a Job Object - a process cap, a memory cap, and the whole tree dies when this
+       function returns. Held until then; elsewhere this is nothing (`sandbox` has the mechanisms of macOS and Linux). */
+    let _contained = super::winjob::contain_command(&child);
     let pid = child.id();
     let mut stdout = child.stdout.take();
     let mut stderr = child.stderr.take();

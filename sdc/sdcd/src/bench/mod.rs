@@ -1091,7 +1091,11 @@ mod tests {
         let (small, tasks): (Vec<Task>, Vec<Task>) = everything.into_iter().partition(|task| task.tiers.iter().any(|tier| tier == "small"));
         let count = |kind: &str| tasks.iter().filter(|task| task.kind == kind).count();
 
-        assert_eq!(small.len(), 8, "the seven situations of the small-model bench, Bangla and Banglish both");
+        /* 3.1 (4.12): 8 original situations + 32 tasks on three more projects, so Gate 1 can be decided by a paired test with power
+           (docs/GATES.md); the original eight are still there. */
+        assert_eq!(small.len(), 40, "the small-model bench: the original eight and the 32 added in 3.1");
+        assert!(["small-banglish-01", "small-bn-01", "small-cutoff-01", "small-limit-01", "small-qa-01", "small-feature-01", "small-notest-01", "small-rename-01"].iter().all(|id| small.iter().any(|task| &task.id == id)), "the original eight are all kept");
+        assert!(small.iter().any(|task| task.language == "ar") && small.iter().any(|task| task.language == "de") && small.iter().any(|task| task.language == "bn") && small.iter().any(|task| task.language == "banglish"));
         assert!(small.iter().all(|task| !task.in_tier("full")), "and none of them is in the full tier");
         assert!(tasks.iter().find(|task| task.id == "ml-bn").unwrap().in_tier("hard"), "the one task the baseline flipped is in the hard tier");
 

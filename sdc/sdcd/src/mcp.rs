@@ -439,9 +439,10 @@ mod tests {
             assert!(call("sdc_vps_run", &json!({ "host": "web-1", "command": bad, "confirm": true }), &mut daemon).unwrap_err().contains("refused"), "{bad}");
         }
 
+        assert!(call("sdc_vps_run", &json!({ "host": "nobody", "command": "uptime" }), &mut daemon).unwrap_err().contains("no connected host"), "a host SDC does not know is not guessed");
+
         assert_eq!(calls.iter().filter(|(method, params)| method == "shell.run" && params["hostId"] == "h-1").count(), 2, "the name was resolved to the id; refused commands never reached the server");
         assert!(call("sdc_vps_run", &json!({ "host": "web-1", "command": "uptime" }), &mut no_daemon).unwrap_err().contains("not running"));
-        assert!(call("sdc_vps_run", &json!({ "host": "nobody", "command": "uptime" }), &mut daemon).unwrap_err().contains("no connected host"), "a host SDC does not know is not guessed");
     }
 
     #[test]
