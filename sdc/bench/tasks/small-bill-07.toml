@@ -1,0 +1,13 @@
+id = "small-bill-07"
+kind = "explain"
+fixture = "py-billing"
+tiers = ["small"]
+language = "en"
+max_steps = 40
+prompt = '''
+How does the billing package round a percentage of an amount - in which file and function is the rounding done, and is it round-half-up, round-half-even or truncation? Name the function and quote the formula. Change no files.
+'''
+
+[verify]
+answer_all = ["money\\.py", "round_half_up", "(?i)half[- ]up", "2 \\* numerator \\+ denominator"]
+no_edits = true

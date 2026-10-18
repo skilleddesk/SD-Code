@@ -1,0 +1,13 @@
+id = "small-bill-02"
+kind = "bugfix"
+fixture = "py-billing"
+tiers = ["small"]
+language = "en"
+max_steps = 40
+prompt = '''
+`percent_of(1000, 8.2)` returns 81 instead of 82: percentages with one decimal sometimes lose a tenth because of floating point. Fix `percent_of` in `billing/money.py` so every percentage with at most one decimal is exact.
+'''
+
+[verify]
+hidden = "small-bill-02"
+commands = ["python3 -m unittest discover -s tests -t . -q"]

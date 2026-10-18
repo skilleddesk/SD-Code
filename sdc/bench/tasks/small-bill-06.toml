@@ -1,0 +1,13 @@
+id = "small-bill-06"
+kind = "edit"
+fixture = "py-billing"
+tiers = ["small"]
+language = "en"
+max_steps = 40
+prompt = '''
+Rename `percent_of` in `billing/money.py` to `percentage_of` and update every use (modules and tests). Behaviour must not change.
+'''
+
+[verify]
+hidden = "small-bill-06"
+commands = ["python3 -m unittest discover -s tests -t . -q"]

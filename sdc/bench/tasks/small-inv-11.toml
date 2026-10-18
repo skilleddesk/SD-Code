@@ -1,0 +1,13 @@
+id = "small-inv-11"
+kind = "feature"
+fixture = "py-inventory"
+tiers = ["small"]
+language = "en"
+max_steps = 40
+prompt = '''
+Add `stock_value_by_band(store)` to `inventory/reports.py`: it returns a dict with the keys `cheap`, `mid` and `premium`, each the total stock value in cents (quantity times price) of the items in that band, using the same bands as `by_price_band`. Bands with no items are 0.
+'''
+
+[verify]
+hidden = "small-inv-11"
+commands = ["python3 -m unittest discover -s tests -t . -q"]

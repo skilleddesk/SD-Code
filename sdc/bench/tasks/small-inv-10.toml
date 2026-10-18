@@ -1,0 +1,13 @@
+id = "small-inv-10"
+kind = "feature"
+fixture = "py-inventory"
+tiers = ["small"]
+language = "en"
+max_steps = 40
+prompt = '''
+Give the command line two more commands: `remove <sku>` deletes the item, and `total` prints the total stock value formatted with `format_money` (for example `$12.50`). Keep the existing commands working.
+'''
+
+[verify]
+hidden = "small-inv-10"
+commands = ["python3 -m unittest discover -s tests -t . -q"]

@@ -1,0 +1,13 @@
+id = "small-inv-05"
+kind = "edit"
+fixture = "py-inventory"
+tiers = ["small"]
+language = "en"
+max_steps = 40
+prompt = '''
+Rename `by_price_band` in `inventory/reports.py` to `price_bands`, and update everything that uses it (including the existing tests). Behaviour must not change.
+'''
+
+[verify]
+hidden = "small-inv-05"
+commands = ["python3 -m unittest discover -s tests -t . -q"]

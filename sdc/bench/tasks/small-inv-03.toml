@@ -1,0 +1,13 @@
+id = "small-inv-03"
+kind = "bugfix"
+fixture = "py-inventory"
+tiers = ["small"]
+language = "en"
+max_steps = 40
+prompt = '''
+The price bands are documented as: cheap under 1000 cents, mid 1000-9999, premium 10000 and over. An item priced exactly 10000 cents is being put in `mid`. Fix `by_price_band`.
+'''
+
+[verify]
+hidden = "small-inv-03"
+commands = ["python3 -m unittest discover -s tests -t . -q"]

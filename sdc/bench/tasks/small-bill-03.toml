@@ -1,0 +1,13 @@
+id = "small-bill-03"
+kind = "bugfix"
+fixture = "py-billing"
+tiers = ["small"]
+language = "en"
+max_steps = 40
+prompt = '''
+`render.money` prints negative amounts wrongly (-5 cents gives `-1.95`). It should print `-0.05`, and -12345 should print `-123.45`. Positive amounts stay as they are.
+'''
+
+[verify]
+hidden = "small-bill-03"
+commands = ["python3 -m unittest discover -s tests -t . -q"]

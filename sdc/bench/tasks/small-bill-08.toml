@@ -1,0 +1,13 @@
+id = "small-bill-08"
+kind = "feature"
+fixture = "py-billing"
+tiers = ["small"]
+language = "banglish"
+max_steps = 40
+prompt = '''
+Invoice class e ekta notun method lagbe: to_dict(). Eta ekta dict ferot dibe: "customer", "lines" (line gulor list, jemon ache temon), "subtotal_cents", "tax_cents", "total_cents". Onno kichu bodlabe na.
+'''
+
+[verify]
+hidden = "small-bill-08"
+commands = ["python3 -m unittest discover -s tests -t . -q"]

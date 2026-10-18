@@ -1,0 +1,13 @@
+id = "small-txt-07"
+kind = "explain"
+fixture = "py-textkit"
+tiers = ["small"]
+language = "en"
+max_steps = 40
+prompt = '''
+Which function in `textkit` splits text into sentences, in which file, and what kind of regular-expression feature does it rely on to keep the punctuation with its sentence? Quote the pattern. Change no files.
+'''
+
+[verify]
+answer_all = ["tokenize\\.py", "sentences", "(?i)lookbehind|\\(\\?<="]
+no_edits = true

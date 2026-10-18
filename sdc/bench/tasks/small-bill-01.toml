@@ -1,0 +1,13 @@
+id = "small-bill-01"
+kind = "bugfix"
+fixture = "py-billing"
+tiers = ["small"]
+language = "en"
+max_steps = 40
+prompt = '''
+`bulk_discount_percent` is documented as "5 percent from 10 units, 10 percent from 50 units", but exactly 10 units gets no discount. Fix it.
+'''
+
+[verify]
+hidden = "small-bill-01"
+commands = ["python3 -m unittest discover -s tests -t . -q"]

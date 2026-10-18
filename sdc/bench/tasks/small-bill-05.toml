@@ -1,0 +1,13 @@
+id = "small-bill-05"
+kind = "feature"
+fixture = "py-billing"
+tiers = ["small"]
+language = "bn"
+max_steps = 40
+prompt = '''
+`Invoice`-এ `remove_line(description)` যোগ করো। এই বিবরণের সবগুলো লাইন মুছে দেবে এবং কয়টা মুছেছে সেই সংখ্যা ফেরত দেবে (না থাকলে ০, কোনো ত্রুটি নয়)। সাবটোটাল তার সাথে মিলে বদলাবে।
+'''
+
+[verify]
+hidden = "small-bill-05"
+commands = ["python3 -m unittest discover -s tests -t . -q"]

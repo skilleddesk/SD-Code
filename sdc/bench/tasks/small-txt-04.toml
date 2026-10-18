@@ -1,0 +1,13 @@
+id = "small-txt-04"
+kind = "feature"
+fixture = "py-textkit"
+tiers = ["small"]
+language = "en"
+max_steps = 40
+prompt = '''
+Give `slugify` an optional `max_length` argument (default `None`, meaning no limit). When the slug is longer, cut it at a hyphen so no word is split, never leave a trailing hyphen, and if the first word alone is longer than `max_length` cut that word at `max_length`.
+'''
+
+[verify]
+hidden = "small-txt-04"
+commands = ["python3 -m unittest discover -s tests -t . -q"]

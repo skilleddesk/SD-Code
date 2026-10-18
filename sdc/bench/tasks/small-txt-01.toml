@@ -1,0 +1,13 @@
+id = "small-txt-01"
+kind = "bugfix"
+fixture = "py-textkit"
+tiers = ["small"]
+language = "en"
+max_steps = 40
+prompt = '''
+`wrap_text(text, width)` is documented as "at most `width` characters per line", but a line that is exactly `width` long is wrapped too early: `wrap_text("aaa bbb", 7)` gives two lines. Fix it.
+'''
+
+[verify]
+hidden = "small-txt-01"
+commands = ["python3 -m unittest discover -s tests -t . -q"]

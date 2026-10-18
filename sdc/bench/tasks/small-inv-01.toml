@@ -1,0 +1,13 @@
+id = "small-inv-01"
+kind = "feature"
+fixture = "py-inventory"
+tiers = ["small"]
+language = "en"
+max_steps = 40
+prompt = '''
+Add low-stock reporting. `InventoryStore.low_stock(threshold)` returns the items whose quantity is below `threshold`, ordered by quantity (fewest first) and then by SKU. The command line gets a `low <threshold>` command that prints `<sku>\t<qty>` for each of them, in the same order.
+'''
+
+[verify]
+hidden = "small-inv-01"
+commands = ["python3 -m unittest discover -s tests -t . -q"]

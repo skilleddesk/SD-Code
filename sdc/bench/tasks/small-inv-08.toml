@@ -1,0 +1,13 @@
+id = "small-inv-08"
+kind = "feature"
+fixture = "py-inventory"
+tiers = ["small"]
+language = "ar"
+max_steps = 40
+prompt = '''
+في الملف `inventory/reports.py` الدالة `format_money` يجب أن تضع فاصلة بين كل ثلاث خانات من الدولارات. مثلاً: 1234567 سنتاً تصبح `$12,345.67`، و 99 سنتاً تبقى `$0.99`، و 100000 سنت تصبح `$1,000.00`. لا تغيّر أي شيء آخر.
+'''
+
+[verify]
+hidden = "small-inv-08"
+commands = ["python3 -m unittest discover -s tests -t . -q"]

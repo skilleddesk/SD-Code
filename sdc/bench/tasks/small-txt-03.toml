@@ -1,0 +1,13 @@
+id = "small-txt-03"
+kind = "bugfix"
+fixture = "py-textkit"
+tiers = ["small"]
+language = "en"
+max_steps = 40
+prompt = '''
+`headings` returns Markdown headings with their optional closing hashes still attached: `## Setup ##` comes back as `(2, "Setup ##")`. Closing `#` characters (and the space before them) must be dropped. A title that merely ends in a `#` with no space before it, like `# C#`, keeps it.
+'''
+
+[verify]
+hidden = "small-txt-03"
+commands = ["python3 -m unittest discover -s tests -t . -q"]

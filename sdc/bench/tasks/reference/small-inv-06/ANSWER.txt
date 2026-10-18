@@ -1,0 +1,1 @@
+inventory/reports.py: in by_price_band the line `elif item.price_cents <= 10000:` puts a 10000-cent item in the mid band, but the docstring says 10000 and over is premium.

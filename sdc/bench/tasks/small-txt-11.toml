@@ -1,0 +1,13 @@
+id = "small-txt-11"
+kind = "explain"
+fixture = "py-textkit"
+tiers = ["small"]
+language = "bn"
+max_steps = 40
+prompt = '''
+`textkit`-এ সবচেয়ে বেশি ব্যবহৃত শব্দ বের করার ফাংশনটা কোন ফাইলে আছে, তার নাম কী, আর দুটো শব্দের গণনা সমান হলে সেটা কীভাবে ক্রম ঠিক করে? কোনো ফাইল বদলাবে না।
+'''
+
+[verify]
+answer_all = ["stats\\.py", "top_n", "(?i)alphabet|বর্ণানুক্রম|বর্ণক্রম|আলফাবেট"]
+no_edits = true

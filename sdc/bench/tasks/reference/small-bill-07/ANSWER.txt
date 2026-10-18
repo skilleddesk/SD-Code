@@ -1,0 +1,1 @@
+billing/money.py: percent_of() calls round_half_up(cents * int(percent * 10), 1000); round_half_up computes (2 * numerator + denominator) // (2 * denominator), i.e. round half up.

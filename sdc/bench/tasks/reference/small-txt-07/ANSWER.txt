@@ -1,0 +1,1 @@
+textkit/tokenize.py: sentences() splits with re.split(r"(?<=[.!?])\s+", ...) - a lookbehind, so the punctuation stays with its sentence.

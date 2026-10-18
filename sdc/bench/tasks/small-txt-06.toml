@@ -1,0 +1,13 @@
+id = "small-txt-06"
+kind = "edit"
+fixture = "py-textkit"
+tiers = ["small"]
+language = "en"
+max_steps = 40
+prompt = '''
+Rename `words` in `textkit/tokenize.py` to `split_words` and update every use of it (modules and tests). Behaviour must not change.
+'''
+
+[verify]
+hidden = "small-txt-06"
+commands = ["python3 -m unittest discover -s tests -t . -q"]

@@ -1,0 +1,13 @@
+id = "small-txt-02"
+kind = "bugfix"
+fixture = "py-textkit"
+tiers = ["small"]
+language = "en"
+max_steps = 40
+prompt = '''
+`average_word_length("")` (and any text with no words) crashes with `ZeroDivisionError`. It should return `0.0`.
+'''
+
+[verify]
+hidden = "small-txt-02"
+commands = ["python3 -m unittest discover -s tests -t . -q"]

@@ -1,0 +1,13 @@
+id = "small-txt-08"
+kind = "feature"
+fixture = "py-textkit"
+tiers = ["small"]
+language = "banglish"
+max_steps = 40
+prompt = '''
+textkit/markdown.py te notun function lagbe: toc(text). Eta headings(text) er upor base kore ekta list of string ferot dibe, protita heading er jonno ekta line: "- Title", jar level 1 er cheye beshi tar age protita extra level er jonno duita space. Jemon level 1 -> "- A", level 3 -> "    - C". Onno kichu bodlabe na.
+'''
+
+[verify]
+hidden = "small-txt-08"
+commands = ["python3 -m unittest discover -s tests -t . -q"]

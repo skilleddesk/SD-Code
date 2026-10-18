@@ -1,0 +1,13 @@
+id = "small-bill-09"
+kind = "feature"
+fixture = "py-billing"
+tiers = ["small"]
+language = "de"
+max_steps = 40
+prompt = '''
+`render_invoice` in `billing/render.py` soll bei einem Steuersatz größer als 0 die Prozent in der Steuerzeile zeigen: statt "Tax 1.00" soll dort "Tax (10%) 1.00" stehen, bei 7,5 Prozent "Tax (7.5%) 0.75" (ohne überflüssige Nachkommastelle: 10 und nicht 10.0). Bei Steuersatz 0 bleibt die Zeile "Tax 0.00". Alles andere bleibt gleich.
+'''
+
+[verify]
+hidden = "small-bill-09"
+commands = ["python3 -m unittest discover -s tests -t . -q"]

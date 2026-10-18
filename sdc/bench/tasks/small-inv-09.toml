@@ -1,0 +1,13 @@
+id = "small-inv-09"
+kind = "bugfix"
+fixture = "py-inventory"
+tiers = ["small"]
+language = "de"
+max_steps = 40
+prompt = '''
+`format_money` in `inventory/reports.py` liefert für negative Beträge falsche Texte (z. B. -5 Cent ergibt "$-1.95"). Negative Beträge sollen so aussehen: -5 -> "-$0.05" und -12345 -> "-$123.45". Positive Beträge bleiben gleich. Das Projekt hat keine Tests dafür - füge keine hinzu und ändere nichts anderes.
+'''
+
+[verify]
+hidden = "small-inv-09"
+commands = ["python3 -m unittest discover -s tests -t . -q"]

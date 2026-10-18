@@ -1,0 +1,13 @@
+id = "small-inv-02"
+kind = "bugfix"
+fixture = "py-inventory"
+tiers = ["small"]
+language = "en"
+max_steps = 40
+prompt = '''
+`InventoryStore.adjust` lets a quantity go below zero. It must raise `ValueError` when the change would make the quantity negative, and then leave the item (and the saved file) exactly as it was.
+'''
+
+[verify]
+hidden = "small-inv-02"
+commands = ["python3 -m unittest discover -s tests -t . -q"]

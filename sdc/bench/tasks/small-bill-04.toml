@@ -1,0 +1,13 @@
+id = "small-bill-04"
+kind = "feature"
+fixture = "py-billing"
+tiers = ["small"]
+language = "en"
+max_steps = 40
+prompt = '''
+Add `Invoice.add_discount(percent)`. The discount applies to the subtotal before tax: `discount_cents()` is `percent_of(subtotal, discount_percent)`, tax is then computed on the discounted subtotal, and `total_cents()` is discounted subtotal plus tax. Without a discount nothing changes. Calling `add_discount` again replaces the earlier discount; a percent outside 0-100 raises `ValueError`.
+'''
+
+[verify]
+hidden = "small-bill-04"
+commands = ["python3 -m unittest discover -s tests -t . -q"]

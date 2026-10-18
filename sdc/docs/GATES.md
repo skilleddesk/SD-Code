@@ -29,6 +29,48 @@ Result: PASS
 
 ## Gate 1
 
+**Status: not run.** What changed in 3.1 is that it can now be run honestly. The statistics plan (written 2026-10-18, before any Gate 1 number exists) is below.
+
+### Why the plan had to change
+
+Gate 1's rule is "same 9B model, Local-only, the Small Model Engine against plain prompting, paired runs, McNemar p < 0.05". With the 8 small-model tasks that existed in 3.0.3 this is **close to unachievable**: simulated power (below) is 3-16 % even for a 20-point improvement, so a real improvement would almost always be reported as "no evidence". A gate that cannot pass is not a gate. The small tier is now **40 tasks** (the original 8 + 32 on three new realistic projects: `py-inventory`, `py-textkit`, `py-billing`; feature, bugfix, rename, no-tests, question-answering; English, Bangla, Banglish, Arabic, German), every one proven by `sdcd bench validate` to fail on the untouched project and pass with its reference solution.
+
+### The method
+
+* **Unit of analysis: the task, not the run.** Runs of one task are correlated (a hard task is hard every time), so counting every run as an independent pair overstates the evidence. For each task, count passes of the SME arm and of the plain arm over the same number of runs (>= 5; the bench refuses fewer than 3), and call the task *better*, *worse* or *tied*.
+* **Primary test:** exact two-sided sign test on the better/worse counts (ties dropped), alpha 0.05, SME must also be the one with more better tasks. This is McNemar's exact test applied at task level.
+* **Secondary, reported but not decisive:** McNemar on all (task, run) pairs (`sdcd bench compare`, as before). It ignores the correlation above, so it is optimistic and is labelled so.
+* **Same everything else:** same model digest (`identity` from the probe), fixed seed, temperature written in `meta.json`, same fixtures, hidden tests copied in after the run, Local-only mode, `--ablate` for the plain arm.
+* **Hard zeros, no statistics:** cut-off answers, invented quotes and silent mis-patches must be 0 in the SME arm.
+* **Speed:** the Speed Gate (median within 5 % of baseline).
+
+### Power (simulated, 4,000 trials per cell, baseline pass rate 40 %, alpha 0.05)
+
+| tasks x runs | +10 points | +15 points | +20 points |
+|---|---|---|---|
+| 8 x 3 (3.0.3) | 3 % | 5 % | 10 % |
+| 8 x 5 | 5 % | 9 % | 16 % |
+| 20 x 3 | 12 % | 24 % | 41 % |
+| 20 x 5 | 19 % | 39 % | 61 % |
+| 40 x 3 | 26 % | 53 % | 77 % |
+| **40 x 5 (the plan)** | **41 %** | **73 %** | **92 %** |
+
+So the gate can detect a real **+20-point** improvement 92 % of the time, a +15 one 73 % of the time, and will usually miss +10. If the true effect is smaller than that, the honest result is "not shown", and the report must say so rather than add runs until a p-value appears (the number of runs is fixed in advance: 5).
+
+### Cost and where it runs
+
+40 tasks x 5 runs x 2 arms = 400 turns on the local 9B model: no API cost, but hours of GPU time. **This is OWNER-TO-RUN on the Windows PC (RTX 4060 8 GB)**; this Mac has no model and does not run it:
+
+```
+sdcd bench run --models ollama:qwen3.5:9b --tier small --runs 5 --label gate1-sme
+sdcd bench run --models ollama:qwen3.5:9b --tier small --runs 5 --label gate1-plain --ablate sme.budget,sme.step_profile,sme.prompt_diet
+sdcd bench compare gate1-plain gate1-sme --report-bn
+```
+
+(The SME switches named after `--ablate` are the ones P1-3..P1-14 introduce; until they exist the two arms are identical and the comparison measures nothing.)
+
+Your own tasks go in `bench/tasks/private/` (git-ignored; `sdcd bench private` prints the folder and an example) and join the `hard` tier.
+
 ## Gate 2
 
 ## Gate 3

@@ -1,0 +1,13 @@
+id = "small-inv-06"
+kind = "explain"
+fixture = "py-inventory"
+tiers = ["small"]
+language = "en"
+max_steps = 40
+prompt = '''
+In the inventory package, an item priced at exactly 10000 cents does not end up in the band the docstring says it should. Which file and which comparison cause that, and which band does the docstring name for it? Quote the comparison. Change no files.
+'''
+
+[verify]
+answer_all = ["reports\\.py", "<= 10000", "premium"]
+no_edits = true

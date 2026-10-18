@@ -1,0 +1,13 @@
+id = "small-inv-04"
+kind = "feature"
+fixture = "py-inventory"
+tiers = ["small"]
+language = "bn"
+max_steps = 40
+prompt = '''
+`InventoryStore`-এ `rename_sku(old, new)` যোগ করো। পুরনো SKU না থাকলে `KeyError`, নতুন SKU আগে থেকেই থাকলে `KeyError` তুলবে। সফল হলে আইটেমের `sku` বদলে যাবে, বাকি সব (নাম, পরিমাণ, দাম) একই থাকবে, আর ফাইলে সেভ হবে।
+'''
+
+[verify]
+hidden = "small-inv-04"
+commands = ["python3 -m unittest discover -s tests -t . -q"]

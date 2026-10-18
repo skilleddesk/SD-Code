@@ -1,0 +1,13 @@
+id = "small-bill-10"
+kind = "edit"
+fixture = "py-billing"
+tiers = ["small"]
+language = "en"
+max_steps = 40
+prompt = '''
+`bulk_discount_percent` should refuse nonsense: a quantity of zero or less raises `ValueError`. Do that, keep every other result the same. The project's tests for discounts are minimal - do not add any, and do not change anything else.
+'''
+
+[verify]
+hidden = "small-bill-10"
+commands = ["python3 -m unittest discover -s tests -t . -q"]

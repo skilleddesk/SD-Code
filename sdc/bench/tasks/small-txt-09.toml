@@ -1,0 +1,13 @@
+id = "small-txt-09"
+kind = "bugfix"
+fixture = "py-textkit"
+tiers = ["small"]
+language = "en"
+max_steps = 40
+prompt = '''
+`slugify` drops accented letters instead of turning them into plain ones: `slugify("Café Crème")` gives `caf-cr-me`, it should give `cafe-creme`. Fix it for the usual accented Latin letters. The project has no tests for this - do not add any, and do not change anything else.
+'''
+
+[verify]
+hidden = "small-txt-09"
+commands = ["python3 -m unittest discover -s tests -t . -q"]

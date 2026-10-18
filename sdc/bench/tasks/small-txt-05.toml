@@ -1,0 +1,13 @@
+id = "small-txt-05"
+kind = "feature"
+fixture = "py-textkit"
+tiers = ["small"]
+language = "bn"
+max_steps = 40
+prompt = '''
+`textkit/stats.py`-এর `top_n(text, n)` ফাংশনে একটা ঐচ্ছিক তৃতীয় আর্গুমেন্ট `stopwords=()` যোগ করো। এই তালিকার শব্দগুলো (ছোট হাতের অক্ষরে তুলনা করে) গণনা থেকে বাদ যাবে। ডিফল্টে আগের মতোই কাজ করবে।
+'''
+
+[verify]
+hidden = "small-txt-05"
+commands = ["python3 -m unittest discover -s tests -t . -q"]

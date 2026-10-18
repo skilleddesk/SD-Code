@@ -1,0 +1,13 @@
+id = "small-txt-10"
+kind = "feature"
+fixture = "py-textkit"
+tiers = ["small"]
+language = "ar"
+max_steps = 40
+prompt = '''
+أضف إلى `textkit/stats.py` الدالة `longest_word(text)` التي ترجع أطول كلمة في النص (حسب `words`)، وإذا تساوى طولان ترجع الكلمة التي ظهرت أولاً. وإذا لم يكن في النص كلمات ترجع نصاً فارغاً `""`. لا تغيّر أي شيء آخر.
+'''
+
+[verify]
+hidden = "small-txt-10"
+commands = ["python3 -m unittest discover -s tests -t . -q"]

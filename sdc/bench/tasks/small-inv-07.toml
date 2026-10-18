@@ -1,0 +1,13 @@
+id = "small-inv-07"
+kind = "feature"
+fixture = "py-inventory"
+tiers = ["small"]
+language = "banglish"
+max_steps = 40
+prompt = '''
+InventoryStore e ekta notun method lagbe: search(text). Eta name ba sku te text ta khuje (boro-choto hater lekha ek e), jei item gulo mile segulo sku onujayi sajiye list hishebe ferot dibe. Text khali hole shob item. Onno kichu bodlabe na.
+'''
+
+[verify]
+hidden = "small-inv-07"
+commands = ["python3 -m unittest discover -s tests -t . -q"]
