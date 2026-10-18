@@ -479,6 +479,11 @@ fn sandboxed(line: &str, root: &str, remote: bool) -> (String, Option<String>) {
     }
 }
 
+/// [`sandboxed`] for the MCP server (`sdc_verify`): a local folder, with the sandbox as the policy says.
+pub fn sandboxed_for_mcp(line: &str, root: &str) -> (String, Option<String>) {
+    sandboxed(line, root, false)
+}
+
 /// The whole run. Blocking stages run on the blocking pool; the reviewer is an engine turn.
 pub async fn run(state: Arc<DaemonState>, out: Arc<dyn Notifier>, request: Request) {
     let posix = request.remote.is_some() || !cfg!(windows);

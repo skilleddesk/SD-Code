@@ -20,7 +20,7 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 
-struct Client {
+pub struct Client {
     writer: TcpStream,
     reader: BufReader<TcpStream>,
     next: u64,
@@ -29,7 +29,7 @@ struct Client {
 }
 
 impl Client {
-    fn connect(port: u16) -> Result<Self, String> {
+    pub fn connect(port: u16) -> Result<Self, String> {
         let stream = TcpStream::connect(("127.0.0.1", port)).map_err(|error| {
             format!("No SDC daemon is answering on 127.0.0.1:{port} ({error}). Open SDC, or start `sdcd` in another terminal.")
         })?;
@@ -38,7 +38,7 @@ impl Client {
         Ok(Self { writer: stream, reader, next: 1, backlog: Vec::new() })
     }
 
-    fn call(&mut self, method: &str, params: Value) -> Result<Value, String> {
+    pub fn call(&mut self, method: &str, params: Value) -> Result<Value, String> {
         let id = format!("cli-{}", self.next);
 
         self.next += 1;

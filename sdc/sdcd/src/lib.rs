@@ -59,6 +59,7 @@ pub mod git;
 pub mod guard;
 pub mod host;
 pub mod intel;
+pub mod mcp;
 pub mod intent;
 pub mod ops;
 pub mod paths;

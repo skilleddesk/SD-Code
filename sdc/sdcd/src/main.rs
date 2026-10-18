@@ -67,6 +67,11 @@ fn main() -> Result<()> {
             std::process::exit(0);
         }
 
+        /* Phase 4.9: `sdcd mcp` is SDC as an MCP server on stdio, for Claude Code, Cursor and Codex. */
+        if all.first().map(String::as_str) == Some("mcp") {
+            std::process::exit(sdcd::mcp::main(&all[1..]));
+        }
+
         if all.first().map(String::as_str) == Some("voice") {
             std::process::exit(sdcd::intent::voice::main(&all[1..]));
         }
