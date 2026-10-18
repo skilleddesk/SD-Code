@@ -57,6 +57,15 @@ notify = "8"
 regex-syntax = "0.8"
 # v3 I1: a changed file read again goes back as a diff.
 similar = "2"
+tree-sitter = "0.26.13"
+tree-sitter-rust = "0.24.2"
+tree-sitter-python = "0.25.0"
+tree-sitter-javascript = "0.25.0"
+tree-sitter-typescript = "0.23.2"
+tree-sitter-go = "0.25.0"
+tree-sitter-php = "0.25.1"
+tree-sitter-json = "0.24.8"
+tree-sitter-bash = "0.25.1"
 
 [dev-dependencies]
 tempfile = "3"

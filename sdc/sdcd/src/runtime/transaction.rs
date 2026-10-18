@@ -107,6 +107,9 @@ pub struct Transaction {
     /// The hash of each touched file in the real tree when the step began (`None`: it did not exist).
     base: BTreeMap<String, Option<String>>,
     edits: BTreeMap<String, Edit>,
+    /// A light transaction has no shadow copy: the edits are held in memory and nothing runs in a shadow (the Step Runtime's own
+    /// per-edit gate is the verifier). The commit protocol - base check, journal, atomic renames, recovery - is the same.
+    light: bool,
 }
 
 fn hash(bytes: &[u8]) -> String {
@@ -193,7 +196,21 @@ impl Transaction {
 
         copy_shadow(&root, &shadow)?;
 
-        Ok(Self { root, id: safe_id, dir, shadow, base: BTreeMap::new(), edits: BTreeMap::new() })
+        Ok(Self { root, id: safe_id, dir, shadow, base: BTreeMap::new(), edits: BTreeMap::new(), light: false })
+    }
+
+    /// A transaction without the shadow copy (P1-2): for a step whose verifier is a check of the edits themselves - the syntax
+    /// gate - and not a command run in a copy of the project. It costs no copy of the tree, which is what lets every agent edit
+    /// go through a transaction.
+    pub fn begin_light(root: &Path, id: &str) -> Result<Self, TxError> {
+        let root = std::fs::canonicalize(root)?;
+        let safe_id: String = id.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' { c } else { '_' }).collect();
+        let dir = root.join(DIR).join(&safe_id);
+
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir)?;
+
+        Ok(Self { root, id: safe_id, shadow: dir.join("shadow"), dir, base: BTreeMap::new(), edits: BTreeMap::new(), light: true })
     }
 
     /// Where Verify runs: the project as it will be if the step is committed.
@@ -214,11 +231,14 @@ impl Transaction {
 
         self.remember(&rel);
 
-        if let Some(parent) = target.parent() {
-            std::fs::create_dir_all(parent)?;
+        if !self.light {
+            if let Some(parent) = target.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+
+            std::fs::write(target, content)?;
         }
 
-        std::fs::write(target, content)?;
         self.edits.insert(rel, Edit::Write(content.to_vec()));
 
         Ok(())
@@ -230,7 +250,10 @@ impl Transaction {
 
         self.remember(&rel);
 
-        let _ = std::fs::remove_file(self.shadow.join(&rel));
+        if !self.light {
+            let _ = std::fs::remove_file(self.shadow.join(&rel));
+        }
+
         self.edits.insert(rel, Edit::Delete);
 
         Ok(())

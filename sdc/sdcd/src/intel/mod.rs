@@ -14,11 +14,15 @@ use std::sync::OnceLock;
 use regex::Regex;
 
 /// One declaration: what it is, its name, and the line it starts on.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Symbol {
     pub kind: String,
     pub name: String,
     pub line: usize,
+    /// `Class.method` / `Type::method` - the name with its scopes (the Code Graph only; empty from the line patterns).
+    pub qualified: String,
+    /// SHA-256 of the declaration's exact bytes (the Code Graph only). `patch_symbol` takes the first 8+ hex digits of it.
+    pub hash: String,
 }
 
 /// At most this many declarations from one file (a generated file can hold tens of thousands).
@@ -128,8 +132,29 @@ fn name_of(captures: &regex::Captures) -> String {
     (1..captures.len()).find_map(|group| captures.get(group).map(|found| found.as_str().trim().to_string())).unwrap_or_default()
 }
 
-/// The declarations in a file's text, in line order.
+/// The declarations in a file's text, in line order. With the Code Graph on (switch `graph.v1`, P1-1) a language it has a grammar for is
+/// read by tree-sitter - real syntax, not line patterns - and the line patterns remain the fallback for every other file and for a file
+/// the parser could find nothing in.
 pub fn symbols(path: &str, text: &str) -> Vec<Symbol> {
+    if crate::v3::on("graph.v1") {
+        if let Some(lang) = crate::graph::Lang::of(path).filter(|lang| lang.has_symbols()) {
+            if let Some(tree) = crate::graph::parse::parse(lang, text) {
+                let defs = crate::graph::parse::definitions(lang, &tree, text);
+
+                if !defs.is_empty() {
+                    /* the old vocabulary: a Rust method is a `fn`, a Python method a `def` */
+                    let kind = |kind: String| match (lang, kind.as_str()) {
+                        (crate::graph::Lang::Rust, "method") => "fn".to_string(),
+                        (crate::graph::Lang::Python, "method") => "def".to_string(),
+                        _ => kind,
+                    };
+
+                    return defs.into_iter().take(MAX_SYMBOLS).map(|def| Symbol { kind: kind(def.kind), name: def.name, line: def.start_line, qualified: def.qualified, hash: def.hash }).collect();
+                }
+            }
+        }
+    }
+
     let Some(family) = language(path) else {
         return Vec::new();
     };
@@ -146,7 +171,7 @@ pub fn symbols(path: &str, text: &str) -> Vec<Symbol> {
                 let name = name_of(&captures);
 
                 if !name.is_empty() {
-                    found.push(Symbol { kind: kind.to_string(), name, line: index + 1 });
+                    found.push(Symbol { kind: kind.to_string(), name, line: index + 1, ..Default::default() });
                 }
 
                 break;
@@ -263,9 +288,20 @@ mod tests {
         assert!(symbols("blob.bin", "whatever").is_empty(), "an unknown extension has no declarations");
     }
 
+    /// P1-1: with `graph.v1` on, a file is read by tree-sitter; switched off, by the line patterns - and where the patterns cannot see
+    /// (an arrow function whose `=>` is on another line) the parser can.
+    #[test]
+    fn the_code_graph_reads_what_the_line_patterns_cannot_and_the_switch_restores_them() {
+        let text = "export const load =\n  async (id: string) =>\n    id;\n";
+
+        assert_eq!(symbols("a.ts", text).iter().map(|symbol| symbol.name.as_str()).collect::<Vec<_>>(), ["load"]);
+        assert!(crate::v3::ablating(&["graph.v1"], || symbols("a.ts", text)).is_empty(), "the old extractor misses it");
+        assert!(crate::v3::forcing(&["graph.v1"], || !symbols("a.ts", text).is_empty()));
+    }
+
     #[test]
     fn a_symbol_is_found_exactly_then_loosely() {
-        let symbols = vec![Symbol { kind: "fn".into(), name: "charge".into(), line: 4 }, Symbol { kind: "fn".into(), name: "charge_once".into(), line: 9 }];
+        let symbols = vec![Symbol { kind: "fn".into(), name: "charge".into(), line: 4, ..Default::default() }, Symbol { kind: "fn".into(), name: "charge_once".into(), line: 9, ..Default::default() }];
 
         assert_eq!(matching(&symbols, "charge").len(), 1, "the exact one");
         assert_eq!(matching(&symbols, "charge_").first().unwrap().line, 9, "then a part of a name");

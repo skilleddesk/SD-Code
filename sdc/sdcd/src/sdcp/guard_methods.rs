@@ -26,6 +26,7 @@ impl Daemon {
             "rotation.set" => self.rotation_set(envelope),
             "rotation.escalate" => self.rotation_escalate(envelope, out),
             "ship.check" => self.ship_check(envelope),
+            "graph.query" => self.graph_query(envelope),
             "secrets.sweep" => self.secrets_sweep(envelope),
             "secrets.move" => self.secrets_move(envelope),
 
@@ -73,6 +74,33 @@ impl Daemon {
         answer["skipped"] = json!(false);
 
         Ok(answer)
+    }
+
+    /// `graph.query` (P1-1): where a name is declared, who calls it, which tests touch a file, a file's declarations, what changed in git - from
+    /// the Code Graph, with no model call. Refreshes the folder's index first (only changed files are parsed) and says how much work that was.
+    pub(super) fn graph_query(&self, envelope: &Envelope) -> Result<Value, ErrorObject> {
+        if !crate::v3::on("graph.v1") {
+            return Err(ErrorObject::bad_request("the Code Graph is switched off (Settings → Advanced → graph.v1)"));
+        }
+
+        let root = self.local_project(envelope)?;
+        let (index, refresh) = crate::graph::index::refreshed(&root);
+        let query = envelope.require_str("query")?;
+        let name = envelope.opt_str("name").unwrap_or_default();
+        let answer = match query.as_str() {
+            "where" => json!(index.where_is(&name).into_iter().map(|(file, def)| json!({ "file": file, "kind": def.kind, "name": def.name, "qualified": def.qualified, "line": def.start_line, "endLine": def.end_line })).collect::<Vec<_>>()),
+            "callers" => json!(index.callers(&name).into_iter().map(|(file, line, call)| json!({ "file": file, "line": line, "call": call })).collect::<Vec<_>>()),
+            "tests" => json!(index.tests_for(&name)),
+            "symbols" => json!(index.symbols_of(&name).into_iter().map(|def| json!({ "kind": def.kind, "name": def.name, "qualified": def.qualified, "line": def.start_line })).collect::<Vec<_>>()),
+            "changed" => {
+                let output = std::process::Command::new("git").arg("-C").arg(&root).args(["status", "--porcelain"]).output().ok().filter(|output| output.status.success());
+
+                json!(output.map(|output| String::from_utf8_lossy(&output.stdout).lines().map(|line| line.get(3..).unwrap_or_default().trim().to_string()).collect::<Vec<_>>()).unwrap_or_default())
+            }
+            other => return Err(ErrorObject::bad_request(format!("unknown query `{other}`: where, callers, tests, symbols or changed"))),
+        };
+
+        Ok(json!({ "query": query, "result": answer, "files": refresh.files, "parsed": refresh.parsed, "reused": refresh.reused, "rootHash": refresh.root_hash, "modelCalls": 0 }))
     }
 
     /// `ship.check`: the five Ship Safe checks on an opened folder, and on a site address when one is given. Blocking (it asks the
@@ -418,5 +446,40 @@ mod tests {
 
         assert_eq!(off["optIn"], false);
         assert_eq!(off["events"], json!([]));
+    }
+
+    /// P1-1: the Code Graph answers where/callers/tests for an opened folder, parses only what changed, and never calls a model.
+    #[test]
+    fn graph_queries_answer_from_an_opened_folder_with_no_model_and_reparse_only_what_changed() {
+        let state = crate::DaemonState::bootstrap(Some(std::path::PathBuf::from(":memory:"))).expect("a daemon");
+        let daemon = Daemon::new(state.clone());
+        let folder = std::env::temp_dir().join(format!("sdcd-graph-method-{}", std::process::id()));
+
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(folder.join("tests")).unwrap();
+        std::fs::write(folder.join("pay.py"), "def charge(x):\n    return x\n").unwrap();
+        std::fs::write(folder.join("app.py"), "from pay import charge\n\ndef run():\n    charge(1)\n").unwrap();
+        std::fs::write(folder.join("tests/test_pay.py"), "from pay import charge\n\ndef test_charge():\n    assert charge(2) == 2\n").unwrap();
+        state.store.ensure_host("local", "Local", "local", "connected").unwrap();
+        state.store.add_project("p-graph", "local", &folder.to_string_lossy(), "x").unwrap();
+
+        let path = folder.to_string_lossy().to_string();
+        let first = call(&daemon, "graph.query", json!({ "path": path, "query": "where", "name": "charge" })).unwrap();
+
+        assert_eq!(first["result"][0]["file"], "pay.py");
+        assert_eq!(first["modelCalls"], 0);
+        assert_eq!(first["parsed"], 3);
+
+        let callers = call(&daemon, "graph.query", json!({ "path": path, "query": "callers", "name": "charge" })).unwrap();
+
+        assert!(callers["result"].as_array().unwrap().iter().any(|row| row["file"] == "app.py" && row["call"] == true));
+        assert_eq!(callers["parsed"], 0, "nothing changed since the first query: nothing re-parsed");
+
+        let tests = call(&daemon, "graph.query", json!({ "path": path, "query": "tests", "name": "pay.py" })).unwrap();
+
+        assert_eq!(tests["result"], json!(["tests/test_pay.py"]));
+        assert!(call(&daemon, "graph.query", json!({ "path": path, "query": "nonsense" })).is_err());
+
+        let _ = std::fs::remove_dir_all(&folder);
     }
 }

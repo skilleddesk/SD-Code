@@ -338,6 +338,7 @@
           "team.set",
           "settings.get",
           "settings.set",
+          "graph.query",
           "report.client",
           "brief.today",
           "telemetry.clear",
@@ -2346,6 +2347,22 @@
           "result": {
             "key": "string",
             "value": "string"
+          }
+        },
+        "graph.query": {
+          "params": {
+            "path": "string",
+            "query": "string",
+            "name": "string?"
+          },
+          "result": {
+            "query": "string",
+            "result": "array",
+            "files": "integer",
+            "parsed": "integer",
+            "reused": "integer",
+            "rootHash": "string",
+            "modelCalls": "integer"
           }
         },
         "report.client": {

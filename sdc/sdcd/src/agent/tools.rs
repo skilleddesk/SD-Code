@@ -73,6 +73,10 @@ pub fn specs_for(caps: Caps) -> Vec<ToolSpec> {
         all.extend(intel_specs());
     }
 
+    if crate::v3::on("intel") && crate::v3::on("graph.v1") {
+        all.push(code_graph_spec());
+    }
+
     if caps.vision {
         all.extend(vision_specs());
     }
@@ -80,6 +84,10 @@ pub fn specs_for(caps: Caps) -> Vec<ToolSpec> {
     if caps.subagent {
         all.retain(|spec| READ_ONLY.contains(&spec.name));
     } else {
+        if crate::v3::on("edit.symbol_patch") && crate::v3::on("graph.v1") {
+            all.push(patch_symbol_spec());
+        }
+
         all.push(task_spec());
         all.push(browser_spec());
 
@@ -652,6 +660,8 @@ fn execute_call(context: &mut ToolContext, call: &ToolUse) -> Outcome {
         "fleet_run" => fleet_run(context, &call_id, &call.input),
         "find_symbol" => find_symbol(context, &call_id, &text("name")),
         "symbols" => file_symbols(context, &call_id, &text("path")),
+        "code_graph" => code_graph(context, &call_id, &text("query"), &text("name")),
+        "patch_symbol" => patch_symbol(context, &call_id, &call.input),
         "web_fetch" => web_fetch(context, &call_id, &text("url")),
         "web_search" => web_search(context, &call_id, &text("query")),
         "start_process" => start_process(context, &call_id, &text("command"), number("wait_seconds").unwrap_or(6).min(60)),
@@ -856,6 +866,227 @@ fn intel_specs() -> Vec<ToolSpec> {
     ]
 }
 
+/// P1-1: the Code Graph's other two questions - who uses a name, and which tests touch a file - with no model behind them.
+fn code_graph_spec() -> ToolSpec {
+    ToolSpec {
+        name: "code_graph",
+        description: "Ask the project's code graph (no guessing, no search): `callers` = where a function/class/name is called or used; `tests` = which test files touch a source file; `where` = where it is declared. Faster and more exact than grep for these questions.",
+        schema: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "query": { "type": "string", "enum": ["callers", "tests", "where"] },
+                "name": { "type": "string", "description": "A name (callers, where) or a file path relative to the project (tests)." },
+            },
+            "required": ["query", "name"],
+            "additionalProperties": false,
+        }),
+    }
+}
+
+fn code_graph(context: &mut ToolContext, call_id: &str, query: &str, name: &str) -> Outcome {
+    started(context, call_id, "read", "Code graph", &format!("{query} {name}"));
+
+    if context.workspace.is_remote() {
+        completed(context, call_id, false, "remote folder", None);
+
+        return Outcome::error("The code graph reads this computer's folders; this chat's folder is on a server.");
+    }
+
+    let (index, _) = crate::graph::index::refreshed(std::path::Path::new(context.workspace.root()));
+    let lines: Vec<String> = match query {
+        "callers" => index.callers(name).into_iter().take(60).map(|(file, line, call)| format!("{file}:{line}{}", if call { " (call)" } else { "" })).collect(),
+        "tests" => index.tests_for(name.trim_start_matches("./")),
+        "where" => index.where_is(name).into_iter().map(|(file, def)| format!("{file}:{}: {} {} #{}", def.start_line, def.kind, def.qualified, &def.hash[..12])).collect(),
+        other => {
+            completed(context, call_id, false, "bad query", None);
+
+            return Outcome::error(format!("`{other}` is not a question the code graph answers: callers, tests or where."));
+        }
+    };
+
+    completed(context, call_id, true, &format!("{} found", lines.len()), None);
+
+    if lines.is_empty() {
+        return Outcome::ok(format!("The code graph found nothing for {query} {name}. (It reads Rust, Python, JavaScript, TypeScript, Go and PHP; for other files use grep.)"));
+    }
+
+    Outcome::ok(lines.join("\n"))
+}
+
+/// P1-11: edit a declaration by what it is, not by where its text happens to be.
+fn patch_symbol_spec() -> ToolSpec {
+    ToolSpec {
+        name: "patch_symbol",
+        description: "Change one declaration (function, method, class, struct...) by name. Give the file, the symbol's qualified name (`Class.method`, `Type::method` - from find_symbol or symbols) and its hash (the #hash those tools print): the edit is applied only if the symbol still has that hash and exactly one declaration has that name; otherwise nothing changes and you are told what to re-read. Either `new_body` (the whole declaration, for a small one) or `edits` (a list of {old, new} replacements inside the symbol, for a larger one - each `old` must match exactly once). Refused if the result would not parse.",
+        schema: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "path": { "type": "string" },
+                "symbol": { "type": "string", "description": "Qualified name, e.g. Store.add or Ledger::total" },
+                "old_hash": { "type": "string", "description": "At least 8 hex digits of the symbol's #hash as find_symbol/symbols showed it" },
+                "new_body": { "type": "string", "description": "The complete new declaration, from its first line to its last (symbols up to 60 lines)." },
+                "edits": { "type": "array", "items": { "type": "object", "properties": { "old": { "type": "string" }, "new": { "type": "string" } }, "required": ["old", "new"] } },
+            },
+            "required": ["path", "symbol", "old_hash"],
+            "additionalProperties": false,
+        }),
+    }
+}
+
+/// The part of the file that is one symbol, after the checks that make a symbol edit safe. `Err` is the sentence for the model.
+pub fn plan_symbol_patch(path: &str, text: &str, symbol: &str, old_hash: &str, new_body: Option<&str>, edits: &[(String, String)]) -> Result<String, String> {
+    use crate::graph::parse;
+
+    let lang = parse::Lang::of(path).filter(|lang| lang.has_symbols()).ok_or_else(|| format!("{path} is not a language the code graph reads (Rust, Python, JavaScript, TypeScript, Go, PHP); use edit_file."))?;
+    let tree = parse::parse(lang, text).ok_or("the file could not be parsed; use edit_file")?;
+    let defs = parse::definitions(lang, &tree, text);
+    let exact: Vec<&parse::Def> = defs.iter().filter(|def| def.qualified == symbol).collect();
+    let found: Vec<&parse::Def> = if exact.is_empty() { defs.iter().filter(|def| def.name == symbol).collect() } else { exact };
+
+    match found.len() {
+        0 => {
+            let known: Vec<String> = defs.iter().take(25).map(|def| def.qualified.clone()).collect();
+
+            return Err(format!("{path} has no declaration called `{symbol}`. Its declarations: {}. Read the file again.", known.join(", ")));
+        }
+        1 => {}
+        _ => {
+            let lines: Vec<String> = found.iter().map(|def| format!("{} (line {}, #{})", def.qualified, def.start_line, &def.hash[..12])).collect();
+
+            return Err(format!("`{symbol}` names {} declarations in {path}: {}. Nothing was changed - say which one by its qualified name and its hash.", found.len(), lines.join("; ")));
+        }
+    }
+
+    let def = found[0];
+    let wanted = old_hash.trim().trim_start_matches('#').to_ascii_lowercase();
+
+    if wanted.len() < 8 || !wanted.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err("old_hash must be at least 8 hex digits of the symbol's #hash.".into());
+    }
+
+    if !def.hash.starts_with(&wanted) && !def.norm_hash.starts_with(&wanted) {
+        return Err(format!("`{symbol}` is not what you read: its hash is now #{} (you gave #{wanted}). Nothing was changed - read it again with find_symbol or read_file, then patch.", &def.hash[..12]));
+    }
+
+    let current = &text[def.start_byte..def.end_byte];
+    let replaced = match (new_body, edits.is_empty()) {
+        (Some(body), true) => {
+            if def.end_line - def.start_line + 1 > 60 {
+                return Err(format!("`{symbol}` is {} lines: too large to rewrite whole. Send `edits` ({{old, new}} replacements inside it) instead.", def.end_line - def.start_line + 1));
+            }
+
+            body.trim_start().to_string()
+        }
+        (None, false) => {
+            let mut working = current.to_string();
+
+            for (old, new) in edits {
+                if old.trim().is_empty() {
+                    return Err("an edit's `old` is empty".into());
+                }
+
+                let exact_hits = working.matches(old.as_str()).count();
+
+                working = match exact_hits {
+                    1 => working.replacen(old.as_str(), new, 1),
+                    0 => {
+                        /* the same tokens in the same order, whitespace aside - never fuzzier than that */
+                        let pattern = old.split_whitespace().map(regex::escape).collect::<Vec<_>>().join(r"\s+");
+                        let matcher = regex::Regex::new(&pattern).map_err(|error| error.to_string())?;
+                        let hits: Vec<_> = matcher.find_iter(&working).collect();
+
+                        match hits.len() {
+                            1 => format!("{}{}{}", &working[..hits[0].start()], new, &working[hits[0].end()..]),
+                            0 => return Err(format!("`old` was not found inside `{symbol}`: {:?}. Copy it from the symbol exactly. Nothing was changed.", old.chars().take(80).collect::<String>())),
+                            n => return Err(format!("`old` matches {n} places inside `{symbol}`; add surrounding text so it is unique. Nothing was changed.")),
+                        }
+                    }
+                    n => return Err(format!("`old` appears {n} times inside `{symbol}`; add surrounding text so it is unique. Nothing was changed.")),
+                };
+            }
+
+            working
+        }
+        (Some(_), false) => return Err("send either new_body or edits, not both".into()),
+        (None, true) => return Err("send new_body (the whole declaration) or edits (replacements inside it)".into()),
+    };
+
+    Ok(format!("{}{}{}", &text[..def.start_byte], replaced, &text[def.end_byte..]))
+}
+
+/// A body that opens more brackets than it closes was most likely cut off in the middle (the model ran out of room).
+pub fn looks_cut_off(body: &str) -> bool {
+    let open = body.chars().filter(|c| matches!(c, '(' | '[' | '{')).count();
+    let close = body.chars().filter(|c| matches!(c, ')' | ']' | '}')).count();
+
+    open > close
+}
+
+fn patch_symbol(context: &mut ToolContext, call_id: &str, input: &Value) -> Outcome {
+    let text_of = |key: &str| input[key].as_str().unwrap_or_default().to_string();
+    let (path, symbol, old_hash) = (text_of("path"), text_of("symbol"), text_of("old_hash"));
+    let new_body = input["new_body"].as_str();
+    let edits: Vec<(String, String)> = input["edits"].as_array().into_iter().flatten().map(|edit| (edit["old"].as_str().unwrap_or_default().to_string(), edit["new"].as_str().unwrap_or_default().to_string())).collect();
+
+    if context.workspace.is_remote() {
+        return Outcome::error("patch_symbol works on this computer's folders; use edit_file for a server's.");
+    }
+
+    let before = match context.workspace.read(&path) {
+        Ok((_, true)) => return Outcome::error(format!("{path} is larger than 256 KB; use edit_file on a range.")),
+        Ok((text, false)) => text,
+        Err(error) => return Outcome::error(error.message),
+    };
+
+    let after = match plan_symbol_patch(&path, &before, &symbol, &old_hash, new_body, &edits) {
+        Ok(after) => after,
+        Err(reason) => return Outcome::error(reason),
+    };
+
+    keep_pre_image(context, &path, Some(before.as_bytes()));
+
+    let diff = diff_lines(&before, &after);
+    let (added, removed) = counts(&diff);
+
+    started(context, call_id, "edit", "Patch symbol", &format!("{path} · {symbol}"));
+
+    if let Some(refused) = guard_edit(context, &path, Some(&after)) {
+        completed(context, call_id, false, "declined", None);
+
+        return refused;
+    }
+
+    if let Some(refused) = ask(context, "edit", &format!("Patch {symbol} in {path}"), &format!("The agent wants to change one declaration (+{added} −{removed} lines)"), &path, "MUTATING", "A checkpoint is taken before the first change of this turn, so Rewind can put the file back.") {
+        completed(context, call_id, false, "declined", None);
+
+        return refused;
+    }
+
+    checkpoint_first(context, &format!("Before patch_symbol {path}"));
+
+    match commit_edits(context, &[(path.as_str(), Some(after.as_str()))]) {
+        Ok(()) => {
+            let now = crate::intel::symbols(&path, &after).into_iter().find(|candidate| candidate.qualified == symbol || candidate.name == symbol).map(|found| format!(" It is now #{}.", &found.hash[..12.min(found.hash.len())])).unwrap_or_default();
+
+            completed(context, call_id, true, &format!("done · +{added} −{removed}"), Some(card(&diff)));
+
+            Outcome::ok(format!("Patched {symbol} in {path} (+{added} −{removed}).{now}"))
+        }
+        Err(error) => {
+            completed(context, call_id, false, "failed", None);
+
+            let cut = new_body.is_some_and(looks_cut_off);
+
+            Outcome::error(if cut { format!("{} The new body opens more brackets than it closes, so it looks cut off: send the whole declaration, or smaller `edits`.", error.message) } else { error.message })
+        }
+    }
+}
+
+/// ` #1a2b3c4d5e6f` after a declaration the Code Graph read: the hash `patch_symbol` asks for (empty for a line-pattern symbol).
+fn hash_tag(symbol: &crate::intel::Symbol) -> String {
+    if symbol.hash.is_empty() { String::new() } else { format!(" #{}", &symbol.hash[..12]) }
+}
+
 /// v3 W4: where a name is declared, across the project (the newest-changed files are looked at first).
 fn find_symbol(context: &mut ToolContext, call_id: &str, name: &str) -> Outcome {
     let name = name.trim();
@@ -875,7 +1106,7 @@ fn find_symbol(context: &mut ToolContext, call_id: &str, name: &str) -> Outcome 
         };
 
         for symbol in crate::intel::matching(&crate::intel::symbols(&path, &text), name) {
-            found.push(format!("{path}:{}: {} {}", symbol.line, symbol.kind, symbol.name));
+            found.push(format!("{path}:{}: {} {}{}", symbol.line, symbol.kind, if symbol.qualified.is_empty() { &symbol.name } else { &symbol.qualified }, hash_tag(&symbol)));
         }
 
         if found.len() >= 40 {
@@ -911,7 +1142,7 @@ fn file_symbols(context: &mut ToolContext, call_id: &str, path: &str) -> Outcome
         return Outcome::ok(format!("{path} has no declarations SDC recognises ({} lines) - read it instead.", text.lines().count()));
     }
 
-    Outcome::ok(symbols.iter().map(|symbol| format!("{}: {} {}", symbol.line, symbol.kind, symbol.name)).collect::<Vec<_>>().join("\n"))
+    Outcome::ok(symbols.iter().map(|symbol| format!("{}: {} {}{}", symbol.line, symbol.kind, if symbol.qualified.is_empty() { &symbol.name } else { &symbol.qualified }, hash_tag(symbol))).collect::<Vec<_>>().join("\n"))
 }
 
 /// v3 W7a: before a file is changed, its old content goes into the content-addressed store, filed under this turn -
@@ -1026,6 +1257,51 @@ fn after_edit(context: &mut ToolContext, call_id: &str, path: &str) -> Option<St
     (!failures.is_empty()).then(|| failures.join("\n\n"))
 }
 
+/// Writes the edits of one step (P1-2). With `edit.transaction` on and a local folder they go through the Step Runtime: a syntax gate that
+/// refuses newly broken code before anything changes, then an all-or-nothing journaled commit. SDC's own `.sdc/` and `.git/` are not
+/// project sources and are written as before; a remote folder is written file by file. `edits` are `(path, Some(text) | None to delete)`.
+fn commit_edits(context: &ToolContext, edits: &[(&str, Option<&str>)]) -> Result<(), crate::sdcp::envelope::ErrorObject> {
+    let own = |path: &str| path.trim_start_matches("./").split('/').any(|part| part == ".sdc" || part == ".git");
+
+    if !crate::v3::on("edit.transaction") || context.workspace.is_remote() {
+        return write_directly(context, edits);
+    }
+
+    let mut staged: Vec<(String, Option<String>)> = Vec::new();
+    let mut direct: Vec<(&str, Option<&str>)> = Vec::new();
+
+    for (path, text) in edits {
+        let absolute = context.workspace.resolve(path)?;
+
+        crate::fs::guard(std::path::Path::new(&absolute))?;
+
+        let relative = context.workspace.relative(&absolute);
+
+        if own(&relative) {
+            direct.push((path, *text));
+        } else {
+            staged.push((relative, text.map(str::to_string)));
+        }
+    }
+
+    if !staged.is_empty() {
+        crate::runtime::step::apply(std::path::Path::new(context.workspace.root()), &format!("{}-{}", context.turn_id, context.calls), &staged).map_err(|refusal| crate::sdcp::envelope::ErrorObject::bad_request(refusal.0))?;
+    }
+
+    write_directly(context, &direct)
+}
+
+fn write_directly(context: &ToolContext, edits: &[(&str, Option<&str>)]) -> Result<(), crate::sdcp::envelope::ErrorObject> {
+    for (path, text) in edits {
+        match text {
+            Some(text) => context.workspace.write(path, text)?,
+            None => context.workspace.remove(path)?,
+        }
+    }
+
+    Ok(())
+}
+
 fn write_file(context: &mut ToolContext, call_id: &str, path: &str, content: &str) -> Outcome {
     if path.trim().is_empty() {
         return Outcome::error("write_file needs a path.");
@@ -1064,7 +1340,7 @@ fn write_file(context: &mut ToolContext, call_id: &str, path: &str, content: &st
 
     checkpoint_first(context, &format!("Before {} {path}", if existed { "Edit" } else { "Create" }));
 
-    match context.workspace.write(path, content) {
+    match commit_edits(context, &[(path, Some(content))]) {
         Ok(()) => {
             let hooks = after_edit(context, call_id, path);
 
@@ -1139,7 +1415,7 @@ fn edit_file(context: &mut ToolContext, call_id: &str, path: &str, old: &str, ne
 
     checkpoint_first(context, &format!("Before Edit {path}"));
 
-    match context.workspace.write(path, &after) {
+    match commit_edits(context, &[(path, Some(&after))]) {
         Ok(()) => {
             let hooks = after_edit(context, call_id, path);
 
@@ -1869,6 +2145,7 @@ fn apply_patch(context: &mut ToolContext, call_id: &str, patch: &str) -> Outcome
     }
 
     let mut report = Vec::new();
+    let mut cards: Vec<(String, String, String, Value)> = Vec::new();
 
     for (index, (path, before, after)) in planned.iter().enumerate() {
         let card_id = format!("{call_id}-{index}");
@@ -1902,21 +2179,26 @@ fn apply_patch(context: &mut ToolContext, call_id: &str, patch: &str) -> Outcome
 
         checkpoint_first(context, &format!("Before patch {path}"));
 
-        let written = match after {
-            Some(text) => context.workspace.write(path, text),
-            None => context.workspace.remove(path),
-        };
+        cards.push((card_id, format!("{verb} {path} (+{added} −{removed})"), format!("done · +{added} −{removed}"), card(&diff)));
+    }
 
-        match written {
-            Ok(()) => {
-                completed(context, &card_id, true, &format!("done · +{added} −{removed}"), Some(card(&diff)));
-                report.push(format!("{verb} {path} (+{added} −{removed})"));
-            }
-            Err(error) => {
-                completed(context, &card_id, false, "failed", None);
+    /* P1-2: every file of the patch reaches the project in one step - all of them, or (a syntax error, a file that changed, a crash)
+       none. It used to be written file by file, so a failure on the third left two of them changed. */
+    let edits: Vec<(&str, Option<&str>)> = planned.iter().map(|(path, _, after)| (path.as_str(), after.as_deref())).collect();
 
-                return Outcome::error(format!("{path}: {}. Done before it: {}", error.message, if report.is_empty() { "nothing".to_string() } else { report.join("; ") }));
+    match commit_edits(context, &edits) {
+        Ok(()) => {
+            for (card_id, line, meta, shown) in cards {
+                completed(context, &card_id, true, &meta, Some(shown));
+                report.push(line);
             }
+        }
+        Err(error) => {
+            for (card_id, ..) in &cards {
+                completed(context, card_id, false, "failed", None);
+            }
+
+            return Outcome::error(format!("{}. The patch was not applied; nothing was changed.", error.message.trim_end_matches('.')));
         }
     }
 
@@ -2118,7 +2400,11 @@ mod tests {
         };
 
         let mut context = context(&workspace, &sink, Autonomy::Auto);
-        let allowing = answer("allow", "perm-turn-t-1");
+
+        /* its own turn id: permission questions are keyed by it, and other tests in this module answer "perm-turn-t-1" */
+        context.turn_id = "turn-secret-guard";
+
+        let allowing = answer("allow", "perm-turn-secret-guard-1");
         let allowed = execute(&mut context, &call("read_file", json!({ "path": "notes.txt" })));
 
         allowing.join().unwrap();
@@ -2127,7 +2413,7 @@ mod tests {
         assert!(allowed.content.contains("deploy host") && allowed.content.contains("password=") && (allowed.content.contains("[masked by SDC") || allowed.content.contains("‹secret:")), "{}", allowed.content);
         assert!(!allowed.content.contains(fake), "the value never reaches the model");
 
-        let declining = answer("deny", "perm-turn-t-2");
+        let declining = answer("deny", "perm-turn-secret-guard-2");
         let declined = execute(&mut context, &call("read_file", json!({ "path": "notes.txt" })));
 
         declining.join().unwrap();
@@ -2136,6 +2422,236 @@ mod tests {
         assert!(!declined.content.contains(fake) && !declined.content.contains("deploy host"));
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// P1-2: a write that would newly break a file's syntax is refused before anything changes, and says where.
+    #[test]
+    fn a_write_that_would_break_the_syntax_is_refused_and_the_file_is_untouched() {
+        let (root, workspace) = folder("syntax-gate");
+        let recorder = Recorder::new();
+        let sink = recorder.sink();
+        let mut context = context(&workspace, &sink, Autonomy::Auto);
+
+        std::fs::write(root.join("lib.rs"), "fn good() -> u32 { 1 }\n").unwrap();
+
+        let broken = execute(&mut context, &call("write_file", json!({ "path": "lib.rs", "content": "fn good( -> u32 {\n" })));
+
+        assert!(broken.is_error, "{}", broken.content);
+        assert!(broken.content.contains("syntax error at line 1") && broken.content.contains("nothing in this step was changed"), "{}", broken.content);
+        assert_eq!(std::fs::read_to_string(root.join("lib.rs")).unwrap(), "fn good() -> u32 { 1 }\n");
+
+        let fine = execute(&mut context, &call("write_file", json!({ "path": "lib.rs", "content": "fn good() -> u32 { 2 }\n" })));
+
+        assert!(!fine.is_error, "{}", fine.content);
+        assert_eq!(std::fs::read_to_string(root.join("lib.rs")).unwrap(), "fn good() -> u32 { 2 }\n");
+        assert!(!root.join(".sdc/tx").read_dir().map(|mut dir| dir.next().is_some()).unwrap_or(false), "no transaction was left behind");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// P1-2: a patch of two files reaches the project as a whole or not at all - the second file's syntax error leaves the first untouched.
+    #[test]
+    fn a_patch_whose_second_file_is_broken_changes_neither_file() {
+        let (root, workspace) = folder("patch-atomic");
+        let recorder = Recorder::new();
+        let sink = recorder.sink();
+        let mut context = context(&workspace, &sink, Autonomy::Auto);
+
+        std::fs::write(root.join("a.py"), "def a():\n    return 1\n").unwrap();
+
+        let patch = "*** Begin Patch\n*** Update File: a.py\n@@\n def a():\n-    return 1\n+    return 2\n*** Add File: b.py\n+def b(:\n+    pass\n*** End Patch";
+        let outcome = execute(&mut context, &call("apply_patch", json!({ "patch": patch })));
+
+        assert!(outcome.is_error, "{}", outcome.content);
+        assert!(outcome.content.contains("b.py") && outcome.content.contains("nothing was changed"), "{}", outcome.content);
+        assert_eq!(std::fs::read_to_string(root.join("a.py")).unwrap(), "def a():\n    return 1\n", "the valid half was not applied alone");
+        assert!(!root.join("b.py").exists());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// P1-2: SDC's own `.sdc/` files (the /init command writes `.sdc/rules.md`) are not project sources and are still writable.
+    #[test]
+    fn files_under_sdc_are_still_written() {
+        let (root, workspace) = folder("own-files");
+        let recorder = Recorder::new();
+        let sink = recorder.sink();
+        let mut context = context(&workspace, &sink, Autonomy::Auto);
+        let outcome = execute(&mut context, &call("write_file", json!({ "path": ".sdc/rules.md", "content": "# rules\n" })));
+
+        assert!(!outcome.is_error, "{}", outcome.content);
+        assert_eq!(std::fs::read_to_string(root.join(".sdc/rules.md")).unwrap(), "# rules\n");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    fn python_with_two_adds() -> String {
+        "class Store:\n    def add(self, x):\n        return x\n\n    def remove(self, x):\n        return None\n\n\nclass Cart:\n    def add(self, x):\n        return x + 1\n".to_string()
+    }
+
+    fn hash_of(path: &str, text: &str, qualified: &str) -> String {
+        crate::intel::symbols(path, text).into_iter().find(|symbol| symbol.qualified == qualified).unwrap().hash
+    }
+
+    /// P1-11: a symbol is found by its qualified name and hash; a changed, missing or duplicated symbol changes nothing.
+    #[test]
+    fn a_symbol_patch_is_applied_only_to_the_one_symbol_with_the_hash_that_was_read() {
+        let text = python_with_two_adds();
+        let hash = hash_of("s.py", &text, "Store.add");
+
+        /* the whole declaration, for a small symbol */
+        let patched = plan_symbol_patch("s.py", &text, "Store.add", &hash[..10], Some("def add(self, x):\n        return x * 2"), &[]).unwrap();
+
+        assert!(patched.contains("return x * 2") && patched.contains("class Cart:\n    def add(self, x):\n        return x + 1"), "{patched}");
+        assert!(patched.contains("def remove(self, x):"), "the neighbours are untouched");
+
+        /* the plain name is ambiguous: two `add`s */
+        let ambiguous = plan_symbol_patch("s.py", &text, "add", &hash[..10], Some("def add(self): pass"), &[]).unwrap_err();
+
+        assert!(ambiguous.contains("names 2 declarations") && ambiguous.contains("Cart.add") && ambiguous.contains("Nothing was changed"), "{ambiguous}");
+
+        /* a stale hash */
+        let stale = plan_symbol_patch("s.py", &text, "Store.add", "deadbeef00", Some("def add(self): pass"), &[]).unwrap_err();
+
+        assert!(stale.contains("is not what you read") && stale.contains(&hash[..12]), "{stale}");
+
+        /* a name that is not there lists what is */
+        let missing = plan_symbol_patch("s.py", &text, "Store.nothing", &hash[..10], Some("x"), &[]).unwrap_err();
+
+        assert!(missing.contains("Store.remove") && missing.contains("Cart.add"), "{missing}");
+        assert!(plan_symbol_patch("s.py", &text, "Store.add", "xyz", Some("x"), &[]).unwrap_err().contains("8 hex digits"));
+        assert!(plan_symbol_patch("notes.txt", "x", "a", "00000000", Some("x"), &[]).unwrap_err().contains("not a language"));
+    }
+
+    #[test]
+    fn edits_inside_a_symbol_must_match_exactly_once_or_by_whitespace_alone() {
+        let text = "def f(a):\n    x = a + 1\n    y = a + 1\n    return x\n";
+        let hash = hash_of("f.py", text, "f");
+        let edit = |old: &str, new: &str| vec![(old.to_string(), new.to_string())];
+
+        /* twice: refused, with the count */
+        let twice = plan_symbol_patch("f.py", text, "f", &hash, None, &edit("a + 1", "a + 2")).unwrap_err();
+
+        assert!(twice.contains("appears 2 times"), "{twice}");
+
+        /* exactly once */
+        let once = plan_symbol_patch("f.py", text, "f", &hash, None, &edit("x = a + 1", "x = a + 5")).unwrap();
+
+        assert!(once.contains("x = a + 5") && once.contains("y = a + 1"), "{once}");
+
+        /* whitespace drift: the model typed one space where the file has more */
+        let drifted = "def g(a):\n    total  =   a   +  1\n    return total\n";
+        let ok = plan_symbol_patch("g.py", drifted, "g", &hash_of("g.py", drifted, "g"), None, &edit("total = a + 1", "total = a + 9")).unwrap();
+
+        assert!(ok.contains("total = a + 9"), "{ok}");
+
+        /* not fuzzy: a different token is not found */
+        assert!(plan_symbol_patch("g.py", drifted, "g", &hash_of("g.py", drifted, "g"), None, &edit("total = a - 1", "x")).unwrap_err().contains("was not found"));
+    }
+
+    #[test]
+    fn a_large_symbol_cannot_be_rewritten_whole_and_both_forms_cannot_be_mixed() {
+        let big = format!("def big():\n{}    return 0\n", "    x = 1\n".repeat(70));
+        let hash = hash_of("b.py", &big, "big");
+
+        assert!(plan_symbol_patch("b.py", &big, "big", &hash, Some("def big():\n    return 1"), &[]).unwrap_err().contains("too large to rewrite whole"));
+        assert!(plan_symbol_patch("b.py", &big, "big", &hash, Some("x"), &[("a".into(), "b".into())]).unwrap_err().contains("not both"));
+        assert!(plan_symbol_patch("b.py", &big, "big", &hash, None, &[]).unwrap_err().contains("new_body"));
+    }
+
+    /// P1-11 fuzz: duplicate names and drifted whitespace never produce a silent misapply - every accepted patch changes exactly the
+    /// intended symbol's bytes, and every refused one changes nothing.
+    #[test]
+    fn fuzzed_duplicate_names_and_drifted_whitespace_never_misapply() {
+        let mut seed = 0x9e37_79b9_u64;
+        let mut next = |bound: u64| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed % bound
+        };
+
+        for round in 0..60 {
+            let classes = 2 + next(3) as usize;
+            let spaces = |n: u64| " ".repeat(1 + n as usize);
+            let mut text = String::new();
+
+            for class in 0..classes {
+                text.push_str(&format!("class C{class}:\n    def run(self, v):\n        return v{}+{}{class}\n\n", spaces(next(3)), spaces(next(3))));
+            }
+
+            let target = next(classes as u64) as usize;
+            let qualified = format!("C{target}.run");
+            let hash = hash_of("m.py", &text, &qualified);
+
+            /* the right symbol, the right hash: only C{target}.run changes */
+            let patched = plan_symbol_patch("m.py", &text, &qualified, &hash, Some(&format!("def run(self, v):\n        return 'patched{round}'")), &[]).unwrap();
+
+            for class in 0..classes {
+                let still = patched.contains(&format!("class C{class}:"));
+
+                assert!(still, "round {round}: class {class} vanished");
+            }
+
+            assert_eq!(patched.matches("patched").count(), 1, "round {round}: exactly one symbol changed");
+
+            let definition = crate::graph::parse::definitions(crate::graph::Lang::Python, &crate::graph::parse::parse(crate::graph::Lang::Python, &patched).unwrap(), &patched);
+
+            for def in definitions_other_than(&definition, &qualified) {
+                let original = hash_of("m.py", &text, &def);
+                let now = hash_of("m.py", &patched, &def);
+
+                assert_eq!(original, now, "round {round}: {def} must be byte-identical");
+            }
+
+            /* the bare name, a wrong qualifier and a wrong hash are all refused */
+            assert!(plan_symbol_patch("m.py", &text, "run", &hash, Some("def run(self): pass"), &[]).is_err());
+            assert!(plan_symbol_patch("m.py", &text, "Nope.run", &hash, Some("def run(self): pass"), &[]).is_err());
+            assert!(plan_symbol_patch("m.py", &text, &qualified, "0123456789ab", Some("def run(self): pass"), &[]).is_err());
+        }
+    }
+
+    fn definitions_other_than(defs: &[crate::graph::Def], qualified: &str) -> Vec<String> {
+        defs.iter().map(|def| def.qualified.clone()).filter(|name| name != qualified && name.ends_with(".run")).collect()
+    }
+
+    #[test]
+    fn the_patch_symbol_tool_writes_through_the_gate_and_refuses_a_cut_off_body() {
+        let (root, workspace) = folder("patch-symbol");
+        let recorder = Recorder::new();
+        let sink = recorder.sink();
+        let mut context = context(&workspace, &sink, Autonomy::Auto);
+        let text = python_with_two_adds();
+        let hash = hash_of("s.py", &text, "Cart.add");
+
+        std::fs::write(root.join("s.py"), &text).unwrap();
+
+        let cut = execute(&mut context, &call("patch_symbol", json!({ "path": "s.py", "symbol": "Cart.add", "old_hash": hash, "new_body": "def add(self, x):\n        return foo(x," })));
+
+        assert!(cut.is_error && cut.content.contains("looks cut off"), "{}", cut.content);
+        assert_eq!(std::fs::read_to_string(root.join("s.py")).unwrap(), text, "a cut-off body changed nothing");
+
+        let good = execute(&mut context, &call("patch_symbol", json!({ "path": "s.py", "symbol": "Cart.add", "old_hash": hash, "new_body": "def add(self, x):\n        return x + 100" })));
+
+        assert!(!good.is_error, "{}", good.content);
+        assert!(good.content.contains("It is now #"), "{}", good.content);
+        assert!(std::fs::read_to_string(root.join("s.py")).unwrap().contains("return x + 100"));
+
+        let again = execute(&mut context, &call("patch_symbol", json!({ "path": "s.py", "symbol": "Cart.add", "old_hash": hash, "new_body": "def add(self, x):\n        return 0" })));
+
+        assert!(again.is_error && again.content.contains("is not what you read"), "the same hash cannot be used twice: {}", again.content);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_new_tools_are_offered_only_when_their_switches_are_on() {
+        let names = |on: &[&str]| crate::v3::forcing(on, || specs_for(Caps { vision: false, subagent: false, patch: false }).iter().map(|spec| spec.name).collect::<Vec<_>>());
+
+        assert!(!names(&[]).contains(&"patch_symbol") && !names(&[]).contains(&"code_graph"), "off by default: the model is told nothing new");
+        assert!(names(&["edit.symbol_patch"]).contains(&"patch_symbol"));
+        assert!(names(&["intel"]).contains(&"code_graph") && names(&["intel"]).contains(&"find_symbol"));
+        assert!(!crate::v3::forcing(&["edit.symbol_patch"], || specs_for(Caps { vision: false, subagent: true, patch: false })).iter().any(|spec| spec.name == "patch_symbol"), "a read-only sub-agent never gets an editing tool");
     }
 
     #[test]

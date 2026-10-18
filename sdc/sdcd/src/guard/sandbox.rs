@@ -135,7 +135,7 @@ pub fn guarantees_for(os: &str, has_sandbox_exec: bool, has_bwrap: bool, has_uns
                 "for real isolation run checks inside WSL2 (install bubblewrap there); SDC does not do that for you yet".into(),
             ],
         },
-        other => Guarantees {
+        _ => Guarantees {
             os: "other",
             mechanism: "runner deadline and process-tree kill only",
             filesystem: Level::None,

@@ -12,4 +12,5 @@
 //! those changes land would be a behaviour change waiting to happen. Nothing here is a facade over anything: it is
 //! empty on purpose, and it stays empty until the task that owns each piece moves the code in.
 
+pub mod step;
 pub mod transaction;

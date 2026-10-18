@@ -92,8 +92,10 @@ pub const FEATURES: &[Feature] = &[
     Feature { name: "models.contract", default_on: true, token_technique: false, what: "P0-10: the model the person chose runs every call of the turn; the router, cascade, failover, ladder, planner-executor and bandit are unreachable under a pin (a cloud/API/CLI model) and under local-only; off = every earlier version's behaviour" },
     Feature { name: "trace.steps", default_on: true, token_technique: false, what: "P0-12: every model call is traced - model, mode, tokens, time to first token, tokens per second, wall time, verify, cost - from a background writer, so recording never slows a step" },
     Feature { name: "exec.sandbox", default_on: true, token_technique: false, what: "P0-14: the checks Verify runs (tests, smoke, scripts) run in the platform sandbox - no writes outside the project, no network unless the project allows it, CPU and file limits; Windows has no isolation and says so" },
-    Feature { name: "edit.transaction", default_on: true, token_technique: false, what: "P0-14: INACTIVE in production until the Step Runtime (P1-2) wires it - today only the recovery of an interrupted transaction runs; the shadow-copy commit exists as a module and is tested, but no agent step uses it yet" },
+    Feature { name: "edit.transaction", default_on: true, token_technique: false, what: "P0-14/P1-2: every agent edit (write_file, edit_file, apply_patch) goes through the Step Transaction: newly broken syntax is refused before anything is written, and a patch's files reach the project all together or not at all; an interrupted commit is undone at the next start" },
     Feature { name: "local.autotune", default_on: true, token_technique: false, what: "P0-16: the Provider Hub shows a proposal for the Ollama server (flash attention, a q8_0 KV cache, the largest context that keeps the model on the GPU) and warns when a local model spills to the CPU; nothing is ever applied by itself" },
+    Feature { name: "graph.v1", default_on: true, token_technique: false, what: "P1-1: the Code Graph - tree-sitter reads declarations, references and imports (Rust, Python, JS/TS, Go, PHP), cached by content hash; the symbol tools, the edit syntax gate and `graph.query` use it, with no model call" },
+    Feature { name: "edit.symbol_patch", default_on: false, token_technique: false, what: "P1-11: the patch_symbol tool - the model edits a declaration by its qualified name and hash (fail closed on a changed, missing or duplicated symbol; a result that does not parse or looks cut off is refused). Offered to the model only when on: it changes what the model is told, so it waits for the bench" },
     Feature { name: "parallel", default_on: true, token_technique: false, what: "PAR: several agents at once, each in its own git worktree, on one board" },
 ];
 
@@ -337,14 +339,12 @@ fn short(tokens: u64) -> String {
     if tokens >= 1_000 { format!("{:.1}k", tokens as f64 / 1_000.0) } else { tokens.to_string() }
 }
 
-/// Switches whose main behaviour is **not reachable from a production path yet**, and why (the promise check, Phase 0.6).
+/// Switches whose main behaviour is **not reachable from a production path yet**, and why (the promise check, Phase 0.6). Empty since 3.1:
+/// `edit.transaction` was the one entry until the Step Runtime (P1-2) wired it into the agent's edit tools.
 /// A switch listed here is shown as inactive wherever switches are shown; removing it from this list is only honest once
 /// a production call site exists (the promise test in `promise.rs` checks the other direction: a default-on switch with
 /// no production reference and no entry here fails CI).
-pub const INACTIVE: &[(&str, &str)] = &[(
-    "edit.transaction",
-    "Inactive in production until the Step Runtime (P1-2) wires it. Only crash recovery of an interrupted transaction runs today; agent edits are not yet applied through a shadow copy.",
-)];
+pub const INACTIVE: &[(&str, &str)] = &[];
 
 /// Why a switch does nothing yet, when that is so.
 pub fn inactive(feature: &str) -> Option<&'static str> {

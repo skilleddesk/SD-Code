@@ -105,5 +105,7 @@ fn an_inactive_switch_names_a_real_switch_and_gives_a_reason() {
         assert!(why.len() > 40, "{name} needs a reason a person can read");
     }
 
-    assert!(crate::v3::FEATURES.iter().find(|feature| feature.name == "edit.transaction").unwrap().what.contains("INACTIVE"));
+    /* 3.1: `edit.transaction` was listed here until the Step Runtime wired it into the edit tools; it must not be listed while it is live. */
+    assert!(crate::v3::inactive("edit.transaction").is_none());
+    assert!(!crate::v3::FEATURES.iter().find(|feature| feature.name == "edit.transaction").unwrap().what.contains("INACTIVE"));
 }
