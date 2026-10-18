@@ -1070,7 +1070,12 @@ fn patch_symbol(context: &mut ToolContext, call_id: &str, input: &Value) -> Outc
 
             completed(context, call_id, true, &format!("done · +{added} −{removed}"), Some(card(&diff)));
 
-            Outcome::ok(format!("Patched {symbol} in {path} (+{added} −{removed}).{now}"))
+            let said = format!("Patched {symbol} in {path} (+{added} −{removed}).{now}");
+
+            Outcome::ok(match language_server_note(context, &path, &after) {
+                Some(note) => format!("{said}\n\n{note}"),
+                None => said,
+            })
         }
         Err(error) => {
             completed(context, call_id, false, "failed", None);
@@ -1302,6 +1307,28 @@ fn write_directly(context: &ToolContext, edits: &[(&str, Option<&str>)]) -> Resu
     Ok(())
 }
 
+/// P1-12 (switch `verify.lsp`): what the language server says about the file just written, with the declarations of the names its
+/// errors mention. `None` when the switch is off, the folder is remote, no server is installed for the language, or there is nothing wrong.
+fn language_server_note(context: &ToolContext, path: &str, text: &str) -> Option<String> {
+    if !crate::v3::on("verify.lsp") || context.workspace.is_remote() {
+        return None;
+    }
+
+    let root = std::path::Path::new(context.workspace.root());
+    let relative = context.workspace.resolve(path).ok().map(|absolute| context.workspace.relative(&absolute))?;
+    let found = crate::verify::lsp::check(root, &relative, text, None).ok().flatten()?;
+    let note = crate::verify::lsp::repair_note(root, &relative, &found);
+
+    (!note.is_empty()).then_some(note)
+}
+
+/// The text after a successful edit: the hooks' failure, and the language server's errors, each only when there is one.
+fn after_edit_notes(context: &ToolContext, path: &str, text: &str, hooks: Option<String>) -> Option<String> {
+    let notes: Vec<String> = hooks.into_iter().chain(language_server_note(context, path, text)).collect();
+
+    (!notes.is_empty()).then(|| notes.join("\n\n"))
+}
+
 fn write_file(context: &mut ToolContext, call_id: &str, path: &str, content: &str) -> Outcome {
     if path.trim().is_empty() {
         return Outcome::error("write_file needs a path.");
@@ -1342,7 +1369,8 @@ fn write_file(context: &mut ToolContext, call_id: &str, path: &str, content: &st
 
     match commit_edits(context, &[(path, Some(content))]) {
         Ok(()) => {
-            let hooks = after_edit(context, call_id, path);
+            let hook_failure = after_edit(context, call_id, path);
+            let hooks = after_edit_notes(context, path, content, hook_failure);
 
             completed(context, call_id, true, &format!("done · +{added} −{removed}"), Some(card(&diff)));
 
@@ -1417,7 +1445,8 @@ fn edit_file(context: &mut ToolContext, call_id: &str, path: &str, old: &str, ne
 
     match commit_edits(context, &[(path, Some(&after))]) {
         Ok(()) => {
-            let hooks = after_edit(context, call_id, path);
+            let hook_failure = after_edit(context, call_id, path);
+            let hooks = after_edit_notes(context, path, &after, hook_failure);
 
             completed(context, call_id, true, &format!("done · +{added} −{removed}"), Some(card(&diff)));
 
@@ -2640,6 +2669,33 @@ mod tests {
         let again = execute(&mut context, &call("patch_symbol", json!({ "path": "s.py", "symbol": "Cart.add", "old_hash": hash, "new_body": "def add(self, x):\n        return 0" })));
 
         assert!(again.is_error && again.content.contains("is not what you read"), "the same hash cannot be used twice: {}", again.content);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// P1-12 end to end: with `verify.lsp` on, an edit's answer carries the language server's errors and the declaration of the name they
+    /// mention; with it off the answer is the plain "Replaced" it always was.
+    #[test]
+    fn an_edit_answers_with_the_language_servers_errors_when_the_switch_is_on() {
+        let (root, workspace) = folder("lsp-note");
+        let recorder = Recorder::new();
+        let sink = recorder.sink();
+        let mut context = context(&workspace, &sink, Autonomy::Auto);
+        let script = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/lsp/mock_server.py");
+
+        std::fs::write(root.join("pay.py"), "def BAD(a):\n    return a\n").unwrap();
+        std::env::set_var("SDC_LSP_COMMAND", serde_json::to_string(&["python3", "-I", &script.to_string_lossy()]).unwrap());
+
+        let on = crate::v3::forcing(&["verify.lsp"], || execute(&mut context, &call("write_file", json!({ "path": "app.py", "content": "import pay\nx = BAD(1)\n" }))));
+        let off = execute(&mut context, &call("write_file", json!({ "path": "app2.py", "content": "import pay\nx = BAD(1)\n" })));
+
+        std::env::remove_var("SDC_LSP_COMMAND");
+        crate::verify::lsp::stop_all();
+
+        assert!(!on.is_error, "{}", on.content);
+        assert!(on.content.contains("language server reports 1 error(s) in app.py") && on.content.contains("line 2:5"), "{}", on.content);
+        assert!(on.content.contains("`BAD` is declared at pay.py:1: def BAD(a):"), "{}", on.content);
+        assert!(!off.content.contains("language server"), "off: the plain answer: {}", off.content);
 
         let _ = std::fs::remove_dir_all(&root);
     }

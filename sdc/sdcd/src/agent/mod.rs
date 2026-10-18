@@ -29,6 +29,7 @@ pub mod mcp;
 pub mod ollama_native;
 pub mod orient;
 pub mod patch;
+pub mod rescue;
 pub mod research;
 pub mod search;
 pub mod skills;
@@ -2051,6 +2052,16 @@ fn drive(
                 pending_note = Some(crate::v3::budget::Budget::CONVERGE.to_string());
             }
         }
+        /* P1-6: a local model that printed its tool call instead of making it - the call is read, repaired and checked
+           against the tool's schema; an invalid one is refused and the model is told why. */
+        if backend == Backend::Ollama && reply.tool_uses.is_empty() && crate::v3::on("sme.toolcall_rescue") {
+            let rescued = rescue::apply(&mut reply, step_specs);
+
+            if !rescued.rejected.is_empty() {
+                pending_note = Some(format!("A tool call you printed was not run: {}. Make the call again with the tool-call channel and the exact arguments the tool lists.", rescued.rejected.join("; ")));
+            }
+        }
+
         said_something = said_something || !reply.text.trim().is_empty();
 
         if !reply.text.trim().is_empty() {
