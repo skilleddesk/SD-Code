@@ -19,12 +19,13 @@ describe('the Agents tab', () => {
   });
 
   it('has the same strings in Bengali as in English, for the tab and for the Escalate dialog', () => {
-    const bn = PACKS.bn as unknown as { agents: Record<string, unknown>; escalate: Record<string, unknown>; profiles: Record<string, unknown>; shipSafe: Record<string, unknown>; settings: { nav: { id: string }[] } };
+    const bn = PACKS.bn as unknown as { agents: Record<string, unknown>; escalate: Record<string, unknown>; profiles: Record<string, unknown>; shipSafe: Record<string, unknown>; telemetry: Record<string, unknown>; settings: { nav: { id: string }[] } };
 
     expect(keysOf(bn.agents)).toEqual(keysOf(strings.agents));
     expect(keysOf(bn.escalate)).toEqual(keysOf(strings.escalate));
     expect(keysOf(bn.profiles)).toEqual(keysOf(strings.profiles));
     expect(keysOf(bn.shipSafe)).toEqual(keysOf(strings.shipSafe));
+    expect(keysOf(bn.telemetry)).toEqual(keysOf(strings.telemetry));
     expect(bn.settings.nav.map((item) => item.id)).toContain('agents');
   });
 

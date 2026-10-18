@@ -254,6 +254,10 @@ impl Daemon {
     }
 
     fn voice_transcribe(&self, envelope: &Envelope, out: Arc<dyn Notifier>) -> Result<Value, ErrorObject> {
+        if !envelope.params.get("interim").and_then(Value::as_bool).unwrap_or(false) {
+            self.count("voice_used");
+        }
+
         let audio = base64::engine::general_purpose::STANDARD
             .decode(envelope.require_str("audio")?.trim())
             .map_err(|error| ErrorObject::bad_request(format!("the recording is not base64: {error}")))?;

@@ -338,6 +338,10 @@
           "team.set",
           "settings.get",
           "settings.set",
+          "telemetry.clear",
+          "telemetry.send",
+          "telemetry.set",
+          "telemetry.status",
           "ship.check",
           "features.preset",
           "features.list",
@@ -2340,6 +2344,48 @@
           "result": {
             "key": "string",
             "value": "string"
+          }
+        },
+        "telemetry.clear": {
+          "params": {},
+          "result": {
+            "cleared": "integer"
+          }
+        },
+        "telemetry.send": {
+          "params": {},
+          "result": {
+            "sent": "object",
+            "status": "integer"
+          }
+        },
+        "telemetry.set": {
+          "params": {
+            "optIn": "boolean",
+            "endpoint": "string?"
+          },
+          "result": {
+            "optIn": "boolean",
+            "endpoint": "string?",
+            "wouldSend": "object",
+            "events": [
+              "object"
+            ],
+            "version": "string",
+            "os": "string"
+          }
+        },
+        "telemetry.status": {
+          "params": {},
+          "result": {
+            "optIn": "boolean",
+            "endpoint": "string?",
+            "wouldSend": "object",
+            "events": [
+              "object"
+            ],
+            "version": "string",
+            "os": "string"
           }
         },
         "ship.check": {

@@ -239,6 +239,8 @@ impl Daemon {
             .map_err(ErrorObject::internal)?;
         }
 
+        self.count("escalate");
+
         if let Ok(mut map) = counts().lock() {
             map.insert(session_id.clone(), done + 1);
         }

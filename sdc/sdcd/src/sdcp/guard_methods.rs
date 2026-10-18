@@ -78,6 +78,7 @@ impl Daemon {
     /// `ship.check`: the five Ship Safe checks on an opened folder, and on a site address when one is given. Blocking (it asks the
     /// site and the public package registries), so the window shows a spinner and never waits on the daemon's other calls.
     pub(super) fn ship_check(&self, envelope: &Envelope) -> Result<Value, ErrorObject> {
+        self.count("ship_safe");
         let root = self.local_project(envelope)?;
         let site = envelope.opt_str("url").map(|url| url.trim().to_string()).filter(|url| !url.is_empty());
 
@@ -389,5 +390,29 @@ mod tests {
         assert!(crate::data::sent::read(&folder).0.is_empty(), "and nothing was recorded as sent");
 
         let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    /// Phase 4.2: off by default; on only by the person's own choice; sending needs their endpoint; off clears what was counted.
+    #[test]
+    fn telemetry_is_off_until_chosen_sends_nowhere_by_default_and_off_clears() {
+        let state = crate::DaemonState::bootstrap(Some(std::path::PathBuf::from(":memory:"))).expect("a daemon");
+        let daemon = Daemon::new(state);
+        let first = call(&daemon, "telemetry.status", json!({})).unwrap();
+
+        assert_eq!(first["optIn"], false);
+        assert!(first["endpoint"].is_null(), "SDC ships with no endpoint");
+        assert_eq!(first["wouldSend"]["counts"], json!([]));
+        assert!(call(&daemon, "telemetry.send", json!({})).unwrap_err().message.contains("off"), "off: nothing is sent");
+
+        let on = call(&daemon, "telemetry.set", json!({ "optIn": true })).unwrap();
+
+        assert_eq!(on["optIn"], true);
+        assert!(on["consentAt"].is_string(), "the moment of consent is recorded");
+        assert!(call(&daemon, "telemetry.send", json!({})).unwrap_err().message.contains("No endpoint"), "on, but nowhere to send to");
+
+        let off = call(&daemon, "telemetry.set", json!({ "optIn": false })).unwrap();
+
+        assert_eq!(off["optIn"], false);
+        assert_eq!(off["events"], json!([]));
     }
 }

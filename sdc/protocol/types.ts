@@ -267,6 +267,10 @@ export type SdcpMethod =
   | 'team.set'
   | 'settings.get'
   | 'settings.set'
+  | 'telemetry.clear'
+  | 'telemetry.send'
+  | 'telemetry.set'
+  | 'telemetry.status'
   | 'ship.check'
   | 'features.preset'
   | 'features.list'
@@ -715,6 +719,20 @@ export interface VoiceStatus {
   installHint: string | null;
   models: { id: string; file: string; bytes: number; note: string; installed: boolean; source: string }[];
   download: { state: 'idle' | 'downloading' | 'done' | 'failed'; id?: string; done?: number; total?: number; error?: string };
+}
+
+/** Opt-in telemetry (Phase 4.2): counts of listed events, nothing else. Off until the person turns it on; no endpoint until they set one. */
+export interface TelemetryView {
+  optIn: boolean;
+  consentAt: string | null;
+  endpoint: string | null;
+  /** Exactly what a send would post. */
+  wouldSend: { version: string; os: string; counts: { event: string; times: number; days: number }[] };
+  /** What is recorded on this computer, newest last: event, day, version, os - no other field exists. */
+  events: { event: string; day: string; version: string; os: string }[];
+  eventNames: string[];
+  version: string;
+  os: string;
 }
 
 /** One Ship Safe check (Phase 4.5). `skipped` is never a pass: it says why the check could not run. */
@@ -2536,6 +2554,10 @@ export interface SdcpMethodMap {
   'team.set': { params: { members?: TeamMember[]; current?: string }; result: TeamState };
   'settings.get': { params: { key: string }; result: { key: string; value: string | null } };
   'settings.set': { params: { key: string; value: string | boolean }; result: { key: string; value: string } };
+  'telemetry.clear': { params: Record<string, never>; result: { cleared: number } };
+  'telemetry.send': { params: Record<string, never>; result: { sent: TelemetryView["wouldSend"]; status: number } };
+  'telemetry.set': { params: { optIn: boolean; endpoint?: string }; result: TelemetryView };
+  'telemetry.status': { params: Record<string, never>; result: TelemetryView };
   'ship.check': { params: { path: string; url?: string }; result: ShipReport };
   'features.preset': { params: { preset: "safe" | "balanced" | "economical" }; result: FeaturesView };
   'features.list': { params: Record<string, never>; result: FeaturesView };

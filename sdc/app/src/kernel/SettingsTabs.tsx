@@ -22,6 +22,7 @@ import {
 import { useSessionsStore } from '../store/sessions';
 import { Badge } from '../panels/ui/Badge';
 import { BTN, BTN_PRIMARY, BTN_SECONDARY, BTN_SM } from '../panels/ui/button';
+import { TelemetryCard } from './TelemetryCard';
 
 /**
  * The three Settings tabs 0.12 adds: **Language** (the window's language, how answers come back, when the
@@ -510,6 +511,7 @@ export function UpdatesTab() {
           </button>
         )}
       </div>
+      <TelemetryCard />
     </div>
   );
 }

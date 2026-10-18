@@ -1520,6 +1520,26 @@ const english = {
    * spec section 2.7 wants it) and `modals/Settings.tsx` renders it. The Keymap tab is the one
    * exception - it reads the command registry, so the two can never disagree (spec section 9.1).
    */
+  /** Opt-in telemetry (Phase 4.2). */
+  telemetry: {
+    title: 'Share anonymous usage counts',
+    on: 'On',
+    off: 'Off',
+    promise: 'Off unless you turn it on. When on, SDC counts how many times you used a feature, with SDC’s version and your operating system’s name - nothing else.',
+    never: 'Never counted or sent: your code, your prompts, file names or folders, keys or passwords, error messages, model names. There is no field in which any of that could be stored.',
+    counted: (names: string): string => `The only things counted: ${names}.`,
+    wouldSend: 'Exactly what would be sent',
+    local: (count: number): string => `Kept on this computer (${count})`,
+    noneYet: 'Nothing counted yet.',
+    nothingKept: 'Nothing is counted or kept while this is off.',
+    endpoint: 'Send to',
+    noServer: 'SDC has no server of its own yet. Until you give an address, “On” only counts here, and nothing leaves this computer. Sending is always your own press - SDC never sends by itself.',
+    send: 'Send these counts now',
+    clear: 'Delete the counts on this computer',
+    turnOn: 'Turn on',
+    sent: (kinds: number, status: number): string => `Sent ${kinds} kind${kinds === 1 ? '' : 's'} of count (HTTP ${status}).`,
+    sendFailed: 'Could not send.',
+  },
   /** Ship Safe (Phase 4.5). */
   shipSafe: {
     title: 'Ship Safe',

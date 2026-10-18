@@ -89,6 +89,8 @@ impl Daemon {
         let session_id = envelope.opt_str("sessionId").unwrap_or_else(|| "s1".into());
         let engine_id = envelope.opt_str("engine").unwrap_or_else(|| "claude_code".into());
 
+        self.count("turn_run");
+
         /* Phase 3.5: a regular turn ends the escalation count of the step before it; an escalation turn itself does not. */
         if !envelope.opt_bool("escalation") {
             super::rotation_methods::note_regular_turn(&session_id);
@@ -418,6 +420,8 @@ impl Daemon {
     /// sends what it knows and the daemon cannot derive: the turn's first checkpoint (`since`, a shadow
     /// commit - the review reads everything after it) and the turn's own prompt (`task`).
     pub(super) fn verify_run(&self, envelope: &Envelope, out: Arc<dyn Notifier>) -> Result<Value, ErrorObject> {
+        self.count("verify_run");
+
         let session_id = envelope.require_str("sessionId")?;
         let root = self
             .root_for(envelope)?

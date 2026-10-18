@@ -234,6 +234,7 @@ async fn run() -> Result<()> {
     /* AUTO (2.0): the clock the Inbox waits on. Every minute it starts whatever automation is due, the same
        way the Inbox's Run button does - an Inbox that only fills when a button is pressed is an empty page,
        which is what `automation.run` alone would have left it. */
+    sdcd::telemetry::record(state.store.setting(sdcd::telemetry::OPT_IN).ok().flatten().is_some_and(|value| value.trim().eq_ignore_ascii_case("on")), "app_open");
     sdcd::v3::run::spawn(state.clone());
     sdcd::providers::runtimes::spawn_startup_scan();
 

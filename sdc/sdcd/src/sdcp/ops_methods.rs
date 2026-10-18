@@ -88,6 +88,10 @@ impl Daemon {
             /* 0.22: any OpenAI-compatible model server, not only Ollama - found on this computer, or added by address. */
             "local.discover" => Ok(crate::providers::local::discover()),
             "local.scan" => Ok(crate::providers::runtimes::scan()),
+            "telemetry.status" => Ok(self.telemetry_status()),
+            "telemetry.set" => self.telemetry_set(envelope),
+            "telemetry.send" => self.telemetry_send(),
+            "telemetry.clear" => Ok(json!({ "cleared": crate::telemetry::clear() })),
             "features.list" => Ok(self.features_list()),
             "features.preset" => self.features_preset(envelope),
             "local.add" => crate::providers::local::add(&envelope.require_str("url")?, envelope.opt_str("label").as_deref(), envelope.opt_str("key").as_deref()),
@@ -607,6 +611,63 @@ impl Daemon {
     /// The settings the daemon itself reads (the language alerts are written in, the agency's email and
     /// style guide, the Intent Engine's reply style, low-bandwidth mode). Anything else is refused, so this
     /// cannot become a way around the methods that check what they write.
+    pub(super) fn telemetry_enabled(&self) -> bool {
+        self.store().setting(crate::telemetry::OPT_IN).ok().flatten().is_some_and(|value| value.trim().eq_ignore_ascii_case("on"))
+    }
+
+    /// Counts one use of a feature, if (and only if) the person opted in.
+    pub(super) fn count(&self, event: &str) {
+        crate::telemetry::record(self.telemetry_enabled(), event);
+    }
+
+    /// `telemetry.status`: off/on, the endpoint (none by default), the exact payload that would be sent, and the local events.
+    fn telemetry_status(&self) -> Value {
+        let events = crate::telemetry::events();
+        let endpoint = self.store().setting(crate::telemetry::ENDPOINT).ok().flatten().filter(|value| !value.trim().is_empty());
+
+        json!({
+            "optIn": self.telemetry_enabled(),
+            "consentAt": self.store().setting(crate::telemetry::CONSENT).ok().flatten(),
+            "endpoint": endpoint,
+            "wouldSend": crate::telemetry::payload(&events),
+            "events": events.iter().rev().take(200).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>(),
+            "eventNames": crate::telemetry::EVENTS,
+            "version": crate::VERSION,
+            "os": crate::telemetry::os(),
+        })
+    }
+
+    /// `telemetry.set`: the person's choice (and, optionally, an endpoint). Turning it off also clears what was counted.
+    fn telemetry_set(&self, envelope: &Envelope) -> Result<Value, ErrorObject> {
+        let on = envelope.opt_bool("optIn");
+
+        self.store().set_setting(crate::telemetry::OPT_IN, if on { "on" } else { "off" }).map_err(ErrorObject::internal)?;
+        self.store().set_setting(crate::telemetry::CONSENT, &if on { chrono::Utc::now().to_rfc3339() } else { String::new() }).map_err(ErrorObject::internal)?;
+
+        if let Some(endpoint) = envelope.opt_str("endpoint") {
+            self.store().set_setting(crate::telemetry::ENDPOINT, endpoint.trim()).map_err(ErrorObject::internal)?;
+        }
+
+        if !on {
+            crate::telemetry::clear();
+        }
+
+        Ok(self.telemetry_status())
+    }
+
+    /// `telemetry.send`: the person's own press. Posts exactly `wouldSend` to the endpoint they set.
+    fn telemetry_send(&self) -> Result<Value, ErrorObject> {
+        if !self.telemetry_enabled() {
+            return Err(ErrorObject::permission_denied("Telemetry is off. Nothing is sent."));
+        }
+
+        let endpoint = self.store().setting(crate::telemetry::ENDPOINT).ok().flatten().filter(|value| !value.trim().is_empty()).ok_or_else(|| ErrorObject::bad_request("No endpoint is set, so there is nowhere to send to. Counts stay on this computer."))?;
+        let body = crate::telemetry::payload(&crate::telemetry::events());
+        let status = crate::telemetry::send(&endpoint, &body).map_err(ErrorObject::bad_request)?;
+
+        Ok(json!({ "sent": body, "status": status }))
+    }
+
     /// `features.list`: every switch with its state and kind, the preset the settings amount to, and Max quality.
     fn features_list(&self) -> Value {
         let read = |key: &str| self.store().setting(key).ok().flatten();
