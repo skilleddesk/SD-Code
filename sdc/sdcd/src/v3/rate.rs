@@ -325,6 +325,18 @@ mod tests {
     }
 
     #[test]
+    fn an_ipv6_literal_keeps_its_brackets_and_port_and_an_empty_url_is_an_empty_name() {
+        assert_eq!(host("http://[::1]:8080/v1/chat"), "[::1]:8080");
+        assert_eq!(host(""), "");
+
+        /* An empty name still gets a working bucket rather than a panic. */
+        let now = Instant::now();
+
+        assert_eq!(reserve(&host(""), 60.0, 1.0, now), Duration::ZERO);
+        assert_eq!(reserve(&host(""), 60.0, 1.0, now), Duration::from_secs(1));
+    }
+
+    #[test]
     fn a_query_or_fragment_straight_after_the_host_does_not_make_a_new_bucket() {
         assert_eq!(host("https://api.example.com?key=1"), "api.example.com");
         assert_eq!(host("https://api.example.com#top"), "api.example.com");

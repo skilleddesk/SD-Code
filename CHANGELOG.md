@@ -15,6 +15,12 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [3.1.1] — a refused printed tool call no longer ends the turn silently
+
+- **Fixed: a local model that printed an invalid tool call ended its turn with nothing done.** Tool-call Rescue refused the call but the reply had no real call, so the turn finished without telling the model. The model is now told why (at most twice per turn), and the retry is constrained (`sme.constrained`: Ollama `format`, a JSON Schema of one call of a known tool).
+- The task decomposer now hands a several-job request to the model as numbered steps with their files (`runtime.decompose`); the loop detector also stops two calls taking turns (A, B, A, B); `read_file` ranges say where to continue.
+- New tests: the loop-wired rescue test and a driven local turn proving no other model is ever contacted by itself.
+
 ## [3.1.0] — voice that works, local-model detection, the Agents tab, and the Small Model Engine
 
 - **Fixed: voice input.** The installed Mac app had no microphone usage description and no audio entitlement, so macOS never even asked; errors were swallowed and the transcriber chain stopped at its first provider. Now: `NSMicrophoneUsageDescription` + the audio-input entitlement, honest microphone errors, a chain (local whisper.cpp -> Groq -> Gemini -> Qwen -> OpenAI) that moves to the next provider and says who failed, a checksummed speech-model download, a language selector, and `sdcd voice FILE`. Cloud providers were not measured here (no keys).
