@@ -17,3 +17,8 @@ d534b716752d43a6f8f1c1c0c70c0a90d9f0df41:sdc/cloud/test/totp.test.ts:generic-api
 49d3d90a51df7e14d6b331520ab5bfc6650cf05f:sdc/cloud/test/webpush.test.ts:generic-api-key:12
 49d3d90a51df7e14d6b331520ab5bfc6650cf05f:sdc/cloud/vitest.config.ts:generic-api-key:13
 49d3d90a51df7e14d6b331520ab5bfc6650cf05f:sdc/web/test/push.test.ts:generic-api-key:4
+
+# 3.1.0: two false positives found by running gitleaks over the new commits. Neither is a secret:
+# a provider name followed by a model name in the voice chain, and a fake value in a secret-guard test.
+100887d38f6247f46be74673fba1b420dba63f67:sdc/sdcd/src/intent/voice.rs:generic-api-key:170
+1a3b09d3f0be11527756043106b0480747174391:sdc/sdcd/src/trust/secretguard.rs:generic-api-key:262
