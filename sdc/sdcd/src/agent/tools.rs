@@ -781,7 +781,7 @@ fn read_file(context: &mut ToolContext, call_id: &str, path: &str) -> Outcome {
             let mut content = numbered(&text);
 
             if truncated {
-                content.push_str("\n[The file is longer than 256 KB; only its beginning is shown.]");
+                content.push_str("\n[The file is longer than 256 KB; only its beginning is shown. Read the rest in pieces: read_file with offset and limit, or find the part with ranked_search.]");
             }
 
             Outcome::ok(content)
@@ -1748,7 +1748,7 @@ fn read_range(context: &mut ToolContext, call_id: &str, path: &str, offset: usiz
                 .join("\n");
             let end = offset + lines.len() - 1;
 
-            Outcome::ok(if end < total { format!("{body}\n[lines {offset}-{end} of {total}]") } else { body })
+            Outcome::ok(if end < total { format!("{body}\n[lines {offset}-{end} of {total} · more: read_file with offset={}]", end + 1) } else { body })
         }
         Err(error) => failed_with(context, call_id, error.message),
     }
@@ -3103,7 +3103,7 @@ mod tests {
 
         let outcome = execute(&mut context, &call("read_file", json!({ "path": "big.txt", "offset": 10, "limit": 3 })));
 
-        assert_eq!(outcome.content, "   10\tline 10\n   11\tline 11\n   12\tline 12\n[lines 10-12 of 50]");
+        assert_eq!(outcome.content, "   10\tline 10\n   11\tline 11\n   12\tline 12\n[lines 10-12 of 50 · more: read_file with offset=13]");
 
         let _ = std::fs::remove_dir_all(&root);
     }

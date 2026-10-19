@@ -484,6 +484,32 @@ pub fn rescue(text: &str, specs: &[ToolSpec]) -> Rescued {
     result
 }
 
+/// **Constrained output (P1-6, switch `sme.constrained`)**: the JSON Schema of one tool call - `{name, arguments}` with `name` one of the
+/// tools and `arguments` that tool's own schema. Sent as Ollama's `format` on the retry after a printed call was refused, the
+/// server can only produce a call of this shape; the reply is then read by `rescue` like any printed call, and still validated.
+pub fn call_schema(specs: &[ToolSpec]) -> Value {
+    let any_of: Vec<Value> = specs
+        .iter()
+        .map(|spec| json!({ "type": "object", "properties": { "name": { "type": "string", "enum": [spec.name] }, "arguments": spec.schema }, "required": ["name", "arguments"] }))
+        .collect();
+
+    json!({ "anyOf": any_of })
+}
+
+thread_local! {
+    static CONSTRAIN_NEXT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Asks for the next request of this turn to be constrained to a tool call.
+pub fn constrain_next(on: bool) {
+    CONSTRAIN_NEXT.with(|flag| flag.set(on));
+}
+
+/// Takes the request (once): whether it is to be constrained.
+pub fn take_constrained() -> bool {
+    CONSTRAIN_NEXT.with(|flag| flag.replace(false))
+}
+
 /// Puts rescued calls into a reply the way the channel would have: `tool_uses`, and the assistant message in OpenAI shape.
 /// Returns what was rescued and what was refused, for the note to the model. Does nothing for a reply that already has tool calls.
 pub fn apply(reply: &mut super::dialect::Reply, specs: &[ToolSpec]) -> Rescued {

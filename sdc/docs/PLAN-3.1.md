@@ -62,3 +62,11 @@ Legend: DONE (verified), PARTIAL (what works / what is missing), OWNER (needs th
 - 5.3 DONE - Mac app in /Applications is 3.1.0 (CI-built aarch64 dmg, sha256 matched SHA256SUMS), mic usage string + audio-input entitlement present, bundled sdcd reports 3.1.0, app starts. Old app kept in ~/Documents/sdc-archive/SDC-3.0.3.app. The build is unsigned: first open = right-click -> Open (or System Settings -> Privacy & Security -> Open Anyway).
 - Known: the `CI` run on main (37c20f8) had two cloud-relay tests (notify, magic) time out at 5 s on a slow runner; that code is untouched and the same suite passed on the tag.
 - Not done / OWNER: rotate every key; signing certificates; Gate 1 run (live 9B model); live Ollama on the Windows PC; real-microphone prompt; cloud STT measurement; live escalation; `sme.constrained`; in-app updater UI.
+
+## After v3.1.0 (on main, not yet in a release)
+- `sme.constrained` DONE (small version): after a refused printed tool call, the retry carries Ollama's `format` = JSON Schema of one call of a known tool.
+- Bug fixed: a refused printed call used to end the turn silently; the model is now told (at most twice). Found by the new loop-wiring test `a_local_models_printed_tool_call_is_run_and_a_printed_invalid_one_is_not`.
+- P1-10 decomposer wired into the turn start (`runtime.decompose`); P1-13 loop detector gained A-B-A-B cycles; Chunked Reader: `read_file` ranges now say `more: read_file with offset=N`.
+- Phase 3.6: `a_local_turn_never_calls_another_model_by_itself_whatever_is_configured` (driven turn on a local model, failover/cascade/router configured, never connected).
+- Escalate returns to local by design: the chat's model setting is never changed by the escalated turn (see `rotation_escalate`).
+- Not done: in-app updater UI and Windows signing (need the owner's certificates), AppContainer/WSL2 (needs a Windows PC), Gate 1 and live Ollama (owner). `cargo fmt` is not applied: 245 files differ from rustfmt, the repo has never been formatted that way and CI does not require it. Cloud tests fail locally on this Mac (workerd WebSocket tests, with and without longer timeouts) while cloud/ has not changed since 3.0.3 and passes in CI.

@@ -101,3 +101,27 @@ fn the_signal_lifts_failures_above_successes_and_the_area_under_the_curve_is_rep
     assert_eq!(auroc(&[(1.0, true), (1.0, false)]), 0.5, "a tie counts half");
     assert_eq!(auroc(&[(1.0, true)]), 0.5, "one class only is not a measurement");
 }
+
+#[test]
+fn two_calls_taking_turns_are_a_loop_that_grows_with_every_round() {
+    let read = |path: &str| Step::new("read_file", path, false, "");
+    let one_round = [read("a.rs"), read("b.rs"), read("a.rs"), read("b.rs")];
+    let caution = assess(&one_round, None);
+
+    assert_eq!(caution.signals.cycles, 1);
+    assert_eq!(caution.level, 2, "one full round is a reason to do something different");
+    assert!(caution.steer().unwrap().contains("taking turns"));
+
+    let two_rounds = [read("a.rs"), read("b.rs"), read("a.rs"), read("b.rs"), read("a.rs"), read("b.rs")];
+
+    assert_eq!(assess(&two_rounds, None).level, 3, "a third visit to each is a stop");
+    assert!(assess(&two_rounds, None).stop());
+}
+
+#[test]
+fn reading_different_files_in_a_row_is_not_a_cycle() {
+    let read = |path: &str| Step::new("read_file", path, false, "");
+
+    assert_eq!(assess(&[read("a.rs"), read("b.rs"), read("c.rs"), read("d.rs")], None).signals.cycles, 0);
+    assert_eq!(assess(&[read("a.rs"), read("a.rs"), read("a.rs"), read("a.rs")], None).signals.cycles, 0, "the same call four times is `repeats`, not a cycle");
+}

@@ -209,6 +209,24 @@ pub fn breakdown(request: &str, known: &[(String, String)]) -> Breakdown {
     Breakdown { steps, one_step_only: false, reason }
 }
 
+/// The note the model gets when a request is several jobs: the steps in order, each with its files, to be finished one at a time.
+/// `None` for the usual case, one step.
+pub fn note(breakdown: &Breakdown) -> Option<String> {
+    if breakdown.one_step_only || breakdown.steps.len() < 2 {
+        return None;
+    }
+
+    let mut lines = vec!["This request is several jobs. Do them one at a time, in this order, and finish and check each before the next:".to_string()];
+
+    for (index, step) in breakdown.steps.iter().enumerate() {
+        let files = if step.files.is_empty() { String::new() } else { format!(" (files: {})", step.files.join(", ")) };
+
+        lines.push(format!("{}. {}{}", index + 1, step.goal, files));
+    }
+
+    Some(lines.join("\n"))
+}
+
 /// The files the next step needs - what the runtime reads while the current step still runs.
 pub fn next_files(breakdown: &Breakdown, done: usize) -> Vec<String> {
     breakdown.steps.get(done + 1).map(|step| step.files.clone()).unwrap_or_default()

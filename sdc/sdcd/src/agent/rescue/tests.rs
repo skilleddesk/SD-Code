@@ -140,3 +140,24 @@ fn json_repair_fixes_the_usual_slips_and_gives_up_on_the_rest() {
     assert_eq!(repair_json("{\"a\": \"unterminated"), None);
     assert_eq!(repair_json("{\"a\": 1}}"), None, "an extra closer is not guessed away");
 }
+
+#[test]
+fn the_constraint_allows_exactly_one_call_of_one_known_tool() {
+    let schema = call_schema(&specs());
+    let options = schema["anyOf"].as_array().unwrap();
+
+    assert_eq!(options.len(), 3);
+    assert_eq!(options[0]["properties"]["name"]["enum"], json!(["read_file"]));
+    assert_eq!(options[0]["properties"]["arguments"]["required"], json!(["path"]));
+    assert_eq!(options[1]["required"], json!(["name", "arguments"]));
+
+    /* what the server would produce under it is read back as a valid call */
+    let produced = r#"{"name": "run_command", "arguments": {"command": "ls"}}"#;
+
+    assert_eq!(rescue(produced, &specs()).calls.len(), 1);
+
+    /* the flag is taken once */
+    constrain_next(true);
+    assert!(take_constrained());
+    assert!(!take_constrained());
+}

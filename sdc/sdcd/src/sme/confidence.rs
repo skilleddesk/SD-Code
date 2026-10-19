@@ -55,6 +55,8 @@ pub struct Signals {
     pub schema_breaks: usize,
     /// The same tool on the same target twice in a row, whatever the result.
     pub repeats: usize,
+    /// Two different calls taking turns (A, B, A, B): a loop that `repeats` does not see because no call follows itself.
+    pub cycles: usize,
     /// The reply's mean log-probability's entropy, when the server reports log-probabilities.
     pub entropy: Option<f32>,
 }
@@ -113,6 +115,16 @@ pub fn assess(history: &[Step], entropy: Option<f32>) -> Caution {
                 signals.repeats += 1;
             }
 
+            /* A, B, A, B - the last four calls are two different calls taking turns */
+            if index >= 3 {
+                let key = |step: &Step| (step.tool.clone(), step.target.clone());
+                let (a, b) = (key(&history[index - 3]), key(&history[index - 2]));
+
+                if a != b && key(&history[index - 1]) == a && key(step) == b {
+                    signals.cycles += 1;
+                }
+            }
+
             /* an edit to A, then to B, then to A again: the turn is undoing itself */
             if index >= 2 && is_edit(&step.tool) && is_edit(&history[index - 1].tool) && is_edit(&history[index - 2].tool) && step.target == history[index - 2].target && step.target != history[index - 1].target {
                 signals.oscillation += 1;
@@ -138,6 +150,10 @@ pub fn assess(history: &[Step], entropy: Option<f32>) -> Caution {
         reasons.push("the same call was made twice in a row".to_string());
     }
 
+    if signals.cycles > 0 {
+        reasons.push("two calls are taking turns without getting anywhere".to_string());
+    }
+
     if entropy.is_some_and(|entropy| entropy > 2.0) {
         reasons.push("the model's own distribution is flat, which is a guess".to_string());
     }
@@ -150,8 +166,8 @@ pub fn assess(history: &[Step], entropy: Option<f32>) -> Caution {
     let level = match (&signals, reasons.len()) {
         (_, 0) => 0,
         /* `repeated_error` counts the repeats after the first sighting: 1 is the same error twice, 2 is three times */
-        (signals, _) if signals.repeated_error >= 2 || signals.repeats >= 3 => 3,
-        (signals, _) if signals.repeated_error >= 1 || signals.oscillation > 0 || signals.schema_breaks >= 2 => 2,
+        (signals, _) if signals.repeated_error >= 2 || signals.repeats >= 3 || signals.cycles >= 2 => 3,
+        (signals, _) if signals.repeated_error >= 1 || signals.oscillation > 0 || signals.schema_breaks >= 2 || signals.cycles >= 1 => 2,
         _ => 1,
     };
 

@@ -101,3 +101,15 @@ fn files_are_paths_and_names_with_an_extension_and_nothing_else() {
     assert_eq!(files_in("billing/pay.py আর store/save.rs, তারপর 12/2 আর 3.5"), vec!["billing/pay.py".to_string(), "store/save.rs".to_string(), "3.5".to_string()]);
     assert!(files_in("make it nicer").is_empty());
 }
+
+#[test]
+fn a_request_that_is_several_jobs_becomes_a_numbered_note_and_a_small_one_gets_none() {
+    let several = breakdown("fix charge in billing/pay.py and then fix save in store/save.rs and then fix draw_header in ui/header.rs", &known());
+    let text = note(&several).expect("three files are three jobs");
+
+    assert!(text.starts_with("This request is several jobs."), "{text}");
+    assert!(text.contains("1. ") && text.contains("2. ") && text.contains("(files: "), "{text}");
+    assert!(text.contains("billing/pay.py") && text.contains("ui/header.rs"), "{text}");
+
+    assert_eq!(note(&breakdown("rename total to subtotal in billing/pay.py", &known())), None);
+}

@@ -659,6 +659,15 @@ fn ask_model(backend: Backend, target: &Target, turn: (&str, crate::guard::model
         body = ollama_native::body(body, num_ctx);
     }
 
+    /* P1-6 (`sme.constrained`): the retry after a refused printed call can only answer with a tool call of a known tool. */
+    if rescue::take_constrained() && target.local_context.is_some() && !specs.is_empty() {
+        body["format"] = rescue::call_schema(specs);
+
+        if let Some(map) = body.as_object_mut() {
+            map.remove("tools");
+        }
+    }
+
     /* P1-4: the step's own sampling and thinking, from what the step is doing (only for a family that documents its numbers). */
     if crate::v3::on("sme.step_profile") && target.local_context.is_some() {
         if let Some(profile) = crate::sme::profile::for_request(&target.model, target.thinking) {
@@ -1650,6 +1659,8 @@ fn drive(
     } else {
         None
     };
+    /* P1-10: a request that is several jobs by its own structure is handed over as numbered steps, each with its files. */
+    let decompose_note = if crate::v3::on("runtime.decompose") && !fast_path && research_session.is_none() { crate::runtime::decompose::note(&crate::runtime::decompose::breakdown(&request_text, &[])) } else { None };
     let text = {
         let mut notes = String::new();
 
@@ -1661,6 +1672,7 @@ fn drive(
             (!map.is_empty()).then_some(map.as_str()),
             brief.as_deref(),
             spec_brief.as_deref(),
+            decompose_note.as_deref(),
         ]
         .into_iter()
         .flatten()
@@ -1675,6 +1687,8 @@ fn drive(
 
     let mut converged = false;
     let mut pending_note: Option<String> = None;
+    /* P1-6: how many times this turn a printed tool call was refused and the model was asked again (at most twice). */
+    let mut printed_refusals = 0usize;
     /* v3 L1: the turn's steps, so a lesson can be distilled from the ones that failed. */
     let mut steps: Vec<crate::v3::lessons::Step> = Vec::new();
     /* v3 I9: what the capsule tells the next model - the steps taken and the last words said. */
@@ -2114,6 +2128,11 @@ fn drive(
         if backend == Backend::Ollama && reply.tool_uses.is_empty() && crate::v3::on("sme.toolcall_rescue") {
             let rescued = rescue::apply(&mut reply, step_specs);
 
+            if !rescued.rejected.is_empty() && reply.tool_uses.is_empty() {
+                printed_refusals += 1;
+                rescue::constrain_next(crate::v3::on("sme.constrained"));
+            }
+
             if !rescued.rejected.is_empty() {
                 pending_note = Some(format!("A tool call you printed was not run: {}. Make the call again with the tool-call channel and the exact arguments the tool lists.", rescued.rejected.join("; ")));
             }
@@ -2164,6 +2183,16 @@ fn drive(
 
             if added {
                 fixed = fixed_tokens(&system, &specs);
+            }
+        }
+
+        /* A call the model printed was refused (it names no tool, misses an argument): the reply has no real call, so the turn would end
+           here with nothing done. The model is told why once or twice instead. */
+        if reply.tool_uses.is_empty() && printed_refusals > 0 && printed_refusals <= 2 {
+            if let Some(note) = pending_note.take() {
+                dialect::append_user_text(target.dialect, &mut messages, &note);
+
+                continue;
             }
         }
 
@@ -4096,6 +4125,108 @@ mod end_to_end {
         assert!(events.iter().any(|event| matches!(event, EngineEvent::Thinking(text) if text == "Read it.")));
         assert!(events.iter().any(|event| matches!(event, EngineEvent::Delta(text) if text.contains("It says hi."))));
         assert!(matches!(events.last(), Some(EngineEvent::Done { summary, .. }) if summary == "Done"));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// P1-6, the loop wiring: a local model that PRINTS its tool call as text instead of making it has the call read, run and answered -
+    /// the next request carries the call as a real one and the tool's answer, and the turn finishes.
+    #[test]
+    fn a_local_models_printed_tool_call_is_run_and_a_printed_invalid_one_is_not() {
+        let root = std::env::temp_dir().join(format!("sdc-agent-rescue-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("hello.txt"), "hi from the folder\n").unwrap();
+
+        let printed = "<tool_call>{'name': 'read_file', 'arguments': {'path': 'hello.txt',},}</tool_call>";
+        let invalid = "<tool_call>{\"name\": \"read_file\", \"arguments\": {\"file\": \"hello.txt\"}}</tool_call>";
+        let done = serde_json::json!({ "message": { "role": "assistant", "content": "" }, "done": true, "done_reason": "stop", "prompt_eval_count": 900, "eval_count": 12 });
+        let say = |text: &str| serde_json::json!({ "message": { "role": "assistant", "content": text }, "done": false });
+        let (url, server) = raw_provider(vec![ndjson(&[say(printed), done.clone()]), ndjson(&[say(invalid), done.clone()]), ndjson(&[say("It says hi."), done])]);
+        let target = Target {
+            url,
+            headers: vec![("content-type".to_string(), "application/json".to_string())],
+            dialect: Dialect::OpenAi,
+            model: "qwen3.5:9b".to_string(),
+            price: None,
+            thinking: false,
+            effort: None,
+            local_context: Some(8_192),
+            local_window: false,
+        };
+        let workspace = Workspace::new(root.to_str().unwrap(), None);
+        let prompt = prompt_in(&root, "turn-agent-rescue", "what does hello.txt say?", "qwen3.5:9b");
+        let recorder = crate::engines::Recorder::new();
+
+        drive(Backend::Ollama, &target, &workspace, Options { autonomy: Autonomy::Auto, max_steps: 6, auto_check: false, research: None }, None, &Default::default(), &prompt, &recorder.sink());
+
+        let bodies = server.join().unwrap();
+        let second = bodies[1]["messages"].as_array().unwrap();
+        let asked = second.iter().find(|message| message["role"] == "assistant").expect("the printed call goes back as a real one");
+        let answered = second.iter().find(|message| message["role"] == "tool").expect("the tool ran and its answer goes back");
+
+        assert_eq!(asked["tool_calls"][0]["function"]["name"], "read_file");
+        assert_eq!(asked["tool_calls"][0]["function"]["arguments"]["path"], "hello.txt", "the slips in the printed JSON were repaired");
+        assert!(answered["content"].as_str().unwrap().contains("hi from the folder"));
+
+        /* the second reply printed a call with an argument the tool does not have: nothing ran, and the model is told why */
+        let third = bodies[2]["messages"].as_array().unwrap();
+
+        assert_eq!(third.iter().filter(|message| message["role"] == "tool").count(), 1, "the invalid call ran nothing");
+        assert!(third.iter().any(|message| message["role"] == "user" && message["content"].as_str().is_some_and(|text| text.contains("was not run"))), "the model hears that its call was refused");
+        assert!(matches!(recorder.events().last(), Some(EngineEvent::Done { .. })));
+
+        /* the retry after the refusal is constrained to a well-formed call of a known tool; the first and second requests were not */
+        assert!(bodies[0].get("format").is_none() && bodies[1].get("format").is_none());
+        assert!(bodies[2]["format"]["anyOf"].as_array().is_some_and(|options| options.len() > 3), "the retry carries the call schema");
+        assert!(bodies[2].get("tools").is_none(), "the schema replaces the tool list for that one request");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Phase 3.6, the contract on a driven turn: a chat on a LOCAL model (Local-only, and Local Rotation until the person presses Escalate)
+    /// never reaches another model by itself. A failover order, a cascade's strong model and a router's fast model are all configured to
+    /// a listener nobody accepts on; the turn fails its tool three times (what makes a cascade take over), and every request still
+    /// names the local model, and the other address never so much as connects.
+    #[test]
+    fn a_local_turn_never_calls_another_model_by_itself_whatever_is_configured() {
+        let root = std::env::temp_dir().join(format!("sdc-local-contract-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        let workspace = Workspace::new(root.to_str().unwrap(), None);
+        let (backup_url, backup_untouched) = forbidden_provider();
+
+        FAKE_TARGETS.with(|targets| targets.borrow_mut().insert("backup".to_string(), fake_target(backup_url, "backup-model")));
+        crate::v3::failover::set_order_for_test(vec![("backup".to_string(), "backup-model".to_string())]);
+        crate::v3::cascade::set_strong_for_test(Some(("backup".into(), "backup-model".into())));
+        crate::v3::router::set_fast_for_test(Some(("backup".into(), "backup-model".into())));
+
+        let done = serde_json::json!({ "message": { "role": "assistant", "content": "" }, "done": true, "done_reason": "stop", "prompt_eval_count": 900, "eval_count": 12 });
+        let missing = |id: &str| {
+            let _ = id;
+
+            ndjson(&[serde_json::json!({ "message": { "role": "assistant", "content": "", "tool_calls": [{ "function": { "name": "read_file", "arguments": { "path": "nothing-here.txt" } } }] }, "done": false }), done.clone()])
+        };
+        let answer = ndjson(&[serde_json::json!({ "message": { "role": "assistant", "content": "I could not find it." }, "done": false }), done.clone()]);
+        let (url, server) = raw_provider(vec![missing("a"), missing("b"), missing("c"), answer]);
+        let prompt = prompt_in(&root, "turn-local-contract", "make the orders tests pass", "qwen3.5:9b");
+        let recorder = crate::engines::Recorder::new();
+
+        drive(Backend::Ollama, &local_target(&url, 8_192), &workspace, Options { autonomy: Autonomy::Auto, max_steps: 8, auto_check: false, research: None }, None, &Default::default(), &prompt, &recorder.sink());
+
+        let asked = server.join().unwrap();
+
+        assert_eq!(asked.len(), 4, "the local model was asked four times and nobody else");
+        assert!(asked.iter().all(|body| body["model"] == "qwen3.5:9b"), "{:?}", asked.iter().map(|body| body["model"].clone()).collect::<Vec<_>>());
+        assert!(matches!(recorder.events().last(), Some(EngineEvent::Done { .. })), "the turn ends by itself, on the local model");
+
+        crate::v3::failover::set_order_for_test(Vec::new());
+        crate::v3::cascade::set_strong_for_test(None);
+        crate::v3::router::set_fast_for_test(None);
+        FAKE_TARGETS.with(|targets| targets.borrow_mut().clear());
+
+        assert!(backup_untouched(), "the other model was never so much as connected to");
 
         let _ = std::fs::remove_dir_all(&root);
     }

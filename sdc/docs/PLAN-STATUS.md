@@ -28,16 +28,16 @@ Status: `todo` · `in-progress` · `blocked` · `done`.
 | P1-3 | Small Model Profile and budgeter | 1 | P0-9, Gate 0 | done | sme.budget |  | model classes and one token budget per step |
 | P1-4 | Step Profile (sampling and thinking) | 1 | P1-3, Gate 0 | done | sme.step_profile |  | vendor sampling per step; off by default until measured |
 | P1-5 | Prompt Diet and stable prefix | 1 | P1-3, Gate 0 | done | sme.prompt_diet |  | tool schemas capped, rules cut to the class, stable prefix |
-| P1-6 | Constrained output and Tool-call Rescue | 1 | P1-5, Gate 0 | in-progress | sme.constrained, sme.toolcall_rescue |  | Tool-call Rescue done (16-shape corpus); constrained output NOT built |
+| P1-6 | Constrained output and Tool-call Rescue | 1 | P1-5, Gate 0 | done | sme.constrained, sme.toolcall_rescue |  | Tool-call Rescue + constrained retry (Ollama format schema); loop-wired test found and fixed a silent turn end |
 | P1-7 | Working Memory | 1 | P1-2, Gate 0 | done | sme.memory |  | working-memory ledger (sqlite) + methods |
 | P1-8 | Retrieval Cascade and Chunked Reader | 1 | P1-1, P0-16, Gate 0 | done | sme.retrieval |  | retrieval cascade + ranked_search |
 | P1-9 | Source Quote Verifier | 1 | P1-7, Gate 0 | done | sme.quote_verify |  | quote verifier wired into note saving |
-| P1-10 | Task Decomposer | 1 | P1-2, P1-8, Gate 0 | in-progress | runtime.decompose |  | decomposer module + plan-size check wired; planner does not call breakdown yet |
+| P1-10 | Task Decomposer | 1 | P1-2, P1-8, Gate 0 | done | runtime.decompose |  | decomposer wired: several-job requests get a numbered steps note; plan-size check; fast path skips it |
 | P1-11 | Symbol-Anchored Patcher and Cut-off Guard | 1 | P1-1, P0-14, Gate 0 | done | edit.symbol_patch |  | symbol patcher + cut-off guard (off by default) |
 | P1-12 | LSP Bridge | 1 | P1-1, Gate 0 | done | verify.lsp |  | LSP client + after-edit hook (off by default) |
-| P1-13 | Confidence Signals | 1 | P1-2, Gate 0 | done | sme.confidence |  | confidence signals wired after tool results |
+| P1-13 | Confidence Signals | 1 | P1-2, Gate 0 | done | sme.confidence |  | confidence signals incl. A-B-A-B cycles; stops at level 3 |
 | P1-14 | Bangla/Banglish Spec Brief | 1 | P1-5, Gate 0 | done | sme.spec_brief |  | Bangla/Banglish spec brief |
-| P1-15 | Fast path and Gate 1 | 1 | P1-1, P1-2, P1-3, P1-4, P1-5, P1-6, P1-7, P1-8, P1-9, P1-10, P1-11, P1-12, P1-13, P1-14, Gate 0 | in-progress | runtime.fastpath |  | fast path done; Gate 1 not run - needs a live model (owner-to-run) |
+| P1-15 | Fast path and Gate 1 | 1 | P1-1, P1-2, P1-3, P1-4, P1-5, P1-6, P1-7, P1-8, P1-9, P1-10, P1-11, P1-12, P1-13, P1-14, Gate 0 | in-progress | runtime.fastpath |  | fast path done (runtime.fastpath); Gate 1 not run - needs a live 9B model (owner-to-run) |
 | P2-1 | Rotation Policy Engine | 2 | Gate 1 | todo | rotation.policy |  |  |
 | P2-2 | Rotation Chain Settings UI | 2 | P2-1, P0-5, Gate 1 | todo | ui.rotation_chain |  |  |
 | P2-3 | Capsule Minimizer, Redactor, audit | 2 | P2-1, Gate 1 | todo | rotation.capsule |  |  |
