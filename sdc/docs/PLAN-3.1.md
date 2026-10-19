@@ -45,3 +45,13 @@ Legend: DONE (verified), PARTIAL (what works / what is missing), OWNER (needs th
   - P3-3 `trust.slopguard` (install commands checked against npm / PyPI / crates.io; unknown name refused; unreachable registry only a note): DONE.
   - P3-9 Diff Review (per-file, per-hunk, ask / ask-to-undo prefill the prompt), P3-11 Select & Instruct (selection in a file -> prompt with `@path:line`): DONE (pure logic tested; the buttons are not covered by a browser test). P3-10 `@` picker: already existed in `PromptArea`.
   - Not done in 4.11: the loop detector beyond the existing one in `trust/cost.rs` (5th identical call), an automated confidence AUROC measurement on real runs.
+
+## Phase 5 - release
+- 5.1 DONE - 3.1.0 in sdcd, app, tauri, package.json and both lockfiles; CHANGELOG [3.1.0]. Tests: sdcd lib 1250 pass + 1 environment-only (see below), all integration suites pass, vitest 326, clippy `-D warnings` clean, protocol check (202 methods) agrees.
+  - The one lib test `on_macos_an_ordinary_cargo_build_still_works_inside_the_sandbox` fails only when `CARGO_TARGET_DIR` points outside the project (the sandbox correctly blocks it); with the variable unset it passes.
+- 5.2 DONE - commits pushed to `main`, tag `v3.1.0`; release workflow succeeded: https://github.com/skilleddesk/SD-Code/releases/tag/v3.1.0 (dmg arm64 + x64, exe, msi, AppImage, deb, rpm, SHA256SUMS.txt).
+  - Secret scan found two false positives in older commits (a model name next to a provider name; a fake test value) -> fingerprints added to `.gitleaksignore`; re-run is green.
+  - `CI` on `main` (37c20f8): rust on ubuntu / windows / macos, desktop app, dependency scan green; the Anywhere relay job failed on two 5 s test timeouts in `sdc/cloud/test` (code not touched in 3.1; the same job passed on the tag). Re-run needs the owner's GitHub login.
+- 5.3 DONE - /Applications/SDC.app replaced with the release's arm64 dmg (sha256 matched SHA256SUMS.txt); 3.0.3 kept in `~/Documents/sdc-archive/SDC-3.0.3.app`. Bundle: version 3.1.0, microphone usage text, audio-input entitlement, bundled `sdcd 3.1.0`, the app starts and its daemon runs.
+- 5.3 NOT VERIFIED here - clicking through About / Agents tab / a real microphone prompt (no GUI driver on this machine). OWNER-TO-RUN. A local `tauri build` crashed with a bus error while compiling a build script (machine-level; the CI build of the same tag is what was installed).
+- Unsigned app: if macOS says it cannot verify the developer, right-click SDC.app -> Open -> Open, or System Settings -> Privacy & Security -> "Open Anyway".
