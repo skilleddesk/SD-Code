@@ -55,3 +55,10 @@ Legend: DONE (verified), PARTIAL (what works / what is missing), OWNER (needs th
 - 5.3 DONE - /Applications/SDC.app replaced with the release's arm64 dmg (sha256 matched SHA256SUMS.txt); 3.0.3 kept in `~/Documents/sdc-archive/SDC-3.0.3.app`. Bundle: version 3.1.0, microphone usage text, audio-input entitlement, bundled `sdcd 3.1.0`, the app starts and its daemon runs.
 - 5.3 NOT VERIFIED here - clicking through About / Agents tab / a real microphone prompt (no GUI driver on this machine). OWNER-TO-RUN. A local `tauri build` crashed with a bus error while compiling a build script (machine-level; the CI build of the same tag is what was installed).
 - Unsigned app: if macOS says it cannot verify the developer, right-click SDC.app -> Open -> Open, or System Settings -> Privacy & Security -> "Open Anyway".
+
+## Phase 5 - release
+- 5.1 DONE - cargo test --locked --no-fail-fast (lib 1250 passed + 1 environment-only: it fails only when CARGO_TARGET_DIR points outside the project; passes without it), all integration suites pass; clippy -D warnings clean; vitest 326; eslint, tsc, protocol check (202 methods) pass; smoke, a11y (0 violations), visual regression (0.000 %).
+- 5.2 DONE - version 3.1.0 (sdcd, app, tauri, both Cargo.lock), CHANGELOG, tag v3.1.0, release workflow succeeded: 7 installers + SHA256SUMS.txt (https://github.com/skilleddesk/SD-Code/releases/tag/v3.1.0).
+- 5.3 DONE - Mac app in /Applications is 3.1.0 (CI-built aarch64 dmg, sha256 matched SHA256SUMS), mic usage string + audio-input entitlement present, bundled sdcd reports 3.1.0, app starts. Old app kept in ~/Documents/sdc-archive/SDC-3.0.3.app. The build is unsigned: first open = right-click -> Open (or System Settings -> Privacy & Security -> Open Anyway).
+- Known: the `CI` run on main (37c20f8) had two cloud-relay tests (notify, magic) time out at 5 s on a slow runner; that code is untouched and the same suite passed on the tag.
+- Not done / OWNER: rotate every key; signing certificates; Gate 1 run (live 9B model); live Ollama on the Windows PC; real-microphone prompt; cloud STT measurement; live escalation; `sme.constrained`; in-app updater UI.
