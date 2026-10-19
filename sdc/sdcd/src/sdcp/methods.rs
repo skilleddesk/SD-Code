@@ -54,6 +54,8 @@ mod file_methods;
 mod model_methods;
 #[path = "guard_methods.rs"]
 mod guard_methods;
+#[path = "memory_methods.rs"]
+mod memory_methods;
 #[path = "rotation_methods.rs"]
 mod rotation_methods;
 #[path = "fleet_methods.rs"]
@@ -250,7 +252,17 @@ async fn run_turn(
 ) {
     let session = Some(plan.session_id.clone());
     let turn = Some(plan.turn_id.clone());
-    let prompt = Prompt {
+
+    /* P1-7: the task's working memory. A fact the person states outright ("remember that ...") is kept first - pinned, so no later note
+       can push it out - and then the block the prompt carries: the pinned fact, the decisions and the failures, newest first, cut to the
+       model class's memory budget. One chat is one task. */
+    if crate::v3::on("sme.memory") {
+        if let Some(fact) = crate::sme::memory::requested_fact(&plan.prompt_text) {
+            let _ = state.store.add_note(&plan.session_id, "fact", &fact, "", "", true);
+        }
+    }
+
+    let mut prompt = Prompt {
         session_id: plan.session_id.clone(),
         turn_id: plan.turn_id.clone(),
         text: plan.prompt_text.clone(),
@@ -264,6 +276,18 @@ async fn run_turn(
         images: plan.images.clone(),
         effort: plan.effort.clone(),
     };
+
+    if crate::v3::on("sme.memory") {
+        if let Ok(notes) = state.store.notes(&prompt.session_id) {
+            let window = crate::context::window_tokens(&plan.engine_id, prompt.provider.as_deref(), &prompt.model);
+            let cap = crate::sme::budget::Budget::for_window(window).chars(crate::sme::budget::Section::Memory);
+            let block = crate::sme::memory::render(&notes, cap);
+
+            if !block.is_empty() {
+                prompt.text = format!("{block}\n\n{}", prompt.text);
+            }
+        }
+    }
     let mut answer = String::new();
     let mut checkpoint_written = false;
     /* What the turn did with its tools, one line per call - kept with the answer for the next turn. */

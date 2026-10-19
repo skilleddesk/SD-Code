@@ -35,7 +35,7 @@ impl Daemon {
             "duel.keep" | "duel.discard" => self.duel_keep(envelope, &*out),
             "console.attach" => self.console_attach(envelope),
             "console.detach" => self.console_detach(envelope),
-            _ => self.dispatch_fleet(envelope, out),
+            _ => self.dispatch_memory(envelope, out),
         }
     }
 

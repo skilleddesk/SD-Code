@@ -630,6 +630,7 @@ fn ask_model(backend: Backend, target: &Target, turn: (&str, crate::guard::model
     crate::guard::modelgate::of(turn.0).permit(turn.1, None, &target.model).map_err(|violation| violation.to_string())?;
 
     let mut body = dialect::body(target.dialect, &target.model, system, messages, specs, target.thinking);
+    let mut traced_profile: Option<crate::sme::profile::Profile> = None;
 
     /* Effort (0.14) reaches only the models that take it: OpenAI's reasoning models. Another model sent an
        unknown field may refuse the whole request, and a turn is worth more than the knob. */
@@ -656,6 +657,14 @@ fn ask_model(backend: Backend, target: &Target, turn: (&str, crate::guard::model
     /* A local model gets Ollama's own request, with the context size in it (0.16.1). */
     if let Some(num_ctx) = target.local_context {
         body = ollama_native::body(body, num_ctx);
+    }
+
+    /* P1-4: the step's own sampling and thinking, from what the step is doing (only for a family that documents its numbers). */
+    if crate::v3::on("sme.step_profile") && target.local_context.is_some() {
+        if let Some(profile) = crate::sme::profile::for_request(&target.model, target.thinking) {
+            crate::sme::profile::apply(&mut body, &profile);
+            traced_profile = Some(profile);
+        }
     }
 
     /* P0-11: a bench run states its seed (and temperature) on every request; outside a bench this changes nothing. */
@@ -737,6 +746,10 @@ fn ask_model(backend: Backend, target: &Target, turn: (&str, crate::guard::model
     /* P0-12: the time to the first byte of the call that answered, and the reasoning it carried. */
     if let Ok(done) = reply.as_mut() {
         done.ttft_ms = first_byte.load(std::sync::atomic::Ordering::SeqCst);
+
+        if let Some(profile) = traced_profile {
+            done.profile = Some(profile.name().to_string());
+        }
         done.thinking_tokens = thinking_tokens_of(&done.message);
     }
 
@@ -1466,10 +1479,16 @@ fn drive(
     /* A `/research` turn (0.16.1): its own brief, its own tools, its limits and its sources. */
     let research_session = options.research.map(|limits| std::sync::Arc::new(research::Session::new(limits)));
     let research_config = research::config();
-    let system = match &research_session {
+    let mut system = match &research_session {
         Some(session) => research::system_prompt(&language, &session.limits, research_config.provider.label(), window < 32_000),
         None => system_prompt(workspace, vision, &language, technique("stable_prefix")) + &skills::brief(&skills::find(workspace)),
     };
+    /* P1-5: the rules cut to this class's cap - a 4K window keeps the rules that matter, not the prose around them. */
+    let diet = crate::v3::on("sme.prompt_diet");
+
+    if diet {
+        system = crate::sme::diet::slim(&system, crate::sme::budget::Class::of(window));
+    }
     /* A model that writes the final answer from what this one gathered (Settings → Research), opt-in. */
     let synthesis = research_session.as_ref().and(research_config.synthesis.clone());
     /* The one model change the person asked for in Settings -> Research: named on the gate, so it is the only other
@@ -1517,6 +1536,12 @@ fn drive(
 
     if pruning {
         specs = crate::v3::tools::select(&all_specs, prompt.text.rsplit("[The person's message]").next().unwrap_or(&prompt.text));
+    }
+
+    /* P1-5: at most six tool schemas a step - a small model given twenty picks the wrong one, and the schemas are the largest fixed cost
+       of a small window. */
+    if crate::v3::on("sme.prompt_diet") {
+        specs = crate::sme::diet::at_most(&specs, crate::sme::diet::MAX_SCHEMAS);
     }
 
     let mut messages: Vec<Value> = prompt
@@ -1614,6 +1639,17 @@ fn drive(
     } else {
         None
     };
+    /* P1-14: a message in Bengali or Banglish is restated as a four-line English technical spec, with the person's paths and commands
+       kept exactly, and the confirmation asked in their own words before anything is touched. */
+    let fast_path = crate::v3::on("runtime.fastpath") && crate::sme::fast::is_fast(&request_text);
+    let spec_brief = if crate::v3::on("sme.spec_brief") && research_session.is_none() && !fast_path {
+        let root = std::path::Path::new(workspace.root());
+        let reading = crate::understand::Reading::of(&request_text);
+
+        crate::sme::spec::of(&request_text, &reading, &crate::v3::interlingua::glossary(root)).map(|spec| format!("{}\n\n{}", spec.brief(), spec.confirm()))
+    } else {
+        None
+    };
     let text = {
         let mut notes = String::new();
 
@@ -1624,6 +1660,7 @@ fn drive(
             knowledge_note.as_deref(),
             (!map.is_empty()).then_some(map.as_str()),
             brief.as_deref(),
+            spec_brief.as_deref(),
         ]
         .into_iter()
         .flatten()
@@ -1642,6 +1679,13 @@ fn drive(
     let mut steps: Vec<crate::v3::lessons::Step> = Vec::new();
     /* v3 I9: what the capsule tells the next model - the steps taken and the last words said. */
     let mut step_log: Vec<String> = Vec::new();
+
+    /* P1-4: the tools the last reply called, and whether any of their results was a failure - what the next step's profile reads. */
+    let mut last_calls: Vec<dialect::ToolUse> = Vec::new();
+    let mut last_failed = false;
+
+    /* P1-13: the turn's own steps, for the caution signal. */
+    let mut turn_history: Vec<crate::sme::confidence::Step> = Vec::new();
     let mut passed_checks: Vec<String> = Vec::new();
     let mut last_words = String::new();
     /* v3 W1: the context ledger, beside the request and only when the bench (or a test) listens. */
@@ -1651,6 +1695,9 @@ fn drive(
     let mut receipt_parts = [0u64; 6];
     let all_specs_tokens = fixed_tokens("", &all_specs);
     let history_len = prompt.history.len();
+
+    /* P1-5: the goal above the evidence and again under it - a small model loses the middle of a long prompt, never the edges. */
+    let text = if diet { crate::sme::diet::bookend(&text, &prompt.text) } else { text };
 
     /* v3 W9: what the person pasted, and earlier turns, pass the same secret filter as tool output. */
     let text = if crate::v3::on("redact") {
@@ -1866,6 +1913,13 @@ fn drive(
             );
         }
 
+        /* P1-4: what this step is doing, from the tools the last reply called (and whether the step before it failed). */
+        if crate::v3::on("sme.step_profile") {
+            let last_tools: Vec<String> = last_calls.iter().map(|call| call.name.clone()).collect();
+
+            crate::sme::profile::set_current_step(Some(crate::sme::profile::Step::of_tools(&last_tools, last_failed)));
+        }
+
         let step_specs: &[dialect::ToolSpec] = if out_of_time { &[] } else { &specs };
         let shape = (ledger_on || receipt_on).then(|| crate::bench::ledger::shape(&system, step_specs, &messages, history_len, map_chars));
         let asked_at = std::time::Instant::now();
@@ -1903,7 +1957,10 @@ fn drive(
                 session_id: prompt.session_id.clone(),
                 step: step as u32,
                 model_key: format!("{}:{}", prompt.provider.as_deref().unwrap_or(if backend == Backend::Ollama { "ollama" } else { "" }), target.model),
-                mode: gate.mode.name().to_string(),
+                mode: match &reply.profile {
+                    Some(profile) => format!("{}·{profile}", gate.mode.name()),
+                    None => gate.mode.name().to_string(),
+                },
                 purpose: "main".to_string(),
                 tokens_in: reply.input_tokens,
                 tokens_out: reply.output_tokens,
@@ -2442,6 +2499,31 @@ fn drive(
 
         messages.extend(dialect::tool_results(target.dialect, &results));
 
+        last_calls = reply.tool_uses.clone();
+        last_failed = results.iter().any(|result| result.2);
+
+        /* P1-13: what the turn's own structure says - the same error twice, an edit undoing an earlier one, a reply that did not parse.
+           A doubt is only ever added: the sentence goes to the model once, and nothing is made more confident by it. */
+        if crate::v3::on("sme.confidence") {
+            for call in &reply.tool_uses {
+                let target = ["path", "command", "query", "symbol"].iter().find_map(|key| call.input[*key].as_str()).unwrap_or_default().to_string();
+                let outcome = results.iter().find(|result| result.0 == call.id);
+
+                turn_history.push(crate::sme::confidence::Step::new(&call.name, &target, outcome.map(|result| result.2).unwrap_or(true), outcome.map(|result| result.1.as_str()).unwrap_or_default()));
+            }
+
+            let caution = crate::sme::confidence::assess(&turn_history, None);
+
+            if caution.level >= 2 {
+                if let Some(steer) = caution.steer() {
+                    pending_note = Some(match pending_note.take() {
+                        Some(note) => format!("{note}\n{steer}"),
+                        None => steer,
+                    });
+                }
+            }
+        }
+
         if let Some(note) = pending_note.take() {
             dialect::append_user_text(target.dialect, &mut messages, &note);
         }
@@ -2510,6 +2592,9 @@ fn drive(
 fn result_cap(backend: Backend, window: u64) -> usize {
     match backend {
         Backend::Api => tools::RESULT_CAP,
+        /* P1-3: the class's budget for one tool result, instead of the whole window. A 32K model was handed 24 000 characters of output
+           with the system prompt and the tool schemas already in the window: the budget divides the room first. */
+        Backend::Ollama if crate::v3::on("sme.budget") => crate::sme::budget::Budget::for_window(window).chars(crate::sme::budget::Section::ToolOutput).clamp(2_000, tools::RESULT_CAP),
         Backend::Ollama => (window as usize).clamp(2_000, tools::RESULT_CAP),
     }
 }
@@ -3186,7 +3271,9 @@ mod end_to_end {
 
         let question = ask("why does the header flicker?", "question");
 
-        assert_eq!(question, "why does the header flicker?", "a quick question is sent as it was typed");
+        /* P1-5: the goal sits above and below the evidence, so the person's words are at both edges of what the model reads. */
+        assert!(question.starts_with("Goal: why does the header flicker?") && question.ends_with("The goal, again: why does the header flicker?"), "{question}");
+        assert_eq!(crate::v3::ablating(&["sme.prompt_diet"], || ask("why does the header flicker?", "question")), "why does the header flicker?", "with the diet off it is sent exactly as it was typed");
     }
 
     #[test]
@@ -3257,7 +3344,11 @@ mod end_to_end {
         /* The conversation carried the history with its roles, the system prompt first. */
         assert_eq!(bodies[0]["messages"][0]["role"], "system");
         assert_eq!(bodies[0]["messages"][2]["role"], "assistant");
-        assert_eq!(bodies[0]["tools"].as_array().unwrap().len(), tools::specs().len());
+        /* P1-5: a step is offered at most six schemas, and every one of them is a real tool. */
+        let offered = bodies[0]["tools"].as_array().unwrap();
+
+        assert!(!offered.is_empty() && offered.len() <= crate::sme::diet::MAX_SCHEMAS, "{} tools", offered.len());
+        assert!(offered.iter().all(|tool| { let name = tool["function"]["name"].as_str().unwrap_or_default(); tools::specs().iter().any(|spec| spec.name == name) }));
 
         /* The window saw two cards (Create, Run), the answer, and a footer with what the turn used. */
         let cards: Vec<String> = events
@@ -3437,8 +3528,9 @@ mod end_to_end {
             let _ = std::fs::remove_dir_all(&root);
             server.join().unwrap()
         };
-        let plain = run("w5-off", &[]);
-        let tuned = run("w5-on", &["stable_prefix", "tool_pruning"]);
+        /* P1-5 caps every step at six schemas, so that cap is ablated here: this test is about the pruning, not the cap. */
+        let plain = crate::v3::ablating(&["sme.prompt_diet"], || run("w5-off", &[]));
+        let tuned = crate::v3::ablating(&["sme.prompt_diet"], || run("w5-on", &["stable_prefix", "tool_pruning"]));
         let system = |bodies: &[Value]| bodies[0]["messages"][0]["content"].as_str().unwrap_or_default().to_string();
         let names = |body: &Value| body["tools"].as_array().unwrap().iter().map(|tool| tool["function"]["name"].as_str().unwrap_or_default().to_string()).collect::<Vec<_>>();
 
@@ -3623,8 +3715,9 @@ mod end_to_end {
             let _ = std::fs::remove_dir_all(&root);
             server.join().unwrap()
         };
-        let off = run(&[], "off");
-        let on = run(&["interlingua", "repomap", "intel"], "on");
+        /* P1-5 caps every step at six schemas; ablated here so the graph tools are seen for what the switch does. */
+        let off = crate::v3::ablating(&["sme.prompt_diet"], || run(&[], "off"));
+        let on = crate::v3::ablating(&["sme.prompt_diet"], || run(&["interlingua", "repomap", "intel"], "on"));
         let asked = |bodies: &[Value]| bodies[0]["messages"].to_string();
         let tools = |body: &Value| body["tools"].as_array().unwrap().iter().map(|tool| tool["function"]["name"].as_str().unwrap_or_default().to_string()).collect::<Vec<_>>();
 

@@ -278,7 +278,7 @@ fn walk(lang: Lang, node: Node, source: &str, scopes: &mut Vec<(String, &'static
         && node.child_by_field_name("value").is_some_and(|value| matches!(value.kind(), "arrow_function" | "function_expression" | "function"));
 
     if let Some(kind) = if arrow { Some("fn") } else { kind_of(lang, node) } {
-        let name = if lang == Lang::Go && node.kind() == "type_spec" { name_of(node, source) } else { name_of(node, source) };
+        let name = name_of(node, source);
 
         if let Some(name) = name {
             let mut qualified_scopes: Vec<String> = scopes.iter().map(|(name, _)| name.clone()).collect();
@@ -293,7 +293,7 @@ fn walk(lang: Lang, node: Node, source: &str, scopes: &mut Vec<(String, &'static
             /* A Python function nested in a class is a method; in a function it is a plain def. */
             /* only a class (Python) or an impl/trait (Rust) makes a function a method - a module does not */
             let in_type = scopes.last().is_some_and(|(_, scope_kind)| *scope_kind != "mod");
-            let kind = if kind == "def" && in_type { "method" } else if kind == "fn" && lang == Lang::Rust && in_type { "method" } else { kind };
+            let kind = if in_type && (kind == "def" || (kind == "fn" && lang == Lang::Rust)) { "method" } else { kind };
             let text = text_of(node, source);
 
             found.push(Def {

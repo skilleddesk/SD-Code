@@ -23,6 +23,7 @@ pub mod ledger;
 pub mod policy;
 pub mod proof;
 pub mod scan;
+pub mod slopguard;
 pub mod shipsafe;
 pub mod secretguard;
 pub mod sweep;

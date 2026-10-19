@@ -66,7 +66,7 @@ fn no_server_for_a_language_is_an_ordinary_answer_not_an_error() {
     let root = project("none");
 
     assert_eq!(check(&root, "notes.txt", "x", None), Ok(None), "not a language");
-    assert_eq!(check(&root, "a.py", "x", Some(("definitely-not-installed-lsp".into(), vec![]))).is_err(), true, "a command that cannot start is reported");
+    assert!(check(&root, "a.py", "x", Some(("definitely-not-installed-lsp".into(), vec![]))).is_err(), "a command that cannot start is reported");
 
     let _ = std::fs::remove_dir_all(&root);
 }

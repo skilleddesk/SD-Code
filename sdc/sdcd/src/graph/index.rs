@@ -58,7 +58,7 @@ fn mtime_ns(meta: &std::fs::Metadata) -> u128 {
     meta.modified().ok().and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |duration| duration.as_nanos())
 }
 
-fn walk(root: &Path, dir: &Path, found: &mut Vec<PathBuf>) {
+fn walk(dir: &Path, found: &mut Vec<PathBuf>) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
@@ -82,7 +82,7 @@ fn walk(root: &Path, dir: &Path, found: &mut Vec<PathBuf>) {
 
         if kind.is_dir() {
             if !SKIP_DIRS.contains(&name.as_str()) {
-                walk(root, &entry.path(), found);
+                walk(&entry.path(), found);
             }
         } else if kind.is_file() && Lang::of(&name).is_some() {
             found.push(entry.path());
@@ -122,7 +122,7 @@ impl Index {
     pub fn refresh(&mut self, root: &Path) -> Refresh {
         let mut paths = Vec::new();
 
-        walk(root, root, &mut paths);
+        walk(root, &mut paths);
 
         let mut seen = std::collections::BTreeSet::new();
         let mut stats = Refresh::default();

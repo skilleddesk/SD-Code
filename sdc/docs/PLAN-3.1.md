@@ -32,3 +32,16 @@ Legend: DONE (verified), PARTIAL (what works / what is missing), OWNER (needs th
 
 ## Phase 4 - product
 - 4.4 DONE (presets, Simple/Pro, Advanced). 4.1-4.3, 4.5-4.12: see below as they are finished.
+- 4.1 DONE (optional signed updater + Windows signing in `release.yml`, secret-gated; OWNER: certificates). In-app updater UI: not built.
+- 4.2 DONE (opt-in telemetry, counts only, no server). 4.3 DONE (onboarding timing test). 4.5 DONE (Ship Safe). 4.6/4.7 DONE (Time Machine on rail, cost by source).
+- 4.8 DONE (morning brief + weekly client report). 4.9 DONE (`sdcd mcp`). 4.10 DONE (Windows Job Object containment; type-checked for the Windows target, runtime test OWNER-TO-RUN on Windows).
+- 4.12 DONE for the task set (40 validated small tasks, Gate 1 statistics plan). The Gate 1 run itself is NOT done: it needs a live 9B model - OWNER-TO-RUN (`sdcd bench run --models ollama:qwen3.5:9b --tier small --runs 3`).
+- 4.11 (Small Model Engine) - switch / evidence:
+  - P1-1 `graph.v1`, P1-2 `runtime.steps`, P1-11 `edit.symbol_patch` (off by default), P1-12 `verify.lsp` (off by default): DONE with tests.
+  - P1-3 `sme.budget`, P1-5 `sme.prompt_diet`: DONE, on. P1-4 `sme.step_profile`: DONE, off by default (not measured on the bench).
+  - P1-6 `sme.toolcall_rescue`: DONE (corpus of 16 printed shapes, schema validation). `sme.constrained` (grammar-constrained output): NOT built.
+  - P1-7 `sme.memory` working memory, P1-8 `sme.retrieval` (ranked_search tool), P1-9 `sme.quote_verify`, P1-10 `runtime.decompose` (only the "step names more than two files" check is wired into the plan tool; the planner does not yet call `breakdown`), P1-13 `sme.confidence`, P1-14 `sme.spec_brief`: DONE with unit tests; wiring as stated in the code.
+  - P1-15 `runtime.fastpath`: DONE for what it skips (spec restatement); Gate 1 itself: NOT RUN (owner).
+  - P3-3 `trust.slopguard` (install commands checked against npm / PyPI / crates.io; unknown name refused; unreachable registry only a note): DONE.
+  - P3-9 Diff Review (per-file, per-hunk, ask / ask-to-undo prefill the prompt), P3-11 Select & Instruct (selection in a file -> prompt with `@path:line`): DONE (pure logic tested; the buttons are not covered by a browser test). P3-10 `@` picker: already existed in `PromptArea`.
+  - Not done in 4.11: the loop detector beyond the existing one in `trust/cost.rs` (5th identical call), an automated confidence AUROC measurement on real runs.

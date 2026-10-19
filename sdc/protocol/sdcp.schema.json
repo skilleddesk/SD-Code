@@ -338,6 +338,8 @@
           "team.set",
           "settings.get",
           "settings.set",
+          "memory.update",
+          "memory.list",
           "graph.query",
           "report.client",
           "brief.today",
@@ -2347,6 +2349,31 @@
           "result": {
             "key": "string",
             "value": "string"
+          }
+        },
+        "memory.update": {
+          "params": {
+            "task": "string",
+            "action": "string",
+            "seq": "integer?",
+            "kind": "string?",
+            "text": "string?",
+            "source": "string?",
+            "quote": "string?",
+            "pinned": "boolean?"
+          },
+          "result": {
+            "notes": "array",
+            "changed": "boolean"
+          }
+        },
+        "memory.list": {
+          "params": {
+            "task": "string",
+            "cap": "integer?"
+          },
+          "result": {
+            "notes": "array"
           }
         },
         "graph.query": {

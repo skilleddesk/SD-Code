@@ -81,7 +81,9 @@ pub fn secrets(root: &Path) -> Value {
 /// Paths a web server must never serve, and the text that proves it did.
 const EXPOSED: &[(&str, &str)] = &[("/.env", "="), ("/.git/config", "[core]"), ("/wp-config.php.bak", "DB_"), ("/.htpasswd", ":"), ("/phpinfo.php", "phpinfo"), ("/backup.sql", "INSERT INTO")];
 
-fn http_get(url: &str, limit: u64) -> Result<(u16, Vec<(String, String)>, String), String> {
+type Fetched = (u16, Vec<(String, String)>, String);
+
+fn http_get(url: &str, limit: u64) -> Result<Fetched, String> {
     let agent = ureq::AgentBuilder::new().timeout_connect(Duration::from_secs(6)).timeout_read(Duration::from_secs(8)).redirects(0).build();
 
     match agent.get(url).set("user-agent", "SDC-ShipSafe/3.1").call() {
@@ -99,7 +101,7 @@ fn http_get(url: &str, limit: u64) -> Result<(u16, Vec<(String, String)>, String
 }
 
 /// 2. Access: secret files readable by every user on this computer, a web folder that holds secrets, and - with a site address - files
-/// the site serves that it must not.
+///    the site serves that it must not.
 pub fn access(root: &Path, site: Option<&str>) -> Value {
     let mut problems: Vec<String> = Vec::new();
 
@@ -394,7 +396,7 @@ fn lookup(dependency: &Dependency, registries: &Registries) -> Existence {
 }
 
 /// 5. Hallucinated packages: a name the registry has never heard of. An AI that writes `import fast-json-sanitize` may be making the name
-/// up - and anyone can register it tomorrow with malware inside. A package created in the last two weeks is flagged to look at, not failed.
+///    up - and anyone can register it tomorrow with malware inside. A package created in the last two weeks is flagged to look at, not failed.
 pub fn existence(root: &Path, registries: &Registries) -> Value {
     let all = dependencies(root);
 
@@ -414,7 +416,7 @@ pub fn existence(root: &Path, registries: &Registries) -> Value {
         out
     });
     let missing: Vec<String> = looked.iter().filter(|(_, answer)| *answer == Existence::Missing).map(|(dependency, _)| format!("{} ({}) - not in the {} registry", dependency.name, dependency.registry, dependency.registry)).collect();
-    let fresh: Vec<String> = looked.iter().filter_map(|(dependency, answer)| matches!(answer, Existence::Exists { age_days: Some(age) } if *age < 14).then(|| format!("{} ({}) - first published less than two weeks ago; check who made it", dependency.name, dependency.registry))).collect();
+    let fresh: Vec<String> = looked.iter().filter(|(_, answer)| matches!(answer, Existence::Exists { age_days: Some(age) } if *age < 14)).map(|(dependency, _)| format!("{} ({}) - first published less than two weeks ago; check who made it", dependency.name, dependency.registry)).collect();
     let unknown = looked.iter().filter(|(_, answer)| matches!(answer, Existence::Unknown(_))).count();
 
     if !missing.is_empty() {

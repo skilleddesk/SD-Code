@@ -267,6 +267,8 @@ export type SdcpMethod =
   | 'team.set'
   | 'settings.get'
   | 'settings.set'
+  | 'memory.update'
+  | 'memory.list'
   | 'graph.query'
   | 'report.client'
   | 'brief.today'
@@ -2557,6 +2559,8 @@ export interface SdcpMethodMap {
   'team.set': { params: { members?: TeamMember[]; current?: string }; result: TeamState };
   'settings.get': { params: { key: string }; result: { key: string; value: string | null } };
   'settings.set': { params: { key: string; value: string | boolean }; result: { key: string; value: string } };
+  'memory.update': { params: { task: string; action: "add" | "pin" | "unpin" | "drop" | "clear"; seq?: number; kind?: string; text?: string; source?: string; quote?: string; pinned?: boolean }; result: { notes: Array<{ seq: number; kind: string; text: string; source: string; quote: string; pinned: boolean }>; changed: boolean } };
+  'memory.list': { params: { task: string; cap?: number }; result: { notes: Array<{ seq: number; kind: string; text: string; source: string; quote: string; pinned: boolean }> } };
   'graph.query': { params: { path: string; query: "where" | "callers" | "tests" | "symbols" | "changed"; name?: string }; result: { query: string; result: unknown[]; files: number; parsed: number; reused: number; rootHash: string; modelCalls: 0 } };
   'report.client': { params: { days?: number; lang?: string }; result: { report: Record<string, unknown>; htmlPath: string; html: string } };
   'brief.today': { params: { lang?: string; push?: boolean }; result: { brief: Record<string, unknown>; headline: string; htmlPath: string; html: string } };

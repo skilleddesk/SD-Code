@@ -5,6 +5,7 @@
 //! log. The app's own state is *derived* from the event log, but the log is persisted here, which is
 //! what makes a restart continue a conversation rather than start a new one.
 
+pub mod memory;
 pub mod sqlite;
 pub mod trust;
 

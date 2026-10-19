@@ -227,11 +227,7 @@ fn close_brackets(text: &str) -> Option<String> {
                 '"' => in_string = true,
                 '{' => stack.push('}'),
                 '[' => stack.push(']'),
-                '}' | ']' => {
-                    if stack.pop() != Some(c) {
-                        return None;
-                    }
-                }
+                '}' | ']' if stack.pop() != Some(c) => return None,
                 _ => {}
             }
         }

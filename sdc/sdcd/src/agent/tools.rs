@@ -77,6 +77,10 @@ pub fn specs_for(caps: Caps) -> Vec<ToolSpec> {
         all.push(code_graph_spec());
     }
 
+    if crate::v3::on("sme.retrieval") {
+        all.push(ranked_search_spec());
+    }
+
     if caps.vision {
         all.extend(vision_specs());
     }
@@ -103,7 +107,7 @@ pub fn specs_for(caps: Caps) -> Vec<ToolSpec> {
 pub fn browser_spec() -> ToolSpec {
     ToolSpec {
         name: "browser",
-        description: "Use a real web browser (headless, on the person's machine) to try a page the way a user would: open, read, click, type, press keys, and - for a model that can see - screenshot. The browser stays open between calls in this chat. Use it to test the page you built (a dev server from start_process, a file:/// page, or a public URL), not as a general web fetch.",
+        description: "Use a real browser (headless) to try a page as a user: open, read, click, type, press keys, screenshot. It stays open between calls. For testing the page you built, not as a web fetch.",
         schema: json!({
             "type": "object",
             "properties": {
@@ -124,7 +128,7 @@ pub fn browser_spec() -> ToolSpec {
 pub fn patch_spec() -> ToolSpec {
     ToolSpec {
         name: "apply_patch",
-        description: "Edit files with one patch in the Codex format - add, update, move and delete several files in one call. The patch starts with '*** Begin Patch' and ends with '*** End Patch'. Each file is '*** Add File: path' (every line prefixed with +), '*** Delete File: path', or '*** Update File: path' (optionally '*** Move to: newpath') followed by hunks: an '@@' line, then context lines (prefixed with a space), removed lines (-) and added lines (+). Context and removed lines must match the file exactly.",
+        description: "Edit several files with one Codex-format patch: '*** Begin Patch' to '*** End Patch', with '*** Add File: path' (+ lines), '*** Delete File: path', or '*** Update File: path' and an '@@' hunk of context, removed (-) and added (+) lines that must match exactly.",
         schema: json!({
             "type": "object",
             "properties": { "patch": { "type": "string", "description": "The whole patch." } },
@@ -138,7 +142,7 @@ pub fn patch_spec() -> ToolSpec {
 pub fn task_spec() -> ToolSpec {
     ToolSpec {
         name: "task",
-        description: "Hand a self-contained research or exploration job to a sub-agent with its own fresh context and read-only tools (read, list, grep, glob, web). It answers with a report. Use it to explore a large codebase or look something up without filling your own context; several task calls in one reply run in parallel. Give it everything it needs to know in prompt - it has not seen this conversation.",
+        description: "Hand a self-contained exploration or research job to a sub-agent with a fresh context and read-only tools; it answers with a report. Several task calls in one reply run in parallel. Give it everything it needs: it has not seen this conversation.",
         schema: json!({
             "type": "object",
             "properties": {
@@ -165,7 +169,7 @@ fn vision_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "screenshot",
-            description: "Render a web page in a headless browser on the person's machine and look at it - to check the page you built looks right. Works with http://localhost addresses of a dev server you started with start_process, public URLs, and file:/// paths.",
+            description: "Render a page in a headless browser and look at it - to check the page you built looks right. Works with a dev server's localhost address, a public URL, and file:/// paths.",
             schema: json!({
                 "type": "object",
                 "properties": {
@@ -184,7 +188,7 @@ fn more_specs() -> Vec<ToolSpec> {
     vec![
         ToolSpec {
             name: "grep",
-            description: "Search file contents with a regular expression (Rust/PCRE-like syntax). Answers path:line: text, up to 200 hits. Skips node_modules, .git, build output and secrets. Prefer it over reading files one by one to find where something is defined or used.",
+            description: "Search file contents with a regular expression (Rust/PCRE-like). Answers path:line: text, up to 200 hits; skips node_modules, .git and build output. Prefer it to reading files one by one to find where something is used.",
             schema: json!({
                 "type": "object",
                 "properties": {
@@ -232,7 +236,7 @@ fn more_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "start_process",
-            description: "Start a command that keeps running - a dev server, a watcher, a worker - in the background, in the project folder. Answers its id and its first output (for a server, usually the address). It keeps running after your answer; read it with process_output and end it with stop_process.",
+            description: "Start a command that keeps running (a dev server, a watcher) in the background. Answers its id and first output - a server's address, usually. It keeps running after your answer: read it with process_output, end it with stop_process.",
             schema: json!({
                 "type": "object",
                 "properties": {
@@ -268,7 +272,7 @@ fn more_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "ask_user",
-            description: "Ask the person a question and wait for the answer - when a decision is theirs to make (which design, which data to keep, which of two readings they meant) and guessing wrong would waste the work. Offer 2-4 short options when you can; they can always write their own answer. Ask in the person's language. Do not use it for permission to run a tool: the tools ask for that themselves.",
+            description: "Ask the person and wait for the answer - when a decision is theirs (which design, which data to keep, which reading) and a wrong guess would waste the work. Offer 2-4 short options, in their language. Not for permission to run a tool.",
             schema: json!({
                 "type": "object",
                 "properties": {
@@ -281,12 +285,14 @@ fn more_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "remember",
-            description: "Keep a fact for every later chat: a preference the person stated, a convention of the project, a decision. project scope writes .sdc/memory.md; global scope is SDC's memory for all projects. Only lasting facts - not the progress of this task.",
+            description: "Keep a lasting fact for later chats (a preference, a convention, a decision) - not this task's progress. project writes .sdc/memory.md; global is for all projects. A quote must be the file's own line.",
             schema: json!({
                 "type": "object",
                 "properties": {
                     "fact": { "type": "string", "description": "One short, self-contained sentence." },
                     "scope": { "type": "string", "enum": ["project", "global"], "description": "project (default) or global." },
+                    "source": { "type": "string", "description": "The file the fact rests on, if it rests on code." },
+                    "quote": { "type": "string", "description": "That line, exactly as the file has it." },
                 },
                 "required": ["fact"],
                 "additionalProperties": false,
@@ -661,6 +667,7 @@ fn execute_call(context: &mut ToolContext, call: &ToolUse) -> Outcome {
         "find_symbol" => find_symbol(context, &call_id, &text("name")),
         "symbols" => file_symbols(context, &call_id, &text("path")),
         "code_graph" => code_graph(context, &call_id, &text("query"), &text("name")),
+        "ranked_search" => ranked_search(context, &call_id, &text("query"), call.input["k"].as_u64()),
         "patch_symbol" => patch_symbol(context, &call_id, &call.input),
         "web_fetch" => web_fetch(context, &call_id, &text("url")),
         "web_search" => web_search(context, &call_id, &text("query")),
@@ -668,7 +675,7 @@ fn execute_call(context: &mut ToolContext, call: &ToolUse) -> Outcome {
         "process_output" => process_output(context, &call_id, &text("process_id"), number("lines").unwrap_or(60) as usize),
         "stop_process" => stop_process(context, &call_id, &text("process_id")),
         "ask_user" => ask_user(context, &call_id, &text("question"), &call.input["options"]),
-        "remember" => remember(context, &call_id, &text("fact"), call.input["scope"].as_str().unwrap_or("project")),
+        "remember" => remember(context, &call_id, &text("fact"), call.input["scope"].as_str().unwrap_or("project"), &call.input),
         "view_image" => view_image(context, &call_id, &text("path")),
         "screenshot" => screenshot(context, &call_id, &text("url"), number("width").unwrap_or(1280) as u32, number("height").unwrap_or(900) as u32),
         "browser" => browser(context, &call_id, &call.input),
@@ -870,7 +877,7 @@ fn intel_specs() -> Vec<ToolSpec> {
 fn code_graph_spec() -> ToolSpec {
     ToolSpec {
         name: "code_graph",
-        description: "Ask the project's code graph (no guessing, no search): `callers` = where a function/class/name is called or used; `tests` = which test files touch a source file; `where` = where it is declared. Faster and more exact than grep for these questions.",
+        description: "The project's code graph: `callers` where a name is used, `tests` which tests touch a file, `where` where it is declared.",
         schema: serde_json::json!({
             "type": "object",
             "properties": {
@@ -917,7 +924,7 @@ fn code_graph(context: &mut ToolContext, call_id: &str, query: &str, name: &str)
 fn patch_symbol_spec() -> ToolSpec {
     ToolSpec {
         name: "patch_symbol",
-        description: "Change one declaration (function, method, class, struct...) by name. Give the file, the symbol's qualified name (`Class.method`, `Type::method` - from find_symbol or symbols) and its hash (the #hash those tools print): the edit is applied only if the symbol still has that hash and exactly one declaration has that name; otherwise nothing changes and you are told what to re-read. Either `new_body` (the whole declaration, for a small one) or `edits` (a list of {old, new} replacements inside the symbol, for a larger one - each `old` must match exactly once). Refused if the result would not parse.",
+        description: "Change one declaration by name: file, qualified name (`Class.method`), the #hash find_symbol printed. Applied only if the hash still matches and the name is unique. `new_body` or `edits` ({old,new}).",
         schema: serde_json::json!({
             "type": "object",
             "properties": {
@@ -1090,6 +1097,47 @@ fn patch_symbol(context: &mut ToolContext, call_id: &str, input: &Value) -> Outc
 /// ` #1a2b3c4d5e6f` after a declaration the Code Graph read: the hash `patch_symbol` asks for (empty for a line-pattern symbol).
 fn hash_tag(symbol: &crate::intel::Symbol) -> String {
     if symbol.hash.is_empty() { String::new() } else { format!(" #{}", &symbol.hash[..12]) }
+}
+
+/// P1-8: the ranked search - which chunks of the project answer this question, from the names, the declarations and BM25, with no model.
+fn ranked_search_spec() -> ToolSpec {
+    ToolSpec {
+        name: "ranked_search",
+        description: "Find the code that answers a question, ranked and with no model: the best chunks as `path:lines` and a skim of the best one.",
+        schema: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "query": { "type": "string", "description": "What you are looking for, in words (e.g. `where the header is drawn`)" },
+                "k": { "type": "integer", "description": "How many candidates (default 6, at most 20)" },
+            },
+            "required": ["query"],
+            "additionalProperties": false,
+        }),
+    }
+}
+
+fn ranked_search(context: &mut ToolContext, call_id: &str, query: &str, k: Option<u64>) -> Outcome {
+    if query.trim().is_empty() {
+        return Outcome::error("ranked_search needs a query.");
+    }
+
+    started(context, call_id, "read", "Ranked search", query);
+
+    if context.workspace.is_remote() {
+        completed(context, call_id, false, "remote folder", None);
+
+        return Outcome::error("The ranked search reads this computer's folders; this chat's folder is on a server - use grep.");
+    }
+
+    let root = std::path::Path::new(context.workspace.root());
+    let k = k.unwrap_or(6).clamp(1, 20) as usize;
+    let index = crate::sme::retrieval::build(root, |_, _| {});
+    let hits = index.search(query, k);
+    let skimmed = crate::sme::retrieval::skim(&hits, 24);
+
+    completed(context, call_id, true, &format!("{} candidates", hits.len()), None);
+
+    Outcome::ok(if skimmed.is_empty() { format!("Nothing in this project matches `{query}`. Try grep with a word you saw.") } else { skimmed })
 }
 
 /// v3 W4: where a name is declared, across the project (the newest-changed files are looked at first).
@@ -1486,6 +1534,21 @@ fn run_command(context: &mut ToolContext, call_id: &str, line: &str, timeout: Du
         ));
     }
 
+    /* P3-3: an install that names a package no registry knows is refused before anyone is asked. */
+    let mut unverified_note = None;
+
+    if crate::v3::on("trust.slopguard") && !context.workspace.is_remote() {
+        let verdict = crate::trust::slopguard::check(line);
+
+        if let Some(refusal) = verdict.refusal() {
+            completed(context, call_id, false, "refused", None);
+
+            return Outcome::error(refusal);
+        }
+
+        unverified_note = verdict.note();
+    }
+
     /* A command the policy lists under `always_ask` waits for the person in every mode, like a dangerous one. */
     let risk = if gate::looks_dangerous(line) || context.policy.always_asks(line).is_some() { "DANGEROUS" } else { "MUTATING" };
 
@@ -1548,6 +1611,11 @@ fn run_command(context: &mut ToolContext, call_id: &str, line: &str, timeout: Du
                 content.push_str(&format!("--- stderr ---\n{}\n", report.stderr));
             }
 
+            if let Some(note) = &unverified_note {
+                content.push_str(note);
+                content.push('\n');
+            }
+
             /* A failed command is information, not a tool error: the model reads the output and fixes
                the code. Only a command that could not be run at all is an error. */
             Outcome::ok(content)
@@ -1589,11 +1657,26 @@ fn update_plan(context: &mut ToolContext, input: &Value) -> Outcome {
     context.plan = Some(json!(steps));
 
     let total = steps.len();
-
-    Outcome::ok(if done == total {
+    let said = if done == total {
         format!("Plan shown: all {total} steps done.")
     } else {
         format!("Plan shown: {done} of {total} steps done. Call update_plan again as each step starts or finishes.")
+    };
+
+    /* P1-10: a step naming more than two files is larger than the step budget, and the answer says which ones - split by file, so no
+       step carries more context than it can hold. */
+    let large = if crate::v3::on("runtime.decompose") {
+        crate::runtime::decompose::too_large(&steps.iter().filter_map(|step| step["text"].as_str().map(str::to_string)).collect::<Vec<_>>())
+    } else {
+        Vec::new()
+    };
+
+    Outcome::ok(if large.is_empty() {
+        said
+    } else {
+        let named: Vec<String> = large.iter().map(|(index, files)| format!("step {} names {} files ({})", index + 1, files.len(), files.join(", "))).collect();
+
+        format!("{said} But {} - a step holds {}: split each into one step per file.", named.join("; "), crate::runtime::decompose::FILES_PER_STEP)
     })
 }
 
@@ -1966,11 +2049,33 @@ fn ask_user(context: &mut ToolContext, call_id: &str, question: &str, options: &
     }
 }
 
-fn remember(context: &mut ToolContext, call_id: &str, fact: &str, scope: &str) -> Outcome {
+fn remember(context: &mut ToolContext, call_id: &str, fact: &str, scope: &str, input: &Value) -> Outcome {
     if fact.trim().is_empty() {
         return Outcome::error("remember needs a fact.");
     }
 
+    /* P1-9: a fact that rests on a line of code carries the line, and the line is checked against the file before anything is kept -
+       a small model quotes from memory, and a quote that is not in the file carries an authority nobody wrote. */
+    let (source, quote) = (input["source"].as_str().unwrap_or_default().trim().to_string(), input["quote"].as_str().unwrap_or_default().trim().to_string());
+
+    if crate::v3::on("sme.quote_verify") && (!source.is_empty() || !quote.is_empty()) {
+        if context.workspace.is_remote() {
+            return Outcome::error("A quote is checked against the file on this computer; this chat's folder is on a server - keep the fact without the quote.");
+        }
+
+        if let Err(refusal) = crate::sme::quote::verify(std::path::Path::new(context.workspace.root()), &source, &quote) {
+            completed(context, call_id, false, "the quote is not in the file", None);
+
+            return Outcome::error(refusal);
+        }
+    }
+
+    let fact = if quote.is_empty() {
+        fact.to_string()
+    } else {
+        format!("{fact} ({source}: `{quote}`)")
+    };
+    let fact = fact.as_str();
     let global = scope == "global";
 
     /* SDC's own memory, not a change to the project: no checkpoint, not in the turn's changed files. */
@@ -2710,6 +2815,65 @@ mod tests {
         assert!(!crate::v3::forcing(&["edit.symbol_patch"], || specs_for(Caps { vision: false, subagent: true, patch: false })).iter().any(|spec| spec.name == "patch_symbol"), "a read-only sub-agent never gets an editing tool");
     }
 
+    /// P1-8: the ranked search answers from the project's own names and declarations, with no model call.
+    #[test]
+    fn the_ranked_search_finds_the_declaration_and_says_where_it_is() {
+        let (root, workspace) = folder("ranked-search");
+        let recorder = Recorder::new();
+        let sink = recorder.sink();
+        let mut context = context(&workspace, &sink, Autonomy::Auto);
+
+        std::fs::create_dir_all(root.join("billing")).unwrap();
+        std::fs::write(root.join("billing/pay.py"), "def charge(amount):\n    return amount * 2\n").unwrap();
+        std::fs::write(root.join("app.py"), "from pay import charge\n\ndef run():\n    return charge(1)\n").unwrap();
+
+        let found = execute(&mut context, &call("ranked_search", json!({ "query": "where is charge defined", "k": 3 })));
+
+        assert!(!found.is_error, "{}", found.content);
+        assert!(found.content.contains("billing/pay.py:1-2 [declares]"), "{}", found.content);
+        assert!(found.content.contains("def charge(amount):"));
+        assert!(execute(&mut context, &call("ranked_search", json!({ "query": "nothing like this exists", "k": 2 }))).content.contains("Nothing in this project matches"));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_ranked_search_is_offered_only_when_its_switch_is_on() {
+        let names = |on: &[&str]| crate::v3::forcing(on, || specs_for(Caps { vision: false, subagent: false, patch: false }).iter().map(|spec| spec.name).collect::<Vec<_>>());
+
+        assert!(names(&[]).contains(&"ranked_search"), "on by default: it costs no model call");
+        assert!(!crate::v3::ablating(&["sme.retrieval"], || names(&[])).contains(&"ranked_search"));
+    }
+
+    /// P1-9: a remembered fact that quotes a file is checked against the file; a quote the file does not have is refused and nothing
+    /// is written.
+    #[test]
+    fn a_remembered_quote_that_is_not_in_the_file_is_refused() {
+        let (root, workspace) = folder("quote-guard");
+        let recorder = Recorder::new();
+        let sink = recorder.sink();
+        let mut context = context(&workspace, &sink, Autonomy::Auto);
+
+        std::fs::create_dir_all(root.join("billing")).unwrap();
+        std::fs::write(root.join("billing/pay.py"), "def charge(amount, currency):\n    return amount\n").unwrap();
+
+        let fake = execute(&mut context, &call("remember", json!({ "fact": "charge takes one argument", "source": "billing/pay.py", "quote": "def charge(amount):" })));
+
+        assert!(fake.is_error, "{}", fake.content);
+        assert!(fake.content.contains("is not in billing/pay.py") && fake.content.contains("was not kept"), "{}", fake.content);
+        assert!(!root.join(".sdc/memory.md").exists(), "nothing was remembered");
+
+        let real = execute(&mut context, &call("remember", json!({ "fact": "charge takes an amount and a currency", "source": "billing/pay.py", "quote": "def charge(amount, currency):" })));
+
+        assert!(!real.is_error, "{}", real.content);
+
+        let remembered = std::fs::read_to_string(root.join(".sdc/memory.md")).unwrap_or_default();
+
+        assert!(remembered.contains("billing/pay.py: `def charge(amount, currency):`"), "{remembered}");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     #[test]
     fn a_command_the_policy_denies_is_refused_without_running() {
         let (root, workspace) = folder("denied");
@@ -2815,8 +2979,8 @@ mod tests {
     fn every_tool_has_a_strict_object_schema() {
         let specs = specs_for(Caps { vision: true, subagent: false, patch: true });
 
-        assert_eq!(specs.len(), 22);
-        assert_eq!(specs_for(Caps::default()).len(), 19, "no image tools, no patch");
+        assert_eq!(specs.len(), 23);
+        assert_eq!(specs_for(Caps::default()).len(), 20, "no image tools, no patch");
         assert_eq!(specs_for(Caps { vision: false, subagent: true, patch: true }).len(), 9, "a sub-agent only reads");
         assert!(specs_for(Caps { vision: false, subagent: true, patch: false }).iter().all(|spec| READ_ONLY.contains(&spec.name)));
 

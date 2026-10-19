@@ -1534,6 +1534,18 @@ const english = {
     open: 'Open the page (to print or save as PDF)',
   },
   /** Opt-in telemetry (Phase 4.2). */
+  review: {
+    ask: 'Ask about this change',
+    askDefault: 'Explain this change, and tell me if anything in it looks wrong.',
+    undo: 'Ask to undo this change',
+    undoDefault: 'Undo this change and leave the rest of the diff as it is.',
+    hunkOf: (added: number, removed: number): string => `+${added} −${removed}`,
+    noHunks: 'No lines to review (a binary file, a rename or a mode change).',
+    instruct: 'Instruct',
+    instructHint: 'Put the selected text in the prompt, with its file',
+    instructDefault: 'Change this: ',
+  },
+
   telemetry: {
     title: 'Share anonymous usage counts',
     on: 'On',

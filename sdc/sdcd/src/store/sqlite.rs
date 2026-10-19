@@ -231,6 +231,17 @@ CREATE INDEX IF NOT EXISTS step_trace_task ON step_trace(task_id, step);
 CREATE INDEX IF NOT EXISTS step_trace_session ON step_trace(session_id, id);
 "#,
     ),
+    /* P1-7: working memory - the few facts a task established, so a long turn is not sent its own history again. */
+    (
+        "0203-working-memory",
+        r#"
+CREATE TABLE IF NOT EXISTS working_memory (
+  task TEXT NOT NULL, seq INTEGER NOT NULL, kind TEXT NOT NULL, text TEXT NOT NULL,
+  source TEXT NOT NULL DEFAULT '', quote TEXT NOT NULL DEFAULT '', pinned INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL, PRIMARY KEY (task, seq));
+CREATE INDEX IF NOT EXISTS working_memory_kind ON working_memory(task, kind, seq);
+"#,
+    ),
 ];
 
 /// The daemon's database handle.

@@ -6,6 +6,7 @@ import { useFilesStore } from '../../store/files';
 import { closeFile, saveFile } from '../../store/intents';
 import { BTN_PRIMARY, BTN_SECONDARY, BTN_SM } from '../ui/button';
 import { IconButton } from '../ui/IconButton';
+import { SelectInstruct } from './SelectInstruct';
 
 /* The editor is loaded the first time a file is opened, not with the window (see `CodeEditor`). */
 const CodeEditor = lazy(() => import('./CodeEditor'));
@@ -174,6 +175,7 @@ export function PreviewFile() {
         </span>
       </div>
 
+      <SelectInstruct path={relativeTo(root, file.path)}>
       <Suspense
         fallback={
           <pre className="min-h-0 flex-1 overflow-auto whitespace-pre px-[10px] py-[8px] font-mono text-[11.5px] leading-[1.6] text-text-secondary">
@@ -190,6 +192,7 @@ export function PreviewFile() {
           onSave={save}
         />
       </Suspense>
+      </SelectInstruct>
     </div>
   );
 }

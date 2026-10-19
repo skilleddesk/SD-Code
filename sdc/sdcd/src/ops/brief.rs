@@ -191,6 +191,11 @@ pub fn brief_html(brief: &Value, lang: &str) -> String {
     let dependencies: String = brief["dependencies"].as_array().into_iter().flatten().map(|entry| format!("<li>{} - {}</li>", escape(entry["project"].as_str().unwrap_or_default()), escape(entry["summary"].as_str().unwrap_or_default()))).collect();
     let cost: String = brief["yesterdayCost"]["bySource"].as_array().into_iter().flatten().filter(|row| row["turns"].as_u64().unwrap_or(0) > 0).map(|row| format!("<li>{}: ${:.4} ({} turn(s))</li>", escape(row["kind"].as_str().unwrap_or_default()), row["usd"].as_f64().unwrap_or(0.0), row["turns"])).collect();
     let agent = &brief["agent"];
+    let dependencies = if dependencies.is_empty() { format!("<li>{}</li>", t("none recorded", "কিছু নেই")) } else { dependencies };
+    let turns = format!("{} {}", agent["turnsStarted"], t("turns started", "টার্ন শুরু"));
+    let done = format!("{} {}", agent["turnsCompleted"], t("completed", "শেষ"));
+    let errors = format!("{} {}", agent["errors"], t("errors", "ত্রুটি"));
+    let cost = if cost.is_empty() { format!("<li>{}</li>", t("nothing recorded", "কিছু নেই")) } else { cost };
 
     format!(
         "<!doctype html><html lang=\"{lang}\"{dir}><head><meta charset=\"utf-8\"><title>{title}</title><style>body{{font:14px system-ui;max-width:860px;margin:24px auto;padding:0 16px;color:#222}}table{{border-collapse:collapse;width:100%}}td,th{{border-bottom:1px solid #ddd;padding:6px 8px;text-align:left}}.bad td{{color:#b00020;font-weight:600}}.warn td{{color:#8a5a00}}h2{{margin-top:28px}}</style></head><body><h1>{title}</h1><p>{headline}</p><h2>{sites}</h2><table><tr><th>{site}</th><th>{status}</th><th>SSL</th><th>{disk}</th><th>{backup}</th><th>{flags}</th></tr>{rows}</table><h2>{deps}</h2><ul>{dependencies}</ul><h2>{did}</h2><p>{turns} / {done} / {errors}</p><h2>{costh}</h2><ul>{cost}</ul><p style=\"color:#777\">{foot}</p></body></html>",
@@ -206,13 +211,13 @@ pub fn brief_html(brief: &Value, lang: &str) -> String {
         flags = t("Needs a look", "দেখার বিষয়"),
         rows = rows,
         deps = t("Dependency warnings (last Ship Safe run)", "ডিপেন্ডেন্সি সতর্কতা (সর্বশেষ Ship Safe)"),
-        dependencies = if dependencies.is_empty() { format!("<li>{}</li>", t("none recorded", "কিছু নেই")) } else { dependencies },
+        dependencies = dependencies,
         did = t("What the agent did in the last 24 hours", "গত ২৪ ঘণ্টায় এজেন্ট কী করেছে"),
-        turns = format!("{} {}", agent["turnsStarted"], t("turns started", "টার্ন শুরু")),
-        done = format!("{} {}", agent["turnsCompleted"], t("completed", "শেষ")),
-        errors = format!("{} {}", agent["errors"], t("errors", "ত্রুটি")),
+        turns = turns,
+        done = done,
+        errors = errors,
         costh = t("Yesterday's AI cost", "গতকালের AI খরচ"),
-        cost = if cost.is_empty() { format!("<li>{}</li>", t("nothing recorded", "কিছু নেই")) } else { cost },
+        cost = cost,
         foot = t("Built from what SDC recorded; nothing here was guessed. A site not checked in 24 hours is shown as stale or unchecked, never as up.", "SDC যা রেকর্ড করেছে তা থেকে তৈরি; কিছুই আন্দাজ নয়। ২৪ ঘণ্টায় পরীক্ষা না হওয়া সাইট 'চালু' নয়, 'পুরনো/অপরীক্ষিত' দেখায়।"),
     )
 }

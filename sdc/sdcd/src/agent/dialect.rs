@@ -52,6 +52,9 @@ pub struct Reply {
     pub ttft_ms: u64,
     /// An estimate of the reasoning tokens in the reply (a provider that reports none still reasoned).
     pub thinking_tokens: u64,
+    /// P1-4: the step profile this request was sent with (`patch`, `format`...), when `sme.step_profile` chose one. Set by
+    /// `ask_model` and written into the step's trace row; the reply itself is unaffected.
+    pub profile: Option<String>,
 }
 
 /// A tool as the model is told about it.
@@ -595,6 +598,7 @@ impl AnthropicState {
             output_tokens: self.output_tokens,
             cached_tokens: self.cached_tokens,
             ttft_ms: 0,
+            profile: None,
             thinking_tokens: 0,
         })
     }
@@ -753,6 +757,7 @@ impl OpenAiState {
             cached_tokens: self.cached_tokens,
             ttft_ms: 0,
             thinking_tokens: 0,
+            profile: None,
         })
     }
 }

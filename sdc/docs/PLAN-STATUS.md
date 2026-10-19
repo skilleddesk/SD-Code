@@ -23,21 +23,21 @@ Status: `todo` · `in-progress` · `blocked` · `done`.
 | P0-15 | Proof-of-Work badge and receipt | 0 | P0-12 | done | ui.proof_badge | sdc/docs/reports/P0-15.md | Proof-of-Work badge + receipt from the Step Trace (totals equal trace), en/bn, component visual fixture |
 | P0-16 | Hardware Auto-Tuner and VRAM Arbiter | 0 | P0-9 | done | local.autotune | sdc/docs/reports/P0-16.md | Auto-Tuner proposal (8GB card -> ~31k ctx on GPU, never applied), spill warnings, VRAM Arbiter |
 | P0-17 | Phase 0 release and Gate 0 | 0 | P0-0, P0-1, P0-2, P0-3, P0-4, P0-5, P0-6, P0-7, P0-8, P0-9, P0-10, P0-11, P0-12, P0-13, P0-14, P0-15, P0-16 | done | n/a | sdc/docs/reports/P0-17.md | Gate 0 PASS with measured numbers; audit fixed a shadow-repo bug that could empty a project; v3.0.0 released for macOS/Windows/Linux |
-| P1-1 | Code Graph and zero-model queries | 1 | Gate 0 | todo | graph.v1 |  |  |
-| P1-2 | Step Runtime | 1 | P1-1, P0-14, Gate 0 | todo | runtime.steps |  |  |
-| P1-3 | Small Model Profile and budgeter | 1 | P0-9, Gate 0 | todo | sme.budget |  |  |
-| P1-4 | Step Profile (sampling and thinking) | 1 | P1-3, Gate 0 | todo | sme.step_profile |  |  |
-| P1-5 | Prompt Diet and stable prefix | 1 | P1-3, Gate 0 | todo | sme.prompt_diet |  |  |
-| P1-6 | Constrained output and Tool-call Rescue | 1 | P1-5, Gate 0 | todo | sme.constrained, sme.toolcall_rescue |  |  |
-| P1-7 | Working Memory | 1 | P1-2, Gate 0 | todo | sme.memory |  |  |
-| P1-8 | Retrieval Cascade and Chunked Reader | 1 | P1-1, P0-16, Gate 0 | todo | sme.retrieval |  |  |
-| P1-9 | Source Quote Verifier | 1 | P1-7, Gate 0 | todo | sme.quote_verify |  |  |
-| P1-10 | Task Decomposer | 1 | P1-2, P1-8, Gate 0 | todo | runtime.decompose |  |  |
-| P1-11 | Symbol-Anchored Patcher and Cut-off Guard | 1 | P1-1, P0-14, Gate 0 | todo | edit.symbol_patch |  |  |
-| P1-12 | LSP Bridge | 1 | P1-1, Gate 0 | todo | verify.lsp |  |  |
-| P1-13 | Confidence Signals | 1 | P1-2, Gate 0 | todo | sme.confidence |  |  |
-| P1-14 | Bangla/Banglish Spec Brief | 1 | P1-5, Gate 0 | todo | sme.spec_brief |  |  |
-| P1-15 | Fast path and Gate 1 | 1 | P1-1, P1-2, P1-3, P1-4, P1-5, P1-6, P1-7, P1-8, P1-9, P1-10, P1-11, P1-12, P1-13, P1-14, Gate 0 | todo | runtime.fastpath |  |  |
+| P1-1 | Code Graph and zero-model queries | 1 | Gate 0 | done | graph.v1 |  | Code Graph on tree-sitter, Merkle index; 8 languages |
+| P1-2 | Step Runtime | 1 | P1-1, P0-14, Gate 0 | done | runtime.steps |  | syntax gate + all-or-nothing journaled commit for every edit |
+| P1-3 | Small Model Profile and budgeter | 1 | P0-9, Gate 0 | done | sme.budget |  | model classes and one token budget per step |
+| P1-4 | Step Profile (sampling and thinking) | 1 | P1-3, Gate 0 | done | sme.step_profile |  | vendor sampling per step; off by default until measured |
+| P1-5 | Prompt Diet and stable prefix | 1 | P1-3, Gate 0 | done | sme.prompt_diet |  | tool schemas capped, rules cut to the class, stable prefix |
+| P1-6 | Constrained output and Tool-call Rescue | 1 | P1-5, Gate 0 | in-progress | sme.constrained, sme.toolcall_rescue |  | Tool-call Rescue done (16-shape corpus); constrained output NOT built |
+| P1-7 | Working Memory | 1 | P1-2, Gate 0 | done | sme.memory |  | working-memory ledger (sqlite) + methods |
+| P1-8 | Retrieval Cascade and Chunked Reader | 1 | P1-1, P0-16, Gate 0 | done | sme.retrieval |  | retrieval cascade + ranked_search |
+| P1-9 | Source Quote Verifier | 1 | P1-7, Gate 0 | done | sme.quote_verify |  | quote verifier wired into note saving |
+| P1-10 | Task Decomposer | 1 | P1-2, P1-8, Gate 0 | in-progress | runtime.decompose |  | decomposer module + plan-size check wired; planner does not call breakdown yet |
+| P1-11 | Symbol-Anchored Patcher and Cut-off Guard | 1 | P1-1, P0-14, Gate 0 | done | edit.symbol_patch |  | symbol patcher + cut-off guard (off by default) |
+| P1-12 | LSP Bridge | 1 | P1-1, Gate 0 | done | verify.lsp |  | LSP client + after-edit hook (off by default) |
+| P1-13 | Confidence Signals | 1 | P1-2, Gate 0 | done | sme.confidence |  | confidence signals wired after tool results |
+| P1-14 | Bangla/Banglish Spec Brief | 1 | P1-5, Gate 0 | done | sme.spec_brief |  | Bangla/Banglish spec brief |
+| P1-15 | Fast path and Gate 1 | 1 | P1-1, P1-2, P1-3, P1-4, P1-5, P1-6, P1-7, P1-8, P1-9, P1-10, P1-11, P1-12, P1-13, P1-14, Gate 0 | in-progress | runtime.fastpath |  | fast path done; Gate 1 not run - needs a live model (owner-to-run) |
 | P2-1 | Rotation Policy Engine | 2 | Gate 1 | todo | rotation.policy |  |  |
 | P2-2 | Rotation Chain Settings UI | 2 | P2-1, P0-5, Gate 1 | todo | ui.rotation_chain |  |  |
 | P2-3 | Capsule Minimizer, Redactor, audit | 2 | P2-1, Gate 1 | todo | rotation.capsule |  |  |

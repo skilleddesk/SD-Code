@@ -303,6 +303,21 @@ mod tests {
     }
 
     #[test]
+    fn requests_spread_at_the_refill_rate_never_wait() {
+        let now = Instant::now();
+
+        /* Drain the single token, then ask once every second (exactly the 60-a-minute rate): nobody queues. */
+        assert_eq!(reserve("bucket-steady.example", 60.0, 1.0, now), Duration::ZERO);
+
+        for secs in 1..=5 {
+            assert_eq!(reserve("bucket-steady.example", 60.0, 1.0, now + Duration::from_secs(secs)), Duration::ZERO, "request at +{secs}s");
+        }
+
+        /* Asking twice as fast does queue: a request half a second after the last owes the other half. */
+        assert_eq!(reserve("bucket-steady.example", 60.0, 1.0, now + Duration::from_millis(5500)), Duration::from_millis(500));
+    }
+
+    #[test]
     fn the_host_is_lowercased_and_stripped_of_scheme_and_path() {
         assert_eq!(host("HTTPS://API.Example.COM/v1"), "api.example.com");
         assert_eq!(host("localhost:8080/v1/chat"), "localhost:8080");
