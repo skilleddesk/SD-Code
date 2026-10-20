@@ -84,3 +84,13 @@ fn the_goal_can_be_repeated_under_the_last_words_of_a_conversation() {
     assert!(!append_to_last(&mut [], "x"));
     assert!(!append_to_last(&mut [json!({ "role": "assistant", "tool_calls": [] })], "x"), "a tool-call message has no plain text to extend");
 }
+
+#[test]
+fn the_cap_keeps_the_tools_that_matter_not_the_first_registered() {
+    let registered = ["read_file", "list_dir", "search", "git_diff", "write_file", "edit_file", "run_command", "update_plan", "grep", "glob", "web_fetch", "remember", "ranked_search", "mcp__x__tool"];
+    let kept = at_most(&prioritise(&registered, |name| name), MAX_SCHEMAS);
+
+    assert_eq!(kept, ["read_file", "grep", "edit_file", "write_file", "run_command", "ranked_search"]);
+    assert_eq!(prioritise(&["zzz", "read_file"], |name| name), ["read_file", "zzz"], "a tool nobody ranked comes after the ranked ones");
+    assert_eq!(prioritise(&["b", "a"], |name| name), ["b", "a"], "unranked tools keep the order they came in");
+}

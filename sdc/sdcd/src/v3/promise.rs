@@ -98,6 +98,84 @@ fn every_default_on_switch_has_a_production_path_and_a_test() {
     assert!(no_test.is_empty(), "default-on switches that no test names (add a test, or list them in v3::INACTIVE): {no_test:?}");
 }
 
+/// The names a text asks `on(..)`, `on_for(..)`, `turn_on(.., ..)` or `technique(..)` about.
+fn asked_names(text: &str) -> Vec<String> {
+    let mut found = Vec::new();
+
+    for marker in ["on(\"", "on_for(\"", "technique(\""] {
+        let mut from = 0;
+
+        while let Some(at) = text[from..].find(marker) {
+            let start = from + at;
+            let before = text[..start].chars().last();
+            let name_from = start + marker.len();
+
+            /* `on(` must be the function, not the tail of another name (`turn_on(`, `button(`): only a `::` or a space/paren/`!` before it */
+            let function = marker != "on(\"" || !before.is_some_and(|c| c.is_alphanumeric() || c == '_');
+
+            if function {
+                if let Some(end) = text[name_from..].find('"') {
+                    found.push(text[name_from..name_from + end].to_string());
+                }
+            }
+
+            from = name_from;
+        }
+    }
+
+    let mut from = 0;
+
+    while let Some(at) = text[from..].find("turn_on(") {
+        let args = &text[from + at + 8..(from + at + 8 + 80).min(text.len())];
+        let end = args.find(')').unwrap_or(args.len());
+
+        if let Some(open) = args[..end].rfind('"') {
+            if let Some(close) = args[..open].rfind('"') {
+                found.push(args[close + 1..open].to_string());
+            }
+        }
+
+        from += at + 8;
+    }
+
+    found
+}
+
+/// Phase 0.6 caught a switch nothing reads. This catches the other half: code that asks about a switch **nobody registered** - `on()` answers
+/// `false` for it, so the feature behind it is dead without any test failing (3.1: working memory, `sme.memory`, was exactly this).
+#[test]
+fn every_switch_the_code_asks_about_is_registered() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut files = Vec::new();
+
+    rust_files(&root.join("src"), &mut files);
+
+    let mut unknown: Vec<String> = Vec::new();
+
+    for file in &files {
+        let text = std::fs::read_to_string(file).unwrap_or_default();
+        let (production, _) = split(file, &text);
+
+        for name in asked_names(&production) {
+            let plausible = !name.is_empty() && name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '.');
+
+            if plausible && !crate::v3::FEATURES.iter().any(|feature| feature.name == name) && !unknown.contains(&name) {
+                unknown.push(format!("{name} ({})", file.file_name().and_then(|name| name.to_str()).unwrap_or_default()));
+            }
+        }
+    }
+
+    assert!(unknown.is_empty(), "the code asks about switches that are not in v3::FEATURES (they are always off): {unknown:?}");
+}
+
+#[test]
+fn the_name_reader_finds_what_the_code_asks_and_nothing_else() {
+    let text = r#"if crate::v3::on("sme.zzz") && v3::on_for("a.b", p, m) { technique("t_1"); crate::v3::turn_on(&turn_id, "skel"); button("not.a.switch"); }"#;
+
+    assert_eq!(asked_names(text), ["sme.zzz", "a.b", "t_1", "skel"]);
+    assert!(!crate::v3::FEATURES.iter().any(|feature| feature.name == "sme.zzz"), "the sample name really is unregistered");
+}
+
 #[test]
 fn an_inactive_switch_names_a_real_switch_and_gives_a_reason() {
     for (name, why) in crate::v3::INACTIVE {

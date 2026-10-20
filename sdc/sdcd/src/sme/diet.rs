@@ -29,7 +29,21 @@ pub fn system_cap(class: Class) -> usize {
     }
 }
 
-/// At most `max` schemas, in the order given (the order the tools were ranked in: the best first).
+/// The tools a small model needs first, most important first: look (read, search), change (edit, write), RUN (the tests), then the rest.
+/// A step capped at six keeps these; the order the tools happened to be registered in says nothing about how much they matter.
+pub const PRIORITY: &[&str] = &["read_file", "grep", "edit_file", "write_file", "run_command", "ranked_search", "code_graph", "glob", "list_dir", "search", "git_diff", "update_plan", "find_symbol", "symbols", "patch_symbol", "apply_patch", "ask_user", "task", "remember"];
+
+/// The specs in order of importance: the `PRIORITY` ones first (in that order), every other one after them in the order given.
+pub fn prioritise<T: Clone>(specs: &[T], name_of: impl Fn(&T) -> &str) -> Vec<T> {
+    let rank = |spec: &T| PRIORITY.iter().position(|name| *name == name_of(spec)).unwrap_or(PRIORITY.len());
+    let mut ordered: Vec<T> = specs.to_vec();
+
+    ordered.sort_by_key(rank);
+
+    ordered
+}
+
+/// At most `max` schemas, in the order given (put the best first with `prioritise`).
 pub fn at_most<T: Clone>(specs: &[T], max: usize) -> Vec<T> {
     specs.iter().take(max.max(1)).cloned().collect()
 }

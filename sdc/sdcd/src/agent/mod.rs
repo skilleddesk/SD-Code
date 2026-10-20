@@ -1549,8 +1549,10 @@ fn drive(
 
     /* P1-5: at most six tool schemas a step - a small model given twenty picks the wrong one, and the schemas are the largest fixed cost
        of a small window. */
-    if crate::v3::on("sme.prompt_diet") {
-        specs = crate::sme::diet::at_most(&specs, crate::sme::diet::MAX_SCHEMAS);
+    let capped = crate::v3::on("sme.prompt_diet") && backend == Backend::Ollama;
+
+    if capped {
+        specs = crate::sme::diet::at_most(&crate::sme::diet::prioritise(&specs, |spec| spec.name), crate::sme::diet::MAX_SCHEMAS);
     }
 
     let mut messages: Vec<Value> = prompt
@@ -2174,7 +2176,7 @@ fn drive(
         journaled = messages.len();
 
         /* v3 W5: a tool the turn was not offered but the model asked for joins the list from now on. */
-        if pruning {
+        if pruning || capped {
             let mut added = false;
 
             for call in &reply.tool_uses {
@@ -3373,10 +3375,11 @@ mod end_to_end {
         /* The conversation carried the history with its roles, the system prompt first. */
         assert_eq!(bodies[0]["messages"][0]["role"], "system");
         assert_eq!(bodies[0]["messages"][2]["role"], "assistant");
-        /* P1-5: a step is offered at most six schemas, and every one of them is a real tool. */
+        /* P1-5: the six-schema cap is for a small LOCAL model (see `the_tools_a_model_is_offered_are_the_ones_that_matter`); a model behind an
+           API keeps every tool, and every one offered is a real tool. */
         let offered = bodies[0]["tools"].as_array().unwrap();
 
-        assert!(!offered.is_empty() && offered.len() <= crate::sme::diet::MAX_SCHEMAS, "{} tools", offered.len());
+        assert!(offered.len() > crate::sme::diet::MAX_SCHEMAS, "{} tools", offered.len());
         assert!(offered.iter().all(|tool| { let name = tool["function"]["name"].as_str().unwrap_or_default(); tools::specs().iter().any(|spec| spec.name == name) }));
 
         /* The window saw two cards (Create, Run), the answer, and a footer with what the turn used. */
@@ -4229,6 +4232,55 @@ mod end_to_end {
         assert!(backup_untouched(), "the other model was never so much as connected to");
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// What the model is actually OFFERED. The prompt diet caps a small local model's tools, but the cap keeps the tools that matter (read,
+    /// search, edit, write, RUN - a model that cannot run the tests cannot finish a job), never just the first six that were registered;
+    /// and a cloud model, which nobody measured the cap on, keeps every tool.
+    #[test]
+    fn the_tools_a_model_is_offered_are_the_ones_that_matter() {
+        let offered = |backend: Backend, local: bool| -> Vec<String> {
+            let root = std::env::temp_dir().join(format!("sdc-offered-{}-{local}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&root);
+            std::fs::create_dir_all(&root).unwrap();
+
+            let done = serde_json::json!({ "message": { "role": "assistant", "content": "" }, "done": true, "done_reason": "stop", "prompt_eval_count": 900, "eval_count": 12 });
+            let reply = if local {
+                ndjson(&[serde_json::json!({ "message": { "role": "assistant", "content": "ok" }, "done": false }), done])
+            } else {
+                chunk(serde_json::json!({ "content": "ok" })) + "data: [DONE]\n\n"
+            };
+            let (url, server) = raw_provider(vec![if local { reply } else { format!("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{reply}", reply.len()) }]);
+            let mut target = local_target(&url, 8_192);
+
+            if !local {
+                target.local_context = None;
+            }
+
+            let workspace = Workspace::new(root.to_str().unwrap(), None);
+            let prompt = prompt_in(&root, "turn-offered", "fix the failing test in billing.py", "model");
+            let recorder = crate::engines::Recorder::new();
+
+            drive(backend, &target, &workspace, Options { autonomy: Autonomy::Auto, max_steps: 3, auto_check: false, research: None }, None, &Default::default(), &prompt, &recorder.sink());
+
+            let bodies = server.join().unwrap();
+            let _ = std::fs::remove_dir_all(&root);
+
+            bodies[0]["tools"].as_array().unwrap().iter().map(|tool| tool["function"]["name"].as_str().or(tool["name"].as_str()).unwrap_or_default().to_string()).collect()
+        };
+
+        let local = offered(Backend::Ollama, true);
+
+        assert!(local.len() <= crate::sme::diet::MAX_SCHEMAS, "{local:?}");
+
+        for must in ["read_file", "grep", "edit_file", "write_file", "run_command"] {
+            assert!(local.iter().any(|name| name == must), "a small model must be offered `{must}`: {local:?}");
+        }
+
+        let cloud = offered(Backend::Api, false);
+
+        assert!(cloud.len() > crate::sme::diet::MAX_SCHEMAS, "a cloud model keeps every tool: {cloud:?}");
+        assert!(cloud.iter().any(|name| name == "run_command"));
     }
 
     fn local_target(url: &str, num_ctx: u64) -> Target {
