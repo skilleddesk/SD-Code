@@ -15,6 +15,12 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [3.1.2] — every model sees the tools it needs, and working memory is switched on
+
+- **Fixed (3.1.0 and 3.1.1): the prompt diet hid tools.** It kept the first six *registered* tools for every model - `read_file, list_dir, search, git_diff, write_file, edit_file` - so no model, cloud ones included, was offered `run_command`, `grep`, `ranked_search` or `code_graph`. The six-tool cap now applies to local (Ollama) models only, keeps the ones that matter (read, search, edit, write, run, ranked search), and a tool the model asks for that was not offered joins the list. Cloud models get every tool again.
+- **Fixed: working memory (P1-7) never ran.** The code asked for the switch `sme.memory`, which was never registered, so it was always off. It is registered (on by default). A new test fails whenever code asks about a switch that is not in the table.
+- Corrected claims: a confidence level of 3 tells the model to stop and report - it does not end the turn.
+
 ## [3.1.1] — a refused printed tool call no longer ends the turn silently
 
 - **Fixed: a local model that printed an invalid tool call ended its turn with nothing done.** Tool-call Rescue refused the call but the reply had no real call, so the turn finished without telling the model. The model is now told why (at most twice per turn), and the retry is constrained (`sme.constrained`: Ollama `format`, a JSON Schema of one call of a known tool).

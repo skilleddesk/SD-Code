@@ -2051,7 +2051,7 @@ dependencies = [
 
 [[package]]
 name = "sdcd"
-version = "3.1.1"
+version = "3.1.2"
 dependencies = [
  "anyhow",
  "async-trait",
