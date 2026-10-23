@@ -187,3 +187,69 @@ fn an_inactive_switch_names_a_real_switch_and_gives_a_reason() {
     assert!(crate::v3::inactive("edit.transaction").is_none());
     assert!(!crate::v3::FEATURES.iter().find(|feature| feature.name == "edit.transaction").unwrap().what.contains("INACTIVE"));
 }
+
+/// Q3 (M0-4): a switch that is **on** by default either needs no measurement (it protects, verifies or records), or was
+/// measured on the bench, or is unmeasured and therefore applies to local models only and says so in its description. An
+/// unmeasured change to a prompt must not be what a cloud model reads.
+#[test]
+fn every_default_on_switch_is_measured_safe_or_local_only_and_honest_about_it() {
+    use crate::v3::{Evidence, Scope};
+
+    let mut wrong = Vec::new();
+
+    for feature in crate::v3::FEATURES.iter().filter(|feature| feature.default_on) {
+        let honest = match feature.evidence {
+            Evidence::Bench { label, models } => !label.is_empty() && !models.is_empty(),
+            Evidence::Safety => true,
+            Evidence::None => feature.scope == Scope::LocalOnly && feature.what.contains("unmeasured"),
+        };
+
+        if !honest {
+            wrong.push(feature.name);
+        }
+    }
+
+    assert!(wrong.is_empty(), "default-on switches with no evidence that are not local-only and marked unmeasured: {wrong:?}");
+
+    /* The reverse: nothing that says it is unmeasured claims evidence, and a token technique is never `Safety` (it changes what a model is told). */
+    for feature in crate::v3::FEATURES {
+        if feature.what.contains("unmeasured") {
+            assert!(matches!(feature.evidence, Evidence::None), "{} says unmeasured and claims evidence", feature.name);
+        }
+
+        if feature.token_technique {
+            assert!(!matches!(feature.evidence, Evidence::Safety), "{} is a token technique: it needs a bench result, not a safety argument", feature.name);
+        }
+    }
+}
+
+/// M0-3: a local-only switch is off for a cloud, API or CLI model whatever it is set to, and a local model sees it as set.
+#[test]
+fn a_local_only_switch_never_reaches_a_cloud_model() {
+    use crate::v3::{ModelCtx, Scope};
+
+    let local = ModelCtx::new(true);
+    let cloud = ModelCtx::cloud();
+
+    for feature in crate::v3::FEATURES.iter().filter(|feature| feature.scope == Scope::LocalOnly) {
+        assert!(!crate::v3::forcing(&[feature.name], || crate::v3::on_in(feature.name, &cloud)), "{} reached a cloud model", feature.name);
+        assert!(crate::v3::forcing(&[feature.name], || crate::v3::on_in(feature.name, &local)), "{} did not reach a local model", feature.name);
+    }
+
+    /* An `All` switch is not narrowed. */
+    assert!(crate::v3::forcing(&["edit.transaction"], || crate::v3::on_in("edit.transaction", &cloud)));
+}
+
+/// The classes a `Classes` scope names are the only local models it reaches.
+#[test]
+fn a_class_scope_reaches_only_its_classes() {
+    use crate::sme::budget::Class;
+    use crate::v3::{ModelCtx, Scope};
+
+    let small_and_medium = Scope::Classes(&[Class::Small, Class::Medium]);
+
+    assert!(small_and_medium.allows(&ModelCtx::local(8_192)));
+    assert!(small_and_medium.allows(&ModelCtx::local(32_768)));
+    assert!(!small_and_medium.allows(&ModelCtx::local(128_000)));
+    assert!(!small_and_medium.allows(&ModelCtx::cloud()));
+}

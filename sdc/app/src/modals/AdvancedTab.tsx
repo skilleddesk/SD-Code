@@ -38,12 +38,15 @@ export function AdvancedTab() {
               <div className="flex flex-wrap items-center gap-[6px]">
                 <span className="font-mono text-[12px] text-text-primary">{feature.name}</span>
                 {feature.tokenTechnique ? <Badge tone="muted">{t.technique}</Badge> : null}
+                <Badge tone={feature.measured ? 'muted' : 'warning'}>{feature.measured ? t.measured : t.unmeasured}</Badge>
+                {feature.scope === 'all' ? null : <Badge tone="muted">{t.localOnly}</Badge>}
                 {feature.active ? null : <Badge tone="warning">{t.inactive}</Badge>}
                 {feature.on === feature.default ? null : <Badge tone="muted">{t.changed}</Badge>}
               </div>
               <p className="m-0 mt-[2px] text-[11.5px] leading-[1.5] text-text-muted">{feature.what}</p>
               {feature.inactiveReason === null ? null : <p className="m-0 mt-[2px] text-[11.5px] leading-[1.5] text-state-waiting">{feature.inactiveReason}</p>}
               {feature.tokenTechnique ? <p className="m-0 mt-[2px] text-[11px] text-text-faint">{t.techniqueNote}</p> : null}
+              {feature.measured || feature.scope === 'all' ? null : <p className="m-0 mt-[2px] text-[11px] text-text-faint">{t.unmeasuredNote}</p>}
             </div>
           </li>
         ))}

@@ -58,7 +58,7 @@ mod tests {
     use super::*;
 
     fn all() -> Vec<ToolSpec> {
-        crate::agent::tools::specs_for(crate::agent::tools::Caps { vision: true, subagent: false, patch: false })
+        crate::agent::tools::specs_for(crate::agent::tools::Caps { vision: true, subagent: false, patch: false, local: true })
     }
 
     #[test]

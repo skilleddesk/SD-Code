@@ -337,6 +337,23 @@ mod tests {
     }
 
     #[test]
+    fn acquire_draws_on_one_bucket_across_the_paths_of_a_host() {
+        let first = "https://acquire-shared.example/v1/chat";
+        let second = "https://ACQUIRE-SHARED.example/v1/models";
+
+        crate::v3::forcing(&["rate_limit"], || {
+            for _ in 0..BURST as usize {
+                acquire(first);
+            }
+
+            /* The burst was spent on one path, so a request to another path of the same host owes a token's time. */
+            let wait = reserve(&host(second), PER_MINUTE, BURST, Instant::now());
+
+            assert!(wait > Duration::ZERO && wait <= Duration::from_millis(500), "waited {wait:?}");
+        });
+    }
+
+    #[test]
     fn a_query_or_fragment_straight_after_the_host_does_not_make_a_new_bucket() {
         assert_eq!(host("https://api.example.com?key=1"), "api.example.com");
         assert_eq!(host("https://api.example.com#top"), "api.example.com");

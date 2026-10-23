@@ -51,66 +51,143 @@ pub struct Feature {
     pub name: &'static str,
     pub default_on: bool,
     pub token_technique: bool,
+    /// Which models the switch reaches when it is on (M0-3).
+    pub scope: Scope,
+    /// What shows the switch earns its place (M0-4).
+    pub evidence: Evidence,
     pub what: &'static str,
 }
 
+/// The models a switch applies to. A switch on does nothing for a model outside its scope.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Scope {
+    /// Every model: the switch protects, verifies or records, and what the model is told does not depend on it.
+    All,
+    /// Models run by a local server (Ollama) only. A cloud, API or CLI model the person picked is untouched, which is the
+    /// rule for everything that changes what a model is told without a bench result behind it.
+    LocalOnly,
+    /// Local models of these classes (S/M/L) only.
+    Classes(&'static [crate::sme::budget::Class]),
+}
+
+/// What backs a switch being on (or being worth switching on).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Evidence {
+    /// Nothing measured. Fine for a switch that is off; a switch that is on and changes what a model is told must then be
+    /// `LocalOnly` and say "unmeasured" (the promise test checks it).
+    None,
+    /// Measured on the bench: the run label and the models it was measured on.
+    Bench { label: &'static str, models: &'static str },
+    /// Needs no measurement: it protects, verifies, records or speeds up without changing what a model is told - or what it
+    /// changes is the protection itself (secrets replaced, outside text marked as data).
+    Safety,
+}
+
+/// The model a switch is asked about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ModelCtx {
+    /// Run by a local server (Ollama), as opposed to a cloud API, a subscription or a CLI.
+    pub local: bool,
+    pub class: crate::sme::budget::Class,
+}
+
+impl ModelCtx {
+    /// A local model with this context window.
+    pub fn local(window: u64) -> Self {
+        Self { local: true, class: crate::sme::budget::Class::of(window) }
+    }
+
+    /// A model known only by whether a local server runs it - enough for every `All` and `LocalOnly` switch. A `Classes` switch
+    /// needs the window (`ModelCtx::local`); asked with this, a local model counts as large.
+    pub fn new(local: bool) -> Self {
+        Self { local, class: crate::sme::budget::Class::Large }
+    }
+
+    /// Any model that is not local. A cloud model's window is large; the class is never what decides for it.
+    pub fn cloud() -> Self {
+        Self { local: false, class: crate::sme::budget::Class::Large }
+    }
+}
+
+impl Scope {
+    pub fn allows(self, model: &ModelCtx) -> bool {
+        match self {
+            Scope::All => true,
+            Scope::LocalOnly => model.local,
+            Scope::Classes(classes) => model.local && classes.contains(&model.class),
+        }
+    }
+}
+
+/// The scope of a switch (`All` for a name that is not one).
+pub fn scope_of(feature: &str) -> Scope {
+    FEATURES.iter().find(|spec| spec.name == feature).map_or(Scope::All, |spec| spec.scope)
+}
+
+/// Is a switch on **for this model**? `on(..)` and the switch's scope: a `LocalOnly` switch is off for a cloud model whatever
+/// it is set to, so an unmeasured change to a prompt cannot reach a model the person picked by hand.
+pub fn on_in(feature: &str, model: &ModelCtx) -> bool {
+    on(feature) && scope_of(feature).allows(model)
+}
+
 pub const FEATURES: &[Feature] = &[
-    Feature { name: "journal", default_on: true, token_technique: false, what: "R1: every agent step written ahead to the job journal" },
-    Feature { name: "resume", default_on: true, token_technique: false, what: "R2: a turn the daemon lost (crash, power) continues from its journal" },
-    Feature { name: "offline", default_on: true, token_technique: false, what: "R3: a model step waits for the network instead of failing the turn" },
-    Feature { name: "rate_limit", default_on: true, token_technique: false, what: "W9: per-provider request pacing (token bucket)" },
-    Feature { name: "redact", default_on: true, token_technique: false, what: "W9: secrets in tool output are replaced by placeholders before any model sees them" },
-    Feature { name: "untrusted", default_on: true, token_technique: false, what: "W9: web pages and fetched text are marked as data, never instructions" },
-    Feature { name: "search", default_on: true, token_technique: false, what: "W3: the indexed, .gitignore-aware search engine" },
-    Feature { name: "receipt", default_on: true, token_technique: false, what: "I10: a token receipt after every agent turn" },
-    Feature { name: "privacy", default_on: true, token_technique: false, what: "I6: files marked secret in .sdc/policy.toml never reach a model" },
-    Feature { name: "fleet", default_on: false, token_technique: false, what: "I7: the fleet_run tool - one command on many servers, outputs clustered (adds a tool, so off unless switched on)" },
-    Feature { name: "budget", default_on: true, token_technique: false, what: "I5: @budget 40k / @budget $0.10 in a message" },
-    Feature { name: "stable_prefix", default_on: false, token_technique: true, what: "W5: nothing volatile (today's date) in the cached prefix" },
-    Feature { name: "tool_pruning", default_on: false, token_technique: true, what: "W5: only the tools the task's intent needs" },
-    Feature { name: "ledger_diff", default_on: false, token_technique: true, what: "I1: a re-read of a changed file is sent as a diff" },
-    Feature { name: "skeleton", default_on: false, token_technique: true, what: "I2: files over 200 lines are read as an outline first" },
-    Feature { name: "recipes", default_on: false, token_technique: true, what: "I4/L2: a recipe from a similar verified task in .sdc/recipes is sent with the request" },
-    Feature { name: "interlingua", default_on: false, token_technique: true, what: "I8: one English task brief per message, answer in the person's language" },
-    Feature { name: "intel", default_on: false, token_technique: false, what: "W4: the find_symbol and symbols tools - where the project's declarations are (adds tools, so off unless switched on)" },
-    Feature { name: "repomap", default_on: false, token_technique: true, what: "W4: a map of the project's declarations, ranked for the request, travels with it" },
-    Feature { name: "memory", default_on: false, token_technique: true, what: "L0: only the memory facts the request touches are sent, not the whole file" },
-    Feature { name: "lessons", default_on: false, token_technique: true, what: "L1: a lesson from a step that failed in this project, and what worked instead" },
-    Feature { name: "knowledge", default_on: false, token_technique: true, what: "L3: a page an earlier turn fetched is sent again as a short excerpt with its address and date" },
-    Feature { name: "learn", default_on: true, token_technique: false, what: "L0-L2: what a turn proved (a recipe, a lesson, a check that passes) is kept in .sdc/ even while sending it is off, so a technique switched on later starts with a history" },
-    Feature { name: "knowledge_core", default_on: true, token_technique: false, what: "I11: learned knowledge needs two sightings, must not contradict what is known, and is taken back when it proves wrong" },
-    Feature { name: "cas", default_on: true, token_technique: false, what: "W7a: a file's old content is kept by its own hash before SDC changes it, so a turn can be taken back without git" },
-    Feature { name: "router", default_on: true, token_technique: false, what: "W6: a plainly light request goes to the fast model named in router.fast; everything else stays on the main model" },
-    Feature { name: "effort", default_on: true, token_technique: false, what: "Q5: a small model is given room to think and one instruction to lean on the tools" },
-    Feature { name: "cascade", default_on: true, token_technique: false, what: "I3: when the draft model is stuck, cascade.strong takes the task over from a capsule of its state" },
-    Feature { name: "terms", default_on: true, token_technique: false, what: "G37: a site's robots.txt decides before SDC reads a page, and a crawl delay is given" },
-    Feature { name: "bandit", default_on: false, token_technique: false, what: "L4: which model wins for which kind of task is learned from the turns themselves" },
-    Feature { name: "runner", default_on: true, token_technique: false, what: "R4: a project's turns can run on the VPS the person names in `.sdc/runners.toml`" },
-    Feature { name: "automations", default_on: true, token_technique: false, what: "AUTO: a request SDC runs on a clock, whose answer waits in the Inbox" },
-    Feature { name: "local.runtime_guard", default_on: true, token_technique: false, what: "P0-8: a prompt is counted before it is sent, and one that does not fit the model's window is split by the caller, never sent to be cut silently" },
-    Feature { name: "models.probe", default_on: true, token_technique: false, what: "P0-9: a local model is measured (context, tools, JSON, speed) in the background after its first turn, and again when its file or runtime changes; off, only `sdcd probe` measures" },
-    Feature { name: "models.contract", default_on: true, token_technique: false, what: "P0-10: the model the person chose runs every call of the turn; the router, cascade, failover, ladder, planner-executor and bandit are unreachable under a pin (a cloud/API/CLI model) and under local-only; off = every earlier version's behaviour" },
-    Feature { name: "trace.steps", default_on: true, token_technique: false, what: "P0-12: every model call is traced - model, mode, tokens, time to first token, tokens per second, wall time, verify, cost - from a background writer, so recording never slows a step" },
-    Feature { name: "exec.sandbox", default_on: true, token_technique: false, what: "P0-14: the checks Verify runs (tests, smoke, scripts) run in the platform sandbox - no writes outside the project, no network unless the project allows it, CPU and file limits; Windows has no isolation and says so" },
-    Feature { name: "edit.transaction", default_on: true, token_technique: false, what: "P0-14/P1-2: every agent edit (write_file, edit_file, apply_patch) goes through the Step Transaction: newly broken syntax is refused before anything is written, and a patch's files reach the project all together or not at all; an interrupted commit is undone at the next start" },
-    Feature { name: "local.autotune", default_on: true, token_technique: false, what: "P0-16: the Provider Hub shows a proposal for the Ollama server (flash attention, a q8_0 KV cache, the largest context that keeps the model on the GPU) and warns when a local model spills to the CPU; nothing is ever applied by itself" },
-    Feature { name: "sme.toolcall_rescue", default_on: true, token_technique: false, what: "P1-6: a local model that prints its tool call as text (<tool_call>, fenced JSON, Qwen XML) has the call read, repaired and run - only when it validates against the tool's schema" },
-    Feature { name: "graph.v1", default_on: true, token_technique: false, what: "P1-1: the Code Graph - tree-sitter reads declarations, references and imports (Rust, Python, JS/TS, Go, PHP), cached by content hash; the symbol tools, the edit syntax gate and `graph.query` use it, with no model call" },
-    Feature { name: "edit.symbol_patch", default_on: false, token_technique: false, what: "P1-11: the patch_symbol tool - the model edits a declaration by its qualified name and hash (fail closed on a changed, missing or duplicated symbol; a result that does not parse or looks cut off is refused). Offered to the model only when on: it changes what the model is told, so it waits for the bench" },
-    Feature { name: "verify.lsp", default_on: false, token_technique: false, what: "P1-12: after an edit, the language server of the file's language (rust-analyzer, pyright, typescript-language-server, gopls - whichever is installed) reports its errors, each with the declarations of the names it mentions, to the model. Off by default: a server's first start takes seconds and SDC installs none of them" },
-    Feature { name: "sme.memory", default_on: true, token_technique: false, what: "P1-7: the task's working memory - a fact the person states (\"remember that ...\") and the notes kept for the chat are put back at the top of every turn's prompt, cut to the model class's memory budget; the person edits them in the app (memory.list / memory.update)" },
-    Feature { name: "sme.budget", default_on: true, token_technique: false, what: "P1-3: the small/medium/large model classes and one token budget per step - system, task card, memory, code, tool schemas and one tool result, with the answer's and thinking's room held back" },
-    Feature { name: "sme.step_profile", default_on: false, token_technique: false, what: "P1-4: each step's sampling and thinking from what the step is doing (the vendor's documented numbers for a family that documents them; a mechanical step does not think). Off by default: not measured on the bench yet" },
-    Feature { name: "sme.prompt_diet", default_on: true, token_technique: false, what: "P1-5: the prompt is built to a budget - at most six tool schemas a step, the rules cut to the model class's cap, the goal above and below the evidence, and a byte-stable prefix (rules, map, memory) for the server's prompt cache" },
-    Feature { name: "sme.retrieval", default_on: true, token_technique: false, what: "P1-8: the zero-model retrieval cascade (file names, declarations, BM25 over AST chunks) and the ranked_search tool with its skim; summaries cached by content hash; the stage-2 re-ranker stays off until it is measured on the bench" },
-    Feature { name: "sme.quote_verify", default_on: true, token_technique: false, what: "P1-9: every quote a note carries is checked against the file it names before the note is kept - exact or whitespace-only differences pass, a changed token is refused with the nearest line. The fabricated-quote rate is measured at zero in the tests" },
-    Feature { name: "sme.confidence", default_on: true, token_technique: false, what: "P1-13: caution from the turn's own structure (the same error twice, an edit undoing an earlier one, a reply that did not parse, the model's flat distribution when it reports one) - it may add doubt, never remove it, and a malformed reply is repaired once with thinking off" },
-    Feature { name: "runtime.decompose", default_on: true, token_technique: false, what: "P1-10: the task decomposer - a request is cut into steps of one or two functions by its own structure, as needed (one step is the usual case), each step names its files, and the next step's files are known in advance; a plan step naming more than two files is reported back" },
-    Feature { name: "runtime.fastpath", default_on: true, token_technique: false, what: "P1-15: a short, single-job request (a question about one file, a one-line change) skips the preparation built for large tasks - the spec restatement and its confirmation - and goes straight to work; every safety gate is unchanged" },
-    Feature { name: "trust.slopguard", default_on: true, token_technique: false, what: "P3-3: before an install command (npm, pnpm, yarn, pip, cargo add) every package it names is looked up in its registry; a name the registry does not know refuses the command (a model-invented name can be registered by an attacker), an unreachable registry only adds a note" },
-    Feature { name: "sme.constrained", default_on: true, token_technique: false, what: "P1-6: after a local model printed a tool call that was refused, the retry is constrained (Ollama `format`, a JSON Schema of one call of a known tool) so the server can only answer with a well-formed call; the answer is still validated" },
-    Feature { name: "sme.spec_brief", default_on: true, token_technique: false, what: "P1-14: a Bengali or Banglish message is restated as a four-line English technical spec (goal, files, constraints, done when) with the person's paths and commands untouched, and confirmed in their own language" },
-    Feature { name: "parallel", default_on: true, token_technique: false, what: "PAR: several agents at once, each in its own git worktree, on one board" },
+    Feature { name: "journal", default_on: true, token_technique: false, scope: Scope::All, evidence: Evidence::Safety, what: "R1: every agent step written ahead to the job journal" },
+    Feature { name: "resume", default_on: true, token_technique: false, scope: Scope::All, evidence: Evidence::Safety, what: "R2: a turn the daemon lost (crash, power) continues from its journal" },
+    Feature { name: "offline", default_on: true, token_technique: false, scope: Scope::All, evidence: Evidence::Safety, what: "R3: a model step waits for the network instead of failing the turn" },
+    Feature { name: "rate_limit", default_on: true, token_technique: false, scope: Scope::All, evidence: Evidence::Safety, what: "W9: per-provider request pacing (token bucket)" },
+    Feature { name: "redact", default_on: true, token_technique: false, scope: Scope::All, evidence: Evidence::Safety, what: "W9: secrets in tool output are replaced by placeholders before any model sees them" },
+    Feature { name: "untrusted", default_on: true, token_technique: false, scope: Scope::All, evidence: Evidence::Safety, what: "W9: web pages and fetched text are marked as data, never instructions" },
+    Feature { name: "search", default_on: true, token_technique: false, scope: Scope::All, evidence: Evidence::Safety, what: "W3: the indexed, .gitignore-aware search engine" },
+    Feature { name: "receipt", default_on: true, token_technique: false, scope: Scope::All, evidence: Evidence::Safety, what: "I10: a token receipt after every agent turn" },
+    Feature { name: "privacy", default_on: true, token_technique: false, scope: Scope::All, evidence: Evidence::Safety, what: "I6: files marked secret in .sdc/policy.toml never reach a model" },
+    Feature { name: "fleet", default_on: false, token_technique: false, scope: Scope::All, evidence: Evidence::None, what: "I7: the fleet_run tool - one command on many servers, outputs clustered (adds a tool, so off unless switched on)" },
+    Feature { name: "budget", default_on: true, token_technique: false, scope: Scope::All, evidence: Evidence::Safety, what: "I5: @budget 40k / @budget $0.10 in a message" },
+    Feature { name: "stable_prefix", default_on: false, token_technique: true, scope: Scope::All, evidence: Evidence::None, what: "W5: nothing volatile (today's date) in the cached prefix" },
+    Feature { name: "tool_pruning", default_on: false, token_technique: true, scope: Scope::All, evidence: Evidence::Bench{ label: "q-one-tool_pruning", models: "deepseek:deepseek-chat" }, what: "W5: only the tools the task's intent needs" },
+    Feature { name: "ledger_diff", default_on: false, token_technique: true, scope: Scope::All, evidence: Evidence::None, what: "I1: a re-read of a changed file is sent as a diff" },
+    Feature { name: "skeleton", default_on: false, token_technique: true, scope: Scope::All, evidence: Evidence::None, what: "I2: files over 200 lines are read as an outline first" },
+    Feature { name: "recipes", default_on: false, token_technique: true, scope: Scope::All, evidence: Evidence::Bench{ label: "q3-repeat-learn", models: "deepseek:deepseek-chat" }, what: "I4/L2: a recipe from a similar verified task in .sdc/recipes is sent with the request" },
+    Feature { name: "interlingua", default_on: false, token_technique: true, scope: Scope::All, evidence: Evidence::None, what: "I8: one English task brief per message, answer in the person's language" },
+    Feature { name: "intel", default_on: false, token_technique: false, scope: Scope::All, evidence: Evidence::None, what: "W4: the find_symbol and symbols tools - where the project's declarations are (adds tools, so off unless switched on)" },
+    Feature { name: "repomap", default_on: false, token_technique: true, scope: Scope::All, evidence: Evidence::Bench{ label: "q-one-repomap", models: "deepseek:deepseek-chat" }, what: "W4: a map of the project's declarations, ranked for the request, travels with it" },
+    Feature { name: "memory", default_on: false, token_technique: true, scope: Scope::All, evidence: Evidence::Bench{ label: "q3-repeat-learn", models: "deepseek:deepseek-chat" }, what: "L0: only the memory facts the request touches are sent, not the whole file" },
+    Feature { name: "lessons", default_on: false, token_technique: true, scope: Scope::All, evidence: Evidence::Bench{ label: "q3-repeat-learn", models: "deepseek:deepseek-chat" }, what: "L1: a lesson from a step that failed in this project, and what worked instead" },
+    Feature { name: "knowledge", default_on: false, token_technique: true, scope: Scope::All, evidence: Evidence::Bench{ label: "q3-repeat-learn", models: "deepseek:deepseek-chat" }, what: "L3: a page an earlier turn fetched is sent again as a short excerpt with its address and date" },
+    Feature { name: "learn", default_on: true, token_technique: false, scope: Scope::All, evidence: Evidence::Safety, what: "L0-L2: what a turn proved (a recipe, a lesson, a check that passes) is kept in .sdc/ even while sending it is off, so a technique switched on later starts with a history" },
+    Feature { name: "knowledge_core", default_on: true, token_technique: false, scope: Scope::All, evidence: Evidence::Safety, what: "I11: learned knowledge needs two sightings, must not contradict what is known, and is taken back when it proves wrong" },
+    Feature { name: "cas", default_on: true, token_technique: false, scope: Scope::All, evidence: Evidence::Safety, what: "W7a: a file's old content is kept by its own hash before SDC changes it, so a turn can be taken back without git" },
+    Feature { name: "router", default_on: true, token_technique: false, scope: Scope::All, evidence: Evidence::Safety, what: "W6: a plainly light request goes to the fast model named in router.fast; everything else stays on the main model" },
+    Feature { name: "effort", default_on: true, token_technique: false, scope: Scope::LocalOnly, evidence: Evidence::None, what: "Q5: a small model is given room to think and one instruction to lean on the tools (unmeasured: it changes what a model is told and has no bench result yet, so it applies to local models only)" },
+    Feature { name: "cascade", default_on: true, token_technique: false, scope: Scope::All, evidence: Evidence::Safety, what: "I3: when the draft model is stuck, cascade.strong takes the task over from a capsule of its state" },
+    Feature { name: "terms", default_on: true, token_technique: false, scope: Scope::All, evidence: Evidence::Safety, what: "G37: a site's robots.txt decides before SDC reads a page, and a crawl delay is given" },
+    Feature { name: "bandit", default_on: false, token_technique: false, scope: Scope::All, evidence: Evidence::None, what: "L4: which model wins for which kind of task is learned from the turns themselves" },
+    Feature { name: "runner", default_on: true, token_technique: false, scope: Scope::All, evidence: Evidence::Safety, what: "R4: a project's turns can run on the VPS the person names in `.sdc/runners.toml`" },
+    Feature { name: "automations", default_on: true, token_technique: false, scope: Scope::All, evidence: Evidence::Safety, what: "AUTO: a request SDC runs on a clock, whose answer waits in the Inbox" },
+    Feature { name: "local.runtime_guard", default_on: true, token_technique: false, scope: Scope::LocalOnly, evidence: Evidence::Safety, what: "P0-8: a prompt is counted before it is sent, and one that does not fit the model's window is split by the caller, never sent to be cut silently" },
+    Feature { name: "models.probe", default_on: true, token_technique: false, scope: Scope::LocalOnly, evidence: Evidence::Safety, what: "P0-9: a local model is measured (context, tools, JSON, speed) in the background after its first turn, and again when its file or runtime changes; off, only `sdcd probe` measures" },
+    Feature { name: "models.contract", default_on: true, token_technique: false, scope: Scope::All, evidence: Evidence::Safety, what: "P0-10: the model the person chose runs every call of the turn; the router, cascade, failover, ladder, planner-executor and bandit are unreachable under a pin (a cloud/API/CLI model) and under local-only; off = every earlier version's behaviour" },
+    Feature { name: "trace.steps", default_on: true, token_technique: false, scope: Scope::All, evidence: Evidence::Safety, what: "P0-12: every model call is traced - model, mode, tokens, time to first token, tokens per second, wall time, verify, cost - from a background writer, so recording never slows a step" },
+    Feature { name: "exec.sandbox", default_on: true, token_technique: false, scope: Scope::All, evidence: Evidence::Safety, what: "P0-14: the checks Verify runs (tests, smoke, scripts) run in the platform sandbox - no writes outside the project, no network unless the project allows it, CPU and file limits; Windows has no isolation and says so" },
+    Feature { name: "edit.transaction", default_on: true, token_technique: false, scope: Scope::All, evidence: Evidence::Safety, what: "P0-14/P1-2: every agent edit (write_file, edit_file, apply_patch) goes through the Step Transaction: newly broken syntax is refused before anything is written, and a patch's files reach the project all together or not at all; an interrupted commit is undone at the next start" },
+    Feature { name: "local.autotune", default_on: true, token_technique: false, scope: Scope::LocalOnly, evidence: Evidence::Safety, what: "P0-16: the Provider Hub shows a proposal for the Ollama server (flash attention, a q8_0 KV cache, the largest context that keeps the model on the GPU) and warns when a local model spills to the CPU; nothing is ever applied by itself" },
+    Feature { name: "sme.toolcall_rescue", default_on: true, token_technique: false, scope: Scope::All, evidence: Evidence::Safety, what: "P1-6: a local model that prints its tool call as text (<tool_call>, fenced JSON, Qwen XML) has the call read, repaired and run - only when it validates against the tool's schema" },
+    Feature { name: "graph.v1", default_on: true, token_technique: false, scope: Scope::All, evidence: Evidence::Safety, what: "P1-1: the Code Graph - tree-sitter reads declarations, references and imports (Rust, Python, JS/TS, Go, PHP), cached by content hash; the symbol tools, the edit syntax gate and `graph.query` use it, with no model call" },
+    Feature { name: "edit.symbol_patch", default_on: false, token_technique: false, scope: Scope::All, evidence: Evidence::None, what: "P1-11: the patch_symbol tool - the model edits a declaration by its qualified name and hash (fail closed on a changed, missing or duplicated symbol; a result that does not parse or looks cut off is refused). Offered to the model only when on: it changes what the model is told, so it waits for the bench" },
+    Feature { name: "verify.lsp", default_on: false, token_technique: false, scope: Scope::All, evidence: Evidence::None, what: "P1-12: after an edit, the language server of the file's language (rust-analyzer, pyright, typescript-language-server, gopls - whichever is installed) reports its errors, each with the declarations of the names it mentions, to the model. Off by default: a server's first start takes seconds and SDC installs none of them" },
+    Feature { name: "sme.memory", default_on: true, token_technique: false, scope: Scope::All, evidence: Evidence::Safety, what: "P1-7: the task's working memory - a fact the person states (\"remember that ...\") and the notes kept for the chat are put back at the top of every turn's prompt, cut to the model class's memory budget; the person edits them in the app (memory.list / memory.update)" },
+    Feature { name: "sme.budget", default_on: true, token_technique: false, scope: Scope::LocalOnly, evidence: Evidence::None, what: "P1-3: the small/medium/large model classes and one token budget per step - system, task card, memory, code, tool schemas and one tool result, with the answer's and thinking's room held back (unmeasured: it changes what a model is told and has no bench result yet, so it applies to local models only)" },
+    Feature { name: "sme.step_profile", default_on: false, token_technique: false, scope: Scope::LocalOnly, evidence: Evidence::None, what: "P1-4: each step's sampling and thinking from what the step is doing (the vendor's documented numbers for a family that documents them; a mechanical step does not think). Off by default: not measured on the bench yet" },
+    Feature { name: "sme.prompt_diet", default_on: true, token_technique: false, scope: Scope::LocalOnly, evidence: Evidence::None, what: "P1-5: the prompt is built to a budget - at most six tool schemas a step, the rules cut to the model class's cap, the goal above and below the evidence, and a byte-stable prefix (rules, map, memory) for the server's prompt cache (unmeasured: it changes what a model is told and has no bench result yet, so it applies to local models only)" },
+    Feature { name: "sme.retrieval", default_on: true, token_technique: false, scope: Scope::LocalOnly, evidence: Evidence::None, what: "P1-8: the zero-model retrieval cascade (file names, declarations, BM25 over AST chunks) and the ranked_search tool with its skim; summaries cached by content hash; the stage-2 re-ranker stays off until it is measured on the bench (unmeasured: it changes what a model is told and has no bench result yet, so it applies to local models only)" },
+    Feature { name: "sme.quote_verify", default_on: true, token_technique: false, scope: Scope::All, evidence: Evidence::Safety, what: "P1-9: every quote a note carries is checked against the file it names before the note is kept - exact or whitespace-only differences pass, a changed token is refused with the nearest line. The fabricated-quote rate is measured at zero in the tests" },
+    Feature { name: "sme.confidence", default_on: true, token_technique: false, scope: Scope::LocalOnly, evidence: Evidence::None, what: "P1-13: caution from the turn's own structure (the same error twice, an edit undoing an earlier one, a reply that did not parse, the model's flat distribution when it reports one) - it may add doubt, never remove it, and a malformed reply is repaired once with thinking off (unmeasured: it changes what a model is told and has no bench result yet, so it applies to local models only)" },
+    Feature { name: "runtime.decompose", default_on: true, token_technique: false, scope: Scope::LocalOnly, evidence: Evidence::None, what: "P1-10: the task decomposer - a request is cut into steps of one or two functions by its own structure, as needed (one step is the usual case), each step names its files, and the next step's files are known in advance; a plan step naming more than two files is reported back (unmeasured: it changes what a model is told and has no bench result yet, so it applies to local models only)" },
+    Feature { name: "runtime.fastpath", default_on: true, token_technique: false, scope: Scope::LocalOnly, evidence: Evidence::None, what: "P1-15: a short, single-job request (a question about one file, a one-line change) skips the preparation built for large tasks - the spec restatement and its confirmation - and goes straight to work; every safety gate is unchanged (unmeasured: it changes what a model is told and has no bench result yet, so it applies to local models only)" },
+    Feature { name: "trust.slopguard", default_on: true, token_technique: false, scope: Scope::All, evidence: Evidence::Safety, what: "P3-3: before an install command (npm, pnpm, yarn, pip, cargo add) every package it names is looked up in its registry; a name the registry does not know refuses the command (a model-invented name can be registered by an attacker), an unreachable registry only adds a note" },
+    Feature { name: "sme.constrained", default_on: true, token_technique: false, scope: Scope::LocalOnly, evidence: Evidence::Safety, what: "P1-6: after a local model printed a tool call that was refused, the retry is constrained (Ollama `format`, a JSON Schema of one call of a known tool) so the server can only answer with a well-formed call; the answer is still validated" },
+    Feature { name: "sme.spec_brief", default_on: true, token_technique: false, scope: Scope::LocalOnly, evidence: Evidence::None, what: "P1-14: a Bengali or Banglish message is restated as a four-line English technical spec (goal, files, constraints, done when) with the person's paths and commands untouched, and confirmed in their own language (unmeasured: it changes what a model is told and has no bench result yet, so it applies to local models only)" },
+    Feature { name: "skills.keyword_trigger", default_on: true, token_technique: false, scope: Scope::All, evidence: Evidence::Safety, what: "M0-0: a skill whose name the person writes in capitals as a word (MEGHNA next) is put in front of the model whole, with a note that its companion files are in the same folder; the same word in small letters does nothing, and a skill too large for the window is reported, never cut. It acts only on the person's explicit word" },
+    Feature { name: "parallel", default_on: true, token_technique: false, scope: Scope::All, evidence: Evidence::Safety, what: "PAR: several agents at once, each in its own git worktree, on one board" },
 ];
 
 #[derive(Debug, Default, Clone)]
@@ -376,6 +453,12 @@ pub fn status() -> serde_json::Value {
                     "on": on(feature.name),
                     "default": feature.default_on,
                     "tokenTechnique": feature.token_technique,
+                    "scope": match feature.scope {
+                        Scope::All => "all".to_string(),
+                        Scope::LocalOnly => "local".to_string(),
+                        Scope::Classes(classes) => classes.iter().map(|class| class.name()).collect::<Vec<_>>().join(""),
+                    },
+                    "measured": !matches!(feature.evidence, Evidence::None),
                     "what": feature.what,
                     "active": inactive(feature.name).is_none(),
                     "inactiveReason": inactive(feature.name),

@@ -7,7 +7,7 @@ vi.mock('./intents', () => ({ refreshCatalog: vi.fn(async () => undefined) }));
 
 const { applyPreset, loadFeatures, setSwitch, setUiMode, useFeatures } = await import('./features');
 
-const view = (preset: string) => ({ features: [{ name: 'redact', on: true, default: true, tokenTechnique: false, what: 'x', active: true, inactiveReason: null }], preset, maxQuality: preset === 'safe' });
+const view = (preset: string) => ({ features: [{ name: 'redact', on: true, default: true, tokenTechnique: false, scope: 'all', measured: true, what: 'x', active: true, inactiveReason: null }], preset, maxQuality: preset === 'safe' });
 
 describe('profiles and Simple/Pro (Phase 4.4)', () => {
   beforeEach(() => {

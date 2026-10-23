@@ -1015,7 +1015,7 @@ fn sub_agent(
     let stopped = || crate::engines::cancel::requested(&parent.turn_id);
     /* A research turn's sub-agent reads one page or runs one search, counted against the same limits. */
     let system = if research_session.is_some() { research::sub_agent_prompt() } else { sub_agent_prompt(workspace) };
-    let mut specs = tools::specs_for(tools::Caps { vision, subagent: true, patch: false });
+    let mut specs = tools::specs_for(tools::Caps { vision, subagent: true, patch: false, local: backend == Backend::Ollama });
 
     if research_session.is_some() {
         specs.retain(|spec| research::TOOLS.contains(&spec.name));
@@ -1412,6 +1412,9 @@ fn drive(
 ) {
     let turn_id = prompt.turn_id.clone();
     let stopped = || crate::engines::cancel::requested(&turn_id);
+    /* M0-3: the model a switch's scope is asked about. A switch that changes what a model is told and has no bench result behind
+       it (`v3::Scope::LocalOnly`) reaches a local model and no other - a cloud, API or CLI model the person picked is untouched. */
+    let scope_model = crate::v3::ModelCtx::new(backend == Backend::Ollama);
     /* P0-10: the turn's gate - the model the person chose, and what that choice allows. Registered once for the turn;
        everything that calls a model for it (the loop, a sub-agent, the research answer) finds it by the turn's id. */
     let gate = turn_gate(backend, target, prompt, policy);
@@ -1470,7 +1473,7 @@ fn drive(
         tuned
     };
     /* v3 Q5: a small model is given room to think instead of being replaced. */
-    let (tuned, lifted) = if crate::v3::on("effort") && crate::v3::effort::is_weak(&tuned.model, tuned.price) {
+    let (tuned, lifted) = if crate::v3::on_in("effort", &scope_model) && crate::v3::effort::is_weak(&tuned.model, tuned.price) {
         let (thinking, effort) = crate::v3::effort::thinking_for(&tuned.model);
 
         (Target { thinking: tuned.thinking || thinking, effort: tuned.effort.clone().or(effort), ..tuned }, true)
@@ -1493,10 +1496,26 @@ fn drive(
         None => system_prompt(workspace, vision, &language, technique("stable_prefix")) + &skills::brief(&skills::find(workspace)),
     };
     /* P1-5: the rules cut to this class's cap - a 4K window keeps the rules that matter, not the prose around them. */
-    let diet = crate::v3::on("sme.prompt_diet");
+    let diet = crate::v3::on_in("sme.prompt_diet", &crate::v3::ModelCtx { class: crate::sme::budget::Class::of(window), ..scope_model });
 
     if diet {
         system = crate::sme::diet::slim(&system, crate::sme::budget::Class::of(window));
+    }
+
+    /* M0-0: a skill the person called by name in capitals is put in front of the model whole. After the diet, so the cut cannot reach it. */
+    if research_session.is_none() && crate::v3::on("skills.keyword_trigger") {
+        let words = prompt.text.rsplit("[The person's message]").next().unwrap_or(&prompt.text);
+        let (loaded, report) = skills::keyword_context(workspace, &skills::find(workspace), words, window, 40);
+
+        system.push_str(&loaded);
+
+        for skill in report {
+            sink.send(EngineEvent::Thinking(if skill.included {
+                format!("Skill `{}` loaded because the message names it in capitals (about {} tokens).\n", skill.name, skill.tokens)
+            } else {
+                format!("Skill `{}` was named but is about {} tokens - too large for this model's window beside the task, so it was not loaded and not cut; the model is told to read it in parts.\n", skill.name, skill.tokens)
+            }));
+        }
     }
     /* A model that writes the final answer from what this one gathered (Settings → Research), opt-in. */
     let synthesis = research_session.as_ref().and(research_config.synthesis.clone());
@@ -1520,7 +1539,7 @@ fn drive(
         sink.send(EngineEvent::Thinking(format!("MCP: {warning}\n")));
     }
 
-    let mut specs = tools::specs_for(tools::Caps { vision, subagent: false, patch: patch::speaks_patch(&target.model) });
+    let mut specs = tools::specs_for(tools::Caps { vision, subagent: false, patch: patch::speaks_patch(&target.model), local: backend == Backend::Ollama });
 
     if research_session.is_some() {
         specs.retain(|spec| research::TOOLS.contains(&spec.name));
@@ -1652,8 +1671,8 @@ fn drive(
     };
     /* P1-14: a message in Bengali or Banglish is restated as a four-line English technical spec, with the person's paths and commands
        kept exactly, and the confirmation asked in their own words before anything is touched. */
-    let fast_path = crate::v3::on("runtime.fastpath") && crate::sme::fast::is_fast(&request_text);
-    let spec_brief = if crate::v3::on("sme.spec_brief") && research_session.is_none() && !fast_path {
+    let fast_path = crate::v3::on_in("runtime.fastpath", &scope_model) && crate::sme::fast::is_fast(&request_text);
+    let spec_brief = if crate::v3::on_in("sme.spec_brief", &scope_model) && research_session.is_none() && !fast_path {
         let root = std::path::Path::new(workspace.root());
         let reading = crate::understand::Reading::of(&request_text);
 
@@ -1662,7 +1681,7 @@ fn drive(
         None
     };
     /* P1-10: a request that is several jobs by its own structure is handed over as numbered steps, each with its files. */
-    let decompose_note = if crate::v3::on("runtime.decompose") && !fast_path && research_session.is_none() { crate::runtime::decompose::note(&crate::runtime::decompose::breakdown(&request_text, &[])) } else { None };
+    let decompose_note = if crate::v3::on_in("runtime.decompose", &scope_model) && !fast_path && research_session.is_none() { crate::runtime::decompose::note(&crate::runtime::decompose::breakdown(&request_text, &[])) } else { None };
     let text = {
         let mut notes = String::new();
 
@@ -2535,7 +2554,7 @@ fn drive(
 
         /* P1-13: what the turn's own structure says - the same error twice, an edit undoing an earlier one, a reply that did not parse.
            A doubt is only ever added: the sentence goes to the model once, and nothing is made more confident by it. */
-        if crate::v3::on("sme.confidence") {
+        if crate::v3::on_in("sme.confidence", &scope_model) {
             for call in &reply.tool_uses {
                 let target = ["path", "command", "query", "symbol"].iter().find_map(|key| call.input[*key].as_str()).unwrap_or_default().to_string();
                 let outcome = results.iter().find(|result| result.0 == call.id);
@@ -3302,9 +3321,96 @@ mod end_to_end {
 
         let question = ask("why does the header flicker?", "question");
 
-        /* P1-5: the goal sits above and below the evidence, so the person's words are at both edges of what the model reads. */
-        assert!(question.starts_with("Goal: why does the header flicker?") && question.ends_with("The goal, again: why does the header flicker?"), "{question}");
-        assert_eq!(crate::v3::ablating(&["sme.prompt_diet"], || ask("why does the header flicker?", "question")), "why does the header flicker?", "with the diet off it is sent exactly as it was typed");
+        /* M0-3: this turn is on a cloud/API model, and the prompt diet is unmeasured, so it applies to local models only: the
+           person's words reach this model exactly as typed. (The local side is pinned by
+           `a_local_model_gets_the_goal_at_both_edges_of_the_prompt` below.) */
+        assert_eq!(question, "why does the header flicker?", "a cloud model is sent the words as typed: {question}");
+    }
+
+    /// M0-0 on a driven turn: `MEGHNA next` puts the skill's whole SKILL.md in the system prompt; `meghna river` does not; with the
+    /// switch off, nothing is added.
+    #[test]
+    fn a_skill_named_in_capitals_reaches_the_model_and_the_same_word_in_a_sentence_does_not() {
+        let system_for = |text: &str, label: &str, skill: bool| -> String {
+            let root = std::env::temp_dir().join(format!("sdc-skill-turn-{}-{label}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&root);
+            std::fs::create_dir_all(&root).unwrap();
+
+            if skill {
+                std::fs::create_dir_all(root.join(".sdc/skills/meghna")).unwrap();
+                std::fs::write(root.join(".sdc/skills/meghna/SKILL.md"), "---\nname: meghna\ndescription: The plan.\n---\nTHE-WHOLE-PLAN-TEXT\n").unwrap();
+            }
+
+            let (url, server) = provider(vec![chunk(serde_json::json!({ "content": "ok" })) + "data: [DONE]\n\n"]);
+            let target = Target {
+                url,
+                headers: vec![("content-type".to_string(), "application/json".to_string())],
+                dialect: Dialect::OpenAi,
+                model: "cloud-test".to_string(),
+                price: None,
+                thinking: false,
+                effort: None,
+                local_context: None,
+                local_window: false,
+            };
+            let prompt = Prompt {
+                session_id: "s1".into(),
+                turn_id: format!("turn-skill-{label}"),
+                text: text.into(),
+                model: "cloud-test".into(),
+                provider: None,
+                history: Vec::new(),
+                project_root: Some(root.to_str().unwrap().to_string()),
+                remote: None,
+                autonomy: Default::default(),
+                resume: None,
+                images: Vec::new(),
+                effort: None,
+            };
+            let recorder = crate::engines::Recorder::new();
+
+            drive(Backend::Api, &target, &Workspace::new(root.to_str().unwrap(), None), Options { autonomy: Autonomy::Auto, max_steps: 3, auto_check: false, research: None }, None, &Default::default(), &prompt, &recorder.sink());
+
+            let system = server.join().unwrap()[0]["messages"][0]["content"].as_str().unwrap().to_string();
+            let _ = std::fs::remove_dir_all(&root);
+
+            system
+        };
+
+        let called = system_for("MEGHNA next", "called", true);
+
+        assert!(called.contains("THE-WHOLE-PLAN-TEXT") && called.contains("loaded in full"), "{called}");
+        assert!(!system_for("meghna river", "word", true).contains("THE-WHOLE-PLAN-TEXT"), "the word in a sentence calls nothing");
+        assert!(!system_for("MEGHNA next", "absent", false).contains("loaded in full"), "no such skill: nothing happens");
+        assert!(!crate::v3::ablating(&["skills.keyword_trigger"], || system_for("MEGHNA next", "off", true)).contains("THE-WHOLE-PLAN-TEXT"), "switched off");
+    }
+
+    /// P1-5, now scoped by M0-3: a LOCAL model gets the goal above and below the evidence; with the diet off it is sent as typed.
+    #[test]
+    fn a_local_model_gets_the_goal_at_both_edges_of_the_prompt() {
+        let ask = |label: &str| -> String {
+            let root = std::env::temp_dir().join(format!("sdc-bookend-{}-{label}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&root);
+            std::fs::create_dir_all(&root).unwrap();
+
+            let done = serde_json::json!({ "message": { "role": "assistant", "content": "" }, "done": true, "done_reason": "stop", "prompt_eval_count": 900, "eval_count": 12 });
+            let (url, server) = raw_provider(vec![ndjson(&[serde_json::json!({ "message": { "role": "assistant", "content": "ok" }, "done": false }), done])]);
+            let prompt = prompt_in(&root, &format!("turn-bookend-{label}"), "why does the header flicker?", "qwen3.5:9b");
+            let recorder = crate::engines::Recorder::new();
+
+            drive(Backend::Ollama, &local_target(&url, 8_192), &Workspace::new(root.to_str().unwrap(), None), Options { autonomy: Autonomy::Auto, max_steps: 3, auto_check: false, research: None }, None, &Default::default(), &prompt, &recorder.sink());
+
+            let bodies = server.join().unwrap();
+            let sent = bodies[0]["messages"].as_array().unwrap().iter().rev().find(|message| message["role"] == "user").unwrap()["content"].as_str().unwrap().to_string();
+            let _ = std::fs::remove_dir_all(&root);
+
+            sent
+        };
+
+        let with = ask("on");
+
+        assert!(with.starts_with("Goal: why does the header flicker?") && with.ends_with("The goal, again: why does the header flicker?"), "{with}");
+        assert_eq!(crate::v3::ablating(&["sme.prompt_diet", "effort"], || ask("off")), "why does the header flicker?", "with the diet off it is sent exactly as it was typed");
     }
 
     #[test]

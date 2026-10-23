@@ -764,6 +764,10 @@ export interface FeatureRow {
   /** A token technique stays off until it passes the bench's Q3 rule for a model; no preset turns one on. */
   tokenTechnique: boolean;
   what: string;
+  /** Which models the switch reaches: `all`, `local` (a local server's models only), or the classes it covers (`SM`, `L`, …). */
+  scope: string;
+  /** True when a bench result or a safety argument backs the switch; false means it is unmeasured. */
+  measured: boolean;
   active: boolean;
   inactiveReason: string | null;
 }

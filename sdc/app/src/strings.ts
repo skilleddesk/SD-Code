@@ -1603,6 +1603,10 @@ const english = {
     inactive: 'inactive',
     changed: 'changed',
     techniqueNote: 'Stays off for a model until it passes the bench (Q3). Max quality (the Safe profile) turns all of these off.',
+    measured: 'measured',
+    unmeasured: 'not measured',
+    localOnly: 'local models only',
+    unmeasuredNote: 'Not measured on the bench yet, so it applies only to models run by a local server; a cloud, API or CLI model you pick is never touched by it.',
   },
   /** Settings → Agents (Phase 3): the Rotation Chain, and the manual Escalate. */
   agents: {

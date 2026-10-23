@@ -48,6 +48,17 @@ pub struct Caps {
     pub subagent: bool,
     /// The model writes Codex's patch format (GPT, o-series, Codex): it gets `apply_patch` (0.14).
     pub patch: bool,
+    /// The model runs on a local server (Ollama). A switch that only applies to local models (`v3::Scope::LocalOnly`) adds its tools
+    /// for such a model and for no other: `false` - the default - is any cloud, API or CLI model.
+    pub local: bool,
+}
+
+impl Caps {
+    /// The model these caps are for, as a switch's scope sees it.
+    pub fn model(&self) -> crate::v3::ModelCtx {
+        /* The class matters to a `Classes` scope only; the tool list is built before the window is known to be small or large. */
+        crate::v3::ModelCtx::new(self.local)
+    }
 }
 
 /// The tools a sub-agent (`task`) may use: they read, search and look - they never change anything.
@@ -77,7 +88,7 @@ pub fn specs_for(caps: Caps) -> Vec<ToolSpec> {
         all.push(code_graph_spec());
     }
 
-    if crate::v3::on("sme.retrieval") {
+    if crate::v3::on_in("sme.retrieval", &caps.model()) {
         all.push(ranked_search_spec());
     }
 
@@ -704,7 +715,7 @@ fn execute_call(context: &mut ToolContext, call: &ToolUse) -> Outcome {
 }
 
 fn names() -> Vec<&'static str> {
-    specs_for(Caps { vision: true, subagent: false, patch: true }).iter().map(|spec| spec.name).collect()
+    specs_for(Caps { vision: true, subagent: false, patch: true, local: true }).iter().map(|spec| spec.name).collect()
 }
 
 fn started(context: &ToolContext, call_id: &str, tool: &str, name: &str, target: &str) {
@@ -1628,6 +1639,11 @@ fn run_command(context: &mut ToolContext, call_id: &str, line: &str, timeout: Du
     }
 }
 
+/// The model a tool context belongs to, for a switch's scope.
+fn tool_model(context: &ToolContext) -> crate::v3::ModelCtx {
+    crate::v3::ModelCtx::new(context.local)
+}
+
 fn update_plan(context: &mut ToolContext, input: &Value) -> Outcome {
     let steps: Vec<Value> = input["steps"]
         .as_array()
@@ -1665,7 +1681,7 @@ fn update_plan(context: &mut ToolContext, input: &Value) -> Outcome {
 
     /* P1-10: a step naming more than two files is larger than the step budget, and the answer says which ones - split by file, so no
        step carries more context than it can hold. */
-    let large = if crate::v3::on("runtime.decompose") {
+    let large = if crate::v3::on_in("runtime.decompose", &tool_model(context)) {
         crate::runtime::decompose::too_large(&steps.iter().filter_map(|step| step["text"].as_str().map(str::to_string)).collect::<Vec<_>>())
     } else {
         Vec::new()
@@ -2807,12 +2823,12 @@ mod tests {
 
     #[test]
     fn the_new_tools_are_offered_only_when_their_switches_are_on() {
-        let names = |on: &[&str]| crate::v3::forcing(on, || specs_for(Caps { vision: false, subagent: false, patch: false }).iter().map(|spec| spec.name).collect::<Vec<_>>());
+        let names = |on: &[&str]| crate::v3::forcing(on, || specs_for(Caps { vision: false, subagent: false, patch: false, local: true }).iter().map(|spec| spec.name).collect::<Vec<_>>());
 
         assert!(!names(&[]).contains(&"patch_symbol") && !names(&[]).contains(&"code_graph"), "off by default: the model is told nothing new");
         assert!(names(&["edit.symbol_patch"]).contains(&"patch_symbol"));
         assert!(names(&["intel"]).contains(&"code_graph") && names(&["intel"]).contains(&"find_symbol"));
-        assert!(!crate::v3::forcing(&["edit.symbol_patch"], || specs_for(Caps { vision: false, subagent: true, patch: false })).iter().any(|spec| spec.name == "patch_symbol"), "a read-only sub-agent never gets an editing tool");
+        assert!(!crate::v3::forcing(&["edit.symbol_patch"], || specs_for(Caps { vision: false, subagent: true, patch: false, local: true })).iter().any(|spec| spec.name == "patch_symbol"), "a read-only sub-agent never gets an editing tool");
     }
 
     /// P1-8: the ranked search answers from the project's own names and declarations, with no model call.
@@ -2839,7 +2855,7 @@ mod tests {
 
     #[test]
     fn the_ranked_search_is_offered_only_when_its_switch_is_on() {
-        let names = |on: &[&str]| crate::v3::forcing(on, || specs_for(Caps { vision: false, subagent: false, patch: false }).iter().map(|spec| spec.name).collect::<Vec<_>>());
+        let names = |on: &[&str]| crate::v3::forcing(on, || specs_for(Caps { vision: false, subagent: false, patch: false, local: true }).iter().map(|spec| spec.name).collect::<Vec<_>>());
 
         assert!(names(&[]).contains(&"ranked_search"), "on by default: it costs no model call");
         assert!(!crate::v3::ablating(&["sme.retrieval"], || names(&[])).contains(&"ranked_search"));
@@ -2977,12 +2993,14 @@ mod tests {
 
     #[test]
     fn every_tool_has_a_strict_object_schema() {
-        let specs = specs_for(Caps { vision: true, subagent: false, patch: true });
+        let specs = specs_for(Caps { vision: true, subagent: false, patch: true, local: true });
 
         assert_eq!(specs.len(), 23);
-        assert_eq!(specs_for(Caps::default()).len(), 20, "no image tools, no patch");
-        assert_eq!(specs_for(Caps { vision: false, subagent: true, patch: true }).len(), 9, "a sub-agent only reads");
-        assert!(specs_for(Caps { vision: false, subagent: true, patch: false }).iter().all(|spec| READ_ONLY.contains(&spec.name)));
+        assert_eq!(specs_for(Caps { local: true, ..Caps::default() }).len(), 20, "no image tools, no patch");
+        assert_eq!(specs_for(Caps::default()).len(), 19, "a cloud model is not offered ranked_search: it is unmeasured, so it is local-only (M0-3)");
+        assert!(!specs_for(Caps::default()).iter().any(|spec| spec.name == "ranked_search"));
+        assert_eq!(specs_for(Caps { vision: false, subagent: true, patch: true, local: true }).len(), 9, "a sub-agent only reads");
+        assert!(specs_for(Caps { vision: false, subagent: true, patch: false, local: true }).iter().all(|spec| READ_ONLY.contains(&spec.name)));
 
         for spec in specs {
             assert_eq!(spec.schema["type"], "object", "{}", spec.name);
