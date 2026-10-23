@@ -1,0 +1,16 @@
+id = "hard-atomic-01"
+kind = "bugfix"
+fixture = "py-shop"
+tiers = ["hard"]
+language = "en"
+max_steps = 40
+timeout_secs = 900
+prompt = '''
+Placing an order must be all-or-nothing. Today it takes stock line by line as it goes, so an order that fails half way leaves part of its goods taken from the shelf for good.
+
+Make `place_order` leave the stock exactly as it found it whenever it raises - for any reason, not only a product that is short: an unknown zone, an unknown product, anything. When a product is short, `OutOfStock` must name the first short product of the cart, and no line may be taken. Do not change the tests that already exist.
+'''
+
+[verify]
+hidden = "hard-atomic-01"
+commands = ["python3 -m unittest discover -s tests -t . -q"]

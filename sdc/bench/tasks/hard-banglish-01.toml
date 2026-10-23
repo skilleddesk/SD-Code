@@ -1,0 +1,14 @@
+id = "hard-banglish-01"
+kind = "bugfix"
+fixture = "py-shop"
+tiers = ["hard"]
+language = "banglish"
+max_steps = 40
+timeout_secs = 900
+prompt = '''
+order cancel korle stock ferot ashche na. cancel_order e stock e jinish gula ferot dao (order er lines onujayi). ar ekta order already cancelled hole abar cancel korle OrderStateError dao, tokhon stock jeno r na bare. Existing test gula bodlabe na.
+'''
+
+[verify]
+hidden = "hard-banglish-01"
+commands = ["python3 -m unittest discover -s tests -t . -q"]

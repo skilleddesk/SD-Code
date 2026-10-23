@@ -62,12 +62,19 @@ So the gate can detect a real **+20-point** improvement 92 % of the time, a +15 
 40 tasks x 5 runs x 2 arms = 400 turns on the local 9B model: no API cost, but hours of GPU time. **This is OWNER-TO-RUN on the Windows PC (RTX 4060 8 GB)**; this Mac has no model and does not run it:
 
 ```
+# pilot (one run, the plain arm) - look at the baseline first
+sdcd bench run --models ollama:qwen3.5:9b --tier small --runs 1 --label gate1-pilot-plain --ablate-group sme
+# the real test
 sdcd bench run --models ollama:qwen3.5:9b --tier small --runs 5 --label gate1-sme
-sdcd bench run --models ollama:qwen3.5:9b --tier small --runs 5 --label gate1-plain --ablate sme.budget,sme.step_profile,sme.prompt_diet
+sdcd bench run --models ollama:qwen3.5:9b --tier small --runs 5 --label gate1-plain --ablate-group sme
 sdcd bench compare gate1-plain gate1-sme --report-bn
 ```
 
-(The SME switches named after `--ablate` are the ones P1-3..P1-14 introduce; until they exist the two arms are identical and the comparison measures nothing.)
+**If the pilot's plain arm passes more than 85 % of the tasks, run the `hard` tier instead** (`--tier hard`, 8 or more tasks): a baseline that already passes almost everything leaves no room to show an improvement, and a gate that cannot show one is not a gate.
+
+**What was wrong with the earlier command (I-1).** It ablated `sme.budget,sme.step_profile,sme.prompt_diet` only. `sme.step_profile` is off by default anyway, so the plain arm differed from the SME arm by two switches; retrieval, tool-call rescue, constrained retries, quote verification, confidence, memory, the spec brief, the decomposer, the fast path and the Code Graph stayed on in **both** arms. The comparison was "SME" against "SME without its budget", and its answer would have been read as "SME against nothing". `--ablate-group sme` turns off every `sme.*` switch, `runtime.decompose`, `runtime.fastpath` and `graph.v1` together (the list is `bench::group_features`, and a test checks it), and leaves `edit.transaction`, `exec.sandbox` and `local.runtime_guard` on in both arms - they guard the run, and a plain arm without them would be unsafe, not plain.
+
+Status: **owner-later** (it needs the local model; this build does not run Gate 1).
 
 Your own tasks go in `bench/tasks/private/` (git-ignored; `sdcd bench private` prints the folder and an example) and join the `hard` tier.
 

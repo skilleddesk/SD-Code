@@ -1,0 +1,18 @@
+id = "hard-refactor-01"
+kind = "edit"
+fixture = "py-shop"
+tiers = ["hard"]
+language = "en"
+max_steps = 40
+timeout_secs = 900
+prompt = '''
+The accountant needs tax per line. Each cart line's tax is rounded on its own (on the line's total after its bulk discount), and the order's tax is the sum of those.
+
+* Make `place_order` work that way, and give the order a `line_taxes` list: one amount in cents per cart line, in cart order.
+* `shop.cli` must print one line per cart line, `  <SKU> tax <amount>` (two leading spaces, the amount formatted as the other amounts), before the `subtotal` line.
+* Keep one place for the rounding rule: `shop.money.percent_of` stays the only function that rounds a percentage.
+'''
+
+[verify]
+hidden = "hard-refactor-01"
+commands = ["python3 -m unittest discover -s tests -t . -q"]

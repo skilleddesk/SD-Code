@@ -2853,6 +2853,36 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// M0-5: with the whole SME group off (the plain arm of Gate 1) nothing crashes - the tools that depend on the graph are not offered, and
+    /// a call to one anyway is answered, not trusted to work.
+    #[test]
+    fn with_the_sme_group_off_no_tool_is_offered_that_needs_it_and_a_stray_call_does_not_crash() {
+        let (root, workspace) = folder("plain-arm");
+        let recorder = Recorder::new();
+        let sink = recorder.sink();
+        let mut context = context(&workspace, &sink, Autonomy::Auto);
+
+        std::fs::write(root.join("app.py"), "def run():\n    return 1\n").unwrap();
+
+        let group = crate::bench::group_features("sme").unwrap();
+
+        crate::v3::ablating(&group, || {
+            crate::v3::forcing(&["intel"], || {
+                let offered: Vec<&str> = specs_for(Caps { vision: false, subagent: false, patch: false, local: true }).iter().map(|spec| spec.name).collect();
+
+                assert!(!offered.contains(&"ranked_search") && !offered.contains(&"code_graph"), "{offered:?}");
+            });
+
+            for stray in [call("ranked_search", json!({ "query": "run" })), call("code_graph", json!({ "query": "where", "name": "run" }))] {
+                let answered = execute(&mut context, &stray);
+
+                assert!(!answered.content.is_empty(), "a call to a tool that is off still gets an answer");
+            }
+        });
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     #[test]
     fn the_ranked_search_is_offered_only_when_its_switch_is_on() {
         let names = |on: &[&str]| crate::v3::forcing(on, || specs_for(Caps { vision: false, subagent: false, patch: false, local: true }).iter().map(|spec| spec.name).collect::<Vec<_>>());

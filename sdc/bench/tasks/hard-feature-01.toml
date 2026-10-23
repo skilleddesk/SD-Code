@@ -1,0 +1,22 @@
+id = "hard-feature-01"
+kind = "feature"
+fixture = "py-shop"
+tiers = ["hard"]
+language = "en"
+max_steps = 40
+timeout_secs = 900
+prompt = '''
+Add coupon codes.
+
+* A new module `shop/coupons.py` with `class InvalidCoupon(Exception)`, a frozen dataclass `Coupon(code, percent, min_subtotal_cents=0, expires=None)` (`expires` is a `datetime.date` or `None`), a dict `COUPONS` with exactly these three coupons, and `discount_cents(code, subtotal_cents, today)`:
+  * `WELCOME10` - 10 %, no minimum, never expires
+  * `BIG20` - 20 %, only for a subtotal of 100.00 (10000 cents) or more, never expires
+  * `OLD5` - 5 %, expired on 2020-01-01 (valid up to and including that day)
+  The discount is `percent_of(subtotal_cents, percent)`. An unknown code, an expired one (`today` after `expires`) or a subtotal below the minimum raises `InvalidCoupon`.
+* `place_order(cart, region, zone, stock, coupon=None, today=None)` (`today` defaults to `datetime.date.today()`): the coupon is applied to the order's bulk-discounted subtotal. The order records `order.coupon` (the code or `None`) and `order.discount_cents`. `order.subtotal_cents` stays the bulk-discounted subtotal; tax and the free-shipping rule use the subtotal **after** the coupon; `total_cents` is `subtotal - discount + tax + shipping`.
+* An order with an invalid coupon is refused before it takes any stock.
+'''
+
+[verify]
+hidden = "hard-feature-01"
+commands = ["python3 -m unittest discover -s tests -t . -q"]

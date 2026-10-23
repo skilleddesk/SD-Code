@@ -3,7 +3,7 @@
 //! ```text
 //! sdcd bench list        [--tier smoke|medium|full]
 //! sdcd bench run         --models deepseek:deepseek-chat,anthropic-api:claude-sonnet-5-5 [--tier smoke] [--runs N]
-//!                        [--label NAME] [--binary bench/bin/v1/sdcd] [--ablate FEATURE] [--max-usd 2] [--tasks a,b]
+//!                        [--label NAME] [--binary bench/bin/v1/sdcd] [--ablate FEATURE] [--ablate-group sme] [--max-usd 2] [--tasks a,b]
 //!                        [--enable FEATURE,...] [--keep-learning] [--data-dir DIR] [--keep] [--dry-run]
 //! sdcd bench competitors --models claude-code:claude-sonnet-5-5,codex:gpt-5.1-codex [--tier smoke] [...same]
 //! sdcd bench lang        --models deepseek:deepseek-chat [--label NAME]
@@ -55,6 +55,27 @@ pub const ABLATE_ENV: &str = "SDC_ABLATE";
 /// Is a v3 feature switched off by the bench (`--ablate`)? Features read this beside their own setting.
 pub fn ablated(feature: &str) -> bool {
     std::env::var(ABLATE_ENV).is_ok_and(|list| list.split(',').any(|name| name.trim() == feature))
+}
+
+/// The switches a named group stands for (`--ablate-group`). `sme` is the Small-Model Engine and everything built beside it: the plain
+/// arm of Gate 1 must be SDC **without** it, not "SDC with most of it" (I-1). The three that guard a run stay on in every arm - the
+/// Step Transaction, the sandbox and the local runtime guard - because switching safety off would not be a fair "plain".
+pub fn group_features(group: &str) -> Option<Vec<&'static str>> {
+    match group {
+        "sme" => {
+            const KEEP: &[&str] = &["edit.transaction", "exec.sandbox", "local.runtime_guard"];
+            let mut names: Vec<&'static str> = crate::v3::FEATURES
+                .iter()
+                .map(|feature| feature.name)
+                .filter(|name| (name.starts_with("sme.") || name.starts_with("runtime.") || *name == "graph.v1") && !KEEP.contains(name))
+                .collect();
+
+            names.sort_unstable();
+
+            Some(names)
+        }
+        _ => None,
+    }
 }
 
 fn flag(args: &[String], name: &str) -> Option<String> {
@@ -591,7 +612,15 @@ fn run(args: &[String], mode: &str) -> Result<(), String> {
     let seed: u64 = flag(args, "--seed").and_then(|value| value.parse().ok()).unwrap_or(rules::DEFAULT_SEED);
     let temperature: Option<f64> = flag(args, "--temperature").and_then(|value| value.parse().ok());
     let models: Vec<Model> = flag(args, "--models").ok_or("--models is required (provider:model, comma-separated)")?.split(',').map(Model::parse).collect::<Result<_, _>>()?;
-    let ablate = flag(args, "--ablate");
+    let group = flag(args, "--ablate-group");
+    let ablate = match (flag(args, "--ablate"), group.as_deref()) {
+        (single, None) => single,
+        (single, Some(group)) => {
+            let names = group_features(group).ok_or_else(|| format!("`--ablate-group {group}`: the only group is `sme`"))?;
+
+            Some(single.into_iter().chain(names.into_iter().map(str::to_string)).collect::<Vec<_>>().join(","))
+        }
+    };
 
     if mode == "competitors" {
         if let Some(model) = models.iter().find(|model| !competitors::AGENTS.contains(&model.provider.as_str())) {
@@ -600,7 +629,11 @@ fn run(args: &[String], mode: &str) -> Result<(), String> {
     }
 
     let date = chrono::Local::now().format("%Y-%m-%d").to_string();
-    let default_label = format!("{date}-{tier}-{}{}", if mode == "competitors" { "competitors" } else { "sdc" }, ablate.as_deref().map(|feature| format!("-no-{feature}")).unwrap_or_default());
+    let default_label = format!("{date}-{tier}-{}{}", if mode == "competitors" { "competitors" } else { "sdc" }, match (&group, &ablate) {
+        (Some(group), _) => format!("-no-{group}"),
+        (None, Some(feature)) => format!("-no-{feature}"),
+        _ => String::new(),
+    });
     let label = flag(args, "--label").unwrap_or(default_label);
     let total = tasks.len() * models.len() * runs;
 
@@ -658,6 +691,7 @@ fn run(args: &[String], mode: &str) -> Result<(), String> {
         "models": models.iter().map(Model::label).collect::<Vec<_>>(),
         "tasks": tasks.iter().map(|task| task.id.clone()).collect::<Vec<_>>(),
         "ablate": ablate,
+        "ablate_group": group,
         "enable": flag(args, "--enable"),
         "v3": crate::v3::status(),
         "max_usd": max_usd,
@@ -1089,6 +1123,8 @@ mod tests {
         let everything = task::load_all(&bench.join("tasks")).unwrap();
         /* P0-11: the small-model bench is a tier of its own, so it is not among the plan's 40 that baselines measure. */
         let (small, tasks): (Vec<Task>, Vec<Task>) = everything.into_iter().partition(|task| task.tiers.iter().any(|tier| tier == "small"));
+        /* M0-8: the hard tier has tasks of its own (`hard-*`, on the `py-shop` fixture); the plan's 40 are the rest. */
+        let (hard, tasks): (Vec<Task>, Vec<Task>) = tasks.into_iter().partition(|task| task.tiers == ["hard"]);
         let count = |kind: &str| tasks.iter().filter(|task| task.kind == kind).count();
 
         /* 3.1 (4.12): 8 original situations + 32 tasks on three more projects, so Gate 1 can be decided by a paired test with power
@@ -1098,13 +1134,17 @@ mod tests {
         assert!(small.iter().any(|task| task.language == "ar") && small.iter().any(|task| task.language == "de") && small.iter().any(|task| task.language == "bn") && small.iter().any(|task| task.language == "banglish"));
         assert!(small.iter().all(|task| !task.in_tier("full")), "and none of them is in the full tier");
         assert!(tasks.iter().find(|task| task.id == "ml-bn").unwrap().in_tier("hard"), "the one task the baseline flipped is in the hard tier");
+        assert_eq!(hard.len(), 8, "M0-8: eight tasks written for the hard tier, beside the one the baseline flipped");
+        assert!(hard.iter().all(|task| task.in_tier("hard") && !task.in_tier("full") && !task.in_tier("medium")), "and none of them changes what the plan's 40 mean");
+        assert!(hard.iter().any(|task| task.language == "bn") && hard.iter().any(|task| task.language == "banglish"), "a Bengali and a Banglish instruction among them");
+        assert!(["bugfix", "edit", "feature", "explain"].iter().all(|kind| hard.iter().any(|task| &task.kind == kind)), "refactor and ripple, bug hunt, feature, and a question");
 
         /* The plan's 40: 8 find, 6 explain, 8 small edits, 6 bug fixes, 4 features, 4 DevOps, 4 multilingual. */
         assert_eq!([count("find"), count("explain"), count("edit"), count("bugfix"), count("feature"), count("devops"), count("multilingual")], [8, 6, 8, 6, 4, 4, 4]);
         assert_eq!(tasks.iter().filter(|task| task.in_tier("smoke")).count(), 8);
         assert_eq!(tasks.iter().filter(|task| task.in_tier("medium")).count(), 20);
 
-        for task in tasks.iter().chain(&small) {
+        for task in tasks.iter().chain(&small).chain(&hard) {
             assert!(bench.join("fixtures").join(&task.fixture).is_dir(), "{}: no fixture {}", task.id, task.fixture);
 
             if let Some(hidden) = &task.verify.hidden {
@@ -1115,5 +1155,37 @@ mod tests {
                 assert!(tasks.iter().any(|other| &other.id == original), "{}: repeats unknown {original}", task.id);
             }
         }
+    }
+
+    /// I-1: the plain arm of Gate 1 is SDC without the Small-Model Engine - every `sme.*`, every `runtime.*` and `graph.v1` - and still
+    /// with the three switches that guard a run.
+    #[test]
+    fn the_sme_group_is_every_sme_switch_and_keeps_the_guards() {
+        let names = group_features("sme").unwrap();
+
+        for expected in ["sme.retrieval", "sme.toolcall_rescue", "sme.quote_verify", "sme.confidence", "sme.memory", "sme.spec_brief", "sme.constrained", "sme.budget", "sme.prompt_diet", "sme.step_profile", "runtime.decompose", "runtime.fastpath", "graph.v1"] {
+            assert!(names.contains(&expected), "{expected} is part of the group");
+        }
+
+        for kept in ["edit.transaction", "exec.sandbox", "local.runtime_guard"] {
+            assert!(!names.contains(&kept), "{kept} guards the run and stays on in the plain arm");
+        }
+
+        assert!(names.iter().all(|name| crate::v3::FEATURES.iter().any(|feature| feature.name == *name)), "every name is a registered switch");
+        assert!(group_features("nothing").is_none());
+    }
+
+    /// With the group ablated, none of its switches is on - including the ones that default to on.
+    #[test]
+    fn ablating_the_sme_group_turns_every_one_of_its_switches_off() {
+        let names = group_features("sme").unwrap();
+
+        crate::v3::ablating(&names, || {
+            for name in &names {
+                assert!(!crate::v3::on(name), "{name} is still on");
+            }
+
+            assert!(crate::v3::on("edit.transaction"), "the guards are untouched");
+        });
     }
 }

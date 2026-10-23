@@ -1,0 +1,20 @@
+id = "hard-hunt-01"
+kind = "bugfix"
+fixture = "py-shop"
+tiers = ["hard"]
+language = "en"
+max_steps = 40
+timeout_secs = 900
+prompt = '''
+Customers report three problems with the shop:
+
+1. An order whose goods come to exactly 50.00 was still charged shipping.
+2. A 1.2 kg parcel to zone B costs the same as a 1 kg parcel.
+3. An order sent to the region "EU-DE" was charged no tax at all, and nobody noticed.
+
+Find the causes in the code and fix them. The README says what the shop's rules are. Do not change the tests that already exist.
+'''
+
+[verify]
+hidden = "hard-hunt-01"
+commands = ["python3 -m unittest discover -s tests -t . -q"]

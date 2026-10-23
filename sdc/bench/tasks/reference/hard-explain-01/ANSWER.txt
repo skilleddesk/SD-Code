@@ -1,0 +1,3 @@
+place_order (shop/orders.py) first prices the cart: discounted_subtotal_cents gives the subtotal after bulk discounts. It then calls shipping_for(subtotal, cart.weight_kg(), zone) in shop/shipping.py, and stores the result as the order's shipping_cents.
+
+shipping_for returns 0 when the subtotal is over FREE_SHIPPING_FROM (5000 cents, i.e. 50.00); otherwise it returns ship_cost(weight_kg, zone). ship_cost looks the zone up in ZONES (base cents and cents per kg: A is 500 and 100, B 900 and 150, C 1500 and 250) and adds the zone's per-kg price times the cart's weight in whole kilograms, so the charge depends on the zone and the total weight of the cart (the sum of every product's weight_kg times its quantity), and it is free once the subtotal passes the threshold.

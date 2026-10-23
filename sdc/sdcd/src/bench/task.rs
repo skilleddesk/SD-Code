@@ -109,13 +109,18 @@ impl Task {
         Ok(task)
     }
 
+    /// A task written for the `hard` tier alone (M0-8): the baselines' "40 tasks" are the ones that existed before it, so it is not in `full`.
+    fn only_hard(&self) -> bool {
+        !self.tiers.is_empty() && self.tiers.iter().all(|t| t == "hard")
+    }
+
     /// Is the task in a tier? `full` holds the plan's 40 (every task but the paired repeats and fleet tasks, which
     /// have tiers of their own); `medium` holds the smoke tasks too.
     pub fn in_tier(&self, tier: &str) -> bool {
         match tier {
             /* The small-model bench and the person's own private tasks are tiers of their own: adding them to `full`
                would change what "the 40 tasks" of every baseline means. */
-            "full" => (!matches!(self.kind.as_str(), "repeat" | "fleet") && !self.tiers.iter().any(|t| t == "small" || t == "private")) || self.tiers.iter().any(|t| t == "full"),
+            "full" => (!matches!(self.kind.as_str(), "repeat" | "fleet") && !self.tiers.iter().any(|t| t == "small" || t == "private") && !self.only_hard()) || self.tiers.iter().any(|t| t == "full"),
             "medium" => self.tiers.iter().any(|t| t == "medium" || t == "smoke"),
             other => self.tiers.iter().any(|t| t == other),
         }

@@ -1,0 +1,19 @@
+id = "hard-ripple-01"
+kind = "edit"
+fixture = "py-shop"
+tiers = ["hard"]
+language = "en"
+max_steps = 40
+timeout_secs = 900
+prompt = '''
+Change the shipping API so a parcel is one thing instead of loose arguments.
+
+* Add a frozen dataclass `Parcel(weight_kg, zone, fragile=False)` to `shop.shipping`.
+* `ship_cost(parcel)` and `shipping_for(subtotal_cents, parcel)` take it instead of `weight_kg, zone`. A fragile parcel costs 200 cents more.
+* `place_order` builds the parcel from the cart: its weight, the zone, and fragile when any product in the cart is fragile (`Product.fragile`).
+* Update every caller and the existing tests; nothing may still use the old signatures.
+'''
+
+[verify]
+hidden = "hard-ripple-01"
+commands = ["python3 -m unittest discover -s tests -t . -q"]

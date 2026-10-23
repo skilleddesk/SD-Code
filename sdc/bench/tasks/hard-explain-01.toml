@@ -1,0 +1,14 @@
+id = "hard-explain-01"
+kind = "explain"
+fixture = "py-shop"
+tiers = ["hard"]
+language = "en"
+max_steps = 40
+timeout_secs = 900
+prompt = '''
+How is the shipping charge on an order worked out? Follow it from `place_order` to the number stored on the order, name the functions and constants it passes through, say what the charge depends on, and say when it is free. Do not change any file.
+'''
+
+[verify]
+answer_all = ["place_order", "shipping_for", "ship_cost", "FREE_SHIPPING_FROM", "5000|50\\.00", "ZONES", "weight"]
+no_edits = true
