@@ -27,6 +27,7 @@ import {
   deletePath,
   loadDirectory,
   loadGitStatus,
+  loadPolicyNotice,
   openDiff,
   refreshAfterTurn,
   openFile,
@@ -98,7 +99,7 @@ export function FilesSection() {
 
   /* Only what the tree draws. The whole store also holds every open file's text and the unsaved draft, which changes
      on every keystroke in the editor - subscribing to all of it re-drew the entire tree for each letter typed. */
-  const { root: storedRoot, directories, expanded, loading, error, git } = useFilesStore(
+  const { root: storedRoot, directories, expanded, loading, error, git, policyNotice } = useFilesStore(
     useShallow((state) => ({
       root: state.root,
       directories: state.directories,
@@ -106,6 +107,7 @@ export function FilesSection() {
       loading: state.loading,
       error: state.error,
       git: state.git,
+      policyNotice: state.policyNotice,
     })),
   );
   /* How many of this chat's turns have ended - a number, so the effect below runs once per ended turn. */
@@ -139,6 +141,7 @@ export function FilesSection() {
 
     /* The branch and the changed-file count come with the folder (0.7.9). */
     void loadGitStatus();
+    void loadPolicyNotice();
   }, [root]);
 
   /*
@@ -268,6 +271,12 @@ export function FilesSection() {
             </>
           )}
         </div>
+
+        {policyNotice ? (
+          <div className="files-policy-note mb-[4px] text-[10.5px] leading-[1.4] text-text-muted" data-policy-notice="missing">
+            {strings.files.noPolicy}
+          </div>
+        ) : null}
 
         {/* The search bar lives above the tree, always (0.11.0): "where is index.php" is the first
             question a project's sidebar is asked, and an icon-toggle hid the answer's door. It

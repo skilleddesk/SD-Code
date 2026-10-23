@@ -162,6 +162,9 @@ impl Daemon {
             "root": root,
             "path": root.as_ref().map(|root| format!("{}/{}", root.trim_end_matches(['/', '\\']), crate::trust::policy::POLICY_FILE)),
             "exists": policy.source != "default",
+            /* M0-2: a folder that is open and has no policy file is told so once, quietly (switch `v3.policy.missing_notice`). It only
+               informs: nothing about what is protected changes. */
+            "missingNotice": missing_notice(root.as_deref(), &policy),
             "policy": policy,
             "text": policy.to_toml(),
             "defaults": { "protected": crate::trust::policy::DEFAULT_PROTECTED, "alwaysAsk": crate::trust::policy::DEFAULT_ALWAYS_ASK },
@@ -546,5 +549,31 @@ impl Daemon {
             "html": html,
             "pack": pack,
         }))
+    }
+}
+
+/// M0-2: should the sidebar mention that this folder has no `.sdc/policy.toml`? Only for an open folder whose policy is the built-in one,
+/// and only while `v3.policy.missing_notice` is on. It informs; what is protected does not change.
+fn missing_notice(root: Option<&str>, policy: &Policy) -> bool {
+    root.is_some() && policy.source == "default" && crate::v3::on("policy.missing_notice")
+}
+
+#[cfg(test)]
+mod missing_notice_tests {
+    use super::*;
+
+    #[test]
+    fn a_folder_without_a_policy_file_is_mentioned_once_and_one_with_a_file_is_not() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_str().unwrap();
+
+        assert!(missing_notice(Some(root), &Policy::load_local(dir.path())), "no file: the built-in policy is in force, and the person is told");
+
+        std::fs::create_dir_all(dir.path().join(".sdc")).unwrap();
+        std::fs::write(dir.path().join(".sdc/policy.toml"), "secret_paths = [\"*.key\"]\n").unwrap();
+
+        assert!(!missing_notice(Some(root), &Policy::load_local(dir.path())), "a policy file is there");
+        assert!(!missing_notice(None, &Policy::default()), "no folder, nothing to say");
+        assert!(!crate::v3::ablating(&["policy.missing_notice"], || missing_notice(Some(root), &Policy::default())), "switched off, it says nothing");
     }
 }

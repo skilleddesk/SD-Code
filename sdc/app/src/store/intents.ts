@@ -1676,6 +1676,25 @@ export async function saveFile(path: string, text: string): Promise<boolean> {
   }
 }
 
+/** Whether the chat's folder has a `.sdc/policy.toml`; when it has none, the sidebar says so once (M0-2). Quiet on any failure. */
+export async function loadPolicyNotice(): Promise<void> {
+  const sessionId = usePrefsStore.getState().activeTab;
+
+  if (sessionId === null) {
+    useFilesStore.getState().setPolicyNotice(false);
+
+    return;
+  }
+
+  try {
+    const answer = await sdcpCall('policy.get', { sessionId, hostId: hostIdOf(sessionId) });
+
+    useFilesStore.getState().setPolicyNotice(answer.missingNotice);
+  } catch {
+    useFilesStore.getState().setPolicyNotice(false);
+  }
+}
+
 /**
  * `git.status` for the chat's folder - the branch and how many files the working tree has changed.
  *

@@ -2500,7 +2500,7 @@ export interface SdcpMethodMap {
   /* 0.12 ---------------------------------------------------------------------------------------- */
   'audit.list': { params: { sessionId?: string; turnId?: string; limit?: number }; result: { entries: AuditEntry[]; chain: LedgerCheck } };
   'audit.verify': { params: Record<string, never>; result: LedgerCheck };
-  'policy.get': { params: { sessionId?: string; root?: string; hostId?: string }; result: { root: string | null; path: string | null; exists: boolean; policy: Policy; text: string; defaults: { protected: string[]; alwaysAsk: string[] } } };
+  'policy.get': { params: { sessionId?: string; root?: string; hostId?: string }; result: { root: string | null; path: string | null; exists: boolean; missingNotice: boolean; policy: Policy; text: string; defaults: { protected: string[]; alwaysAsk: string[] } } };
   'policy.set': { params: { sessionId?: string; root?: string; hostId?: string; text?: string; policy?: Partial<Policy> }; result: { policy: Policy; path: string } };
   'kill.all': { params: Record<string, never>; result: { stopped: ActiveWork[]; processes: number; checkpoints: { sessionId: string; checkpointId: string }[] } };
   'kill.list': { params: Record<string, never>; result: { active: ActiveWork[] } };

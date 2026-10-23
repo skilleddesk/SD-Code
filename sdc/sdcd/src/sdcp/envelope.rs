@@ -42,7 +42,7 @@ impl Envelope {
     pub fn is_read_lane(&self) -> bool {
         matches!(
             self.method.as_str(),
-            "fs.list" | "fs.read" | "fs.stat" | "fs.search" | "git.status" | "git.diff" | "pty.output"
+            "fs.list" | "fs.read" | "fs.stat" | "fs.search" | "git.status" | "git.diff" | "pty.output" | "policy.get"
         )
     }
 

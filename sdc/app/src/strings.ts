@@ -442,6 +442,7 @@ const english = {
     rootTitle: (path: string): string => path,
     /** A chat with no folder has no tree: the way in is the empty state's `Open folder`. */
     noFolder: 'Open a folder to see its files',
+    noPolicy: 'No .sdc/policy.toml here - only the built-in protections are in force.',
     /** `Reading…` while `fs.list` is out. */
     loading: 'Reading…',
     /** An empty directory is a fact, not a failure. */

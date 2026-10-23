@@ -72,6 +72,8 @@ export interface FilesState {
   git: GitView | null;
   /** The working tree's diff (0.7.9), shown in the Preview instead of a file. */
   diff: string | null;
+  /** The folder has no `.sdc/policy.toml` and the daemon says to mention it (M0-2). */
+  policyNotice: boolean;
 }
 
 export interface FilesActions {
@@ -94,6 +96,7 @@ export interface FilesActions {
   setReveal: (reveal: { path: string; line: number } | null) => void;
   /** The folder's git state - or `null` when there is none to show. */
   setGit: (git: GitView | null) => void;
+  setPolicyNotice: (notice: boolean) => void;
   /** The working tree's diff - or `null` when the diff was closed. */
   setDiff: (patch: string | null) => void;
   /** The error line goes, for a host that came back (0.16.0). */
@@ -119,6 +122,7 @@ const initialFilesState: FilesState = {
   opening: null,
   git: null,
   diff: null,
+  policyNotice: false,
 };
 
 export const useFilesStore = create<FilesState & FilesActions>()((set, get) => ({
@@ -223,6 +227,8 @@ export const useFilesStore = create<FilesState & FilesActions>()((set, get) => (
     }),
 
   setGit: (git) => set((state) => ({ ...state, git })),
+
+  setPolicyNotice: (notice) => set((state) => (state.policyNotice === notice ? state : { ...state, policyNotice: notice })),
 
   /* Opening a diff takes the tab over from the file it was showing - the two are the same surface, and a
      diff *beside* a file would be two answers to one question on a 400px panel. */

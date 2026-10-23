@@ -49,7 +49,7 @@ const READ_SOCKETS: usize = 4;
 /// same list (`Envelope::is_read_lane` in `sdcd/src/sdcp/envelope.rs`) for its own connections; the two are kept equal
 /// by `read_lane_matches_the_daemons` below.
 pub fn is_read_lane(method: &str) -> bool {
-    matches!(method, "fs.list" | "fs.read" | "fs.stat" | "fs.search" | "git.status" | "git.diff" | "pty.output")
+    matches!(method, "fs.list" | "fs.read" | "fs.stat" | "fs.search" | "git.status" | "git.diff" | "pty.output" | "policy.get")
 }
 
 /// The daemon's default loopback port; `SDC_SDCP_PORT` overrides it.
