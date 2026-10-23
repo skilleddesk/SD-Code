@@ -95,4 +95,55 @@ describe('file tabs', () => {
     expect(useFilesStore.getState().tabs).toEqual([]);
     expect(useFilesStore.getState().open).toBeNull();
   });
+
+  it('a new row shows at once, and only once', () => {
+    const store = useFilesStore.getState();
+
+    store.fill('/p', { entries: [{ name: 'a.ts', path: '/p/a.ts', dir: false, size: 3 }], hidden: 0 });
+    store.addEntry('/p', { name: 'b.ts', path: '/p/b.ts', dir: false, size: 0 });
+    store.addEntry('/p', { name: 'b.ts', path: '/p/b.ts', dir: false, size: 0 });
+
+    expect(useFilesStore.getState().directories['/p']?.entries.map((entry) => entry.name)).toEqual(['a.ts', 'b.ts']);
+  });
+
+  it('a row for a folder that was never listed is not invented', () => {
+    useFilesStore.getState().addEntry('/never', { name: 'x', path: '/never/x', dir: false, size: 0 });
+
+    expect(useFilesStore.getState().directories['/never']).toBeUndefined();
+  });
+
+  it('a deleted folder takes its listing, and its open rows, with it', () => {
+    const store = useFilesStore.getState();
+
+    store.fill('/p', {
+      entries: [
+        { name: 'src', path: '/p/src', dir: true, size: 0 },
+        { name: 'keep.ts', path: '/p/keep.ts', dir: false, size: 1 },
+      ],
+      hidden: 0,
+    });
+    store.fill('/p/src', { entries: [{ name: 'deep', path: '/p/src/deep', dir: true, size: 0 }], hidden: 0 });
+    store.fill('/p/src/deep', { entries: [], hidden: 0 });
+    store.setExpanded('/p/src', true);
+    store.setExpanded('/p/src/deep', true);
+    store.dropEntry('/p/src');
+
+    const after = useFilesStore.getState();
+
+    expect(after.directories['/p']?.entries.map((entry) => entry.name)).toEqual(['keep.ts']);
+    expect(after.directories['/p/src']).toBeUndefined();
+    expect(after.directories['/p/src/deep']).toBeUndefined();
+    expect(after.expanded).toEqual([]);
+  });
+
+  it('a folder whose name only starts the same is left alone', () => {
+    const store = useFilesStore.getState();
+
+    store.fill('/p', { entries: [], hidden: 0 });
+    store.fill('/p/src', { entries: [], hidden: 0 });
+    store.fill('/p/src2', { entries: [], hidden: 0 });
+    store.dropEntry('/p/src');
+
+    expect(useFilesStore.getState().directories['/p/src2']).toBeDefined();
+  });
 });

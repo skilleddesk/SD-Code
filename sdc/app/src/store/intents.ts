@@ -1223,12 +1223,39 @@ function parentOf(path: string): string {
   return cut <= 0 ? path : path.slice(0, cut);
 }
 
-/** Re-reads one directory of the tree and the git badge, after a change made from the tree. */
-async function refreshAfter(directory: string): Promise<void> {
-  const root = useFilesStore.getState().root;
+/* The directories and the badge waiting to be re-read after changes made from the window. */
+const stale = new Set<string>();
+let staleTimer: ReturnType<typeof setTimeout> | undefined;
 
-  await loadDirectory(directory === root ? null : directory);
-  await loadGitStatus();
+/**
+ * Re-reads the tree and the git badge **after** the change has been shown, not before it is acknowledged.
+ *
+ * A change used to end with `await loadDirectory(); await loadGitStatus()`: the person saw the toast only after a
+ * listing and a `git status` of the whole project had come back - on a large project or a slow disk, seconds in
+ * which Save, Rename and Delete looked frozen. The change is shown at once now (the toast, the row), and this
+ * confirms it a moment later. Several changes in a row share one re-read: it waits until they stop for 350 ms.
+ */
+function refreshSoon(directory: string): void {
+  stale.add(directory);
+
+  if (staleTimer !== undefined) {
+    clearTimeout(staleTimer);
+  }
+
+  staleTimer = setTimeout(() => {
+    const directories = [...stale];
+
+    stale.clear();
+    staleTimer = undefined;
+
+    const root = useFilesStore.getState().root;
+
+    for (const candidate of directories) {
+      void loadDirectory(candidate === root ? null : candidate);
+    }
+
+    void loadGitStatus();
+  }, 350);
 }
 
 /** A name a person typed for a file or folder: one path segment, nothing that climbs out. */
@@ -1236,6 +1263,12 @@ export function validName(name: string): boolean {
   const trimmed = name.trim();
 
   return trimmed !== '' && trimmed !== '.' && trimmed !== '..' && !/[\\/:*?"<>|]/.test(trimmed);
+}
+
+/** Brings the Preview forward, the way a click on a file in the tree does. */
+function showPreview(): void {
+  useLayoutStore.getState().showRight();
+  useRightPanelStore.getState().setActiveTab('preview', usePrefsStore.getState().activeTab);
 }
 
 /** New file: an empty file, opened in a tab. `fs.write` checkpoints first, like every write. */
@@ -1260,9 +1293,16 @@ export async function createFile(directory: string, name: string): Promise<boole
   }
 
   try {
-    await sdcpCall('fs.write', { path, text: '', sessionId, hostId: hostIdOf(sessionId) });
-    await refreshAfter(directory);
-    await openFile(path, name.trim());
+    const answer = await sdcpCall('fs.write', { path, text: '', sessionId, hostId: hostIdOf(sessionId) });
+    const files = useFilesStore.getState();
+
+    /* The row and the tab appear now. The file is empty and the answer carries its hash, so there is nothing to
+       read back; the listing confirms the row a moment later. */
+    files.addEntry(directory, { name: name.trim(), path, dir: false, size: 0 });
+    files.setOpen({ path, name: name.trim(), text: '', sha256: answer.sha256, bytes: 0, truncated: false });
+    files.setReveal(null);
+    showPreview();
+    refreshSoon(directory);
 
     return true;
   } catch (error) {
@@ -1282,9 +1322,12 @@ export async function createFolder(directory: string, name: string): Promise<boo
     return false;
   }
 
+  const path = inFolder(directory, name.trim());
+
   try {
-    await sdcpCall('fs.mkdir', { path: inFolder(directory, name.trim()), sessionId, hostId: hostIdOf(sessionId) });
-    await refreshAfter(directory);
+    await sdcpCall('fs.mkdir', { path, sessionId, hostId: hostIdOf(sessionId) });
+    useFilesStore.getState().addEntry(directory, { name: name.trim(), path, dir: true, size: 0 });
+    refreshSoon(directory);
 
     return true;
   } catch (error) {
@@ -1314,7 +1357,8 @@ export async function renamePath(path: string, name: string): Promise<boolean> {
   try {
     await sdcpCall('fs.rename', { path, to, sessionId, hostId: hostIdOf(sessionId) });
     closeTabsUnder(path);
-    await refreshAfter(directory);
+    useFilesStore.getState().dropEntry(path);
+    refreshSoon(directory);
     toast(strings.files.renamed(baseName(path), name.trim()));
 
     return true;
@@ -1325,7 +1369,12 @@ export async function renamePath(path: string, name: string): Promise<boolean> {
   }
 }
 
-/** Delete - a checkpoint is taken first, so Rewind brings it back. */
+/**
+ * Delete - a checkpoint is taken first, so Rewind brings it back.
+ *
+ * The row leaves the tree the moment the daemon says it is gone, and a failure puts it back: the daemon is asked
+ * first, so a refused delete (a protected path) never makes a row disappear.
+ */
 export async function deletePath(path: string): Promise<boolean> {
   const sessionId = usePrefsStore.getState().activeTab;
 
@@ -1336,7 +1385,8 @@ export async function deletePath(path: string): Promise<boolean> {
   try {
     await sdcpCall('fs.delete', { path, sessionId, hostId: hostIdOf(sessionId) });
     closeTabsUnder(path);
-    await refreshAfter(parentOf(path));
+    useFilesStore.getState().dropEntry(path);
+    refreshSoon(parentOf(path));
     toast(strings.files.deleted(baseName(path)));
 
     return true;
@@ -1607,14 +1657,15 @@ export async function saveFile(path: string, text: string): Promise<boolean> {
 
     /* The badge is live, not a snapshot: a Save is exactly the moment the changed count and the Diff button
        become interesting, and reading `git.status` once when the folder was opened left both stale (found by
-       the probe, which saved a line and watched `0 changed` stay `0`). */
-    await loadGitStatus();
-
-    /* And the file's row: its size changed, and a tree that still shows the old size is a stale tree. */
+       the probe, which saved a line and watched `0 changed` stay `0`). It, and the file's row (its size
+       changed), are re-read after the Save has been acknowledged - not before it: a `git status` of a large
+       folder is not something a person should wait for to see "Saved". */
     const directory = parentOf(path);
 
     if (useFilesStore.getState().directories[directory] !== undefined) {
-      await loadDirectory(directory === useFilesStore.getState().root ? null : directory);
+      refreshSoon(directory);
+    } else {
+      void loadGitStatus();
     }
 
     return true;

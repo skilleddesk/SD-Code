@@ -36,6 +36,16 @@ impl Envelope {
         Ok(envelope)
     }
 
+    /// True for a method that only looks: it changes nothing, so it may be answered while a slower request of the
+    /// same connection is still running. The window's file tree depends on this - a Save that is waiting on a
+    /// slow disk must not hold back the listing, the file read or the git badge that follow it.
+    pub fn is_read_lane(&self) -> bool {
+        matches!(
+            self.method.as_str(),
+            "fs.list" | "fs.read" | "fs.stat" | "fs.search" | "git.status" | "git.diff" | "pty.output"
+        )
+    }
+
     /// A string parameter, or the method's `bad_request` when it is missing.
     pub fn require_str(&self, key: &str) -> Result<String, ErrorObject> {
         match self.params.get(key) {

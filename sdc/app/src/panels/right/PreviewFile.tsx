@@ -1,5 +1,5 @@
 import { LoaderCircle, RotateCcw, Save, X } from 'lucide-react';
-import { lazy, Suspense, useState } from 'react';
+import { lazy, Suspense, useMemo, useRef, useState } from 'react';
 
 import { strings } from '../../strings';
 import { useFilesStore } from '../../store/files';
@@ -35,6 +35,21 @@ function relativeTo(root: string | null, path: string): string {
   return full.toLowerCase().startsWith(`${base.toLowerCase()}/`) ? full.slice(base.length + 1) : path;
 }
 
+/** How many lines a text has, without allocating one string per line. */
+function countLines(text: string): number {
+  if (text === '') {
+    return 0;
+  }
+
+  let lines = 1;
+
+  for (let at = text.indexOf('\n'); at !== -1; at = text.indexOf('\n', at + 1)) {
+    lines += 1;
+  }
+
+  return lines;
+}
+
 export function PreviewFile() {
   const file = useFilesStore((state) => state.open);
   const root = useFilesStore((state) => state.root);
@@ -42,8 +57,13 @@ export function PreviewFile() {
   const drafts = useFilesStore((state) => state.drafts);
   const reveal = useFilesStore((state) => state.reveal);
   const [busy, setBusy] = useState(false);
+  /* The editor's text right now (it tells the store a moment after typing). */
+  const latest = useRef<(() => string) | null>(null);
   /* A dirty tab asks once before it closes: the first click arms, the second discards. */
   const [armed, setArmed] = useState<string | null>(null);
+
+  const shownText = file === null ? '' : (drafts[file.path] ?? file.text);
+  const lines = useMemo(() => countLines(shownText), [shownText]);
 
   if (file === null) {
     return null;
@@ -52,15 +72,17 @@ export function PreviewFile() {
   const draft = drafts[file.path];
   const shown = draft ?? file.text;
   const changed = draft !== undefined && draft !== file.text;
-  const lines = shown === '' ? 0 : shown.split('\n').length;
 
   const save = (): void => {
-    if (!changed || busy || file.truncated) {
+    /* The text as typed this instant, which may be a moment ahead of the store's draft. */
+    const text = latest.current?.() ?? shown;
+
+    if (busy || file.truncated || text === file.text) {
       return;
     }
 
     setBusy(true);
-    void saveFile(file.path, shown).finally(() => setBusy(false));
+    void saveFile(file.path, text).finally(() => setBusy(false));
   };
 
   const close = (path: string): void => {
@@ -188,8 +210,17 @@ export function PreviewFile() {
           value={shown}
           readOnly={file.truncated}
           line={reveal !== null && reveal.path === file.path ? reveal.line : null}
-          onChange={(text) => useFilesStore.getState().setDraft(file.path, text === file.text ? null : text)}
+          onChange={(text, at) => {
+            /* The editor tells a moment after typing, and by then the tab may be another one - or closed, in which case
+               its draft was just discarded and must not come back. */
+            const owner = useFilesStore.getState().tabs.find((tab) => tab.path === at);
+
+            if (owner !== undefined) {
+              useFilesStore.getState().setDraft(at, text === owner.text ? null : text);
+            }
+          }}
           onSave={save}
+          flushRef={latest}
         />
       </Suspense>
       </SelectInstruct>

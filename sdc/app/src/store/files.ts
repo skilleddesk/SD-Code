@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 
 import type { FsEntry } from '../../../protocol/types';
-import { samePath } from '../lib/paths';
+import { isUnder, samePath } from '../lib/paths';
 
 /**
  * The file tree's view state - which folders are open, what was read, and the file on screen (0.7.7).
@@ -98,6 +98,10 @@ export interface FilesActions {
   setDiff: (patch: string | null) => void;
   /** The error line goes, for a host that came back (0.16.0). */
   clearError: () => void;
+  /** Show a row the moment its file or folder exists, before the next listing arrives. */
+  addEntry: (directory: string, entry: FsEntry) => void;
+  /** Take a row (and everything open under it) out of the tree at once; the next listing confirms it. */
+  dropEntry: (path: string) => void;
   /** Forget everything, for a chat whose folder changed: the old paths are not in the new tree. */
   reset: () => void;
 }
@@ -146,6 +150,35 @@ export const useFilesStore = create<FilesState & FilesActions>()((set, get) => (
     set((state) => ({ ...state, loading: [], opening: null, error: message })),
 
   clearError: () => set((state) => (state.error === null ? state : { ...state, error: null })),
+
+  addEntry: (directory, entry) =>
+    set((state) => {
+      const listing = state.directories[directory];
+
+      if (listing === undefined || listing.entries.some((candidate) => samePath(candidate.path, entry.path))) {
+        return state;
+      }
+
+      return { ...state, directories: { ...state.directories, [directory]: { ...listing, entries: [...listing.entries, entry] } } };
+    }),
+
+  dropEntry: (path) =>
+    set((state) => {
+      const under = (candidate: string): boolean => isUnder(candidate, path);
+      const directories: Record<string, DirectoryView> = {};
+
+      for (const [directory, listing] of Object.entries(state.directories)) {
+        if (under(directory)) {
+          continue;
+        }
+
+        directories[directory] = listing.entries.some((entry) => samePath(entry.path, path))
+          ? { ...listing, entries: listing.entries.filter((entry) => !samePath(entry.path, path)) }
+          : listing;
+      }
+
+      return { ...state, directories, expanded: state.expanded.filter((candidate) => !under(candidate)) };
+    }),
 
   setExpanded: (path, open) =>
     set((state) => ({

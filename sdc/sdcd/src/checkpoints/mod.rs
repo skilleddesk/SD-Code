@@ -10,6 +10,7 @@
 //! `screenshot.rs` explains why `thumbnail` is usually `null` on this build, and why that does not
 //! weaken the rewind: the *files* are what a rewind restores, and the file half is real today.
 
+pub mod deferred;
 pub mod screenshot;
 
 use std::sync::Arc;

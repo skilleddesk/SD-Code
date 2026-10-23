@@ -12,12 +12,12 @@ impl Daemon {
         match envelope.method.as_str() {
             /* The engines' environment ------------------------------------------------------- */
             "fs.read" => self.fs_read(envelope),
-            "fs.write" => self.fs_write(envelope, &*out),
+            "fs.write" => self.fs_write(envelope, &out),
             "fs.list" => self.fs_list(envelope),
             "fs.stat" => self.fs_stat(envelope),
             "fs.search" => self.fs_search(envelope),
-            "fs.rename" => self.fs_rename(envelope, &*out),
-            "fs.delete" => self.fs_delete(envelope, &*out),
+            "fs.rename" => self.fs_rename(envelope, &out),
+            "fs.delete" => self.fs_delete(envelope, &out),
             "fs.mkdir" => self.fs_mkdir(envelope),
             "git.status" => self.git_status(envelope),
             "git.diff" => self.git_diff(envelope),
@@ -91,7 +91,7 @@ impl Daemon {
     /// **On a host the checkpoint is the host's**: its shadow repository at `$HOME/.sdc/git/<hash>` there
     /// (0.7.13), so a remote save is rewound the same way a local one is. Until v4 this branch skipped the
     /// checkpoint while the window's toast said one had been taken.
-    pub(super) fn fs_write(&self, envelope: &Envelope, out: &dyn Notifier) -> Result<Value, ErrorObject> {
+    pub(super) fn fs_write(&self, envelope: &Envelope, out: &Arc<dyn Notifier>) -> Result<Value, ErrorObject> {
         let raw = envelope.require_str("path")?;
         let text = envelope.opt_str("text").unwrap_or_default();
         let session_id = envelope.opt_str("sessionId");
@@ -127,33 +127,12 @@ impl Daemon {
         }
 
         let path = std::path::PathBuf::from(&raw);
+        let name = path.file_name().and_then(|name| name.to_str()).unwrap_or("a file").to_string();
 
-        if let Some(session) = session_id.as_deref() {
-            let name = path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or("a file")
-                .to_string();
-            /* The root comes from the session (0.7.6), so the checkpoint hashes the files that are about to
-               change rather than nothing - and since 0.7.13 it is the same folder whether that is a local
-               path or a path on a host, because the subject says which. */
-            let subject = self.subject(envelope)?;
-
-            if let Ok(fresh) = crate::checkpoints::create(
-                self.store(),
-                session,
-                self.state.events.seq(),
-                &format!("Before editing {name}"),
-                subject.snapshot(),
-                crate::checkpoints::screenshot::capture(),
-            ) {
-                out.push(
-                    event::checkpoint_saved(session, fresh.to_event_payload()),
-                    Some(session.to_string()),
-                    turn_id.clone(),
-                );
-            }
-        }
+        /* The checkpoint of what is about to change is taken for this path alone, now, and written out in the
+           background (`checkpoint_first`): Save answers when the file is written, not when the folder has been
+           walked. */
+        self.checkpoint_first(envelope, &format!("Before editing {name}"), &[path.as_path()], out)?;
 
         let sha256 = crate::fs::write(&path, &text)?;
 
@@ -167,16 +146,52 @@ impl Daemon {
     /// A checkpoint of the chat's folder before a change a person made from the window (P5): the same one
     /// `fs.write` takes, on whichever machine the folder is. Without a session there is nothing to
     /// checkpoint against, and nothing is taken.
-    pub(super) fn checkpoint_first(&self, envelope: &Envelope, title: &str, out: &dyn Notifier) -> Result<(), ErrorObject> {
+    ///
+    /// `touched` are the paths the change is about to alter. For a folder on this machine their pre-image is
+    /// captured here, in a moment, and the checkpoint itself - which reads the whole folder - is finished by a
+    /// background worker (`checkpoints::deferred`) while the change goes ahead; the commit is the same one, with the
+    /// touched paths as they were. A folder on a host, or a path outside the folder, keeps the plain synchronous
+    /// checkpoint: it is the network or an unusual layout that decides there, and "undoable" must not depend on a guess.
+    pub(super) fn checkpoint_first(
+        &self,
+        envelope: &Envelope,
+        title: &str,
+        touched: &[&std::path::Path],
+        out: &Arc<dyn Notifier>,
+    ) -> Result<(), ErrorObject> {
         let Some(session) = envelope.opt_str("sessionId") else {
             return Ok(());
         };
         let subject = self.subject(envelope)?;
+        let turn_id = envelope.opt_str("turnId");
+        let turn = self.state.events.seq();
+
+        if let crate::checkpoints::Snapshot::Local(root) = subject.snapshot() {
+            if let Ok(image) = crate::git::preimage(root, touched) {
+                if !image.paths.is_empty() {
+                    let (notifier, event_session) = (out.clone(), session.clone());
+
+                    crate::checkpoints::deferred::submit(crate::checkpoints::deferred::Pending {
+                        store: self.store().clone(),
+                        session_id: session.clone(),
+                        turn,
+                        title: title.to_string(),
+                        root: root.to_path_buf(),
+                        image,
+                        done: Box::new(move |fresh| {
+                            notifier.push(event::checkpoint_saved(&event_session, fresh.to_event_payload()), Some(event_session.clone()), turn_id);
+                        }),
+                    });
+
+                    return Ok(());
+                }
+            }
+        }
 
         if let Ok(fresh) = crate::checkpoints::create(
             self.store(),
             &session,
-            self.state.events.seq(),
+            turn,
             title,
             subject.snapshot(),
             crate::checkpoints::screenshot::capture(),
@@ -212,7 +227,7 @@ impl Daemon {
     }
 
     /// `fs.rename` (v4) - the tree's Rename, with a checkpoint first.
-    pub(super) fn fs_rename(&self, envelope: &Envelope, out: &dyn Notifier) -> Result<Value, ErrorObject> {
+    pub(super) fn fs_rename(&self, envelope: &Envelope, out: &Arc<dyn Notifier>) -> Result<Value, ErrorObject> {
         let from = envelope.require_str("path")?;
         let to = envelope.require_str("to")?;
 
@@ -221,7 +236,12 @@ impl Daemon {
 
         let name = from.rsplit(['/', '\\']).next().unwrap_or("a file").to_string();
 
-        self.checkpoint_first(envelope, &format!("Before renaming {name}"), out)?;
+        self.checkpoint_first(
+            envelope,
+            &format!("Before renaming {name}"),
+            &[std::path::Path::new(&from), std::path::Path::new(&to)],
+            out,
+        )?;
 
         match self.remote_for(envelope)? {
             Some(ssh) => crate::ssh::ops::rename(&ssh, &from, &to)?,
@@ -232,14 +252,14 @@ impl Daemon {
     }
 
     /// `fs.delete` (v4) - the tree's Delete, with a checkpoint first so Rewind brings it back.
-    pub(super) fn fs_delete(&self, envelope: &Envelope, out: &dyn Notifier) -> Result<Value, ErrorObject> {
+    pub(super) fn fs_delete(&self, envelope: &Envelope, out: &Arc<dyn Notifier>) -> Result<Value, ErrorObject> {
         let raw = envelope.require_str("path")?;
 
         self.inside_folder(envelope, &raw)?;
 
         let name = raw.rsplit(['/', '\\']).next().unwrap_or("a file").to_string();
 
-        self.checkpoint_first(envelope, &format!("Before deleting {name}"), out)?;
+        self.checkpoint_first(envelope, &format!("Before deleting {name}"), &[std::path::Path::new(&raw)], out)?;
 
         match self.remote_for(envelope)? {
             Some(ssh) => crate::ssh::ops::remove(&ssh, &raw)?,

@@ -13,7 +13,8 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
-import { createContext, useContext, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { createContext, memo, useContext, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 
 import type { FsEntry } from '../../../../protocol/types';
 import { baseName } from '../../lib/paths';
@@ -95,7 +96,18 @@ export function FilesSection() {
   const host = activeTab === null ? null : hosts.find((candidate) => candidate.sessions.some((item) => item.id === activeTab)) ?? null;
   const openRemoteFolder = useOverlayStore((state) => state.openRemoteFolder);
 
-  const { root: storedRoot, directories, expanded, loading, error, git } = useFilesStore();
+  /* Only what the tree draws. The whole store also holds every open file's text and the unsaved draft, which changes
+     on every keystroke in the editor - subscribing to all of it re-drew the entire tree for each letter typed. */
+  const { root: storedRoot, directories, expanded, loading, error, git } = useFilesStore(
+    useShallow((state) => ({
+      root: state.root,
+      directories: state.directories,
+      expanded: state.expanded,
+      loading: state.loading,
+      error: state.error,
+      git: state.git,
+    })),
+  );
   /* How many of this chat's turns have ended - a number, so the effect below runs once per ended turn. */
   const ended = useAppStore(
     (state) => state.turns.filter((turn) => turn.sessionId === activeTab && turn.status !== 'running' && turn.status !== 'stuck').length,
@@ -171,6 +183,9 @@ export function FilesSection() {
       void refreshAfterTurn();
     }
   }, [ended, root]);
+
+  /* One object per change of what it holds, so the memoized rows below can tell nothing happened. */
+  const tree = useMemo<TreeState>(() => ({ directories, expanded, loading }), [directories, expanded, loading]);
 
   if (root === null) {
     return (
@@ -264,7 +279,7 @@ export function FilesSection() {
           {listing === undefined ? (
             <div className="files-status px-[4px] py-[2px] text-[11px] text-text-muted">{strings.files.loading}</div>
           ) : (
-            <Rows path={top} state={{ directories, expanded, loading }} />
+            <Rows path={top} state={tree} />
           )}
         </div>
 
@@ -275,8 +290,19 @@ export function FilesSection() {
 }
 
 /** One directory's rows: folders first, then files, then the guard's count. */
-function Rows({ path, state, depth = 0 }: { path: string; state: TreeState; depth?: number }) {
+const Rows = memo(function Rows({ path, state, depth = 0 }: { path: string; state: TreeState; depth?: number }) {
   const listing = state.directories[path];
+  /* Folders first, then files - once per listing rather than once per render. */
+  const ordered = useMemo(
+    () =>
+      listing === undefined
+        ? []
+        : /* `.git` is the repository's machinery, not the project's files - the badge above stands for it. */
+          listing.entries
+            .filter((entry) => entry.name !== '.git')
+            .sort((left, right) => (left.dir === right.dir ? left.name.localeCompare(right.name) : left.dir ? -1 : 1)),
+    [listing],
+  );
 
   if (listing === undefined) {
     return null;
@@ -289,11 +315,6 @@ function Rows({ path, state, depth = 0 }: { path: string; state: TreeState; dept
       </div>
     );
   }
-
-  /* `.git` is the repository's machinery, not the project's files - the badge above stands for it. */
-  const ordered = listing.entries.filter((entry) => entry.name !== '.git').sort((left, right) =>
-    left.dir === right.dir ? left.name.localeCompare(right.name) : left.dir ? -1 : 1,
-  );
 
   return (
     <>
@@ -308,10 +329,10 @@ function Rows({ path, state, depth = 0 }: { path: string; state: TreeState; dept
       )}
     </>
   );
-}
+});
 
 /** One row: a folder that expands or a file that opens - and, on hover, its Rename and Delete. */
-function Row({ entry, state, depth }: { entry: FsEntry; state: TreeState; depth: number }) {
+const Row = memo(function Row({ entry, state, depth }: { entry: FsEntry; state: TreeState; depth: number }) {
   const editing = useEditing();
   const open = entry.dir && state.expanded.includes(entry.path);
   const busy = entry.dir && state.loading.includes(entry.path);
@@ -440,7 +461,7 @@ function Row({ entry, state, depth }: { entry: FsEntry; state: TreeState; depth:
       {open ? <Rows path={entry.path} state={state} depth={depth + 1} /> : null}
     </>
   );
-}
+});
 
 /** The in-place name box: a new file or folder, or a rename. Enter commits, Escape leaves it as it was. */
 function NameInput({ depth, kind, renaming }: { depth: number; kind: 'file' | 'folder'; renaming?: FsEntry }) {

@@ -362,6 +362,9 @@ async fn run() -> Result<()> {
         signal = stop_signal() => println!("sdcd: {signal} - stopping; running turns resume on the next start"),
     }
 
+    /* A Save made in the last second has its checkpoint still being written; let it finish (bounded) so it is undoable. */
+    sdcd::checkpoints::deferred::drain(std::time::Duration::from_secs(10));
+
     state.shutdown();
     state.store.checkpoint_wal();
 
@@ -430,6 +433,26 @@ where
     let notifier: Arc<dyn Notifier> = Arc::new(ChannelNotifier::new(state.events.clone(), state.fanout.clone()));
     let mut lines = BufReader::new(reader).lines();
 
+    /* Two lanes. A request that changes something goes through `ordered`, one at a time and in the order it
+       arrived, exactly as before. A request that only looks (`Envelope::is_read_lane`: the file tree's
+       listing, a file read, the git badge) is answered on its own task the moment it arrives. Until this the
+       connection answered one request before it even read the next, so a Save that waited on a slow disk held
+       back every listing and every file open behind it - the sidebar felt frozen. */
+    let (ordered, mut queue) = mpsc::unbounded_channel::<Envelope>();
+    let lane_state = state.clone();
+    let lane_notifier = notifier.clone();
+    let lane_writer = writer.clone();
+
+    let worker = tokio::spawn(async move {
+        while let Some(envelope) = queue.recv().await {
+            let response = run_request(&lane_state, envelope, lane_notifier.clone()).await;
+
+            if send(&lane_writer, &response).await.is_err() {
+                break;
+            }
+        }
+    });
+
     while let Some(line) = lines.next_line().await? {
         let line = line.trim().to_string();
 
@@ -441,33 +464,58 @@ where
            to answer: a turn's stream keeps landing in the database after the response is written. */
         /* The handlers are synchronous and some wait on the network (an `ssh` call can take 20 s). On the
            blocking pool that wait holds a thread meant for waiting, not one of the few that move every
-           other connection's notifications (0.16.1). Requests still answer in the order they came. */
-        let response = match Envelope::parse(&line) {
-            Ok(envelope) => {
-                let daemon = state.handler();
-                let notifier = notifier.clone();
-                let id = envelope.id.clone();
+           other connection's notifications (0.16.1). */
+        match Envelope::parse(&line) {
+            Ok(envelope) if envelope.is_read_lane() => {
+                let (state, notifier, writer) = (state.clone(), notifier.clone(), writer.clone());
 
-                tokio::task::spawn_blocking(move || daemon.handle(&envelope, notifier))
-                    .await
-                    .unwrap_or_else(|_| {
-                        Response::fail(id, ErrorObject::internal("the request stopped unexpectedly inside the daemon; the daemon is still running"))
-                    })
+                tokio::spawn(async move {
+                    let response = run_request(&state, envelope, notifier).await;
+
+                    let _ = send(&writer, &response).await;
+                });
             }
-            Err(error) => Response::fail("unknown", error),
-        };
-
-        let mut answer = serde_json::to_string(&response)?;
-
-        answer.push('\n');
-
-        let mut sink = writer.lock().await;
-
-        sink.write_all(answer.as_bytes()).await?;
-        sink.flush().await?;
+            Ok(envelope) => {
+                if ordered.send(envelope).is_err() {
+                    break;
+                }
+            }
+            Err(error) => send(&writer, &Response::fail("unknown", error)).await?,
+        }
     }
 
+    /* The connection closed: the requests already queued are still answered, then the lane ends. */
+    drop(ordered);
+    let _ = worker.await;
+
     state.fanout.unsubscribe(subscriber);
+
+    Ok(())
+}
+
+/// Runs one request on the blocking pool and turns a panic inside the handler into an error response.
+async fn run_request(state: &Arc<DaemonState>, envelope: Envelope, notifier: Arc<dyn Notifier>) -> Response {
+    let daemon = state.handler();
+    let id = envelope.id.clone();
+
+    tokio::task::spawn_blocking(move || daemon.handle(&envelope, notifier)).await.unwrap_or_else(|_| {
+        Response::fail(id, ErrorObject::internal("the request stopped unexpectedly inside the daemon; the daemon is still running"))
+    })
+}
+
+/// Writes one response line. The lock is held for the whole line, so it can never interleave with another.
+async fn send<W>(writer: &Arc<tokio::sync::Mutex<W>>, response: &Response) -> Result<()>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    let mut answer = serde_json::to_string(response)?;
+
+    answer.push('\n');
+
+    let mut sink = writer.lock().await;
+
+    sink.write_all(answer.as_bytes()).await?;
+    sink.flush().await?;
 
     Ok(())
 }

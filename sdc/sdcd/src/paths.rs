@@ -20,6 +20,15 @@ use anyhow::{Context, Result};
 
 /// `…/sdc` - the daemon's data directory. Created on first use.
 pub fn data_dir() -> Result<PathBuf> {
+    let dir = data_dir_path()?;
+
+    std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
+
+    Ok(dir)
+}
+
+/// Where the data directory is, without making it.
+fn data_dir_path() -> Result<PathBuf> {
     /* `SDC_DATA_DIR` moves the whole data directory: for a portable install on a stick. Unset, the platform's own location
        is used - except under `cargo test`, where it is one folder for the whole test process ([`test_data_dir`]): a test
        must never write in the person's real data folder, and every test thread has to see the *same* folder, because a
@@ -32,8 +41,6 @@ pub fn data_dir() -> Result<PathBuf> {
         #[cfg(not(test))]
         None => dirs::data_dir().context("no platform data directory for this user")?.join("sdc"),
     };
-
-    std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
 
     Ok(dir)
 }
@@ -171,7 +178,9 @@ pub fn socket_path(port: u16) -> Result<PathBuf> {
 /// True when `path` is inside the daemon's own data directory - the check the file guard uses to
 /// keep an engine from rewriting the daemon's database (spec section 5.4, blocked patterns).
 pub fn is_internal(path: &Path) -> bool {
-    match data_dir() {
+    /* The folder is only *named* here, never created: this runs once per entry of every directory listing, and
+       `data_dir` makes the folder (two system calls) each time it is asked. */
+    match data_dir_path() {
         Ok(root) => path.starts_with(root),
         Err(_) => false,
     }

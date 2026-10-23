@@ -30,7 +30,7 @@
 use std::net::{Ipv4Addr, SocketAddrV4};
 use std::path::PathBuf;
 use std::process::Stdio;
-use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 
 use serde_json::{json, Value};
@@ -41,6 +41,16 @@ use tokio::sync::Mutex;
 
 /// The event name the frontend subscribes to (`app/src/lib/transport.ts`).
 pub const EVENT_NAME: &str = "sdcp://event";
+
+/// How many lookups can be in flight at once.
+const READ_SOCKETS: usize = 4;
+
+/// Methods that change nothing, so they may be answered while a slower request is still running. The daemon keeps the
+/// same list (`Envelope::is_read_lane` in `sdcd/src/sdcp/envelope.rs`) for its own connections; the two are kept equal
+/// by `read_lane_matches_the_daemons` below.
+pub fn is_read_lane(method: &str) -> bool {
+    matches!(method, "fs.list" | "fs.read" | "fs.stat" | "fs.search" | "git.status" | "git.diff" | "pty.output")
+}
 
 /// The daemon's default loopback port; `SDC_SDCP_PORT` overrides it.
 pub const DEFAULT_PORT: u16 = 7811;
@@ -72,6 +82,12 @@ pub struct SdcpBridge {
     /// The request connection. A `tokio::sync::Mutex` because a call awaits inside it: two calls in
     /// flight on one socket would interleave their responses.
     call: Mutex<Option<TcpStream>>,
+    /// Sockets for requests that only look (`is_read_lane`). The file tree's listing, a file open and the git badge
+    /// used to queue behind whatever else was in flight on `call` - a Save waiting on a slow disk, a model catalogue
+    /// refresh - because every request of the window shared the one socket. Each slot is one socket, used by one
+    /// request at a time, so the no-interleaving rule above still holds; several slots let several lookups run at once.
+    reads: Vec<Mutex<Option<TcpStream>>>,
+    next_read: AtomicUsize,
     /// The daemon this bridge started, if it started one. Kept so the app can stop what it owns: a
     /// daemon the user started by hand is never touched (`stop_daemon`).
     child: StdMutex<Option<std::process::Child>>,
@@ -104,6 +120,8 @@ impl SdcpBridge {
             port,
             version: version.into(),
             call: Mutex::new(None),
+            reads: (0..READ_SOCKETS).map(|_| Mutex::new(None)).collect(),
+            next_read: AtomicUsize::new(0),
             child: StdMutex::new(None),
             next_id: AtomicI64::new(1),
             connected: AtomicBool::new(false),
@@ -181,6 +199,12 @@ pub async fn connect(app: AppHandle, bridge: Arc<SdcpBridge>) -> Result<Value, S
     let stream = TcpStream::connect(bridge.address()).await.map_err(|error| error.to_string())?;
 
     *bridge.call.lock().await = Some(stream);
+
+    /* The lookup sockets belong to the daemon that was just replaced or restarted: they reconnect on first use. */
+    for slot in &bridge.reads {
+        *slot.lock().await = None;
+    }
+
     bridge.connected.store(true, Ordering::SeqCst);
 
     /* The notification connection: a *second* socket, because a notification is not a response and
@@ -296,6 +320,27 @@ pub async fn call(
 
     let id = id.unwrap_or_else(|| format!("app-{}", bridge.next_id.fetch_add(1, Ordering::SeqCst)));
     let envelope = json!({ "v": "0.1", "id": id, "method": method, "params": params });
+
+    if is_read_lane(&method) {
+        let slot = &bridge.reads[bridge.next_read.fetch_add(1, Ordering::Relaxed) % bridge.reads.len()];
+        let mut guard = slot.lock().await;
+
+        if guard.is_none() {
+            *guard = Some(TcpStream::connect(bridge.address()).await.map_err(|error| error.to_string())?);
+        }
+
+        let stream = guard.as_mut().ok_or_else(|| "the daemon connection was closed".to_string())?;
+        let answer = exchange(stream, &envelope, &id).await;
+
+        /* A lookup socket that failed is dropped, so the next lookup opens a fresh one; whether the daemon is
+           gone altogether is for the ordered socket (and the notification reader) to say. */
+        if answer.is_err() {
+            *guard = None;
+        }
+
+        return answer.map_err(|error| error.to_string());
+    }
+
     let mut guard = bridge.call.lock().await;
     let stream = guard.as_mut().ok_or_else(|| "the daemon connection was closed".to_string())?;
 
@@ -303,28 +348,29 @@ pub async fn call(
        `connected`, so a daemon that was replaced under the window - an update, a crash - left a dead
        stream here and every later call failed with `os error 10054` until the app was relaunched. The
        next call now connects again, which is also what starts a daemon that is not running. */
-    let dead = |error: std::io::Error| {
+    exchange(stream, &envelope, &id).await.map_err(|error| {
         bridge.connected.store(false, Ordering::SeqCst);
 
         error.to_string()
-    };
+    })
+}
 
-    stream.write_all(format!("{envelope}\n").as_bytes()).await.map_err(dead)?;
-    stream.flush().await.map_err(dead)?;
+/// Writes one request and reads until *this* id answers.
+///
+/// Notifications that arrive first are skipped rather than dropped: the daemon may legitimately push an event
+/// before answering (`TurnStarted` can win the race against `engine.start`'s response), and the notification socket
+/// forwards them anyway.
+async fn exchange(stream: &mut TcpStream, envelope: &Value, id: &str) -> Result<Value, std::io::Error> {
+    stream.write_all(format!("{envelope}\n").as_bytes()).await?;
+    stream.flush().await?;
 
-    /* Read until *this* id answers. Notifications that arrive first are skipped rather than dropped:
-       the daemon may legitimately push an event before answering (`TurnStarted` can win the race
-       against `engine.start`'s response), and the notification socket forwards them anyway. */
     let mut reader = BufReader::new(stream);
 
     loop {
         let mut line = String::new();
-        let read = reader.read_line(&mut line).await.map_err(dead)?;
 
-        if read == 0 {
-            bridge.connected.store(false, Ordering::SeqCst);
-
-            return Err("the daemon closed the connection".to_string());
+        if reader.read_line(&mut line).await? == 0 {
+            return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "the daemon closed the connection"));
         }
 
         let Ok(message) = serde_json::from_str::<Value>(line.trim()) else {
@@ -335,7 +381,7 @@ pub async fn call(
             continue;
         }
 
-        if message.get("id").and_then(Value::as_str) != Some(id.as_str()) {
+        if message.get("id").and_then(Value::as_str) != Some(id) {
             continue;
         }
 

@@ -11,7 +11,7 @@ import { Compartment, EditorSelection, EditorState, type Extension } from '@code
 import { EditorView, keymap } from '@codemirror/view';
 import { tags } from '@lezer/highlight';
 import { basicSetup } from 'codemirror';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, type MutableRefObject } from 'react';
 
 /**
  * The code editor (v4, docs/ROADMAP-v4.md decision 4) - CodeMirror 6, not Monaco.
@@ -29,11 +29,21 @@ export interface CodeEditorProps {
   path: string;
   value: string;
   readOnly: boolean;
-  onChange: (text: string) => void;
+  /** The text changed. `path` is the document it belongs to, which is not always the one on screen by the time this is called. */
+  onChange: (text: string, path: string) => void;
   onSave: () => void;
   /** A line to put the cursor on and scroll to (1-based) - a review issue, a search hit. */
   line?: number | null;
+  /**
+   * Filled with a function that hands over the editor's text as it is **right now**. `onChange` is told about typing
+   * a moment after it happens (see below), so a Save button outside the editor asks for the text through this rather
+   * than trusting the last thing `onChange` said.
+   */
+  flushRef?: MutableRefObject<(() => string) | null>;
 }
+
+/** How long typing must pause before the rest of the window is told. */
+const TELL_AFTER_MS = 120;
 
 /** The language for a file name, by extension. Unknown files are plain text, not a guess. */
 function languageFor(path: string): LanguageSupport | null {
@@ -136,13 +146,44 @@ const highlight = HighlightStyle.define([
   { tag: tags.invalid, color: 'var(--red)' },
 ]);
 
-export default function CodeEditor({ path, value, readOnly, onChange, onSave, line = null }: CodeEditorProps) {
+export default function CodeEditor({ path, value, readOnly, onChange, onSave, line = null, flushRef }: CodeEditorProps) {
   const host = useRef<HTMLDivElement | null>(null);
   const view = useRef<EditorView | null>(null);
   const handlers = useRef({ onChange, onSave });
   const editable = useRef(new Compartment());
+  /* The last text the window was told, and the pause that is waiting to tell it. */
+  const told = useRef(value);
+  const owner = useRef(path);
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   handlers.current = { onChange, onSave };
+
+  /** Tells the window the text now, and returns it. */
+  const tell = (): string => {
+    if (timer.current !== undefined) {
+      clearTimeout(timer.current);
+      timer.current = undefined;
+    }
+
+    const current = view.current;
+
+    if (current === null) {
+      return told.current;
+    }
+
+    const text = current.state.doc.toString();
+
+    if (text !== told.current) {
+      told.current = text;
+      handlers.current.onChange(text, owner.current);
+    }
+
+    return text;
+  };
+
+  if (flushRef !== undefined) {
+    flushRef.current = tell;
+  }
 
   /* One editor per document: a different path starts a fresh state, with its own undo history. */
   useEffect(() => {
@@ -161,6 +202,7 @@ export default function CodeEditor({ path, value, readOnly, onChange, onSave, li
           key: 'Mod-s',
           preventDefault: true,
           run: () => {
+            tell();
             handlers.current.onSave();
 
             return true;
@@ -172,9 +214,16 @@ export default function CodeEditor({ path, value, readOnly, onChange, onSave, li
       EditorView.lineWrapping,
       syntaxHighlighting(highlight),
       editable.current.of([EditorState.readOnly.of(readOnly), EditorView.editable.of(!readOnly)]),
+      /* Typing is not broadcast letter by letter. Turning the whole document into a string for every keystroke,
+         and re-drawing everything that watches the draft, made a large file lag behind the keyboard; the window
+         is told once typing pauses, and at once on Save, on switching files and on closing. */
       EditorView.updateListener.of((update) => {
         if (update.docChanged) {
-          handlers.current.onChange(update.state.doc.toString());
+          if (timer.current !== undefined) {
+            clearTimeout(timer.current);
+          }
+
+          timer.current = setTimeout(tell, TELL_AFTER_MS);
         }
       }),
       EditorView.contentAttributes.of({ 'aria-label': path }),
@@ -188,7 +237,12 @@ export default function CodeEditor({ path, value, readOnly, onChange, onSave, li
 
     view.current = created;
 
+    told.current = value;
+    owner.current = path;
+
     return () => {
+      /* What was typed in the last moment is not lost to a switch of file. */
+      tell();
       created.destroy();
       view.current = null;
     };
@@ -200,7 +254,9 @@ export default function CodeEditor({ path, value, readOnly, onChange, onSave, li
   useEffect(() => {
     const current = view.current;
 
-    if (current !== null && current.state.doc.toString() !== value) {
+    /* Our own typing comes back as `value`: nothing to do, and no reason to compare a whole document for it. */
+    if (current !== null && value !== told.current && current.state.doc.toString() !== value) {
+      told.current = value;
       current.dispatch({ changes: { from: 0, to: current.state.doc.length, insert: value } });
     }
   }, [value]);

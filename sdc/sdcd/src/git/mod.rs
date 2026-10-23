@@ -50,13 +50,50 @@ impl Shadow {
 
     /// Runs one git command against this repository, with the project as its work tree.
     pub fn run(&self, args: &[&str]) -> Result<String, ErrorObject> {
-        let output = Command::new("git")
+        Ok(String::from_utf8_lossy(&self.run_raw(args, None)?).to_string())
+    }
+
+    /// The same, answering the raw bytes and optionally feeding git's standard input - what `update-index
+    /// --index-info` needs, and what keeps a path that is not valid UTF-8 intact.
+    pub fn run_raw(&self, args: &[&str], input: Option<&[u8]>) -> Result<Vec<u8>, ErrorObject> {
+        self.run_indexed(args, input, None)
+    }
+
+    /// `run_raw` against an index file of its own (`GIT_INDEX_FILE`) instead of the repository's: a scratch index is
+    /// never contended for, and it starts empty, so reading it costs nothing however large the folder is.
+    fn run_indexed(&self, args: &[&str], input: Option<&[u8]>, index: Option<&Path>) -> Result<Vec<u8>, ErrorObject> {
+        use std::io::Write;
+        use std::process::Stdio;
+
+        let mut command = Command::new("git");
+
+        if let Some(index) = index {
+            command.env("GIT_INDEX_FILE", index);
+        }
+
+        let mut child = command
             /* A commit needs an identity; the daemon's is not the user's, on purpose. */
             .args(["-c", "user.name=sdcd", "-c", "user.email=sdcd@localhost"])
+            /* A shadow repository is written to by this daemon and nobody else, so it never needs a background
+               `gc` (which would stall the next checkpoint on a slow disk), and a folder that is walked again
+               and again is walked faster with git's untracked cache. */
+            .args(["-c", "gc.auto=0", "-c", "core.untrackedCache=true", "-c", "core.preloadIndex=true", "-c", "core.quotePath=false"])
             .arg(format!("--git-dir={}", self.git_dir.display()))
             .arg(format!("--work-tree={}", self.work_tree.display()))
             .args(args)
-            .output()
+            .stdin(if input.is_some() { Stdio::piped() } else { Stdio::null() })
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|error| ErrorObject::internal(format!("git is not available: {error}")))?;
+
+        if let (Some(bytes), Some(mut stdin)) = (input, child.stdin.take()) {
+            /* A broken pipe here means git already failed; its exit status below says why. */
+            let _ = stdin.write_all(bytes);
+        }
+
+        let output = child
+            .wait_with_output()
             .map_err(|error| ErrorObject::internal(format!("git is not available: {error}")))?;
 
         if !output.status.success() {
@@ -67,7 +104,7 @@ impl Shadow {
             )));
         }
 
-        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+        Ok(output.stdout)
     }
 }
 
@@ -119,8 +156,100 @@ pub fn ensure_repository(project_root: &Path) -> Result<PathBuf, ErrorObject> {
 /// `git.checkpoint` answers with and what a `CheckpointSaved` event records.
 pub fn checkpoint(project_root: &Path, message: &str) -> Result<String, ErrorObject> {
     let shadow = Shadow::of(project_root)?;
+    let _index = INDEX.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
 
     shadow.run(&["add", "-A"])?;
+    shadow.run(&["commit", "--quiet", "--allow-empty", "-m", message])?;
+
+    Ok(shadow.run(&["rev-parse", "HEAD"])?.trim().to_string())
+}
+
+static SCRATCH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Held while the repository's own index is being read or rewritten: git refuses two writers at once (`index.lock`),
+/// and a checkpoint, a restore and the deferred checkpoint below must take turns.
+static INDEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// What some paths looked like **before** a change: their entries in git's index format, captured now.
+///
+/// A change made from the window (Save, Rename, Delete) must be undoable, so a checkpoint has to hold the files as they
+/// were - but a checkpoint of the whole folder walks every file of it, and on a slow disk or a big folder that walk is
+/// what a person waited for after pressing Save. Capturing only the paths the change touches takes a moment; the
+/// walk then happens afterwards (`checkpoint_with`), and puts these entries back over what it finds.
+pub struct PreImage {
+    /// The touched paths, relative to the project and written with `/`.
+    pub paths: Vec<String>,
+    /// `git ls-files -s -z` of those paths, or empty when none of them existed.
+    pub entries: Vec<u8>,
+}
+
+/// Captures the pre-image of `paths` (absolute, inside `project_root`). A path git does not track - ignored, outside
+/// the folder, not there - simply has no entry, which is what a checkpoint holds for it too.
+pub fn preimage(project_root: &Path, paths: &[&Path]) -> Result<PreImage, ErrorObject> {
+    let relative: Vec<String> = paths
+        .iter()
+        .filter_map(|path| path.strip_prefix(project_root).ok())
+        .map(|path| path.to_string_lossy().replace('\\', "/"))
+        .filter(|path| !path.is_empty())
+        .collect();
+
+    if relative.is_empty() {
+        return Ok(PreImage { paths: Vec::new(), entries: Vec::new() });
+    }
+
+    let shadow = Shadow::of(project_root)?;
+    let scratch = shadow.git_dir.join(format!(
+        "index-gesture-{}-{}",
+        std::process::id(),
+        SCRATCH.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    /* Only what is there to be read: `git add` refuses the whole command when one of its paths does not exist, and a
+       path that does not exist has no pre-image to capture (a file about to be created, a rename's new name). */
+    let present: Vec<&str> = relative
+        .iter()
+        .map(String::as_str)
+        .filter(|path| std::fs::symlink_metadata(project_root.join(path)).is_ok())
+        .collect();
+
+    if !present.is_empty() {
+        let mut add = vec!["--literal-pathspecs", "add", "-A", "--ignore-errors", "--"];
+
+        add.extend(present);
+
+        /* Refused for a path that is ignored; the listing below says what actually got in. */
+        let _ = shadow.run_indexed(&add, None, Some(&scratch));
+    }
+
+    let mut list = vec!["--literal-pathspecs", "ls-files", "-s", "-z", "--"];
+
+    list.extend(relative.iter().map(String::as_str));
+
+    let entries = shadow.run_indexed(&list, None, Some(&scratch));
+
+    let _ = std::fs::remove_file(&scratch);
+
+    Ok(PreImage { paths: relative, entries: entries? })
+}
+
+/// A checkpoint of the folder **as it was before** the changes whose pre-images are given: the whole folder is read
+/// as it is now, and every touched path is put back to the way its pre-image says.
+pub fn checkpoint_with(project_root: &Path, message: &str, images: &[PreImage]) -> Result<String, ErrorObject> {
+    let shadow = Shadow::of(project_root)?;
+    let _index = INDEX.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+
+    shadow.run(&["add", "-A"])?;
+
+    for image in images.iter().filter(|image| !image.paths.is_empty()) {
+        let mut remove = vec!["--literal-pathspecs", "rm", "-r", "--cached", "--ignore-unmatch", "-q", "--"];
+
+        remove.extend(image.paths.iter().map(String::as_str));
+        shadow.run_raw(&remove, None)?;
+
+        if !image.entries.is_empty() {
+            shadow.run_raw(&["update-index", "-z", "--index-info"], Some(&image.entries))?;
+        }
+    }
+
     shadow.run(&["commit", "--quiet", "--allow-empty", "-m", message])?;
 
     Ok(shadow.run(&["rev-parse", "HEAD"])?.trim().to_string())
@@ -152,7 +281,9 @@ pub fn status(project_root: &Path) -> Result<(String, usize), ErrorObject> {
     }
 
     let branch = run_here(project_root, &["rev-parse", "--abbrev-ref", "HEAD"])?.trim().to_string();
-    let porcelain = run_here(project_root, &["status", "--porcelain"])?;
+    /* `--no-optional-locks`: a badge that is refreshed in the background must not take the repository's index lock
+       away from the person's own `git commit`. */
+    let porcelain = run_here(project_root, &["--no-optional-locks", "status", "--porcelain"])?;
     let dirty = porcelain.lines().filter(|line| !line.trim().is_empty()).count();
 
     Ok((branch, dirty))
@@ -190,6 +321,7 @@ pub fn diff(project_root: &Path, since: Option<&str>) -> Result<String, ErrorObj
 /// left alone; the project's own `.git` is never touched.
 pub fn restore(project_root: &Path, sha: &str) -> Result<(), ErrorObject> {
     let shadow = Shadow::of(project_root)?;
+    let _index = INDEX.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
 
     shadow.run(&["add", "-A"])?;
     shadow.run(&["read-tree", "-u", "--reset", sha])?;
@@ -248,6 +380,7 @@ pub fn file_diff(project_root: &Path, sha: &str, path: &str) -> Result<String, E
 pub fn restore_file(project_root: &Path, sha: &str, path: &str) -> Result<&'static str, ErrorObject> {
     let path = clean_relative(path)?;
     let shadow = Shadow::of(project_root)?;
+    let _index = INDEX.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let existed = shadow.run(&["cat-file", "-e", &format!("{sha}:{path}")]).is_ok();
 
     if existed {
@@ -418,5 +551,130 @@ mod tests {
         assert!(run_here(&repo, &["--git-dir", ".git", "cat-file", "-e", &sha]).is_ok(), "the commit is in the repository the operation opened");
         assert!(run_here(&elsewhere, &["--git-dir", ".git", "cat-file", "-e", &sha]).is_err(), "and in no other one");
         assert_eq!(shadow.run(&["ls-tree", "-r", "--name-only", &sha]).unwrap().trim(), "a.txt", "the tree is the project's, not an empty one");
+    }
+
+    /// The tree a shadow commit recorded, as `path -> content`.
+    fn recorded(project: &Path, sha: &str) -> std::collections::BTreeMap<String, String> {
+        let shadow = Shadow::of(project).unwrap();
+        let names = shadow.run(&["ls-tree", "-r", "--name-only", sha]).unwrap();
+
+        names
+            .lines()
+            .map(|name| (name.to_string(), shadow.run(&["show", &format!("{sha}:{name}")]).unwrap()))
+            .collect()
+    }
+
+    /// A checkpoint taken *after* a Save, with the file's pre-image put back over it, holds the file as it was.
+    #[test]
+    fn a_deferred_checkpoint_holds_the_file_as_it_was_before_the_save() {
+        if !git_available() {
+            return;
+        }
+
+        let project = tempfile::tempdir().unwrap();
+        let file = project.path().join("a.txt");
+
+        std::fs::write(&file, "before\n").unwrap();
+        std::fs::write(project.path().join("b.txt"), "other\n").unwrap();
+
+        let image = preimage(project.path(), &[file.as_path()]).unwrap();
+
+        std::fs::write(&file, "after\n").unwrap();
+
+        let sha = checkpoint_with(project.path(), "sdcd: save", &[image]).unwrap();
+        let tree = recorded(project.path(), &sha);
+
+        assert_eq!(tree["a.txt"], "before\n", "the touched file is as it was");
+        assert_eq!(tree["b.txt"], "other\n", "the rest of the folder is as it is");
+    }
+
+    /// A deleted folder is in the checkpoint even though it was gone when the folder was read.
+    #[test]
+    fn a_deferred_checkpoint_still_holds_a_folder_that_was_deleted() {
+        if !git_available() {
+            return;
+        }
+
+        let project = tempfile::tempdir().unwrap();
+        let folder = project.path().join("src");
+
+        std::fs::create_dir_all(folder.join("deep")).unwrap();
+        std::fs::write(folder.join("one.rs"), "1\n").unwrap();
+        std::fs::write(folder.join("deep").join("two.rs"), "2\n").unwrap();
+        std::fs::write(project.path().join("keep.txt"), "keep\n").unwrap();
+
+        let image = preimage(project.path(), &[folder.as_path()]).unwrap();
+
+        std::fs::remove_dir_all(&folder).unwrap();
+
+        let sha = checkpoint_with(project.path(), "sdcd: delete", &[image]).unwrap();
+        let tree = recorded(project.path(), &sha);
+
+        assert_eq!(tree["src/one.rs"], "1\n");
+        assert_eq!(tree["src/deep/two.rs"], "2\n");
+        assert_eq!(tree["keep.txt"], "keep\n");
+    }
+
+    /// A new file did not exist before, so the checkpoint must not hold it - and a rename is a delete of the old name
+    /// plus a create of the new one.
+    #[test]
+    fn a_deferred_checkpoint_leaves_out_what_the_change_created() {
+        if !git_available() {
+            return;
+        }
+
+        let project = tempfile::tempdir().unwrap();
+        let old = project.path().join("old.txt");
+        let new = project.path().join("new.txt");
+
+        std::fs::write(&old, "content\n").unwrap();
+
+        let image = preimage(project.path(), &[old.as_path(), new.as_path()]).unwrap();
+
+        std::fs::rename(&old, &new).unwrap();
+
+        let sha = checkpoint_with(project.path(), "sdcd: rename", &[image]).unwrap();
+        let tree = recorded(project.path(), &sha);
+
+        assert_eq!(tree.get("old.txt").map(String::as_str), Some("content\n"));
+        assert!(!tree.contains_key("new.txt"), "the renamed-to name did not exist before");
+    }
+
+    /// Several changes in one checkpoint each get their own pre-image back.
+    #[test]
+    fn one_deferred_checkpoint_can_cover_several_changes() {
+        if !git_available() {
+            return;
+        }
+
+        let project = tempfile::tempdir().unwrap();
+        let (one, two) = (project.path().join("one.txt"), project.path().join("two.txt"));
+
+        std::fs::write(&one, "1\n").unwrap();
+        std::fs::write(&two, "2\n").unwrap();
+
+        let first = preimage(project.path(), &[one.as_path()]).unwrap();
+
+        std::fs::write(&one, "1 changed\n").unwrap();
+
+        let second = preimage(project.path(), &[two.as_path()]).unwrap();
+
+        std::fs::write(&two, "2 changed\n").unwrap();
+
+        let sha = checkpoint_with(project.path(), "sdcd: two saves", &[first, second]).unwrap();
+        let tree = recorded(project.path(), &sha);
+
+        assert_eq!(tree["one.txt"], "1\n");
+        assert_eq!(tree["two.txt"], "2\n");
+    }
+
+    /// A path outside the folder has no pre-image, which is how the caller knows to take the plain checkpoint.
+    #[test]
+    fn a_path_outside_the_folder_has_no_preimage() {
+        let project = tempfile::tempdir().unwrap();
+        let elsewhere = tempfile::tempdir().unwrap();
+        let image = preimage(project.path(), &[elsewhere.path().join("x.txt").as_path()]).unwrap();
+
+        assert!(image.paths.is_empty());
     }
 }
