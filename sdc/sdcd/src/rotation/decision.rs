@@ -31,6 +31,8 @@ pub enum RelayReason {
     Refusal,
     /// A quote the model wrote is not in the file it names, twice.
     QuoteFail,
+    /// The step was judged beyond the local model before it was tried (`relay.preroute`).
+    Preroute,
 }
 
 impl RelayReason {
@@ -43,6 +45,7 @@ impl RelayReason {
             RelayReason::Slow => "slow",
             RelayReason::Refusal => "refusal",
             RelayReason::QuoteFail => "quote_fail",
+            RelayReason::Preroute => "preroute",
         }
     }
 
@@ -56,6 +59,7 @@ impl RelayReason {
             RelayReason::Slow => "the local model was too slow",
             RelayReason::Refusal => "the local model could not do it",
             RelayReason::QuoteFail => "a quoted line was not in the file",
+            RelayReason::Preroute => "the step looked beyond the local model before it was tried",
         }
     }
 }
@@ -79,6 +83,8 @@ pub struct StepSignals {
     pub gave_up: bool,
     /// Quotes the verifier refused this step or the one before.
     pub quote_failures: u32,
+    /// The step was judged too hard before it was tried (`relay.preroute`).
+    pub preroute: bool,
 }
 
 /// What the turn has used of the relay so far.
@@ -102,6 +108,10 @@ pub enum Decision {
 
 /// The reason a step needs the chain, or `None` while the local model should keep trying. Most urgent first.
 pub fn reason_for(signals: &StepSignals, policy: &RelayPolicy) -> Option<RelayReason> {
+    if signals.preroute {
+        return Some(RelayReason::Preroute);
+    }
+
     if signals.gave_up {
         return Some(RelayReason::Refusal);
     }
@@ -200,6 +210,7 @@ mod tests {
             (with(|s| s.gave_up = true), Some(RelayReason::Refusal)),
             (with(|s| s.quote_failures = 1), None),
             (with(|s| s.quote_failures = 2), Some(RelayReason::QuoteFail)),
+            (with(|s| s.preroute = true), Some(RelayReason::Preroute)),
             (StepSignals::default(), None),
         ];
 

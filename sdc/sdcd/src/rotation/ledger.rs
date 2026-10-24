@@ -225,7 +225,7 @@ pub fn report(summaries: &[Value]) -> Value {
             let name = row["reason"].as_str().unwrap_or_default();
             let count = row["count"].as_u64().unwrap_or(0) as u32;
 
-            if let Some(reason) = [RelayReason::InvalidToolCall, RelayReason::VerifyFail, RelayReason::Loop, RelayReason::ContextOverflow, RelayReason::Slow, RelayReason::Refusal, RelayReason::QuoteFail].into_iter().find(|reason| reason.name() == name) {
+            if let Some(reason) = [RelayReason::InvalidToolCall, RelayReason::VerifyFail, RelayReason::Loop, RelayReason::ContextOverflow, RelayReason::Slow, RelayReason::Refusal, RelayReason::QuoteFail, RelayReason::Preroute].into_iter().find(|reason| reason.name() == name) {
                 match ledger.reasons.iter_mut().find(|(known, _)| *known == reason) {
                     Some((_, total)) => *total += count,
                     None => ledger.reasons.push((reason, count)),

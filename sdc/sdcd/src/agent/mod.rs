@@ -1998,6 +1998,19 @@ fn drive(
         }};
     }
 
+    /* M1-13: a step plainly beyond the local model goes to the chain before it is tried (switch `relay.preroute`, off: the heuristic is unmeasured). */
+    if relay_on && relay_hook.borrow().as_ref().is_some_and(|hook| hook.policy.preroute || crate::v3::on("relay.preroute")) {
+        let facts = crate::rotation::preroute::facts_for(std::path::Path::new(workspace.root()), &request_text, crate::sme::budget::Class::of(window));
+
+        if crate::rotation::preroute::plainly_beyond(&facts) {
+            if let Some(hook) = relay_hook.borrow_mut().as_mut() {
+                hook.signals.preroute = true;
+            }
+
+            let _ = relay_step!(String::new());
+        }
+    }
+
     for step in 1..=options.max_steps {
         if stopped() {
             return;

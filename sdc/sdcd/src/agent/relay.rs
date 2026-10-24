@@ -319,6 +319,24 @@ impl Hook {
             return false;
         }
 
+        /* What this project's steps teach: a kind of step that needed the chain (for pre-routing), and - only when the person switched `relay.learn`
+           on - a lesson proposed to the knowledge core, which admits it only after a second sighting and never as an instruction. */
+        let kind = crate::rotation::preroute::kind_of(env.goal);
+
+        crate::rotation::preroute::remember_relayed(&root, &crate::rotation::preroute::history_key(kind, &relayed.edited));
+
+        if (self.policy.learn || crate::v3::on("relay.learn")) && crate::v3::on("knowledge_core") && !matches!(relayed.verified, Verified::Red(_)) && !relayed.edited.is_empty() {
+            let mut files: Vec<String> = relayed.edited.iter().map(|path| rel(path)).collect();
+
+            files.sort();
+
+            let text = format!("A step the local model could not finish ({}) was finished by a chain model; it changed {}.", reason.sentence(), files.join(", "));
+
+            if let crate::v3::knowledge_core::Decision::Admitted(_) = crate::v3::knowledge_core::propose(&root, crate::v3::knowledge_core::Candidate { kind: "lesson".into(), text: text.clone(), observations: vec![turn.clone()] }) {
+                crate::v3::lessons::save(&root, &text);
+            }
+        }
+
         /* Back to the local model, with a note written from the diff. */
         let changes: Vec<(String, Vec<String>)> = relayed
             .edited

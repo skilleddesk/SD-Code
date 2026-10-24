@@ -411,3 +411,85 @@ fn past_its_allowance_the_turn_asks_once_and_a_no_keeps_the_work_local() {
     clear_fakes();
     let _ = std::fs::remove_dir_all(&root);
 }
+
+#[test]
+fn a_plainly_hard_request_is_pre_routed_only_when_the_switch_is_on() {
+    let request = "rename charge_customer across billing/pay.py, billing/render.py and src/app.py";
+    let run = |turn: &str, on: bool| {
+        let root = folder(turn);
+        let (cloud_url, cloud) = cloud_that_writes();
+        let (local_url, local) = raw_provider(vec![local_says("Carrying on after the chain.")]);
+
+        fake("cloud", cloud_url, "cloud-model");
+
+        let recorder = Recorder::new();
+        let prompt = prompt_in(&root, turn, request, "qwen3.5:9b");
+        let chain = rotation(&["cloud:cloud-model"], true);
+
+        crate::data::rotation::forcing(chain, || {
+            let go = || drive(Backend::Ollama, &local_target(&local_url, 8_192), &Workspace::new(root.to_str().unwrap(), None), Options { autonomy: Autonomy::Auto, max_steps: 6, auto_check: false, research: None }, None, &Default::default(), &prompt, &recorder.sink());
+
+            if on {
+                crate::v3::forcing(&["relay.preroute"], go);
+            } else {
+                go();
+            }
+        });
+
+        let result = (steps_of(&recorder), local.join().unwrap().len());
+
+        if on {
+            cloud.join().unwrap();
+        }
+
+        clear_fakes();
+        let _ = std::fs::remove_dir_all(&root);
+
+        result
+    };
+
+    let (steps, local_calls) = run("turn-preroute-on", true);
+
+    assert_eq!(steps.len(), 1);
+    assert_eq!(steps[0]["reason"], "preroute");
+    assert_eq!(local_calls, 1, "the local model was only asked after the chain had done the step");
+
+    let (off_steps, _) = run("turn-preroute-off", false);
+
+    assert!(off_steps.is_empty(), "with the switch off the same request goes to the local model first");
+}
+
+#[test]
+fn what_the_chain_solved_becomes_a_lesson_only_after_a_second_sighting_and_only_when_asked() {
+    let root = folder("learn");
+    let lessons = || std::fs::read_dir(root.join(".sdc")).ok().map(|dir| dir.flatten().map(|entry| entry.path()).collect::<Vec<_>>()).unwrap_or_default().into_iter().filter(|path| path.to_string_lossy().contains("lesson")).map(|path| std::fs::read_to_string(&path).unwrap_or_default()).collect::<String>();
+    let once = |turn: &str, learn: bool| {
+        let (cloud_url, cloud) = cloud_that_writes();
+        let (local_url, _local) = raw_provider(vec![local_silent(), local_says("Carrying on.")]);
+
+        fake("cloud", cloud_url, "cloud-model");
+        let _ = std::fs::remove_file(root.join("greeting.txt"));
+
+        let go = || run_local(&root, turn, &local_url, rotation(&["cloud:cloud-model"], true));
+
+        if learn {
+            crate::v3::forcing(&["relay.learn"], go);
+        } else {
+            go();
+        }
+
+        cloud.join().unwrap();
+        clear_fakes();
+    };
+
+    once("turn-learn-off", false);
+    assert!(!lessons().contains("finished by a chain model"), "relay.learn is off: nothing is proposed");
+
+    once("turn-learn-1", true);
+    assert!(!lessons().contains("finished by a chain model"), "one sighting is not enough for the knowledge core");
+
+    once("turn-learn-2", true);
+    assert!(lessons().contains("finished by a chain model") && lessons().contains("greeting.txt"), "the second sighting admits it: {}", lessons());
+
+    let _ = std::fs::remove_dir_all(&root);
+}
