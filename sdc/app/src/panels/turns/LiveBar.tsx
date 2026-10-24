@@ -3,6 +3,7 @@ import { ArrowDown, Brain, Loader2, PenLine, Sparkles, Terminal } from 'lucide-r
 
 import { strings } from '../../strings';
 import { look } from './draftLook';
+import { useModelStore } from '../../store/model';
 import type { LiveBarData, TurnStatsData } from './types';
 
 /**
@@ -19,13 +20,17 @@ export function LiveBar({
   model,
   behind,
   onJump,
+  relay = null,
 }: {
   live: LiveBarData;
   stats: TurnStatsData;
   model: string;
   behind: boolean;
   onJump: () => void;
+  /** Silent Relay (M1-8): how many steps of this turn the chain finished, and the newest attempt's words for the tooltip. */
+  relay?: { cloud: number; title: string } | null;
 }) {
+  const chip = useModelStore((state) => state.relayChip);
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
@@ -76,6 +81,12 @@ export function LiveBar({
             {strings.turns.live.step(live.step.index, live.step.total)} · {live.step.text}
           </span>
         )}
+
+        {relay !== null && chip ? (
+          <span className="shrink-0 rounded-full border border-border-subtle bg-accent-subtle px-[7px] py-[1px] font-mono text-[10.5px] text-accent" title={relay.title} data-relay-chip="">
+            {strings.turns.relay.chip(relay.cloud)}
+          </span>
+        ) : null}
 
         <span className="hidden shrink-0 font-mono text-[10.5px] tabular-nums text-text-muted md:inline" role="status" aria-live="off">
           {totals.join(' · ')}

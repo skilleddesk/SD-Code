@@ -881,9 +881,9 @@ impl Daemon {
 fn with_probe_classes(mut listed: Value) -> Value {
     /* P0-10: how many rows of the Rotation Chain are enabled on this computer - what the mode badge needs to tell
        Local Rotation (a chain) from Local-only (none). */
-    let enabled = crate::data::home().map(|home| crate::data::rotation::load(&home).0.usable().len()).unwrap_or(0);
+    let rotation = crate::data::home().map(|home| crate::data::rotation::load(&home).0).unwrap_or_default();
 
-    listed["rotation"] = json!({ "enabledRows": enabled });
+    listed["rotation"] = json!({ "enabledRows": rotation.usable().len(), "relayAuto": rotation.relay.auto, "showChip": rotation.relay.show_chip });
 
     if let Some(rows) = listed["models"].as_array_mut() {
         for row in rows.iter_mut().filter(|row| row["providerId"] == "ollama") {

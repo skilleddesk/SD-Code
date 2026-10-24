@@ -220,7 +220,7 @@ export interface ModelsView {
     fetchedAt?: string | null;
     probe?: { class: string; status: 'probed' | 'provisional'; effectiveContext: number; toolCallReliability: number };
   }[];
-  rotation?: { enabledRows: number };
+  rotation?: { enabledRows: number; relayAuto?: boolean; showChip?: boolean };
   snapshot: string;
   refreshed: boolean;
   notes: string[];
@@ -249,6 +249,7 @@ export async function refreshCatalog(): Promise<void> {
     useModelStore.getState().setCatalog(models.map((row) => ({ ...row, tier: tierFromName(row.tier) })));
     useModelStore.getState().setInUse(inUse ?? []);
     useModelStore.getState().setRotationRows(rotation?.enabledRows ?? 0);
+    useModelStore.getState().setRelay(rotation?.relayAuto ?? false, rotation?.showChip ?? true);
   } catch {
     /* A window with no daemon keeps its fallback list; the boot toast has already explained why. */
   }

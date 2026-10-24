@@ -1,7 +1,7 @@
 import { ArrowDown, ArrowUp, Plus, Trash2 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 
-import type { RotationGlobal, RotationRowInput, RotationView } from '../../../protocol/types';
+import type { RelaySettings, RotationGlobal, RotationRowInput, RotationView } from '../../../protocol/types';
 import { sdcpCall } from '../lib/sdcp';
 import { isSdcpError } from '../lib/transport';
 import { strings } from '../strings';
@@ -32,7 +32,8 @@ export function AgentsTab() {
   const rotationRows = useModelStore((state) => state.rotationRows);
   const catalog = useModelStore((state) => state.catalog);
   const providers = useAppStore((state) => state.providers);
-  const mode = modelMode(providerId, rotationRows);
+  const [relay, setRelay] = useState<RelaySettings | null>(null);
+  const mode = modelMode(providerId, rotationRows, relay?.auto ?? false);
   const editable = providerId === 'ollama';
   const [view, setView] = useState<RotationView | null>(null);
   const [rows, setRows] = useState<RotationRowInput[]>([]);
@@ -43,6 +44,7 @@ export function AgentsTab() {
     setView(next);
     setRows(next.rows.map((row) => ({ model: row.model, enabled: row.enabled, allowedSteps: row.allowedSteps, maxCostPerStep: row.maxCostPerStep, maxRepairRetries: row.maxRepairRetries })));
     setGlobal(next.global);
+    setRelay(next.relay);
   };
 
   useEffect(() => {
@@ -86,7 +88,7 @@ export function AgentsTab() {
   };
 
   const save = (): void => {
-    void sdcpCall('rotation.set', { rows, ...(global === null ? {} : { global }) }).then(
+    void sdcpCall('rotation.set', { rows, ...(global === null ? {} : { global }), ...(relay === null ? {} : { relay }) }).then(
       (saved) => {
         load(saved);
         setStatus({ tone: 'ok', text: t.saved });
@@ -111,7 +113,7 @@ export function AgentsTab() {
     return row.cost.perStep === 0 ? t.costFree : t.costPerStep((row.cost.perStep ?? 0).toFixed(4));
   };
 
-  const badge = mode === 'pinned' ? t.modePinned : mode === 'local-rotation' ? t.modeLocalRotation : t.modeLocalOnly;
+  const badge = mode === 'pinned' ? t.modePinned : mode === 'silent-relay' ? t.modeSilentRelay : mode === 'local-rotation' ? t.modeLocalRotation : t.modeLocalOnly;
 
   return (
     <div data-agents-tab="">
@@ -123,7 +125,7 @@ export function AgentsTab() {
       <div className="mb-[12px] flex items-start gap-[10px] rounded-md border border-border-subtle bg-bg-raised px-[12px] py-[10px]" data-agents-mode={mode}>
         <Badge tone={mode === 'pinned' ? 'muted' : 'success'}>{badge}</Badge>
         <p className="m-0 text-[12px] leading-[1.6] text-text-secondary">
-          {mode === 'pinned' ? t.pinnedExplain : mode === 'local-only' ? t.localOnlyExplain : t.rotationExplain(rotationRows)}
+          {mode === 'pinned' ? t.pinnedExplain : mode === 'local-only' ? t.localOnlyExplain : mode === 'silent-relay' ? t.silentRelayExplain(rotationRows) : t.rotationExplain(rotationRows)}
         </p>
       </div>
 
@@ -210,6 +212,77 @@ export function AgentsTab() {
           {t.add}
         </button>
       </div>
+
+      {relay === null ? null : (
+        <div className="mt-[16px] flex flex-col gap-[8px] border-t border-border-subtle pt-[12px]" data-agents-relay="">
+          <div className="text-[12.5px] font-medium text-text-primary">{t.relay.title}</div>
+          <label className="flex items-center gap-[8px] text-[12.5px] text-text-primary">
+            <input
+              type="checkbox"
+              role="switch"
+              checked={relay.auto}
+              disabled={!editable}
+              onChange={(event) => {
+                setRelay({ ...relay, auto: event.target.checked });
+                setStatus(null);
+              }}
+            />
+            {t.relay.auto}
+          </label>
+          <p className="m-0 text-[11.5px] leading-[1.5] text-text-muted" data-agents-consent="">
+            {t.relay.consent}
+          </p>
+          <div className="flex flex-wrap items-center gap-[14px] text-[12.5px] text-text-primary">
+            <label className="flex items-center gap-[8px]" htmlFor="agents-relay-steps">
+              {t.relay.maxSteps}
+              <input
+                id="agents-relay-steps"
+                type="number"
+                min={1}
+                max={50}
+                className={inputClass + ' w-[70px]'}
+                disabled={!editable || !relay.auto}
+                value={relay.maxCloudStepsPerTurn}
+                onChange={(event) => {
+                  setRelay({ ...relay, maxCloudStepsPerTurn: Math.max(1, Math.min(50, Number(event.target.value) || 1)) });
+                  setStatus(null);
+                }}
+              />
+            </label>
+            <label className="flex items-center gap-[8px]" htmlFor="agents-relay-usd">
+              {t.relay.maxUsd}
+              <input
+                id="agents-relay-usd"
+                type="number"
+                min={0}
+                max={100}
+                step={0.05}
+                className={inputClass + ' w-[80px]'}
+                disabled={!editable || !relay.auto}
+                value={relay.maxUsdPerTurn}
+                onChange={(event) => {
+                  setRelay({ ...relay, maxUsdPerTurn: Math.max(0, Math.min(100, Number(event.target.value) || 0)) });
+                  setStatus(null);
+                }}
+              />
+            </label>
+            <label className="flex items-center gap-[8px]">
+              <input
+                type="checkbox"
+                role="switch"
+                checked={relay.showChip}
+                disabled={!editable}
+                onChange={(event) => {
+                  setRelay({ ...relay, showChip: event.target.checked });
+                  setStatus(null);
+                }}
+              />
+              {t.relay.showChip}
+            </label>
+          </div>
+          <p className="m-0 text-[11.5px] text-text-muted">{t.relay.limits}</p>
+        </div>
+      )}
 
       {global === null ? null : (
         <div className="mt-[16px] flex flex-col gap-[10px] border-t border-border-subtle pt-[12px]">

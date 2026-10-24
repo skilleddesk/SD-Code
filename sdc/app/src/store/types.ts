@@ -376,6 +376,14 @@ export interface AppState {
   questions: QuestionView[];
   /** How full the model's context is, per chat, as the newest `ContextUpdated` said (0.13). */
   contexts: Record<string, ContextView>;
+  /** What Silent Relay did in each turn (M1-6): the attempts as they happened, and the split once the turn ended. */
+  relays: Record<string, RelayView>;
+}
+
+/** The chain's part in one turn. */
+export interface RelayView {
+  steps: import('../../../protocol/types').RelayStepEvent[];
+  summary: import('../../../protocol/types').RelaySummaryEvent | null;
 }
 
 /** An agent's question on its card (0.13). */

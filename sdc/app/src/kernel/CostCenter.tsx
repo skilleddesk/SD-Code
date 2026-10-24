@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 
-import type { CostSummary } from '../../../protocol/types';
+import type { CostSummary, RelayReport } from '../../../protocol/types';
+import { sdcpCall } from '../lib/sdcp';
+import { periodStarts, relayLine } from '../panels/turns/relay';
 import { strings } from '../strings';
 import { usd } from '../store/kernel';
 import { costSummary, setBudgets } from '../store/kernelIntents';
@@ -23,6 +25,41 @@ function Stat({ label, value, note }: { label: string; value: string; note?: str
       <div className="mt-[2px] text-[18px] font-semibold tabular-nums text-text-primary">{value}</div>
       {note === undefined ? null : <div className="text-[10.5px] text-text-muted">{note}</div>}
     </div>
+  );
+}
+
+function RelayCost({ open }: { open: boolean }) {
+  const [reports, setReports] = useState<{ today: RelayReport; month: RelayReport } | null>(null);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    const { today, month } = periodStarts(new Date());
+
+    void Promise.all([sdcpCall('relay.report', { since: today }), sdcpCall('relay.report', { since: month })]).then(
+      ([day, whole]) => setReports({ today: day, month: whole }),
+      () => setReports(null),
+    );
+  }, [open]);
+
+  if (reports === null || reports.month.stepsTotal === 0) {
+    return null;
+  }
+
+  return (
+    <section aria-label={k.relay.title} data-cost-relay="">
+      <h3 className="mb-[4px] text-[10px] font-semibold uppercase tracking-[.1em] text-text-muted">{k.relay.title}</h3>
+      <ul className="m-0 flex list-none flex-col gap-[3px] p-0 text-[12px] text-text-secondary">
+        <li>
+          <strong className="font-medium text-text-primary">{k.relay.today}</strong> · {reports.today.stepsTotal === 0 ? k.relay.none : relayLine(reports.today)}
+        </li>
+        <li>
+          <strong className="font-medium text-text-primary">{k.relay.month}</strong> · {relayLine(reports.month)}
+        </li>
+      </ul>
+    </section>
   );
 }
 
@@ -73,6 +110,8 @@ export function CostCenter() {
               />
               <Stat label={k.measured} value={`${summary.measuredTurns} / ${summary.measuredTurns + summary.unmeasuredTurns}`} note={k.measuredNote} />
             </div>
+
+            <RelayCost open={open} />
 
             {summary.bySource === undefined ? null : (
               <section aria-label={k.sourceTitle} data-cost-sources="">

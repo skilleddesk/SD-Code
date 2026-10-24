@@ -49,6 +49,13 @@ export const kernelStrings = {
       subscription: 'subscription',
       estimate: 'estimate',
     },
+    relay: {
+      title: 'Local model and chain',
+      today: 'Today',
+      month: 'This month',
+      line: (local: number, cloud: number, percent: number, usd: string, label: string): string => `${local} steps on the local model · ${cloud} on the chain (${percent}%) · ${usd} (${label})`,
+      none: 'No steps yet.',
+    },
     sourceTitle: 'Where each figure comes from',
     sourceHelp: 'Measured: reported by the provider or the CLI. Priced: tokens times the catalogue price. Local: a model on this computer, nothing to pay. Subscription: a plan, no per-token figure. Estimate: a guess, never added into the others.',
     sourceToday: 'Today',

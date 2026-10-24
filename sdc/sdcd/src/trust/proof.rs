@@ -104,6 +104,8 @@ pub fn build(store: &Store, log: &[StoredEvent], session_id: &str, turn_id: Opti
             })),
             "trust": { "score": score, "level": level, "reasons": reasons },
             "cost": store.usage_of(turn).ok().flatten(),
+            /* M1-7: what went to the chain, from the turn's own relay events - null for a turn that never relayed or counted. */
+            "relay": relay_of(&events),
             "rollbackPoint": checkpoint,
             "audit": audit,
         }));
@@ -120,33 +122,49 @@ pub fn build(store: &Store, log: &[StoredEvent], session_id: &str, turn_id: Opti
     })
 }
 
+/// The relay part of a turn's pack: its summary and every attempt, as the events recorded them. `Null` for a turn with neither.
+fn relay_of(events: &[&StoredEvent]) -> Value {
+    let summary = events.iter().rev().find(|entry| entry.event["type"] == "RelaySummary").map(|entry| entry.event.clone());
+    let steps: Vec<Value> = events.iter().filter(|entry| entry.event["type"] == "RelayStep").map(|entry| entry.event.clone()).collect();
+
+    match (summary, steps.is_empty()) {
+        (None, true) => Value::Null,
+        (summary, _) => json!({ "summary": summary, "steps": steps }),
+    }
+}
+
 /// The report's words, in the languages SDC writes reports in; English for anything else.
-fn words(lang: &str) -> [&'static str; 22] {
+fn words(lang: &str) -> [&'static str; 25] {
     match lang.split('-').next().unwrap_or("en") {
         "bn" => [
             "প্রমাণপত্র", "অনুরোধ", "ইঞ্জিন", "যা বদলেছে", "যে কমান্ড চলেছে", "যাচাই", "পাস", "পাস হয়নি", "যাচাই হয়নি",
             "বিশ্বাস স্কোর", "খরচ", "ফেরার বিন্দু", "অডিট লেজার", "অক্ষত — কেউ বদলায়নি", "ভাঙা — এই সারিতে বদল ধরা পড়েছে",
             "দ্বিতীয় AI-এর রায়", "গোপন তথ্য (secret)", "ঝুঁকিপূর্ণ কোড", "কিছু পাওয়া যায়নি", "আনুমানিক", "মাপা", "তৈরি",
+            "সাইলেন্ট রিলে", "লোকাল ধাপ", "ক্লাউড চেইনের ধাপ",
         ],
         "hi" => [
             "प्रमाण पत्र", "अनुरोध", "इंजन", "क्या बदला", "कौन से कमांड चले", "जाँच", "पास", "पास नहीं", "जाँच नहीं हुई",
             "भरोसा स्कोर", "खर्च", "वापसी बिंदु", "ऑडिट लेजर", "सुरक्षित — किसी ने नहीं बदला", "टूटा — इस पंक्ति में बदलाव मिला",
             "दूसरे AI का निर्णय", "गुप्त जानकारी", "जोखिम भरा कोड", "कुछ नहीं मिला", "अनुमानित", "मापा गया", "बनाया",
+            "साइलेंट रिले", "लोकल चरण", "चेन के चरण",
         ],
         "ar" => [
             "حزمة الإثبات", "الطلب", "المحرك", "ما الذي تغيّر", "الأوامر التي نُفّذت", "التحقق", "نجح", "لم ينجح", "لم يُتحقق",
             "درجة الثقة", "التكلفة", "نقطة الاستعادة", "سجل التدقيق", "سليم — لم يُعدَّل", "مكسور — تغيير في هذا الصف",
             "رأي الذكاء الثاني", "أسرار", "شيفرة خطرة", "لم يُعثر على شيء", "تقديري", "مُقاس", "أُنشئ",
+            "التتابع الصامت", "خطوات محلية", "خطوات السلسلة",
         ],
         "es" => [
             "Paquete de prueba", "Solicitud", "Motor", "Qué cambió", "Comandos ejecutados", "Verificación", "Aprobado", "No aprobado", "Sin verificar",
             "Puntuación de confianza", "Costo", "Punto de restauración", "Registro de auditoría", "Intacto: nadie lo modificó", "Roto: cambio en esta fila",
             "Veredicto de la segunda IA", "Secretos", "Código riesgoso", "No se encontró nada", "estimado", "medido", "Generado",
+            "Relevo silencioso", "pasos locales", "pasos de la cadena",
         ],
         _ => [
             "Proof Pack", "Request", "Engine", "What changed", "Commands that ran", "Verification", "Passed", "Did not pass", "Not verified",
             "Trust score", "Cost", "Rollback point", "Audit ledger", "Intact - nobody has edited it", "Broken - a change was found at this row",
             "Second AI's verdict", "Secrets", "Risky code", "Nothing found", "estimated", "measured", "Generated",
+            "Silent Relay", "local steps", "chain steps",
         ],
     }
 }
@@ -282,6 +300,29 @@ pub fn html(pack: &Value, lang: &str) -> String {
             ));
         }
 
+        if let Some(summary) = turn["relay"]["summary"].as_object().filter(|summary| summary.get("attempts").and_then(Value::as_u64).unwrap_or(0) > 0) {
+            body.push_str(&format!(
+                "<h3>{}</h3><p>{}: {} · {}: {} · ${:.4} ({})</p>",
+                w[22],
+                w[23],
+                summary.get("stepsLocal").and_then(Value::as_u64).unwrap_or(0),
+                w[24],
+                summary.get("stepsCloud").and_then(Value::as_u64).unwrap_or(0),
+                summary.get("costUsd").and_then(Value::as_f64).unwrap_or(0.0),
+                escape(summary.get("costLabel").and_then(Value::as_str).unwrap_or("estimate")),
+            ));
+
+            for step in turn["relay"]["steps"].as_array().cloned().unwrap_or_default() {
+                body.push_str(&format!(
+                    "<p class=\"mono\" dir=\"ltr\">{} → {} · {} · {}</p>",
+                    escape(step["fromModel"].as_str().unwrap_or_default()),
+                    escape(step["toModel"].as_str().unwrap_or_default()),
+                    escape(step["reason"].as_str().unwrap_or_default()),
+                    escape(step["outcome"].as_str().unwrap_or_default()),
+                ));
+            }
+        }
+
         if let Some(checkpoint) = turn["rollbackPoint"].as_object() {
             body.push_str(&format!(
                 "<h3>{}</h3><p class=\"mono\" dir=\"ltr\">{} · {}</p>",
@@ -349,5 +390,34 @@ mod tests {
         assert!(page.contains("যাচাই হয়নি"));
         assert!(page.contains("form.php"));
         assert!(html(&pack, "ar").contains("dir=\"rtl\""));
+    }
+
+    #[test]
+    fn a_turn_that_relayed_carries_its_attempts_and_split_into_the_pack_and_the_page() {
+        let store = Store::in_memory().unwrap();
+
+        store.upsert_host("local", "Local", "local", None, "connected", None).unwrap();
+        store.insert_session("s1", "local", "Relay", "fix", None).unwrap();
+        store.start_turn("turn-r", "s1", 1, "native_api", "qwen3.5:9b", "Fast", "fix it").unwrap();
+        store.start_turn("turn-plain", "s1", 2, "native_api", "qwen3.5:9b", "Fast", "read it").unwrap();
+
+        let step = json!({ "type": "RelayStep", "turnId": "turn-r", "fromModel": "ollama:qwen3.5:9b", "toModel": "deepseek:deepseek-chat", "reason": "loop", "outcome": "done" });
+        let summary = json!({ "type": "RelaySummary", "turnId": "turn-r", "stepsLocal": 4, "stepsCloud": 1, "attempts": 1, "costUsd": 0.002, "costLabel": "priced" });
+        let log = vec![
+            StoredEvent { seq: 1, ts: String::new(), session_id: Some("s1".into()), turn_id: Some("turn-r".into()), event: step },
+            StoredEvent { seq: 2, ts: String::new(), session_id: Some("s1".into()), turn_id: Some("turn-r".into()), event: summary },
+        ];
+        let pack = build(&store, &log, "s1", None);
+        let relayed = pack["turns"].as_array().unwrap().iter().find(|turn| turn["turnId"] == "turn-r").unwrap();
+        let plain = pack["turns"].as_array().unwrap().iter().find(|turn| turn["turnId"] == "turn-plain").unwrap();
+
+        assert_eq!(relayed["relay"]["summary"]["stepsCloud"], 1);
+        assert_eq!(relayed["relay"]["steps"][0]["toModel"], "deepseek:deepseek-chat");
+        assert!(plain["relay"].is_null(), "a turn that never relayed has no relay part");
+
+        let page = html(&pack, "bn");
+
+        assert!(page.contains("সাইলেন্ট রিলে") && page.contains("deepseek:deepseek-chat") && page.contains("loop"), "{page}");
+        assert!(html(&pack, "en").contains("Silent Relay"));
     }
 }

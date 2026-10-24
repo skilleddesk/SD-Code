@@ -3,6 +3,7 @@ import { ChevronRight } from 'lucide-react';
 import { strings } from '../../strings';
 import { toast } from '../../store/toast';
 import { useModelStore } from '../../store/model';
+import { useAppStore } from '../../store/store';
 import { FlowWork } from './FlowWork';
 import { ErrorCard } from './ErrorCard';
 import { PlanCard } from './PlanCard';
@@ -77,6 +78,7 @@ export function TurnStream({ turns, collapsed = null, sessionId }: TurnStreamPro
 /** One `.turn`: the user's message, the meta line, then whatever the engine produced. */
 function TurnBlock({ turn, sessionId, latest }: { turn: Turn; sessionId: string; latest: boolean }) {
   const rotationRows = useModelStore((state) => state.rotationRows);
+  const relay = useAppStore((state) => state.relays[turn.id]?.summary ?? null);
 
   return (
     <div className="turn mb-[30px]">
@@ -123,6 +125,7 @@ function TurnBlock({ turn, sessionId, latest }: { turn: Turn; sessionId: string;
         footer={turn.footer}
         verify={turn.running ? null : { sessionId, turnId: turn.id, author: turn.author, result: turn.verify ?? null }}
         lines={turn.running ? null : changedLines(turn.timeline)}
+        relay={turn.running ? null : relay}
       />
     </div>
   );

@@ -6,6 +6,8 @@ import { useState } from 'react';
 import { strings } from '../../strings';
 import { runVerifyChosen } from '../../store/intents';
 import { toast } from '../../store/toast';
+import { receiptOf } from './relay';
+import type { RelaySummaryEvent } from '../../../../protocol/types';
 import type { TurnFooterData, TurnVerifyData } from './types';
 
 /**
@@ -31,11 +33,13 @@ export interface TurnFooterProps {
   } | null;
   /** Lines the turn added plus removed (P0-15's badge), or `null` when it changed nothing. */
   lines?: number | null;
+  /** Silent Relay's split of the turn (M1-7): the receipt lines. `null` when the turn was not in that mode. */
+  relay?: RelaySummaryEvent | null;
 }
 
 type Feedback = 'up' | 'down' | null;
 
-export function TurnFooter({ footer, verify = null, lines = null }: TurnFooterProps) {
+export function TurnFooter({ footer, verify = null, lines = null, relay = null }: TurnFooterProps) {
   const [feedback, setFeedback] = useState<Feedback>(null);
 
   const rate = (direction: Exclude<Feedback, null>): void => {
@@ -116,6 +120,13 @@ export function TurnFooter({ footer, verify = null, lines = null }: TurnFooterPr
         </button>
       </div>
     </div>
+    {relay === null || receiptOf(relay).length === 0 ? null : (
+      <div className="relay-receipt mb-[6px] flex flex-col gap-[1px] text-[11px] leading-[1.5] text-text-muted" data-relay-receipt="">
+        {receiptOf(relay).map((line) => (
+          <span key={line}>{line}</span>
+        ))}
+      </div>
+    )}
     {verify === null ? null : <ProofBadge turnId={verify.turnId} verify={verify.result} lines={lines} />}
     </>
   );

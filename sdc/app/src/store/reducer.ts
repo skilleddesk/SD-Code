@@ -69,6 +69,7 @@ export const EMPTY_STATE: AppState = {
   kernel: EMPTY_KERNEL,
   questions: [],
   contexts: {},
+  relays: {},
 };
 
 
@@ -610,6 +611,19 @@ function reduce(state: AppState, entry: AppEvent): AppState {
 
     case 'QuestionAnswered':
       return { ...state, questions: state.questions.filter((open) => open.questionId !== event.questionId) };
+
+    /* M1-6: append-only - an attempt is never rewritten, a turn's summary arrives once at its end. */
+    case 'RelayStep': {
+      const before = state.relays[event.turnId] ?? { steps: [], summary: null };
+
+      return { ...state, relays: { ...state.relays, [event.turnId]: { ...before, steps: [...before.steps, event] } } };
+    }
+
+    case 'RelaySummary': {
+      const before = state.relays[event.turnId] ?? { steps: [], summary: null };
+
+      return { ...state, relays: { ...state.relays, [event.turnId]: { ...before, summary: event } } };
+    }
 
     case 'ContextUpdated':
       return {

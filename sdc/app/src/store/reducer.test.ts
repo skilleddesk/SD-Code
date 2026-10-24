@@ -1069,4 +1069,52 @@ describe('0.14.2: a tool call the model is still writing', () => {
 
     expect(state.turns[0]?.draft).toBeUndefined();
   });
+
+  /** M1-6: the relay's events are append-only - an attempt is never rewritten, and the summary arrives once, at the turn's end. */
+  it('folds relay attempts in order and keeps the summary beside them', () => {
+    const step = (stepId: string, outcome: string): SdcpEvent => ({
+      type: 'RelayStep',
+      sessionId: 's1',
+      turnId: 't1',
+      stepId,
+      fromModel: 'ollama:qwen3.5:9b',
+      toModel: 'deepseek:deepseek-chat',
+      reason: 'loop',
+      attempt: 1,
+      tokensOut: 100,
+      tokensIn: 900,
+      costUsd: 0.001,
+      costLabel: 'priced',
+      durationMs: 800,
+      outcome,
+    });
+    let state = fold(EMPTY_STATE, step('t1.r1', 'failed'));
+
+    state = fold(state, step('t1.r2', 'done'));
+
+    expect(state.relays['t1']?.steps.map((row) => row.stepId)).toEqual(['t1.r1', 't1.r2']);
+    expect(state.relays['t1']?.summary).toBeNull();
+
+    state = fold(state, {
+      type: 'RelaySummary',
+      sessionId: 's1',
+      turnId: 't1',
+      stepsTotal: 3,
+      stepsLocal: 2,
+      stepsCloud: 1,
+      attempts: 2,
+      failed: 0,
+      unverified: 0,
+      byModel: [],
+      tokensIn: 1800,
+      tokensOut: 200,
+      costUsd: 0.002,
+      costLabel: 'priced',
+      reasons: [{ reason: 'loop', count: 1 }],
+    });
+
+    expect(state.relays['t1']?.steps).toHaveLength(2);
+    expect(state.relays['t1']?.summary?.stepsCloud).toBe(1);
+    expect(state.relays['t2']).toBeUndefined();
+  });
 });

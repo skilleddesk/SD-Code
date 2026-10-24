@@ -131,14 +131,19 @@ export const FALLBACK_MODELS: Record<EngineId, readonly ModelDefinition[]> = {
  * enabled row, and **Local-only** when it has none. (A project can force Local-only through `.sdc/policy.toml`; the
  * daemon enforces that whatever this badge says, and the receipt names the mode a turn really ran in.)
  */
-export type ModelMode = 'pinned' | 'local-rotation' | 'local-only';
+export type ModelMode = 'pinned' | 'local-rotation' | 'silent-relay' | 'local-only';
 
-export function modelMode(providerId: string | null, enabledChainRows: number): ModelMode {
+/** `relayAuto` is the person's consent in Settings → Agents: with a chain and a local model it makes Local Rotation a Silent Relay (M1-1). */
+export function modelMode(providerId: string | null, enabledChainRows: number, relayAuto = false): ModelMode {
   if (providerId !== 'ollama') {
     return 'pinned';
   }
 
-  return enabledChainRows > 0 ? 'local-rotation' : 'local-only';
+  if (enabledChainRows === 0) {
+    return 'local-only';
+  }
+
+  return relayAuto ? 'silent-relay' : 'local-rotation';
 }
 
 /** One row of the daemon's catalogue, as `models.list` answers it. */
@@ -643,6 +648,9 @@ export interface ModelState {
   inUse: { modelId: string; providerId: string | null }[];
   /** How many rows of the Rotation Chain are enabled on this computer (P0-10) - what tells Local Rotation from Local-only. */
   rotationRows: number;
+  /** Silent Relay is on (M1-8), and whether the LiveBar shows its cloud chip. */
+  relayAuto: boolean;
+  relayChip: boolean;
   /**
    * Whether a person has ever picked a model in this window or an earlier launch. Until then the choice is
    * only the built-in default, and `preferConnected` may move it to a model this computer can run.
@@ -689,6 +697,7 @@ export interface ModelActions {
   setCatalog: (models: readonly CatalogModel[]) => void;
   setInUse: (inUse: readonly { modelId: string; providerId: string | null }[]) => void;
   setRotationRows: (rows: number) => void;
+  setRelay: (auto: boolean, chip: boolean) => void;
   /**
    * A fresh install's default made runnable: while nobody has picked a model and the default's provider is
    * not connected, the window's choice moves to a connected one - a local model first (the plan's
@@ -731,6 +740,8 @@ const initialModelState: ModelState = {
   catalog: [],
   inUse: [],
   rotationRows: 0,
+  relayAuto: false,
+  relayChip: true,
   picked: remembered.last !== null,
   chats: remembered.chats,
   dropdownOpen: null,
@@ -801,6 +812,10 @@ export const useModelStore = create<ModelState & ModelActions>()((set, get) => (
 
   setRotationRows: (rows) => {
     set({ rotationRows: rows });
+  },
+
+  setRelay: (auto, chip) => {
+    set({ relayAuto: auto, relayChip: chip });
   },
 
   preferConnected: (providers) => {

@@ -2389,7 +2389,7 @@ export interface SdcpMethodMap {
       /** The models in use (0.12.4): more than one, oldest first. */
       inUse: { modelId: string; providerId: string | null }[];
       /** The Rotation Chain on this computer (P0-10): how many rows are enabled. The mode badge reads it. */
-      rotation: { enabledRows: number };
+      rotation: { enabledRows: number; /** Silent Relay is switched on (M1-8). */ relayAuto: boolean; /** The LiveBar shows the cloud chip. */ showChip: boolean };
     };
   };
   /**

@@ -7,6 +7,7 @@ import { useAppStore } from '../../store/store';
 import { PromptArea } from '../prompt';
 import { collapsedSummary, toTurns } from '../turns/live';
 import { TurnStream } from '../turns';
+import { chipOf } from '../turns/relay';
 import { LiveBar } from '../turns/LiveBar';
 import { BrandLogo } from '../ui/BrandLogo';
 import { HostIcon } from '../ui/HostIcon';
@@ -45,6 +46,8 @@ export function Pane({ session, host, showHeader }: PaneProps) {
   const collapsed = collapsedSummary(turns, session.id);
   /* The turn still running in this chat, if any - what the sticky live bar describes (0.12.5). */
   const running = streamTurns.length === 0 ? undefined : streamTurns[streamTurns.length - 1];
+  const relaySteps = useAppStore((state) => (running === undefined ? undefined : state.relays[running.id]?.steps));
+  const relayChip = relaySteps === undefined ? null : chipOf(relaySteps);
   const liveTurn = running?.running === true && running.live !== undefined && running.stats !== undefined ? running : undefined;
 
   /*
@@ -194,7 +197,7 @@ export function Pane({ session, host, showHeader }: PaneProps) {
       {/* 0.18: the timeline's own bottom line says what is happening now; the sticky bar is for when the
           reader has scrolled away from it. */}
       {behind && liveTurn?.live !== undefined && liveTurn.stats !== undefined ? (
-        <LiveBar live={liveTurn.live} stats={liveTurn.stats} model={liveTurn.meta.model} behind={behind} onJump={jumpToLatest} />
+        <LiveBar live={liveTurn.live} stats={liveTurn.stats} model={liveTurn.meta.model} behind={behind} onJump={jumpToLatest} relay={relayChip} />
       ) : null}
 
       {behind && liveTurn === undefined ? (

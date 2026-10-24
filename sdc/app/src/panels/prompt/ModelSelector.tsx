@@ -68,10 +68,11 @@ export function ModelSelector({ sessionId }: { sessionId: string | null }) {
 
   const Icon = tierIcon(tier);
   const rotationRows = useModelStore((state) => state.rotationRows);
-  const mode = modelMode(providerId, rotationRows);
+  const relayAuto = useModelStore((state) => state.relayAuto);
+  const mode = modelMode(providerId, rotationRows, relayAuto);
   const modeText = strings.prompt.model.mode;
-  const modeLabel = mode === 'pinned' ? modeText.pinned : mode === 'local-rotation' ? modeText.localRotation(rotationRows) : modeText.localOnly;
-  const modeHint = mode === 'pinned' ? modeText.pinnedHint : mode === 'local-rotation' ? modeText.localRotationHint : modeText.localOnlyHint;
+  const modeLabel = mode === 'pinned' ? modeText.pinned : mode === 'silent-relay' ? modeText.silentRelay : mode === 'local-rotation' ? modeText.localRotation(rotationRows) : modeText.localOnly;
+  const modeHint = mode === 'pinned' ? modeText.pinnedHint : mode === 'silent-relay' ? modeText.silentRelayHint : mode === 'local-rotation' ? modeText.localRotationHint : modeText.localOnlyHint;
 
   return (
     <div className="model-selector relative" ref={rootRef}>
