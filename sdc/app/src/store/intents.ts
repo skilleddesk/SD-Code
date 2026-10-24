@@ -218,7 +218,7 @@ export interface ModelsView {
     cost: string;
     source: 'live' | 'cache' | 'bundled';
     fetchedAt?: string | null;
-    probe?: { class: string; status: 'probed' | 'provisional'; effectiveContext: number; toolCallReliability: number };
+    probe?: { class: string; status: 'probed' | 'provisional'; effectiveContext: number; toolCallReliability: number; advice?: string | null };
   }[];
   rotation?: { enabledRows: number; relayAuto?: boolean; showChip?: boolean };
   snapshot: string;

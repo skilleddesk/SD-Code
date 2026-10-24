@@ -15,6 +15,29 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [Unreleased] — NAVARATNA: a small local model finishing large jobs
+
+Twenty-five new `nr.*` switches, one for each part of the NAVARATNA plan. Seven are on by default and only protect, verify or record
+(`nr.ctx_lock`, `nr.quant_advice`, `nr.sentence_cover`, `nr.symbol_index`, `nr.edit_gate`, `nr.exist_gate`, `nr.registry`); the other eighteen are off until the
+bench (`sdcd bench navaratna`, scripted) and then the live bench (N9-3, run by the owner with Ollama) justify them. Everything here was tested on scripted
+fakes; nothing was measured on a live 9B.
+
+- **N1-1 `nr.ctx_lock`:** a prompt that would not fit the window a model was shown to use is handed back as `NeedsSplit` (it starts `ContextOverflow`, so the relay and the splitter react as before) and is never sent; `sdcd probe window --model M` measures that window with facts planted at the start, middle and end and stores it as `models/<model>.toml`. A test reads the sources and fails if any request to Ollama's chat endpoint leaves out `num_ctx`.
+- **N1-2 `nr.quant_advice`:** a one-line advice (English and Bengali) in the model list for 4-bit weights or a 4-bit KV cache; a Q4 model's step target is 60% of the window instead of 80%. **N1-3 `nr.mem_budget`:** free memory, weights and KV give the number of local calls that may run at once (one or two); the second waits when the answer is one.
+- **N2-1 `nr.sentence_cover`:** a request over 1,500 characters is cut by code (code blocks, tables, JSON, quotes and conditions stay whole) into units `S-001`..., every unit must be a requirement (`R-001`...) or background, and planning is blocked, naming the unit, if one is not; the request and its map are kept in `.sdc/vault/`. **N2-2 `nr.lang_spec`:** per-unit English restatement with a back-check of every number, name, path and identifier. **N2-3 `nr.blueprint`:** one architect call (only with the relay consent, no local-only, no manual pin), validated by the coverage gate, an empty-signature check and a path check; otherwise the local path.
+- **N3-1 `nr.fresh_step` / N3-2 `nr.skeleton_pack`:** each step's prompt is built from the ledger (goal on top and again on the last line, spec units word for word, skeletons plus the full body of the target only), never a growing chat. **N3-3 `nr.error_slice`:** a failing command shows its first error with the code around it (rustc, tsc, eslint, pytest, jest, go) and `spec_read` fetches the whole log from the vault.
+- **N4-1 `nr.symbol_index`:** signatures and skeletons from the Code Graph's grammars. **N4-2 `nr.symbol_patch`:** the `replace_symbol` tool takes the new definition from a code block in the message, never from JSON; elision markers, renames and a second symbol are refused and every other symbol stays byte-identical. **N4-3 `nr.edit_gate`:** a broken Rust/Python/JS/TS/Go/JSON edit no longer reaches the disk even when sent twice (Python's empty block is caught too); PHP and shell keep the old escape. **N4-4 `nr.out_chunk`:** long documents in sections with end markers, continued from the last 30 lines, never joined half-done.
+- **N5-1 `nr.test_first`:** tests from the done-when, must fail on the stub, code written by a separate call, anchor tests untouchable. **N5-2 `nr.exist_gate`:** members of the project's own types that do not exist are added as a warning to an edit's answer.
+- **N6-1 `nr.registry`:** one owner per requirement, a registry of artifacts, create-becomes-edit, duplicate warnings (also a copy under another name) and a receipt of every requirement with step, model and evidence. **N6-2 `nr.git_shadow`:** a hidden `refs/sdc/shadow/<step>` snapshot made with a private index, exact restore of a failed step (`git status` identical), crash recovery. **N6-3 `nr.contract_lock`:** published signatures are locked; a contract-change step must update every call site; a glossary rides in the pack.
+- **N7-1 `nr.best_of_n`, N7-2 `nr.tool_envelope`, N7-3 `nr.think_budget`:** two to four candidates picked by tests; malformed and back-to-back repeated tool calls stopped before the tool; thinking only for plan, test-writing and fix steps and counted in the reserve.
+- **N8-1 `nr.tag_route`, N8-2 `nr.escalation_packet`, N8-3 `nr.role_rotation`:** step tags and the routing table; the Capsule v2 gains requirements, locked contracts, skeletons, the local diff, the sliced error and the new tests (instead of whole files); chain rows get a role (Settings → Agents) and a row that answered 429, quota, no key or a timeout cools down so the next row is asked.
+- **N9-1 `nr.golden_trace`:** a relayed fix that passed the checks is stored in `.sdc/golden.db`, offered (one example) only after two turns saw it, dropped after two failures. **N9-2:** `sdcd bench navaratna` runs one scripted scenario per switch, off against on, and prints the table. **N9-3** (the live run) is for the owner.
+- **Changed for tests:** `v3::forcing` and `v3::ablating` now restore the earlier setting instead of clearing it, so they can be nested; `v3::with_switches` sets switches for one thread outside tests (the bench uses it).
+
+**বাংলায় সারাংশ:** NAVARATNA-র ২৬টি টাস্কের ২৫টিই কোডে এসেছে (N9-3 লাইভ যাচাই মালিকের কাজ): ছোট লোকাল মডেলের জন্য জানালা-সত্য, প্রম্পটের প্রতিটি বাক্যের হিসাব, ছোট পরিষ্কার প্রম্পট, symbol ধরে সম্পাদনা, ভাঙা কোড ডিস্কে না যাওয়া, আগে-টেস্ট, ঠিক-একবার, বহু চেষ্টা, স্মার্ট রিলে আর Golden Trace। সব নতুন আচরণ `nr.*` সুইচের পেছনে; ডিফল্টে চালু শুধু সাতটি, যেগুলো কেবল রক্ষা বা হিসাব রাখে।
+
+---
+
 ## [1.0.2] — a stopped Claude says why, and a cut stream line is no longer shown as its sentence
 
 `1.0.1` was tagged but never published (its Windows build failed on a timing test), so its changes ship here too.

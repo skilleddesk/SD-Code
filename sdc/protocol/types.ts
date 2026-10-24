@@ -794,6 +794,8 @@ export interface RotationRowInput {
   allowedSteps?: string[];
   maxCostPerStep?: number;
   maxRepairRetries?: number;
+  /** What the row is for (N8-3): `architect` designs once, `fixer` repairs a step the local model could not, `any` (the default) does either. */
+  role?: 'any' | 'architect' | 'fixer';
 }
 
 export interface RotationRow extends RotationRowInput {
@@ -2778,7 +2780,7 @@ export interface LocalRuntime {
   kind: 'ollama' | 'openai-compatible';
   label: string;
   base: string;
-  models: { id: string; ctx: number; sizeBytes?: number | null; local?: boolean; probe?: { class: string; status: string } | null }[];
+  models: { id: string; ctx: number; sizeBytes?: number | null; local?: boolean; probe?: { class: string; status: string; effectiveContext?: number; advice?: string | null } | null }[];
   state: 'ready' | 'empty' | 'silent' | 'needs-key';
 }
 

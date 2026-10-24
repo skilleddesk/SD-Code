@@ -205,6 +205,31 @@ pub const FEATURES: &[Feature] = &[
     Feature { name: "prefix.date_tail", default_on: false, token_technique: true, scope: Scope::All, evidence: Evidence::None, what: "M5-2: today's date moves to the very end of the system prompt, and an Anthropic request marks the cache breakpoint just before it - so the long stable part of the prompt is the same bytes every day and the provider's cache keeps it across midnight. Unmeasured" },
     Feature { name: "provider.native_effort", default_on: false, token_technique: false, scope: Scope::All, evidence: Evidence::None, what: "M5-3: the turn's effort level is sent to an Anthropic model that documents the parameter as output_config.effort (low / medium / high / max); a model that does not, and every other provider, is sent what it was sent before. Verified against Anthropic's documentation; not measured live" },
     Feature { name: "parallel", default_on: true, token_technique: false, scope: Scope::All, evidence: Evidence::Safety, what: "PAR: several agents at once, each in its own git worktree, on one board" },
+    Feature { name: "nr.ctx_lock", default_on: true, token_technique: false, scope: Scope::LocalOnly, evidence: Evidence::Safety, what: "N1-1: no local request is sent without num_ctx, and a prompt that would not fit the usable window (the one `sdcd probe window` measured; without a probe the context SDC asks for, or half of the card's when that is known) is handed back as NeedsSplit instead of being sent" },
+    Feature { name: "nr.quant_advice", default_on: true, token_technique: false, scope: Scope::All, evidence: Evidence::Safety, what: "N1-2: one line of advice when the local model's quantization or KV cache harms long work (Q4 lowers the step target from 80% to 60% of the window); advice only, nothing is changed or downloaded" },
+    Feature { name: "nr.mem_budget", default_on: false, token_technique: false, scope: Scope::LocalOnly, evidence: Evidence::None, what: "unmeasured; N1-3: computes from free memory, weights and the probed window whether one or two local model calls may run at once; the scheduler never starts a second call when it says one" },
+    Feature { name: "nr.sentence_cover", default_on: true, token_technique: false, scope: Scope::All, evidence: Evidence::Safety, what: "N2-1: a big prompt is cut into numbered units (code blocks, tables and conditions stay whole), every unit is mapped to a requirement or marked background, and planning is blocked while one is unmapped" },
+    Feature { name: "nr.lang_spec", default_on: false, token_technique: false, scope: Scope::LocalOnly, evidence: Evidence::None, what: "unmeasured; N2-2: a Bengali or Banglish prompt is restated unit by unit as English, and every number, name, path and identifier of the original is checked to be in the English line" },
+    Feature { name: "nr.blueprint", default_on: false, token_technique: false, scope: Scope::LocalOnly, evidence: Evidence::None, what: "unmeasured; N2-3: for a large or tangled prompt, with relay consent and a privacy that allows it, one call to the chain's architect row returns a Blueprint (folders, models, empty signatures, requirement list) that must pass the coverage and syntax gates" },
+    Feature { name: "nr.fresh_step", default_on: false, token_technique: true, scope: Scope::LocalOnly, evidence: Evidence::None, what: "unmeasured; N3-1: every step is a new short prompt built from the ledger (rules, goal, requirement units, contracts, last handover notes, the goal again on the last line) with no earlier chat turns" },
+    Feature { name: "nr.skeleton_pack", default_on: false, token_technique: true, scope: Scope::LocalOnly, evidence: Evidence::None, what: "unmeasured; N3-2: the context pack carries each related file as a skeleton (imports and signatures) and the full body of the target symbol only" },
+    Feature { name: "nr.error_slice", default_on: false, token_technique: true, scope: Scope::LocalOnly, evidence: Evidence::None, what: "unmeasured; N3-3: a compiler, linter or test failure is shown to the model as its first error, file:line and the code around it; the whole log stays in the vault" },
+    Feature { name: "nr.symbol_index", default_on: true, token_technique: false, scope: Scope::All, evidence: Evidence::Safety, what: "N4-1: a symbol index (kind, name, byte range, signature) and file skeletons from the Code Graph's grammars; it changes no prompt, but the symbol patcher, the skeleton pack, the existence gate and the registry read symbols through it, so switching it off switches those off too" },
+    Feature { name: "nr.symbol_patch", default_on: false, token_technique: false, scope: Scope::LocalOnly, evidence: Evidence::None, what: "unmeasured; N4-2: replace_symbol - the model returns one new definition as a plain code block and SDC swaps that symbol's byte range; output with elision markers or another symbol is refused" },
+    Feature { name: "nr.edit_gate", default_on: true, token_technique: false, scope: Scope::All, evidence: Evidence::Safety, what: "N4-3: a syntactically broken edit never reaches the disk - no 'send it again' bypass for Rust, Python, JavaScript, TypeScript, Go and JSON" },
+    Feature { name: "nr.out_chunk", default_on: false, token_technique: false, scope: Scope::LocalOnly, evidence: Evidence::None, what: "unmeasured; N4-4: a long document is written section by section with end markers; a missing marker triggers an automatic continuation and a half-written section is never joined" },
+    Feature { name: "nr.test_first", default_on: false, token_technique: false, scope: Scope::LocalOnly, evidence: Evidence::None, what: "unmeasured; N5-1: for a hard code step, tests are written first from the done-when, must fail on a stub, and the code is written by a separate call; a test that edits or deletes an anchor test is refused" },
+    Feature { name: "nr.exist_gate", default_on: true, token_technique: false, scope: Scope::All, evidence: Evidence::Safety, what: "N5-2: after an edit, imports not in the manifest or lockfile and members called on project symbols the index does not know are attached to the step as a warning (warn only)" },
+    Feature { name: "nr.registry", default_on: true, token_technique: false, scope: Scope::All, evidence: Evidence::Safety, what: "N6-1: every requirement has exactly one owner step; an artifact registry records file, symbol, step and content hash; duplicates are reported as warnings and never deleted" },
+    Feature { name: "nr.git_shadow", default_on: false, token_technique: false, scope: Scope::All, evidence: Evidence::None, what: "unmeasured; N6-2: before a step a hidden snapshot under refs/sdc/shadow is taken without touching the branch or index, a failed step is restored exactly, and a restart skips finished steps" },
+    Feature { name: "nr.contract_lock", default_on: false, token_technique: false, scope: Scope::LocalOnly, evidence: Evidence::None, what: "unmeasured; N6-3: once a symbol's signature is published it is locked; a patch that changes it is refused unless the step is a contract-change step that updates every call site" },
+    Feature { name: "nr.best_of_n", default_on: false, token_technique: false, scope: Scope::LocalOnly, evidence: Evidence::None, what: "unmeasured; N7-1: after the normal attempt and two sliced retries fail (or for a hard step with a check), two to four candidates are tried from a clean snapshot and the smallest passing diff wins" },
+    Feature { name: "nr.tool_envelope", default_on: false, token_technique: false, scope: Scope::LocalOnly, evidence: Evidence::None, what: "unmeasured; N7-2: only the tool-call envelope is schema-bound; an identical call repeated back to back is blocked, and prose where a tool was required is re-asked once" },
+    Feature { name: "nr.think_budget", default_on: false, token_technique: false, scope: Scope::LocalOnly, evidence: Evidence::None, what: "unmeasured; N7-3: for a local model that supports thinking, plan, test-writing and error-fix steps think and boilerplate steps do not; thinking counts toward the answer's reserve" },
+    Feature { name: "nr.tag_route", default_on: false, token_technique: false, scope: Scope::LocalOnly, evidence: Evidence::None, what: "unmeasured; N8-1: each planned step is tagged simple, code, hard or architecture by rules; architecture goes to the architect row once (with consent), hard enables Best-of-N earlier, the rest stays local" },
+    Feature { name: "nr.escalation_packet", default_on: false, token_technique: false, scope: Scope::LocalOnly, evidence: Evidence::None, what: "unmeasured; N8-2: the Capsule that goes to the chain also carries requirement ids, locked contracts, skeletons, the local model's last diff, the sliced error and the new tests, inside the same budget and redaction" },
+    Feature { name: "nr.role_rotation", default_on: false, token_technique: false, scope: Scope::LocalOnly, evidence: Evidence::None, what: "unmeasured; N8-3: a chain row may carry a role (architect, fixer, any); a row on HTTP 429, quota, a missing key or a timeout cools down and the next row is asked, within the turn's step and dollar limits" },
+    Feature { name: "nr.golden_trace", default_on: false, token_technique: false, scope: Scope::LocalOnly, evidence: Evidence::None, what: "unmeasured; N9-1: a cloud fix that passed every test is stored (error class, symbol kind, language, sliced error, final diff) after the knowledge core's two-witness rule, and at most one example is offered for a like problem" },
 ];
 
 #[derive(Debug, Default, Clone)]
@@ -273,22 +298,45 @@ thread_local! {
 /// Runs `body` with these features off, on this thread only (tests).
 #[cfg(test)]
 pub fn ablating<T>(features: &[&str], body: impl FnOnce() -> T) -> T {
+    /* nested calls restore what the outer one had set, instead of clearing it */
+    let before = ABLATED.with(|ablated| ablated.borrow().clone());
+
     ABLATED.with(|ablated| ablated.borrow_mut().extend(features.iter().map(|feature| feature.to_string())));
 
     let result = body();
 
-    ABLATED.with(|ablated| ablated.borrow_mut().clear());
+    ABLATED.with(|ablated| *ablated.borrow_mut() = before);
     result
 }
 
 /// Runs `body` with these features on, on this thread only (tests).
 #[cfg(test)]
 pub fn forcing<T>(features: &[&str], body: impl FnOnce() -> T) -> T {
+    let before = FORCED.with(|forced| forced.borrow().clone());
+
     FORCED.with(|forced| forced.borrow_mut().extend(features.iter().map(|feature| feature.to_string())));
 
     let result = body();
 
-    FORCED.with(|forced| forced.borrow_mut().clear());
+    FORCED.with(|forced| *forced.borrow_mut() = before);
+    result
+}
+
+thread_local! {
+    /// Switches an in-process run (the NAVARATNA bench) sets for its own thread: the last setting for a name wins over everything else.
+    static OVERRIDES: std::cell::RefCell<Vec<(String, bool)>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Runs `body` with these switches set, on this thread only, and puts the previous settings back afterwards. The bench compares a switch on
+/// and off in one process with it.
+pub fn with_switches<T>(settings: &[(&str, bool)], body: impl FnOnce() -> T) -> T {
+    let before = OVERRIDES.with(|overrides| overrides.borrow().clone());
+
+    OVERRIDES.with(|overrides| overrides.borrow_mut().extend(settings.iter().map(|(name, on)| (name.to_string(), *on))));
+
+    let result = body();
+
+    OVERRIDES.with(|overrides| *overrides.borrow_mut() = before);
     result
 }
 
@@ -297,6 +345,10 @@ pub fn on(feature: &str) -> bool {
     let Some(spec) = FEATURES.iter().find(|spec| spec.name == feature) else {
         return false;
     };
+
+    if let Some(set) = OVERRIDES.with(|overrides| overrides.borrow().iter().rev().find(|(name, _)| name == feature).map(|(_, on)| *on)) {
+        return set;
+    }
 
     #[cfg(test)]
     if FORCED.with(|forced| forced.borrow().iter().any(|name| name == feature)) {

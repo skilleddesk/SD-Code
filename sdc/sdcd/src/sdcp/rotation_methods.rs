@@ -59,6 +59,7 @@ fn row_json(index: usize, row: &Row) -> Value {
         "allowedSteps": row.allowed_steps,
         "maxCostPerStep": row.max_cost_per_step,
         "maxRepairRetries": row.max_repair_retries,
+        "role": if row.role.is_empty() { "any" } else { row.role.as_str() },
         "cost": cost_hint(&row.model),
     })
 }
@@ -139,6 +140,7 @@ fn parse(envelope: &Envelope, stored_relay: &RelayPolicy) -> Result<Rotation, Er
             allowed_steps: row["allowedSteps"].as_array().map(|steps| steps.iter().filter_map(|step| step.as_str().map(str::to_string)).collect()).unwrap_or_default(),
             max_cost_per_step: row["maxCostPerStep"].as_f64().unwrap_or(0.0),
             max_repair_retries: row["maxRepairRetries"].as_u64().unwrap_or(0) as u32,
+            role: row["role"].as_str().map(|role| role.trim().to_ascii_lowercase()).filter(|role| role != "any").unwrap_or_default(),
         });
     }
 

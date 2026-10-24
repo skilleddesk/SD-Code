@@ -76,6 +76,10 @@ fn main() -> Result<()> {
         }
 
         if all.first().map(String::as_str) == Some("probe") {
+            if all.get(1).map(String::as_str) == Some("window") {
+                std::process::exit(sdcd::navaratna::window::main(&all[2..]));
+            }
+
             std::process::exit(sdcd::sme::probe::main(&all[1..]));
         }
 

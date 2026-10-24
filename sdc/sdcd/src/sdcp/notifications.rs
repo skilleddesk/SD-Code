@@ -321,4 +321,26 @@ mod tests {
         assert!(slow_rx.try_recv().is_err(), "nothing more is queued for a connection that is already too far behind");
         assert!(fast_rx.try_recv().is_ok(), "a connection that is keeping up still receives");
     }
+
+    /// The limiter's edge: one line under [`MAX_BACKLOG`] is still allowed, and that send is what
+    /// brings the queue to the limit, so the next broadcast drops the connection.
+    #[test]
+    fn a_connection_one_line_under_max_backlog_still_receives_once_then_is_dropped() {
+        let fanout = Fanout::new();
+        let (tx, mut rx) = unbounded_channel();
+        let (_id, backlog) = fanout.subscribe_counted(tx);
+
+        backlog.store(MAX_BACKLOG - 1, Ordering::SeqCst);
+
+        fanout.broadcast(r#"{"seq":1,"event":{"type":"TurnStarted"}}"#);
+
+        assert_eq!(fanout.listeners(), 1, "under the limit the connection is kept");
+        assert!(rx.try_recv().is_ok(), "and it receives the line");
+        assert_eq!(backlog.load(Ordering::SeqCst), MAX_BACKLOG);
+
+        fanout.broadcast(r#"{"seq":2,"event":{"type":"TurnDelta"}}"#);
+
+        assert_eq!(fanout.listeners(), 0, "at the limit the next broadcast lets it go");
+        assert!(rx.try_recv().is_err());
+    }
 }

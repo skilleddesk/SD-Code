@@ -25,6 +25,8 @@ pub struct ChainModel {
     pub model: String,
     /// Dollars a step may cost on this row; `0` is "no limit set" for a cloud row.
     pub max_cost_per_step: f64,
+    /// `architect`, `fixer` or empty for any (N8-3, `nr.role_rotation`).
+    pub role: String,
 }
 
 impl ChainModel {
@@ -43,7 +45,7 @@ pub fn chain_of(rotation: &Rotation, local_only: bool) -> Vec<ChainModel> {
         .usable()
         .into_iter()
         .filter(|row| !is_local(&row.model))
-        .filter_map(|row| row.model.split_once(':').map(|(provider, model)| ChainModel { provider: provider.to_string(), model: model.to_string(), max_cost_per_step: row.max_cost_per_step }))
+        .filter_map(|row| row.model.split_once(':').map(|(provider, model)| ChainModel { provider: provider.to_string(), model: model.to_string(), max_cost_per_step: row.max_cost_per_step, role: row.role.clone() }))
         .collect()
 }
 
@@ -138,6 +140,8 @@ pub fn run(
         let record = |outcome: &'static str| StepRecord { model: model.label(), position, reason, tokens_in: attempt.tokens_in, tokens_out: attempt.tokens_out, cost_usd: attempt.cost_usd, duration_ms, outcome };
 
         if !attempt.finished {
+            /* N8-3: a 429, a quota, a missing key or a timeout puts the row to cool down, so the next job skips it */
+            crate::navaratna::roles::note_failure(&model.label(), &attempt.failure);
             undo(&attempt.edited);
             failure = format!("{} did not finish the step: {}", model.label(), if attempt.failure.is_empty() { "no answer" } else { attempt.failure.as_str() });
             records.push(record("failed"));
@@ -172,8 +176,8 @@ mod tests {
 
     fn chain() -> Vec<ChainModel> {
         vec![
-            ChainModel { provider: "deepseek".into(), model: "deepseek-chat".into(), max_cost_per_step: 0.0 },
-            ChainModel { provider: "anthropic-api".into(), model: "claude-sonnet-5-5".into(), max_cost_per_step: 0.0 },
+            ChainModel { provider: "deepseek".into(), model: "deepseek-chat".into(), max_cost_per_step: 0.0, role: String::new() },
+            ChainModel { provider: "anthropic-api".into(), model: "claude-sonnet-5-5".into(), max_cost_per_step: 0.0, role: String::new() },
         ]
     }
 

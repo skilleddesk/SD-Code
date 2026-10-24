@@ -178,6 +178,8 @@ pub fn main(args: &[String]) -> i32 {
         "drift" => drift_cmd(rest),
         "baseline" => baseline_cmd(rest),
         "compare" => compare_cmd(rest),
+        /* N9-2: one scripted scenario per `nr.*` switch, off against on */
+        "navaratna" => crate::navaratna::bench::command(rest),
         _ => {
             println!("{}", include_str!("mod.rs").lines().skip(2).take(19).map(|line| line.trim_start_matches("//! ")).collect::<Vec<_>>().join("\n"));
             Ok(())

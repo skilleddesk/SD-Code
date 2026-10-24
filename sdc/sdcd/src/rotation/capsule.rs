@@ -51,6 +51,9 @@ pub struct Step<'a> {
     pub notes: &'a [String],
     /// `(path, content)` of files the step touched, whole.
     pub files: &'a [(String, String)],
+    /// N8-2 (`nr.escalation_packet`): requirement ids, locked contracts, skeletons, the local model's last diff, the sliced error and the new
+    /// tests, as extra sections of this same capsule. Ignored with the switch off.
+    pub packet: Option<&'a crate::navaratna::packet::Packet>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -175,8 +178,21 @@ pub fn finish(prepared: &Prepared, root: &Path, policy: &Policy, step: &Step, bu
         sections.push(("Done when".into(), list.join("\n"), false));
     }
 
-    if !step.error.trim().is_empty() {
-        let compressed = crate::guard::compress::compress(step.error.trim(), 3_000).text;
+    let packet = step.packet.filter(|_| crate::v3::on("nr.escalation_packet"));
+
+    /* the requirements and the contracts come right after the goal: the cloud reads what "done" means before the details */
+    if let Some(packet) = packet {
+        for (title, body) in crate::navaratna::packet::sections(packet, &|path| may_leave(policy, root, path)).into_iter().take(2) {
+            sections.push((title, clean(step.session_id, "packet", &body, &mut fired), false));
+        }
+    }
+
+    if !step.error.trim().is_empty() || packet.is_some_and(|packet| packet.sliced_error.is_some()) {
+        let sliced = packet.and_then(|packet| packet.sliced_error.as_deref());
+        let compressed = match sliced {
+            Some(sliced) => sliced.to_string(),
+            None => crate::guard::compress::compress(step.error.trim(), 3_000).text,
+        };
 
         sections.push(("The local attempt's exact error".into(), format!("<error>\n{}\n</error>", clean(step.session_id, "error", &compressed, &mut fired)), false));
     }
@@ -185,6 +201,12 @@ pub fn finish(prepared: &Prepared, root: &Path, policy: &Policy, step: &Step, bu
         let list: Vec<String> = step.notes.iter().map(|note| format!("- {}", clean(step.session_id, "note", note.trim(), &mut fired))).collect();
 
         sections.push(("Verified so far".into(), list.join("\n"), false));
+    }
+
+    if let Some(packet) = packet {
+        for (title, body) in crate::navaratna::packet::sections(packet, &|path| may_leave(policy, root, path)).into_iter().skip(2) {
+            sections.push((title, clean(step.session_id, "packet", &body, &mut fired), false));
+        }
     }
 
     for (path, snippet) in &prepared.snippets {
@@ -282,7 +304,7 @@ mod tests {
     }
 
     fn step<'a>(goal: &'a str, error: &'a str, files: &'a [(String, String)]) -> Step<'a> {
-        Step { session_id: "relay-capsule-test", goal, done_when: &[], error, notes: &[], files }
+        Step { session_id: "relay-capsule-test", goal, done_when: &[], error, notes: &[], files, packet: None }
     }
 
     #[test]

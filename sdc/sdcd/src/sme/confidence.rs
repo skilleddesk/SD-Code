@@ -176,7 +176,7 @@ pub fn assess(history: &[Step], entropy: Option<f32>) -> Caution {
 
 /// A tool that changes files.
 fn is_edit(tool: &str) -> bool {
-    matches!(tool, "write_file" | "edit_file" | "apply_patch" | "patch_symbol")
+    matches!(tool, "write_file" | "edit_file" | "apply_patch" | "patch_symbol" | "replace_symbol")
 }
 
 /// A malformed reply's repair: the same call again, without thinking and at temperature 0, once. Answers whether a reply should be

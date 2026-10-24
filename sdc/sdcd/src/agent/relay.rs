@@ -258,7 +258,19 @@ impl Hook {
         let files: Vec<(String, String)> = env.changed.iter().take(3).filter_map(|path| std::fs::read_to_string(root.join(rel(path))).ok().map(|content| (rel(path), content))).collect();
         let prepared = self.prepared().clone();
         let done_when: Vec<String> = env.passed_checks.iter().map(|check| format!("`{check}` keeps passing")).collect();
-        let built = capsule::finish(&prepared, &root, env.policy, &capsule::Step { session_id: &session, goal: env.goal, done_when: &done_when, error: env.error, notes: &[], files: &files }, capsule::DEFAULT_BUDGET_TOKENS);
+        /* N8-2 (`nr.escalation_packet`): skeletons instead of whole files, the local model's diff, and the error cut to its first real failure. */
+        /* N9-1 (`nr.golden_trace`): at most one fix of a like problem that two turns saw pass the tests. */
+        let golden_signature = crate::v3::on("nr.golden_trace").then(|| crate::navaratna::golden::signature_for(&root, env.error, files.first().map_or("", |(path, _)| path.as_str()))).flatten();
+        let example = golden_signature.as_ref().and_then(|(signature, _)| crate::navaratna::golden::lookup(&root, signature)).map(|example| example.render());
+        let packet = (crate::v3::on("nr.escalation_packet") || example.is_some()).then(|| crate::navaratna::packet::Packet {
+            example,
+            skeletons: files.iter().filter_map(|(path, content)| crate::navaratna::symbols::skeleton(path, content).map(|skeleton| (path.clone(), skeleton))).collect(),
+            last_diff: crate::git::diff(&root, None).unwrap_or_default().chars().take(6_000).collect(),
+            sliced_error: crate::navaratna::errslice::slice(&root, env.error, None, 600).map(|slice| slice.text),
+            ..Default::default()
+        });
+        let whole_files: &[(String, String)] = if packet.is_some() && crate::v3::on("nr.escalation_packet") { &[] } else { &files };
+        let built = capsule::finish(&prepared, &root, env.policy, &capsule::Step { session_id: &session, goal: env.goal, done_when: &done_when, error: env.error, notes: &[], files: whole_files, packet: packet.as_ref() }, capsule::DEFAULT_BUDGET_TOKENS);
 
         env.sink.send(EngineEvent::Thinking(format!("Relaying this step to the chain ({}): about {} tokens leave this computer, secrets taken out.\n", reason.sentence(), built.tokens)));
 
@@ -288,8 +300,10 @@ impl Hook {
 
         let labels = std::cell::Cell::new(Label::Measured);
         let local_label = format!("ollama:{}", env.local_model);
+        /* N8-3 (`nr.role_rotation`): the rows for a repair - fixers first, cooled-down rows skipped - in the person's own order. */
+        let chain = crate::navaratna::roles::candidates_now(&self.chain, crate::navaratna::roles::Role::Fixer);
         let relayed = executor::run(
-            &self.chain,
+            &chain,
             reason,
             env.gate,
             &mut |model, _position| {
@@ -333,6 +347,34 @@ impl Hook {
             note_to_local(format!("[SDC: this step was sent to the chain and could not be done: {}. Tell the person plainly what is blocking you and what you tried, or take a different approach.]", relayed.failure), messages);
 
             return false;
+        }
+
+        /* N6-3 (`nr.contract_lock`): what a verified step left in the code is published - from now on its signatures are locked. */
+        if crate::v3::on("nr.contract_lock") && matches!(relayed.verified, Verified::Green(_)) {
+            let mut lock = crate::navaratna::contracts::Lock::load(&root);
+
+            for path in &relayed.edited {
+                if let Ok(text) = std::fs::read_to_string(root.join(rel(path))) {
+                    lock.publish(&rel(path), &text, &format!("{turn}.r{}", self.relays));
+                }
+            }
+
+            let _ = lock.save(&root);
+        }
+
+        /* N9-1: a fix that passed the checks is kept for the next like problem (a second turn must see it too before it is ever offered). */
+        if let (Some((signature, found)), Verified::Green(_)) = (&golden_signature, &relayed.verified) {
+            let diff = crate::git::diff(&root, Some(&sha)).unwrap_or_default();
+            let fix = crate::navaratna::golden::Fix {
+                signature: signature.clone(),
+                sliced_error: crate::navaratna::errslice::slice(&root, env.error, None, 600).map_or_else(|| found.message.clone(), |slice| slice.text),
+                final_diff: diff.chars().take(6_000).collect(),
+                turn: turn.clone(),
+                tests_passed: true,
+                touched: relayed.edited.iter().map(|path| rel(path)).collect(),
+            };
+
+            crate::navaratna::golden::record(&root, &fix, &|path| env.policy.secret(path, root.to_str()).is_some(), env.policy.privacy_local());
         }
 
         /* What this project's steps teach: a kind of step that needed the chain (for pre-routing), and - only when the person switched `relay.learn`

@@ -106,6 +106,11 @@ export function LocalServers() {
                   <span className="min-w-0 flex-1 truncate">{model.id}</span>
                   <span className="rounded-full bg-bg-hover px-[7px] py-[1px] text-[10px] text-text-muted">{r.local}</span>
                   <span className="text-[10.5px] text-text-faint">{model.probe ? `${model.probe.class}` : r.measuring}</span>
+                  {model.probe?.advice ? (
+                    <span className="max-w-[46%] truncate font-sans text-[10.5px] text-text-muted" title={strings.prompt.model.quantAdvice(model.probe.advice)} data-local-advice={model.id}>
+                      {strings.prompt.model.quantAdvice(model.probe.advice)}
+                    </span>
+                  ) : null}
                 </li>
               ))}
             </ul>

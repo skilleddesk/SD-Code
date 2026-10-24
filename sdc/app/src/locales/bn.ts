@@ -45,6 +45,12 @@ export const bn: StringsPack = {
         silentRelayHint: 'প্রতিটি ধাপ আগে এই লোকাল মডেলে; যে ধাপ সে পারে না সেটা নিজে থেকেই আপনার Rotation Chain-এ যায়, তারপর কাজ আবার এখানে ফেরে। টার্ন শেষে হিসাব দেখায় কতটা কোথায় গেল।',
       },
       probeClass: (label: string, contextTokens: number): string => `ক্লাস ${label} · ${Math.round(contextTokens / 1024)}K context`,
+      quantAdvice: (code: string): string =>
+        code === 'kv4'
+          ? '৪-বিট KV cache লম্বা কাজে ক্ষতি করে - f16 বা q8_0 ব্যবহার করুন'
+          : code === 'quant4kv4'
+            ? '৪-বিট weights আর ৪-বিট KV cache লম্বা কাজে ক্ষতি করে - Q5_K_M বা তার বেশি, আর f16 বা q8_0 KV cache নিন'
+            : '৪-বিট weights লম্বা কাজে ক্ষতি করে - মেমরিতে কুলালে Q5_K_M বা তার বেশি নিন (ততক্ষণ ধাপ ছোট রাখা হয়)',
     },
   },
   turns: {
@@ -389,6 +395,10 @@ export const bn: StringsPack = {
     costPerStep: (usd: string): string => `সাধারণ একটা ধাপে প্রায় $${usd} (আন্দাজ)`,
     costUnknown: 'এই মডেলের দাম তালিকায় নেই',
     costFree: 'বিনামূল্যে',
+    role: 'ভূমিকা',
+    roleAny: 'যেকোনো কাজ',
+    roleArchitect: 'নকশাকার (একবার নকশা করে)',
+    roleFixer: 'মেরামতকারী (ব্যর্থ ধাপ ঠিক করে)',
     offloadLimit: 'অফলোড সীমা',
     offloadHelp: 'লোকাল নয় এমন মডেলে পরপর কতগুলো ধাপ যেতে পারবে, তারপর SDC থামে ও জানায়। ০ মানে একটাও না।',
     askBeforeCloud: 'কোনো ধাপ এই কম্পিউটার ছাড়ার আগে জিজ্ঞেস করুন',

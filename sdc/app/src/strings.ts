@@ -679,6 +679,13 @@ const english = {
       },
       /** A measured local model's class beside its name (P0-9): S small, M medium, L large; `?` = measured on an earlier version. */
       probeClass: (label: string, contextTokens: number): string => `class ${label} · ${Math.round(contextTokens / 1024)}K context`,
+      /** N1-2: one line of advice for a local model whose setup harms long work (code from the daemon: quant4, kv4, quant4kv4). */
+      quantAdvice: (code: string): string =>
+        code === 'kv4'
+          ? 'a 4-bit KV cache hurts long tasks - use f16 or q8_0'
+          : code === 'quant4kv4'
+            ? '4-bit weights and a 4-bit KV cache hurt long tasks - prefer Q5_K_M or higher, and an f16 or q8_0 KV cache'
+            : '4-bit weights hurt long tasks - prefer Q5_K_M or higher when memory allows (steps are kept smaller meanwhile)',
       groupTitles: {
         tier: 'Tier',
         engine: 'Engine',
@@ -1668,6 +1675,11 @@ const english = {
     costPerStep: (usd: string): string => `about $${usd} for a typical step (an estimate)`,
     costUnknown: 'No price listed for this model',
     costFree: 'free',
+    /** N8-3: what a chain row is for. */
+    role: 'Role',
+    roleAny: 'Any job',
+    roleArchitect: 'Architect (designs once)',
+    roleFixer: 'Fixer (repairs a failed step)',
     offloadLimit: 'Offload limit',
     offloadHelp: 'How many steps in a row may go to a model that is not local before SDC stops and says so. 0 means none.',
     askBeforeCloud: 'Ask before a step leaves this computer',

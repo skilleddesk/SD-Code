@@ -31,7 +31,7 @@ pub fn system_cap(class: Class) -> usize {
 
 /// The tools a small model needs first, most important first: look (read, search), change (edit, write), RUN (the tests), then the rest.
 /// A step capped at six keeps these; the order the tools happened to be registered in says nothing about how much they matter.
-pub const PRIORITY: &[&str] = &["read_file", "grep", "edit_file", "write_file", "run_command", "ranked_search", "code_graph", "glob", "list_dir", "search", "git_diff", "update_plan", "find_symbol", "symbols", "patch_symbol", "apply_patch", "ask_user", "task", "remember"];
+pub const PRIORITY: &[&str] = &["read_file", "grep", "edit_file", "write_file", "run_command", "ranked_search", "code_graph", "glob", "list_dir", "search", "git_diff", "update_plan", "find_symbol", "symbols", "patch_symbol", "replace_symbol", "apply_patch", "ask_user", "task", "remember"];
 
 /// The specs in order of importance: the `PRIORITY` ones first (in that order), every other one after them in the order given.
 pub fn prioritise<T: Clone>(specs: &[T], name_of: impl Fn(&T) -> &str) -> Vec<T> {

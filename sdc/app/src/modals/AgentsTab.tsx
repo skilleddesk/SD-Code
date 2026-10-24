@@ -42,7 +42,7 @@ export function AgentsTab() {
 
   const load = (next: RotationView): void => {
     setView(next);
-    setRows(next.rows.map((row) => ({ model: row.model, enabled: row.enabled, allowedSteps: row.allowedSteps, maxCostPerStep: row.maxCostPerStep, maxRepairRetries: row.maxRepairRetries })));
+    setRows(next.rows.map((row) => ({ model: row.model, enabled: row.enabled, allowedSteps: row.allowedSteps, maxCostPerStep: row.maxCostPerStep, maxRepairRetries: row.maxRepairRetries, role: row.role ?? 'any' })));
     setGlobal(next.global);
     setRelay(next.relay);
   };
@@ -83,7 +83,7 @@ export function AgentsTab() {
       return;
     }
 
-    setRows((current) => [...current, { model: `${group.providerId}:${model.id}`, enabled: true, allowedSteps: [], maxCostPerStep: 0.05, maxRepairRetries: 1 }]);
+    setRows((current) => [...current, { model: `${group.providerId}:${model.id}`, enabled: true, allowedSteps: [], maxCostPerStep: 0.05, maxRepairRetries: 1, role: 'any' }]);
     setStatus(null);
   };
 
@@ -172,6 +172,11 @@ export function AgentsTab() {
                       {candidate.name === '' ? candidate.id : candidate.name}
                     </option>
                   ))}
+                </select>
+                <select className={inputClass} aria-label={t.role} disabled={!editable} value={row.role ?? 'any'} onChange={(event) => update(index, { role: event.target.value as 'any' | 'architect' | 'fixer' })} data-agents-role={index}>
+                  <option value="any">{t.roleAny}</option>
+                  <option value="architect">{t.roleArchitect}</option>
+                  <option value="fixer">{t.roleFixer}</option>
                 </select>
                 <label className="ml-auto flex items-center gap-[6px] text-[12px] text-text-secondary">
                   <input type="checkbox" role="switch" checked={row.enabled} disabled={!editable} onChange={(event) => update(index, { enabled: event.target.checked })} />

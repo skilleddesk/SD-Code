@@ -63,6 +63,9 @@ pub struct Row {
     /// How many times a failed step may be handed back to this model before the chain moves on.
     #[serde(default)]
     pub max_repair_retries: u32,
+    /// What the row is for: `architect` (designs once), `fixer` (repairs a step the local model could not) or empty for any (N8-3).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub role: String,
 }
 
 fn yes() -> bool {
@@ -199,6 +202,10 @@ pub fn validate(rotation: &Rotation) -> Result<(), String> {
 
         if row.max_repair_retries > 10 {
             return Err(format!("Entry {number}: at most 10 retries."));
+        }
+
+        if !crate::navaratna::roles::valid_role(&row.role) {
+            return Err(format!("Entry {number}: the role must be architect, fixer or any."));
         }
     }
 
@@ -419,7 +426,7 @@ mod save_tests {
     use super::*;
 
     fn row(model: &str) -> Row {
-        Row { model: model.into(), enabled: true, allowed_steps: Vec::new(), max_cost_per_step: 0.05, max_repair_retries: 1 }
+        Row { model: model.into(), enabled: true, allowed_steps: Vec::new(), max_cost_per_step: 0.05, max_repair_retries: 1, role: String::new() }
     }
 
     #[test]

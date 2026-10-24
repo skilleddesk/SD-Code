@@ -56,6 +56,13 @@ pub fn gate(path: &str, old: Option<&str>, new: &str) -> Option<String> {
     let errors = parse::syntax_errors(&tree, new, 3);
 
     if errors.is_empty() {
+        /* N4-3: Python's grammar lets `def f():` with nothing indented under it parse; Python itself does not */
+        if crate::v3::on("nr.edit_gate") && old.and_then(|old| crate::navaratna::gate::empty_python_block(path, old)).is_none() {
+            if let Some(line) = crate::navaratna::gate::empty_python_block(path, new) {
+                return Some(format!("{path} would have an IndentationError: the block opened before line {line} has nothing indented in it"));
+            }
+        }
+
         return None;
     }
 
@@ -84,7 +91,8 @@ pub fn apply(root: &Path, id: &str, edits: &[(String, Option<String>)]) -> Resul
             let wanted = key(path, text);
             let mut again = insisted().lock().unwrap_or_else(|poison| poison.into_inner());
 
-            if !again.remove(&wanted) {
+            /* N4-3: for a trusted grammar a broken edit is never let through, not even sent twice */
+            if !crate::navaratna::gate::may_insist(path) || !again.remove(&wanted) {
                 if again.len() > 512 {
                     again.clear();
                 }

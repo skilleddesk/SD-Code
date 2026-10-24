@@ -400,6 +400,8 @@ pub fn row(profile: &Profile) -> Value {
         "status": if profile.status == Status::Probed { "probed" } else { "provisional" },
         "effectiveContext": profile.effective_context,
         "toolCallReliability": profile.tool_call_reliability,
+        /* N1-2: a code the UI turns into one line of advice (`quant4`, `kv4`, `quant4kv4`), or null */
+        "advice": crate::navaratna::advice::code_for(&profile.key.model, Some(&profile.key.quantization)),
     })
 }
 

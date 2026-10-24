@@ -57,10 +57,24 @@ fn sending_the_same_text_again_after_a_refusal_writes_it_so_a_grammar_gap_cannot
     let root = project("insist");
     let text = "fn odd( {\n";
 
-    assert!(apply(&root, "t4-1", &[edit("src/odd.rs", text)]).is_err());
-    assert!(!root.join("src/odd.rs").exists());
-    assert!(apply(&root, "t4-2", &[edit("src/odd.rs", text)]).is_ok(), "the same text, sent again, is written");
-    assert!(apply(&root, "t4-3", &[edit("src/odd2.rs", "fn also( {\n")]).is_err(), "but a different text is judged afresh");
+    /* with `nr.edit_gate` off, the rule of 1.0: the same text, sent again, is written */
+    crate::v3::ablating(&["nr.edit_gate"], || {
+        assert!(apply(&root, "t4-1", &[edit("src/odd.rs", text)]).is_err());
+        assert!(!root.join("src/odd.rs").exists());
+        assert!(apply(&root, "t4-2", &[edit("src/odd.rs", text)]).is_ok(), "the same text, sent again, is written");
+        assert!(apply(&root, "t4-3", &[edit("src/odd2.rs", "fn also( {\n")]).is_err(), "but a different text is judged afresh");
+    });
+
+    /* with it on, that is still so for a language whose grammar is not trusted (PHP templates), and closed for Rust */
+    crate::v3::forcing(&["nr.edit_gate"], || {
+        let php = "<?php function odd( {\n";
+
+        assert!(apply(&root, "t4-4", &[edit("src/odd.php", php)]).is_err());
+        assert!(apply(&root, "t4-5", &[edit("src/odd.php", php)]).is_ok());
+        assert!(apply(&root, "t4-6", &[edit("src/odd3.rs", text)]).is_err());
+        assert!(apply(&root, "t4-7", &[edit("src/odd3.rs", text)]).is_err(), "a broken Rust edit is refused every time");
+        assert!(!root.join("src/odd3.rs").exists());
+    });
 
     let _ = std::fs::remove_dir_all(&root);
 }

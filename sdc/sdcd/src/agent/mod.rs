@@ -535,6 +535,13 @@ pub fn run(
         }
     }
 
+    /* N6-2 (`nr.git_shadow`): a step a crash left half-done is put back from its hidden snapshot; a step that was verified is finished. */
+    if prompt.remote.is_none() && crate::v3::on("nr.git_shadow") {
+        for step in crate::navaratna::shadow::recover(std::path::Path::new(root)) {
+            sink.send(EngineEvent::Delta(format!("_(SDC put the files back after an interrupted step: {step})_\n\n")));
+        }
+    }
+
     /* 0.21: a local model's turn starts Ollama itself when it is installed and stopped. */
     if backend == Backend::Ollama {
         crate::host::tools::ensure_ollama();
@@ -651,11 +658,30 @@ fn ask_model(backend: Backend, target: &Target, turn: (&str, crate::guard::model
        is never sent - Ollama would answer 200 and drop the start of it, a cloud API would refuse it - the caller gets
        `ContextOverflow` and splits the work. A local model's window is the `num_ctx` it is asked for; a cloud
        model's is the one its catalogue row documents, and a model with none documented is not judged. */
-    let window = target.local_context.or_else(|| crate::guard::context::documented_window(&target.model));
+    let mut window = target.local_context.or_else(|| crate::guard::context::documented_window(&target.model));
     let mut expected_tokens = None;
 
+    /* N1-1 (`nr.ctx_lock`): a local model's window is what it was shown to use (`sdcd probe window`), else half of what it advertises - never
+       more than the `num_ctx` it is asked for. A prompt beyond that is `NeedsSplit`, not sent. */
+    if let (Some(num_ctx), true) = (target.local_context, crate::v3::on_in("nr.ctx_lock", &crate::v3::ModelCtx::new(true))) {
+        window = Some(crate::navaratna::window::usable_for(&target.model, num_ctx));
+    }
+
+    /* N1-3 (`nr.mem_budget`): the second local call waits while the memory budget says one. Held until this call returns. */
+    let _local_slot = target.local_context.and_then(|num_ctx| crate::navaratna::membudget::hold_for_local_call(crate::navaratna::membudget::weights_estimate(&target.model, None), window.unwrap_or(num_ctx)));
+
+    /* N7-3 (`nr.think_budget`): a local model that can think does so for planning, test-writing and error-fix steps and not for boilerplate; what it
+       may think counts toward the reserve below. */
+    let thinking_kind = if target.local_context.is_some() && crate::v3::on_in("nr.think_budget", &crate::v3::ModelCtx::new(true)) {
+        crate::sme::profile::current_step().map(|step| crate::navaratna::think::kind_of(step, false, false))
+    } else {
+        None
+    };
+    let can_think = thinking_kind.is_some() && crate::navaratna::think::supports_thinking(&Value::Null, crate::sme::probe::latest("ollama", &target.model).map(|profile| profile.thinking));
+    let thinking_decision = thinking_kind.and_then(|kind| crate::navaratna::think::decide(kind, can_think));
+
     if let (Some(window), true) = (window, crate::v3::on("local.runtime_guard")) {
-        let reserve = crate::guard::context::max_output(&body, window);
+        let reserve = crate::navaratna::think::reserve(crate::guard::context::max_output(&body, window), thinking_decision);
 
         match crate::guard::context::check(&body, window, reserve) {
             Ok(estimated) => expected_tokens = Some((estimated, window)),
@@ -666,6 +692,10 @@ fn ask_model(backend: Backend, target: &Target, turn: (&str, crate::guard::model
     /* A local model gets Ollama's own request, with the context size in it (0.16.1). */
     if let Some(num_ctx) = target.local_context {
         body = ollama_native::body(body, num_ctx);
+    }
+
+    if let Some(think) = thinking_decision {
+        body["think"] = serde_json::json!(think);
     }
 
     /* P1-6 (`sme.constrained`): the retry after a refused printed call can only answer with a tool call of a known tool. */
@@ -1067,6 +1097,7 @@ fn sub_agent(
         research: research_session,
         local: backend == Backend::Ollama,
         result_cap: if target.local_window { (window as usize).clamp(2_000, tools::RESULT_CAP) } else { result_cap(backend, window) },
+        reply_text: String::new(),
     };
     let mut messages = vec![dialect::user_message(job)];
     let (mut input, mut output) = (0u64, 0u64);
@@ -1205,6 +1236,7 @@ fn run_reads(parent: &ToolContext, first: usize, calls: &[(usize, &dialect::Tool
                         research: parent.research.clone(),
                         local: parent.local,
                         result_cap: parent.result_cap,
+                        reply_text: String::new(),
                     };
 
                     (index, tools::execute(&mut context, call))
@@ -1751,6 +1783,16 @@ fn drive(
     };
     /* P1-10: a request that is several jobs by its own structure is handed over as numbered steps, each with its files. */
     let decompose_note = if crate::v3::on_in("runtime.decompose", &scope_model) && !fast_path && research_session.is_none() { crate::runtime::decompose::note(&crate::runtime::decompose::breakdown(&request_text, &[])) } else { None };
+    /* N2-1 (`nr.sentence_cover`): a big request is cut into units, every unit is accounted for, and the whole is kept in the vault. The model is told
+       nothing unless the gate blocks. */
+    let cover_note = if research_session.is_none() {
+        match crate::navaratna::spec::check_big_prompt(std::path::Path::new(workspace.root()), &request_text) {
+            Some(Err(blocked)) => Some(blocked.to_string()),
+            _ => None,
+        }
+    } else {
+        None
+    };
     let text = {
         let mut notes = String::new();
 
@@ -1763,6 +1805,7 @@ fn drive(
             brief.as_deref(),
             spec_brief.as_deref(),
             decompose_note.as_deref(),
+            cover_note.as_deref(),
         ]
         .into_iter()
         .flatten()
@@ -1786,6 +1829,8 @@ fn drive(
 
     /* P1-4: the tools the last reply called, and whether any of their results was a failure - what the next step's profile reads. */
     let mut last_calls: Vec<dialect::ToolUse> = Vec::new();
+    /* N7-2 (`nr.tool_envelope`): arguments that do not fit the tool, and the same call twice in a row, never reach the tool. */
+    let mut envelope = crate::navaratna::envelope::Guard::default();
     let mut last_failed = false;
 
     /* P1-13: the turn's own steps, for the caution signal. */
@@ -1846,6 +1891,7 @@ fn drive(
         research: research_session.clone(),
         local: backend == Backend::Ollama,
         result_cap: if target.local_window { (window as usize).clamp(2_000, tools::RESULT_CAP) } else { result_cap(backend, window) },
+        reply_text: String::new(),
     };
     /* v3 R2: a turn the daemon lost continues here - its conversation rebuilt from the journal, the reads that
        never answered run again, and a change that never answered is reported as unknown rather than redone.
@@ -2093,7 +2139,7 @@ fn drive(
         }
 
         /* P1-4: what this step is doing, from the tools the last reply called (and whether the step before it failed). */
-        if crate::v3::on("sme.step_profile") {
+        if crate::v3::on("sme.step_profile") || crate::v3::on("nr.think_budget") {
             let last_tools: Vec<String> = last_calls.iter().map(|call| call.name.clone()).collect();
 
             crate::sme::profile::set_current_step(Some(crate::sme::profile::Step::of_tools(&last_tools, last_failed)));
@@ -2661,7 +2707,14 @@ fn drive(
                 }
             }
 
+            context.reply_text.clone_from(&reply.text);
+
+            let blocked = match envelope.judge(&specs, &call.name, &call.input) {
+                crate::navaratna::envelope::Verdict::Run => None,
+                crate::navaratna::envelope::Verdict::Repeat(why) | crate::navaratna::envelope::Verdict::Malformed(why) => Some(why),
+            };
             let outcome = match mcp.as_mut() {
+                _ if blocked.is_some() => tools::Outcome::error(blocked.unwrap_or_default()),
                 Some(servers) if servers.handles(&call.name) => tools::mcp_call(&mut context, servers, call),
                 /* M2-1: the search runs over the tools of this turn, so what it answers is exactly what becomes available. */
                 _ if catalog_on && call.name == "tool_search" => tools::Outcome::ok(crate::sme::catalog::answer(&crate::sme::catalog::search(&all_specs, call.input["query"].as_str().unwrap_or_default(), 3))),
@@ -2764,7 +2817,7 @@ fn drive(
             }
 
             if !skill_reminded {
-                let edits: Vec<usize> = reply.tool_uses.iter().enumerate().filter(|(_, call)| matches!(call.name.as_str(), "edit_file" | "write_file" | "apply_patch" | "patch_symbol")).map(|(index, _)| index).collect();
+                let edits: Vec<usize> = reply.tool_uses.iter().enumerate().filter(|(_, call)| matches!(call.name.as_str(), "edit_file" | "write_file" | "apply_patch" | "patch_symbol" | "replace_symbol")).map(|(index, _)| index).collect();
                 let unread: Vec<&skills::Skill> = skills::about(&skills_found, &request_text).into_iter().filter(|skill| !read_skills.contains(&skill.path) && !skills::named_in_capitals(&skill.name, &request_text)).collect();
 
                 if let (Some(first), Some(skill)) = (edits.first(), unread.first()) {

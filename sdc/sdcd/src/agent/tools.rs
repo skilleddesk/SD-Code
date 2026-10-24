@@ -66,7 +66,7 @@ impl Caps {
 /// already stream their own output, and edits carry a diff.
 const SEEN: &[&str] = &["read_file", "list_dir", "search", "grep", "glob", "git_diff", "web_fetch", "web_search", "process_output"];
 
-pub const READ_ONLY: &[&str] = &["read_file", "list_dir", "search", "grep", "glob", "git_diff", "web_fetch", "web_search", "view_image", "process_output"];
+pub const READ_ONLY: &[&str] = &["read_file", "list_dir", "search", "grep", "glob", "git_diff", "web_fetch", "web_search", "view_image", "process_output", "spec_read"];
 
 /// Every tool, for a turn whose model cannot see and which is not a sub-agent.
 pub fn specs() -> Vec<ToolSpec> {
@@ -92,6 +92,11 @@ pub fn specs_for(caps: Caps) -> Vec<ToolSpec> {
         all.push(ranked_search_spec());
     }
 
+    /* N3-1 / N3-3: what was kept in the vault (a whole build log, a long prompt) is fetched by id and line range */
+    if crate::v3::on_in("nr.error_slice", &caps.model()) || crate::v3::on_in("nr.fresh_step", &caps.model()) {
+        all.push(spec_read_spec());
+    }
+
     if caps.vision {
         all.extend(vision_specs());
     }
@@ -101,6 +106,11 @@ pub fn specs_for(caps: Caps) -> Vec<ToolSpec> {
     } else {
         if crate::v3::on("edit.symbol_patch") && crate::v3::on("graph.v1") {
             all.push(patch_symbol_spec());
+        }
+
+        /* N4-2: the new definition comes in the message as a plain code block, not in the arguments */
+        if crate::v3::on_in("nr.symbol_patch", &caps.model()) {
+            all.push(replace_symbol_spec());
         }
 
         all.push(task_spec());
@@ -461,6 +471,9 @@ pub struct ToolContext<'a> {
     pub local: bool,
     /// The most one tool answer hands back - `RESULT_CAP`, or less for a local model's window.
     pub result_cap: usize,
+    /// The words the model wrote in the message that carries this step's tool calls: where `replace_symbol` finds the new definition (a plain
+    /// fenced code block - model-written code is never inside a JSON string, N3).
+    pub reply_text: String,
 }
 
 impl ToolContext<'_> {
@@ -492,6 +505,18 @@ fn guard_edit(context: &mut ToolContext, path: &str, content: Option<&str>) -> O
             "This path is in .sdc/policy.toml's protected list (or SDC's defaults). Allow only if you meant the agent to touch it.",
         ) {
             return Some(refused);
+        }
+    }
+
+    /* N6-3 (`nr.contract_lock`): a signature a verified step published cannot be changed or removed by a patch */
+    if let (Some(text), false) = (content, context.workspace.is_remote()) {
+        if crate::v3::on("nr.contract_lock") {
+            let relative = context.workspace.resolve(path).ok().map(|absolute| context.workspace.relative(&absolute)).unwrap_or_else(|| path.to_string());
+            let lock = crate::navaratna::contracts::Lock::load(std::path::Path::new(&root));
+
+            if let Err(violations) = crate::navaratna::contracts::check_patch(&lock, &relative, text) {
+                return Some(Outcome::error(violations.iter().map(ToString::to_string).collect::<Vec<_>>().join("\n")));
+            }
         }
     }
 
@@ -680,6 +705,8 @@ fn execute_call(context: &mut ToolContext, call: &ToolUse) -> Outcome {
         "code_graph" => code_graph(context, &call_id, &text("query"), &text("name")),
         "ranked_search" => ranked_search(context, &call_id, &text("query"), call.input["k"].as_u64()),
         "patch_symbol" => patch_symbol(context, &call_id, &call.input),
+        "replace_symbol" => replace_symbol(context, &call_id, &call.input),
+        "spec_read" => spec_read(context, &call.input),
         "web_fetch" => web_fetch(context, &call_id, &text("url")),
         "web_search" => web_search(context, &call_id, &text("query")),
         "start_process" => start_process(context, &call_id, &text("command"), number("wait_seconds").unwrap_or(6).min(60)),
@@ -1105,6 +1132,124 @@ fn patch_symbol(context: &mut ToolContext, call_id: &str, input: &Value) -> Outc
     }
 }
 
+/// `spec_read` (N3): lines of something SDC kept outside the conversation - the whole log behind an error slice, the full request.
+fn spec_read_spec() -> ToolSpec {
+    ToolSpec {
+        name: "spec_read",
+        description: "Read part of something SDC kept for you: the whole log behind a cut-down error (kind `log`), the full request (`spec`). Give the kind and the id that was printed, and the line range.",
+        schema: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "kind": { "type": "string", "enum": ["log", "spec", "specmap", "section"] },
+                "id": { "type": "string", "description": "The id printed next to `spec_read`." },
+                "from": { "type": "integer", "description": "First line (1-based, default 1)." },
+                "to": { "type": "integer", "description": "Last line (default: 200 lines on)." },
+            },
+            "required": ["kind", "id"],
+            "additionalProperties": false,
+        }),
+    }
+}
+
+fn spec_read(context: &ToolContext, input: &Value) -> Outcome {
+    let (kind, id) = (input["kind"].as_str().unwrap_or_default(), input["id"].as_str().unwrap_or_default());
+    let from = input["from"].as_u64().unwrap_or(1).max(1) as usize;
+    let to = input["to"].as_u64().map_or(from + 199, |to| to as usize).min(from + 399);
+
+    if context.workspace.is_remote() {
+        return Outcome::error("spec_read works on this computer's folders.");
+    }
+
+    match crate::navaratna::vault::read_lines(std::path::Path::new(context.workspace.root()), kind, id, from, to) {
+        Some(text) => Outcome::ok(cap_to(&text, RESULT_CAP)),
+        None => Outcome::error(format!("Nothing is kept under {kind} {id}. Use the id exactly as it was printed.")),
+    }
+}
+
+/// N4-2 (`nr.symbol_patch`): replace a whole declaration with the definition the model wrote as a code block in its message.
+fn replace_symbol_spec() -> ToolSpec {
+    ToolSpec {
+        name: "replace_symbol",
+        description: "Replace one whole declaration, or add one after it. Name the file and the symbol (qualified, e.g. Cart.add or Ledger::total). Write the COMPLETE new definition in a fenced ``` code block in the same message, before this call - not in the arguments; nothing may be left out (no `// ...`, no `rest unchanged`) and it must define exactly that one symbol. mode `insert_after` adds a new symbol after the named one instead.",
+        schema: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "path": { "type": "string" },
+                "symbol": { "type": "string", "description": "Qualified name of the symbol to replace (or to insert after)." },
+                "mode": { "type": "string", "enum": ["replace", "insert_after"] },
+            },
+            "required": ["path", "symbol"],
+            "additionalProperties": false,
+        }),
+    }
+}
+
+fn replace_symbol(context: &mut ToolContext, call_id: &str, input: &Value) -> Outcome {
+    use crate::navaratna::patcher;
+
+    let text_of = |key: &str| input[key].as_str().unwrap_or_default().to_string();
+    let (path, symbol) = (text_of("path"), text_of("symbol"));
+    let insert = input["mode"].as_str() == Some("insert_after");
+
+    if context.workspace.is_remote() {
+        return Outcome::error("replace_symbol works on this computer's folders; use edit_file for a server's.");
+    }
+
+    if !context.reply_text.contains("```") {
+        return Outcome::error("Write the new definition in a fenced ``` code block in your message first, then call replace_symbol with the path and the symbol. The code goes in the message, not in the arguments.");
+    }
+
+    let before = match context.workspace.read(&path) {
+        Ok((_, true)) => return Outcome::error(format!("{path} is larger than 256 KB; use edit_file on a range.")),
+        Ok((text, false)) => text,
+        Err(error) => return Outcome::error(error.message),
+    };
+    let planned = if insert { patcher::insert_after(&path, &before, &symbol, &context.reply_text) } else { patcher::replace_symbol(&path, &before, &symbol, &context.reply_text) };
+    let after = match planned {
+        Ok(after) => after,
+        Err(refused) => return Outcome::error(refused.to_string()),
+    };
+
+    keep_pre_image(context, &path, Some(before.as_bytes()));
+
+    let diff = diff_lines(&before, &after);
+    let (added, removed) = counts(&diff);
+
+    started(context, call_id, "edit", "Replace symbol", &format!("{path} · {symbol}"));
+
+    if let Some(refused) = guard_edit(context, &path, Some(&after)) {
+        completed(context, call_id, false, "declined", None);
+
+        return refused;
+    }
+
+    if let Some(refused) = ask(context, "edit", &format!("Replace {symbol} in {path}"), &format!("The agent wants to change one declaration (+{added} −{removed} lines)"), &path, "MUTATING", "A checkpoint is taken before the change, so it can be undone.") {
+        completed(context, call_id, false, "declined", None);
+
+        return refused;
+    }
+
+    checkpoint_first(context, &format!("Before replace_symbol {path}"));
+
+    match commit_edits(context, &[(path.as_str(), Some(after.as_str()))]) {
+        Ok(()) => {
+            completed(context, call_id, true, &format!("done · +{added} −{removed}"), Some(card(&diff)));
+
+            let said = format!("{} {symbol} in {path} (+{added} −{removed}).", if insert { "Added a symbol after" } else { "Replaced" });
+
+            Outcome::ok(match language_server_note(context, &path, &after) {
+                Some(note) => format!("{said}\n\n{note}"),
+                None => said,
+            })
+        }
+        Err(error) => {
+            completed(context, call_id, false, "failed", None);
+
+            Outcome::error(error.message)
+        }
+    }
+}
+
 /// ` #1a2b3c4d5e6f` after a declaration the Code Graph read: the hash `patch_symbol` asks for (empty for a line-pattern symbol).
 fn hash_tag(symbol: &crate::intel::Symbol) -> String {
     if symbol.hash.is_empty() { String::new() } else { format!(" #{}", &symbol.hash[..12]) }
@@ -1392,9 +1537,24 @@ fn api_exists_note(context: &ToolContext, path: &str, text: &str) -> Option<Stri
     crate::verify::api_exists::warning(&crate::verify::api_exists::check(std::path::Path::new(context.workspace.root()), &relative, text))
 }
 
+/// N5-2 (`nr.exist_gate`): members of this project's own types that the symbol index does not have. A warning, never a refusal.
+fn exist_gate_note(context: &ToolContext, path: &str, text: &str) -> Option<String> {
+    if context.workspace.is_remote() {
+        return None;
+    }
+
+    let relative = context.workspace.resolve(path).ok().map(|absolute| context.workspace.relative(&absolute))?;
+
+    let root = std::path::Path::new(context.workspace.root());
+    /* N6-1 (`nr.registry`): the same name or the same body declared in two places */
+    let notes: Vec<String> = crate::navaratna::exist::note(root, &relative, text).into_iter().chain(crate::navaratna::registry::duplicate_note(root, &relative, text)).collect();
+
+    (!notes.is_empty()).then(|| notes.join("\n\n"))
+}
+
 /// The text after a successful edit: the hooks' failure, and the language server's errors, each only when there is one.
 fn after_edit_notes(context: &ToolContext, path: &str, text: &str, hooks: Option<String>) -> Option<String> {
-    let notes: Vec<String> = hooks.into_iter().chain(language_server_note(context, path, text)).chain(api_exists_note(context, path, text)).collect();
+    let notes: Vec<String> = hooks.into_iter().chain(language_server_note(context, path, text)).chain(api_exists_note(context, path, text)).chain(exist_gate_note(context, path, text)).collect();
 
     (!notes.is_empty()).then(|| notes.join("\n\n"))
 }
@@ -1636,6 +1796,19 @@ fn run_command(context: &mut ToolContext, call_id: &str, line: &str, timeout: Du
             if let Some(note) = &unverified_note {
                 content.push_str(note);
                 content.push('\n');
+            }
+
+            /* N3-3 (`nr.error_slice`): a failed build or test is shown as its first error, where it is, and the code around it; the whole log is
+               kept in the vault. A log the slicer does not read is shown as it always was. */
+            if !report.ok && !report.timed_out && !context.workspace.is_remote() && crate::v3::on_in("nr.error_slice", &tool_model(context)) {
+                if let Some(slice) = crate::navaratna::errslice::slice(std::path::Path::new(context.workspace.root()), &combined, None, 800) {
+                    content = format!("exit code: {exit}\n--- the failure, cut to its first error ---\n{}\n", slice.text);
+
+                    if let Some(note) = &unverified_note {
+                        content.push_str(note);
+                        content.push('\n');
+                    }
+                }
             }
 
             /* A failed command is information, not a tool error: the model reads the output and fixes
@@ -2525,6 +2698,7 @@ mod tests {
             research: None,
             local: false,
             result_cap: RESULT_CAP,
+            reply_text: String::new(),
         }
     }
 
@@ -2825,6 +2999,135 @@ mod tests {
         let again = execute(&mut context, &call("patch_symbol", json!({ "path": "s.py", "symbol": "Cart.add", "old_hash": hash, "new_body": "def add(self, x):\n        return 0" })));
 
         assert!(again.is_error && again.content.contains("is not what you read"), "the same hash cannot be used twice: {}", again.content);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// N6-3 end to end: a signature a verified step published cannot be changed by a later write; a body change is fine; off, nothing is locked.
+    #[test]
+    fn a_locked_signature_cannot_be_changed_by_a_later_write() {
+        let (root, workspace) = folder("contract-lock");
+        let recorder = Recorder::new();
+        let sink = recorder.sink();
+        let mut context = context(&workspace, &sink, Autonomy::Auto);
+        let shop = "pub fn total(items: &[u64]) -> u64 {\n    items.iter().sum()\n}\n";
+
+        std::fs::write(root.join("shop.rs"), shop).unwrap();
+
+        let mut lock = crate::navaratna::contracts::Lock::default();
+
+        crate::v3::forcing(&["nr.contract_lock"], || lock.publish("shop.rs", shop, "s1"));
+        lock.save(&root).unwrap();
+
+        let changed = shop.replace("(items: &[u64])", "(items: &[u64], tax: u64)");
+        let refused = crate::v3::forcing(&["nr.contract_lock"], || execute(&mut context, &call("write_file", json!({ "path": "shop.rs", "content": changed }))));
+
+        assert!(refused.is_error && refused.content.contains("locked contract"), "{}", refused.content);
+        assert_eq!(std::fs::read_to_string(root.join("shop.rs")).unwrap(), shop, "nothing was written");
+
+        let body = shop.replace("items.iter().sum()", "items.iter().copied().sum()");
+        let fine = crate::v3::forcing(&["nr.contract_lock"], || execute(&mut context, &call("write_file", json!({ "path": "shop.rs", "content": body }))));
+
+        assert!(!fine.is_error, "{}", fine.content);
+
+        let off = execute(&mut context, &call("write_file", json!({ "path": "shop.rs", "content": changed })));
+
+        assert!(!off.is_error, "with the switch off the old behaviour stands: {}", off.content);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// N3-3 end to end: a failing command's output is cut to its first error with the code around it and a pointer to the whole log; with the
+    /// switch off the model gets the whole output, as before.
+    #[cfg(unix)]
+    #[test]
+    fn a_failing_command_shows_its_first_error_and_keeps_the_whole_log() {
+        let (root, workspace) = folder("error-slice");
+        let recorder = Recorder::new();
+        let sink = recorder.sink();
+        let mut context = context(&workspace, &sink, Autonomy::Auto);
+
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/a.rs"), (1..=20).map(|n| format!("let line_{n} = {n};\n")).collect::<String>()).unwrap();
+        std::fs::write(root.join("fail.sh"), "for n in 1 2 3 4 5 6 7 8; do echo \"warning: noise $n\"; done\necho 'error[E0308]: mismatched types'\necho ' --> src/a.rs:7:5'\necho 'error[E0425]: cannot find value'\necho ' --> src/a.rs:9:5'\nexit 1\n").unwrap();
+
+        let plain = execute(&mut context, &call("run_command", json!({ "command": "sh fail.sh" })));
+
+        assert!(plain.content.contains("warning: noise 8"), "off: the whole output, as it always was: {}", plain.content);
+
+        let cloud = crate::v3::forcing(&["nr.error_slice"], || execute(&mut context, &call("run_command", json!({ "command": "sh fail.sh" }))));
+
+        assert!(cloud.content.contains("warning: noise 8"), "a cloud model is untouched whatever the switch says");
+
+        context.local = true;
+
+        let sliced = crate::v3::forcing(&["nr.error_slice"], || execute(&mut context, &call("run_command", json!({ "command": "sh fail.sh" }))));
+
+        assert!(sliced.content.contains("src/a.rs:7") && sliced.content.contains("mismatched types") && sliced.content.contains("let line_7 = 7;"), "{}", sliced.content);
+        assert!(sliced.content.contains("(+1 more error") && !sliced.content.contains("warning: noise 8"), "{}", sliced.content);
+
+        let id = sliced.content.split("spec_read log ").nth(1).and_then(|rest| rest.split(')').next()).unwrap();
+
+        assert!(crate::navaratna::vault::get(&root, "log", id).unwrap().contains("warning: noise 8"), "the whole log is in the vault");
+
+        /* and the model can fetch any part of it with spec_read */
+        let part = execute(&mut context, &call("spec_read", json!({ "kind": "log", "id": id, "from": 1, "to": 2 })));
+
+        assert!(!part.is_error && part.content.contains("warning: noise 1") && !part.content.contains("noise 3"), "{}", part.content);
+        assert!(execute(&mut context, &call("spec_read", json!({ "kind": "log", "id": "ffff" }))).is_error);
+        assert!(!crate::v3::forcing(&["nr.error_slice"], || specs_for(Caps { vision: false, subagent: false, patch: false, local: true })).iter().all(|spec| spec.name != "spec_read"), "offered when the slicer is on");
+        assert!(specs_for(Caps { vision: false, subagent: false, patch: false, local: true }).iter().all(|spec| spec.name != "spec_read"), "and not otherwise");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// N4-2 end to end: the definition comes from the message as a code block; elision and a rename are refused; everything else in the file is
+    /// byte-identical afterwards; with the switch off the model is not offered the tool.
+    #[test]
+    fn the_replace_symbol_tool_takes_the_definition_from_the_message_and_changes_nothing_else() {
+        let (root, workspace) = folder("replace-symbol");
+        let recorder = Recorder::new();
+        let sink = recorder.sink();
+        let mut context = context(&workspace, &sink, Autonomy::Auto);
+        let text = python_with_two_adds();
+
+        std::fs::write(root.join("s.py"), &text).unwrap();
+
+        let silent = execute(&mut context, &call("replace_symbol", json!({ "path": "s.py", "symbol": "Cart.add" })));
+
+        assert!(silent.is_error && silent.content.contains("fenced"), "{}", silent.content);
+
+        context.reply_text = "Here it is:\n```python\ndef add(self, x):\n    # rest unchanged\n    return x\n```".to_string();
+
+        let lazy = execute(&mut context, &call("replace_symbol", json!({ "path": "s.py", "symbol": "Cart.add" })));
+
+        assert!(lazy.is_error && lazy.content.contains("leaves code out"), "{}", lazy.content);
+
+        context.reply_text = "```python\ndef remove(self, x):\n    return x\n```".to_string();
+
+        let renamed = execute(&mut context, &call("replace_symbol", json!({ "path": "s.py", "symbol": "Cart.add" })));
+
+        assert!(renamed.is_error && renamed.content.contains("exactly the one symbol"), "{}", renamed.content);
+        assert_eq!(std::fs::read_to_string(root.join("s.py")).unwrap(), text, "refusals changed nothing");
+
+        context.reply_text = "```python\ndef add(self, x):\n    return x + 100\n```".to_string();
+
+        let good = execute(&mut context, &call("replace_symbol", json!({ "path": "s.py", "symbol": "Cart.add" })));
+
+        assert!(!good.is_error, "{}", good.content);
+
+        let after = std::fs::read_to_string(root.join("s.py")).unwrap();
+
+        assert!(after.contains("return x + 100") && !after.contains("# rest unchanged"));
+        assert!(after.lines().count().abs_diff(text.lines().count()) <= 2);
+
+        let names = |on: bool| -> Vec<&'static str> {
+            let caps = Caps { vision: false, subagent: false, patch: false, local: true };
+
+            if on { crate::v3::forcing(&["nr.symbol_patch"], || specs_for(caps)) } else { specs_for(caps) }.into_iter().map(|spec| spec.name).collect()
+        };
+
+        assert!(names(true).contains(&"replace_symbol") && !names(false).contains(&"replace_symbol"), "off by default: the model is told nothing new");
 
         let _ = std::fs::remove_dir_all(&root);
     }
