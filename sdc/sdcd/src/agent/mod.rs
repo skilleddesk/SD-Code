@@ -23,6 +23,7 @@
 
 pub mod background;
 pub mod browser;
+pub mod describe;
 pub mod dialect;
 pub mod gate;
 pub mod mcp;
@@ -1510,9 +1511,11 @@ fn drive(
     /* A `/research` turn (0.16.1): its own brief, its own tools, its limits and its sources. */
     let research_session = options.research.map(|limits| std::sync::Arc::new(research::Session::new(limits)));
     let research_config = research::config();
+    /* The project's skills, read once for the turn: the brief, the capital-letter trigger (M0-0) and the must-read reminder (M2-3) all use them. */
+    let skills_found = if research_session.is_some() { Vec::new() } else { skills::find(workspace) };
     let mut system = match &research_session {
         Some(session) => research::system_prompt(&language, &session.limits, research_config.provider.label(), window < 32_000),
-        None => system_prompt(workspace, vision, &language, technique("stable_prefix")) + &skills::brief(&skills::find(workspace)),
+        None => system_prompt(workspace, vision, &language, technique("stable_prefix")) + &skills::brief(&skills_found),
     };
     /* P1-5: the rules cut to this class's cap - a 4K window keeps the rules that matter, not the prose around them. */
     let diet = crate::v3::on_in("sme.prompt_diet", &crate::v3::ModelCtx { class: crate::sme::budget::Class::of(window), ..scope_model });
@@ -1524,7 +1527,7 @@ fn drive(
     /* M0-0: a skill the person called by name in capitals is put in front of the model whole. After the diet, so the cut cannot reach it. */
     if research_session.is_none() && crate::v3::on("skills.keyword_trigger") {
         let words = prompt.text.rsplit("[The person's message]").next().unwrap_or(&prompt.text);
-        let (loaded, report) = skills::keyword_context(workspace, &skills::find(workspace), words, window, 40);
+        let (loaded, report) = skills::keyword_context(workspace, &skills_found, words, window, 40);
 
         system.push_str(&loaded);
 
@@ -1596,6 +1599,35 @@ fn drive(
     /* M1-4: a step relayed to the chain gets the short tool list of the plan, not the whole agent's. */
     if relay::in_scope() {
         specs.retain(|spec| relay::TOOLS.contains(&spec.name));
+    }
+
+    /* M2-1: the tools the cap left out are listed in one line each, and tool_search fetches one (a local model's prompt only; off). */
+    let catalog_on = capped && research_session.is_none() && !relay::in_scope() && technique("tools.catalog") && scope_model.local;
+
+    if catalog_on {
+        system.push_str(&crate::sme::catalog::block(&specs, &all_specs));
+        specs.push(crate::sme::catalog::spec());
+    }
+
+    /* M2-2: a tool description of the length this window can use - the full one says when not to use the tool (a local model's prompt only; off). */
+    let describe_on = research_session.is_none() && scope_model.local && technique("tools.describe_when_not");
+    let all_specs = if describe_on {
+        let mut described = all_specs;
+
+        describe::apply(&mut described, crate::sme::budget::Class::of(window));
+        describe::apply(&mut specs, crate::sme::budget::Class::of(window));
+
+        described
+    } else {
+        all_specs
+    };
+
+    /* M2-5: every part of the context says where it came from, and only the person and the policy can instruct (off). */
+    let provenance = research_session.is_none() && technique("context.provenance");
+
+    if provenance {
+        system.push_str("\n\n");
+        system.push_str(crate::sme::frame::SYSTEM_RULE);
     }
 
     let mut messages: Vec<Value> = prompt
@@ -1769,6 +1801,13 @@ fn drive(
         crate::v3::redact::scrub(&prompt.session_id, &text).0
     } else {
         text
+    };
+
+    /* The tag goes on the person's own words (they come last), so the notes and the memory before them are not labelled as the person's. */
+    let text = match (provenance, text.strip_suffix(request_text.as_str())) {
+        (true, Some(before)) if !request_text.is_empty() => format!("{before}{}", crate::sme::frame::tagged(crate::sme::frame::Source::User, &request_text)),
+        (true, _) => crate::sme::frame::tagged(crate::sme::frame::Source::User, &text),
+        (false, _) => text,
     };
 
     messages.push(dialect::user_message_with_images(target.dialect, &text, &images));
@@ -1964,6 +2003,15 @@ fn drive(
     let _relay_summary = RelaySummaryOnExit { hook: &relay_hook, sink, session: &prompt.session_id, turn: &turn_id };
     /* M1-2: in this mode the local model is given `local_ttft_s` to say anything, not ten minutes. */
     let _first_silence = relay_hook.borrow().as_ref().map(|hook| crate::rotation::policy::FirstSilence::set(&turn_id, hook.policy.local_ttft_s));
+
+    /* M2-3: the skill files read so far, and whether the one reminder has been given. */
+    let mut read_skills: HashSet<String> = HashSet::new();
+    let mut skill_reminded = false;
+    /* M2-6: the job's size sets a soft limit of tool calls; it is said once, and the closing contract is asked for once. */
+    let job_size = crate::sme::frame::size_of(orient::pace_of(&request_text));
+    let contract_on = research_session.is_none() && crate::v3::on("turn.contract");
+    let mut limit_said = false;
+    let mut contract_asked = false;
 
     /* Asks the relay what to do about this step, from the signals it holds; answers what became of the step (`relay::Handled`). */
     macro_rules! relay_step {
@@ -2388,6 +2436,14 @@ fn drive(
                     continue;
                 }
             }
+
+            /* M2-6: a turn that changed files ends with three parts - what changed, what was verified, what was not done. Asked once. */
+            if contract_on && !contract_asked && !context.changed.is_empty() && !crate::sme::frame::has_three_parts(&reply.text) && !stopped() {
+                contract_asked = true;
+                dialect::append_user_text(target.dialect, &mut messages, crate::sme::frame::CONTRACT_NOTE);
+
+                continue;
+            }
         }
 
         if reply.tool_uses.is_empty() {
@@ -2574,6 +2630,8 @@ fn drive(
 
             let outcome = match mcp.as_mut() {
                 Some(servers) if servers.handles(&call.name) => tools::mcp_call(&mut context, servers, call),
+                /* M2-1: the search runs over the tools of this turn, so what it answers is exactly what becomes available. */
+                _ if catalog_on && call.name == "tool_search" => tools::Outcome::ok(crate::sme::catalog::answer(&crate::sme::catalog::search(&all_specs, call.input["query"].as_str().unwrap_or_default(), 3))),
                 _ => tools::execute(&mut context, call),
             };
 
@@ -2649,6 +2707,42 @@ fn drive(
         /* v3 W9: external text marked as data, secrets replaced - before anything reaches the model. */
         crate::v3::guard_results(&prompt.session_id, &reply.tool_uses, &mut results);
 
+        /* M2-1: what tool_search found joins the offered tools from the next step on. */
+        if catalog_on {
+            let mut added = false;
+
+            for call in reply.tool_uses.iter().filter(|call| call.name == "tool_search") {
+                for found in crate::sme::catalog::search(&all_specs, call.input["query"].as_str().unwrap_or_default(), 3) {
+                    added |= crate::v3::tools::add_missing(&mut specs, &all_specs, found.name);
+                }
+            }
+
+            if added {
+                fixed = fixed_tokens(&system, &specs);
+            }
+        }
+
+        /* M2-3: the skill files this turn has read, and - once - a reminder on the first edit made without reading the skill the request is about. */
+        if crate::v3::on("skills.must_read") && research_session.is_none() && !skills_found.is_empty() {
+            for call in reply.tool_uses.iter().filter(|call| call.name == "read_file") {
+                if let Some(path) = call.input["path"].as_str() {
+                    read_skills.insert(path.trim_start_matches("./").to_string());
+                }
+            }
+
+            if !skill_reminded {
+                let edits: Vec<usize> = reply.tool_uses.iter().enumerate().filter(|(_, call)| matches!(call.name.as_str(), "edit_file" | "write_file" | "apply_patch" | "patch_symbol")).map(|(index, _)| index).collect();
+                let unread: Vec<&skills::Skill> = skills::about(&skills_found, &request_text).into_iter().filter(|skill| !read_skills.contains(&skill.path) && !skills::named_in_capitals(&skill.name, &request_text)).collect();
+
+                if let (Some(first), Some(skill)) = (edits.first(), unread.first()) {
+                    if let Some(result) = results.get_mut(*first) {
+                        result.1 = format!("{}\n\n{}", result.1, skills::reminder(skill));
+                        skill_reminded = true;
+                    }
+                }
+            }
+        }
+
         let before_dedupe: u64 = results.iter().map(|result| crate::context::tokens_of(&result.1)).sum();
 
         dedupe_reads(&mut seen_reads, &reply.tool_uses, &mut results);
@@ -2660,6 +2754,13 @@ fn drive(
 
         if ledger_on {
             crate::bench::ledger::record_reads(&turn_id, "main", step, read_entries(&earlier, &reply.tool_uses, &results));
+        }
+
+        /* M2-5: the tag goes on last, after the results have been de-duplicated and diffed, so it is the first thing on each. */
+        if provenance {
+            for (call, result) in reply.tool_uses.iter().zip(results.iter_mut()) {
+                result.1 = crate::sme::frame::tagged(crate::sme::frame::source_of_tool(&call.name), &result.1);
+            }
         }
 
         messages.extend(dialect::tool_results(target.dialect, &results));
@@ -2738,6 +2839,22 @@ fn drive(
                     return;
                 }
             }
+        }
+
+        /* M2-6: the job's soft limit of tool calls is said once, with the numbers, and the turn goes on. */
+        if contract_on && !limit_said && context.calls >= crate::sme::frame::soft_limit(job_size) {
+            limit_said = true;
+            sink.send(EngineEvent::Thinking(format!("{}\n", crate::sme::frame::limit_status(job_size, context.calls))));
+        }
+
+        /* M2-4: a short reminder of the goal, what is never allowed and the language, every eighth step. */
+        if research_session.is_none() && technique("sme.rule_capsule") && crate::sme::frame::capsule_due(step + 1) {
+            let never: Vec<String> = policy.protected_paths.iter().take(4).cloned().chain(policy.deny_commands.iter().take(3).cloned()).collect();
+            let done_when: Vec<String> = passed_checks.iter().take(2).map(|check| format!("`{check}` keeps passing")).collect();
+            let now = context.open_plan_steps();
+            let reminder = crate::sme::frame::capsule(&request_text, &done_when, &never, language.reply_in, step + 1, now.as_deref().and_then(|open| open.lines().next()));
+
+            dialect::append_user_text(target.dialect, &mut messages, &reminder);
         }
 
         steer(&mut messages);
@@ -4921,3 +5038,6 @@ mod l5_budget {
 
 #[cfg(test)]
 mod relay_tests;
+
+#[cfg(test)]
+mod frame_tests;

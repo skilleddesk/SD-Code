@@ -14,9 +14,11 @@
 //! Empty on purpose until those tasks land, so adding them does not mean rearranging the agent again.
 
 pub mod budget;
+pub mod catalog;
 pub mod confidence;
 pub mod diet;
 pub mod fast;
+pub mod frame;
 pub mod memory;
 pub mod ollama_probe;
 pub mod profile;

@@ -284,6 +284,9 @@ async fn run_turn(
             let block = crate::sme::memory::render(&notes, cap);
 
             if !block.is_empty() {
+                /* M2-5: the memory is data about the project, not an instruction - with provenance on, it says so. */
+                let block = if crate::v3::on("context.provenance") { crate::sme::frame::tagged(crate::sme::frame::Source::Memory, &block) } else { block };
+
                 prompt.text = format!("{block}\n\n{}", prompt.text);
             }
         }

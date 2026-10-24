@@ -100,6 +100,34 @@ pub fn brief(skills: &[Skill]) -> String {
 }
 
 
+/// The skills a request is about, without capitals: the skill's name is one of the request's words, or the request shares at least two of the
+/// description's longer words. Deliberately cautious - a reminder that fires on every request is a reminder nobody reads.
+pub fn about<'a>(skills: &'a [Skill], message: &str) -> Vec<&'a Skill> {
+    let lower = message.to_lowercase();
+    let words: Vec<&str> = lower.split(|c: char| !c.is_alphanumeric() && c != '-' && c != '_').filter(|word| !word.is_empty()).collect();
+
+    skills
+        .iter()
+        .filter(|skill| {
+            let name = skill.name.to_lowercase();
+
+            if words.contains(&name.as_str()) {
+                return true;
+            }
+
+            let description = skill.description.to_lowercase();
+            let long: std::collections::BTreeSet<&str> = description.split(|c: char| !c.is_alphanumeric()).filter(|word| word.chars().count() >= 6).collect();
+
+            long.iter().filter(|word| words.contains(*word)).count() >= 2
+        })
+        .collect()
+}
+
+/// The one reminder (M2-3): this task matches a skill, and its file has not been read.
+pub fn reminder(skill: &Skill) -> String {
+    format!("[SDC reminder, once: this task matches the skill `{}` ({}), and you have not read it. Read it with read_file before you go on, and follow it.]", skill.name, skill.path)
+}
+
 /// A skill the person named in capitals (`MEGHNA next`) and what became of it (M0-0, switch `v3.skills.keyword_trigger`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Triggered {
@@ -264,5 +292,19 @@ mod tests {
         assert!(keyword_context(&workspace, &[], "MEGHNA next", 8_192, 40).1.is_empty());
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_request_is_about_a_skill_by_its_name_or_by_enough_of_its_description() {
+        let skills = vec![
+            Skill { name: "deploy".into(), description: "Deploy this site to staging or production with the release script.".into(), path: ".sdc/skills/deploy/SKILL.md".into() },
+            Skill { name: "seo".into(), description: "Check meta tags and sitemap before publishing.".into(), path: ".sdc/skills/seo/SKILL.md".into() },
+        ];
+
+        assert_eq!(about(&skills, "please deploy it").iter().map(|skill| skill.name.as_str()).collect::<Vec<_>>(), ["deploy"], "the name as a word");
+        assert_eq!(about(&skills, "push this site to production with the release process").len(), 1, "enough of the description");
+        assert!(about(&skills, "fix the header").is_empty());
+        assert!(about(&skills, "it is a deployment of seoul").is_empty(), "part of another word is not the name");
+        assert!(reminder(&skills[0]).contains("SKILL.md") && reminder(&skills[0]).contains("once"));
     }
 }
