@@ -587,7 +587,7 @@ impl CliAdapter {
             let _ = child.kill().await;
         }
 
-        let _ = child.wait().await;
+        let status = child.wait().await.ok();
 
         if let Ok(mut children) = self.children.lock() {
             children.remove(&prompt.turn_id);
@@ -620,6 +620,15 @@ impl CliAdapter {
             let mut ending = vec![EngineEvent::Failed(GENERIC_ENDING.to_string())];
 
             explain_failure(&mut ending, self.spec.program, &stderr, plain_text_of(&lines));
+
+            /* Still the generic sentence, and the child did not exit on its own: it was stopped from
+               outside. On an 8 GB Mac that is usually the system freeing memory, and "ended without a
+               result" does not tell a person to close something and send the prompt again. */
+            if ending == vec![EngineEvent::Failed(GENERIC_ENDING.to_string())] {
+                if let Some(signal) = status.and_then(stopped_by_signal) {
+                    ending = vec![EngineEvent::Failed(stopped_sentence(self.spec.program, signal))];
+                }
+            }
 
             for event in ending {
                 sink.send(event);
@@ -794,10 +803,11 @@ async fn read_structured(
 
     /* The stream closed: a last line the CLI wrote without its newline is still a line. Dropping it
        dropped the `result` too, and a turn that had answered in full ended `the engine's stream ended
-       without a result`. */
+       without a result`. Only a *whole* JSON line counts: a child that was killed mid-write leaves half
+       of one, and `plain_text_of` would show that half as the CLI's own sentence. */
     let last = String::from_utf8_lossy(&pending).trim().to_string();
 
-    if !last.is_empty() {
+    if !last.is_empty() && serde_json::from_str::<serde_json::Value>(&last).is_ok() {
         take_stream_line(last, &mut lines, &mut ended, sink, &mut drafts);
     }
 
@@ -866,6 +876,30 @@ pub fn waiting_for_a_person(program: &str, question: &str) -> String {
             "`{program}` stopped to ask \"{question}\", and a turn has no keyboard to answer it. Run `{program}` once in a terminal to answer it, then send the prompt again."
         )
     }
+}
+
+/// The signal that stopped a child, when it was stopped rather than exiting. `None` on Windows, which has none.
+fn stopped_by_signal(status: std::process::ExitStatus) -> Option<i32> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+
+        status.signal()
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = status;
+
+        None
+    }
+}
+
+/// The sentence for a CLI that was stopped from outside before it finished.
+fn stopped_sentence(program: &str, signal: i32) -> String {
+    format!(
+        "`{program}` was stopped before it finished (signal {signal}) - on a computer with little memory the system does this to free some. Close other apps and send the prompt again."
+    )
 }
 
 /// The last line of stdout that is not JSON - what a CLI prints when it is talking to a person rather
@@ -1271,6 +1305,41 @@ mod tests {
         assert_eq!(lines.len(), 2, "the unterminated line is kept: {lines:?}");
         assert!(ended, "the result line ended the turn");
         assert!(question.is_none());
+    }
+
+    /// A child killed in the middle of a line leaves half a JSON object. It is not a line, and it must not
+    /// become the sentence the turn fails with (`claude said: {"type":"stream_event",...`).
+    #[tokio::test]
+    async fn half_a_json_line_at_eof_is_dropped_not_shown() {
+        let (mut writer, reader) = tokio::io::duplex(1024);
+        let recorder = crate::engines::Recorder::new();
+        let sink = recorder.sink();
+        let read = tokio::spawn(async move { read_structured(reader, &sink).await });
+
+        writer.write_all(b"{\"type\":\"init\"}\n{\"type\":\"stream_event\",\"event\":{\"type\":\"content_block_delta\",\"delta\":{\"te").await.unwrap();
+        drop(writer);
+
+        let (lines, ended, question) =
+            tokio::time::timeout(std::time::Duration::from_secs(5), read).await.expect("the reader hung at EOF").unwrap();
+
+        assert_eq!(lines, vec![r#"{"type":"init"}"#.to_string()], "the half line is not kept");
+        assert!(plain_text_of(&lines).is_none(), "and so it cannot become the failure sentence");
+        assert!(!ended);
+        assert!(question.is_none());
+    }
+
+    /// A child the system stopped says which signal did it, so the turn can say more than "ended without a result".
+    #[cfg(unix)]
+    #[test]
+    fn a_child_stopped_by_a_signal_is_named() {
+        let status = std::process::Command::new("sh").args(["-c", "kill -9 $$"]).status().unwrap();
+
+        assert_eq!(stopped_by_signal(status), Some(9));
+        assert_eq!(stopped_by_signal(std::process::Command::new("sh").args(["-c", "exit 3"]).status().unwrap()), None);
+
+        let sentence = stopped_sentence("claude", 9);
+
+        assert!(sentence.contains("signal 9") && sentence.contains("send the prompt again"), "{sentence}");
     }
 
     /// The hang this release fixes: signed out, Gemini prints its auth question **without a newline**

@@ -15,6 +15,18 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [1.0.2] — a stopped Claude says why, and a cut stream line is no longer shown as its sentence
+
+`1.0.1` was tagged but never published (its Windows build failed on a timing test), so its changes ship here too.
+
+- **Fixed (1.0.1): a half-written last line became the failure sentence.** The reader kept a final line that had no newline, and when the child was killed mid-write that line was half a JSON object; `plain_text_of` showed it as `claude said: {"type":"stream_event",...`. Only a whole JSON line is kept now.
+- **A child stopped from outside says so.** A turn that ended with no result, no stderr and a signal (Unix) now reads `` `claude` was stopped before it finished (signal 9) - on a computer with little memory the system does this to free some. Close other apps and send the prompt again. `` instead of the generic `ended without a result`. This names the cause; it does not stop the system from stopping the child - on an 8 GB Mac with a model server, a browser and a build open, that is memory pressure.
+- **Fixed: a timing test failed on a slow Windows runner.** `a_chain_model_that_takes_too_long_is_given_up_on_and_its_edits_are_put_back` gave the fast model the same one-second limit as the slow one; both limits are wider now (3 s and a 6 s delay).
+
+**বাংলায় সারাংশ:** কাটা অর্ধেক JSON লাইন আর এররের বাক্য হিসেবে দেখানো হয় না। সিস্টেম `claude` প্রসেস থামিয়ে দিলে এখন স্পষ্ট বার্তা আসে (কম মেমরিতে এটা ঘটে)। আর Windows-এর সময়-নির্ভর টেস্ট শক্ত করা হয়েছে।
+
+---
+
 ## [1.0.1] — Claude model versions in the menu, and a last stream line is no longer dropped
 
 - **Claude Code's menu lists versions.** The Claude Code card offered only the aliases `sonnet`, `opus` and `haiku`, so a person could not choose Opus 5.5 or Sonnet 5.5. `protocol/models.json` now also lists `claude-opus-5-5`, `claude-sonnet-5-5`, `claude-haiku-5-5` and `claude-fable-5-1` (each id checked against `claude --model <id>`; Fable needs usage credits on the account). The aliases stay.

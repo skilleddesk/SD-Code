@@ -343,7 +343,7 @@ fn slow_provider(delay: std::time::Duration, replies: Vec<String>) -> (String, s
 #[test]
 fn a_chain_model_that_takes_too_long_is_given_up_on_and_its_edits_are_put_back() {
     let root = folder("watchdog");
-    let (slow_url, slow) = slow_provider(std::time::Duration::from_millis(2_500), vec![call("c1", "write_file", json!({ "path": "late.txt", "content": "too late\n" })), chunk(json!({ "content": "done" })) + "data: [DONE]\n\n"]);
+    let (slow_url, slow) = slow_provider(std::time::Duration::from_millis(6_000), vec![call("c1", "write_file", json!({ "path": "late.txt", "content": "too late\n" })), chunk(json!({ "content": "done" })) + "data: [DONE]\n\n"]);
     let (fast_url, fast) = cloud_that_writes();
     let (local_url, _local) = raw_provider(vec![local_silent(), local_says("Carrying on.")]);
 
@@ -352,7 +352,8 @@ fn a_chain_model_that_takes_too_long_is_given_up_on_and_its_edits_are_put_back()
 
     let mut chain = rotation(&["slow:slow-model", "fast:fast-model"], true);
 
-    chain.relay.call_timeout_s = 1;
+    /* Three seconds: the fast model has to finish inside the same limit, and a loaded Windows runner took more than one. */
+    chain.relay.call_timeout_s = 3;
 
     let recorder = run_local(&root, "turn-relay-watchdog", &local_url, chain);
     let steps = steps_of(&recorder);
