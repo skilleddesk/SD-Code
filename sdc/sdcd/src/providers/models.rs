@@ -661,6 +661,19 @@ mod tests {
         assert_eq!(snapshot_date().len(), 10, "the bundle carries an ISO date");
     }
 
+    /// "model ba version koto seta nai": the Claude Code card lists the versions, not only `sonnet` and `opus`.
+    /// Each id is one `claude --model <id>` accepts, so a row the menu offers is a row that runs.
+    #[test]
+    fn the_claude_card_lists_versions_next_to_the_aliases() {
+        let blocks = blocked();
+        let claude = blocks.iter().find(|block| block.id == "claude").expect("the claude card");
+        let ids: Vec<&str> = claude.models.iter().filter_map(|model| model["id"].as_str()).collect();
+
+        for id in ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "sonnet", "opus", "haiku"] {
+            assert!(ids.contains(&id), "{id} is missing from the claude card");
+        }
+    }
+
     /// "multiple use ar option rakba" (0.12.4): `Use` adds, `remove` takes out, the choice stays one.
     #[test]
     fn more_than_one_model_can_be_in_use() {

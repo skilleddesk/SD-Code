@@ -15,6 +15,16 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [1.0.1] — Claude model versions in the menu, and a last stream line is no longer dropped
+
+- **Claude Code's menu lists versions.** The Claude Code card offered only the aliases `sonnet`, `opus` and `haiku`, so a person could not choose Opus 5.5 or Sonnet 5.5. `protocol/models.json` now also lists `claude-opus-5-5`, `claude-sonnet-5-5`, `claude-haiku-5-5` and `claude-fable-5-1` (each id checked against `claude --model <id>`; Fable needs usage credits on the account). The aliases stay.
+- **Fixed: a finished turn could end `the engine's stream ended without a result`.** The CLI reader (`read_structured`) discarded a final line that arrived without its newline, and with it the `result`. It now reads that line when the stream closes. Not reproduced against a live CLI - every real run ended its `result` with a newline - so this closes a real gap, and it is not proven to be the only cause.
+- **Not done:** the Gemini engine still starts `gemini`, which Google has switched off for personal accounts (including Google AI Pro) since 2026-06-18; the replacement is `agy` (Antigravity CLI), and the engine moves to it once a signed-in `agy` stream can be captured. Codex lists only `default` until a ChatGPT sign-in can verify model names.
+
+**বাংলায় সারাংশ:** Claude Code-এর মেনুতে এখন Opus 5.5, Sonnet 5.5, Haiku 5.5 ও Fable 5.1 আলাদা করে দেখা যায়। আর CLI-র শেষ লাইন newline ছাড়া এলে সেটা আর বাদ পড়ে না, তাই পূর্ণ উত্তর দেওয়া টার্ন ভুল করে `stream ended without a result` দেখাত, সেই ফাঁক বন্ধ হয়েছে। Gemini ইঞ্জিন এখনো `agy`-তে সরেনি।
+
+---
+
 ## [1.0.0] — Silent Relay, a faster file tree, Memory 2.0 and the first numbered release
 
 This is the first release under the new numbering: every earlier release has been withdrawn, and `1.0.0` is the only one published.

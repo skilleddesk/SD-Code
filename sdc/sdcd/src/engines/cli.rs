@@ -771,14 +771,7 @@ async fn read_structured(
                     let raw: Vec<u8> = pending.drain(..=end).collect();
                     let line = String::from_utf8_lossy(&raw).trim_end().to_string();
 
-                    if !ended {
-                        for draft in drafts.observe(&line) {
-                            sink.send(draft);
-                        }
-                    }
-
-                    push_stream_line_with(&line, &mut ended, sink, &mut drafts);
-                    lines.push(line);
+                    take_stream_line(line, &mut lines, &mut ended, sink, &mut drafts);
                 }
 
                 let tail = String::from_utf8_lossy(&pending).trim().to_string();
@@ -799,7 +792,34 @@ async fn read_structured(
         }
     }
 
+    /* The stream closed: a last line the CLI wrote without its newline is still a line. Dropping it
+       dropped the `result` too, and a turn that had answered in full ended `the engine's stream ended
+       without a result`. */
+    let last = String::from_utf8_lossy(&pending).trim().to_string();
+
+    if !last.is_empty() {
+        take_stream_line(last, &mut lines, &mut ended, sink, &mut drafts);
+    }
+
     (lines, ended, None)
+}
+
+/// One complete line of a CLI's stream: its drafts, its event, and the record of it.
+fn take_stream_line(
+    line: String,
+    lines: &mut Vec<String>,
+    ended: &mut bool,
+    sink: &EventSink,
+    drafts: &mut crate::engines::draft::DraftTracker,
+) {
+    if !*ended {
+        for draft in drafts.observe(&line) {
+            sink.send(draft);
+        }
+    }
+
+    push_stream_line_with(&line, ended, sink, drafts);
+    lines.push(line);
 }
 
 /// The half-written line that means a CLI has stopped to talk to a person, when it has.
@@ -1228,6 +1248,29 @@ mod tests {
         assert!(question.unwrap().contains("Do you want to continue?"));
 
         drop(writer);
+    }
+
+    /// A turn that answered in full and whose `result` line arrives without its newline, then EOF, is a finished
+    /// turn - not `the engine's stream ended without a result`.
+    #[tokio::test]
+    async fn a_last_line_without_a_newline_is_still_read() {
+        let (mut writer, reader) = tokio::io::duplex(1024);
+        let recorder = crate::engines::Recorder::new();
+        let sink = recorder.sink();
+        let read = tokio::spawn(async move { read_structured(reader, &sink).await });
+
+        writer
+            .write_all(b"{\"type\":\"init\"}\n{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"OK\"}")
+            .await
+            .unwrap();
+        drop(writer);
+
+        let (lines, ended, question) =
+            tokio::time::timeout(std::time::Duration::from_secs(5), read).await.expect("the reader hung at EOF").unwrap();
+
+        assert_eq!(lines.len(), 2, "the unterminated line is kept: {lines:?}");
+        assert!(ended, "the result line ended the turn");
+        assert!(question.is_none());
     }
 
     /// The hang this release fixes: signed out, Gemini prints its auth question **without a newline**
