@@ -17,6 +17,12 @@ A Tauri 2 desktop app, a host daemon (<code>sdcd</code>) and an append-only even
 
 ---
 
+## What is new in 1.0
+
+**Silent Relay.** A small local model keeps the turn. When one step is beyond it, only that step goes to the Rotation Chain model - with a short capsule that holds no secrets - and the answer is applied through the same safe edit path as everything else. A safety checkpoint comes first, only green project checks count as success, and Settings -> Agents and the Cost Center show how much the local model did and what the rest cost (measured, priced or estimated, never blurred). A project that is local-only never relays.
+
+The file tree is now instant: opening, saving, editing, renaming and deleting answer before the disk has finished its bookkeeping. Memory says where each fact came from, and `sdcd mcp` lets other agents use SDC's code graph, search, memory and safety checks.
+
 ## Where the code lives
 
 The product is in [`sdc/`](sdc/README.md). This repository root holds only the

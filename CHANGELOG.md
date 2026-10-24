@@ -15,6 +15,24 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [1.0.0] — Silent Relay, a faster file tree, Memory 2.0 and the first numbered release
+
+This is the first release under the new numbering: every earlier release has been withdrawn, and `1.0.0` is the only one published.
+(Installed copies of `3.x` do not see it as an update, because `1.0.0` is lower - install it over them by hand; settings and data are untouched.)
+
+- **Faster file tree (sidebar).** Open, save, edit, create, rename and delete no longer wait for the disk. The daemon answers reads on their own lane while a write is still running; the Time Machine checkpoint behind a write is taken just after the answer, in one batch per folder; the tree updates at once and confirms afterwards; the editor saves after a short pause and always before it is closed.
+- **Silent Relay (ModelGate mode).** A small local model keeps the turn; when a step is beyond it, that one step goes to the Rotation Chain model with a compact, secret-free capsule, and the answer is applied through the Step Transaction. Only green project checks count as success, a safety checkpoint is taken first, a handover note records what changed, and a ledger labels every number measured, priced or estimated. Stop, permissions, the offload limit and an allowance question work as in any turn. See Settings -> Agents and Cost Center; `sdcd relay report` and `relay.report` print the report.
+- **Small Model Engine.** Skill catalog and short descriptions for small windows, a frame that keeps the reasoning order, the prompt diet applied by model class (small and medium only), a date line placed last so the prompt prefix stays cacheable (with the Anthropic cache breakpoint), native Anthropic `effort`, and cached tokens in the Step Trace.
+- **Memory 2.0.** Every fact says where it came from (`[stated]`, `[observed]`, `[inferred]`; an inferred fact is never an instruction), is tidied after the turn in code, travels as an index instead of a pile, and stays small and lasting.
+- **Verification.** A warning when an edit calls an API the project does not have, sentence-level citations for research answers, and a closing summary filled from the Proof Pack.
+- **MCP.** `sdcd mcp` now offers 13 tools: the Code Graph, ranked search, memory (stated and observed facts, plus `CLAUDE.md` / `AGENTS.md` as `[file]` rules), the package check, the Step Trace and the relay report - read-only, and they honour `secret_paths`.
+- **Honesty.** Every v3 switch declares its scope and evidence (`docs/GATES.md`); eight new hard benchmark tasks; unmeasured scaffolding is no longer sent to cloud models.
+- **Not done:** Gate 1 and any live local-model measurement (no model on the build machine); the relay supports API-provider chain rows only; relay cost is shown per turn but not fed to the day/month budget.
+
+**বাংলায় সারাংশ:** এই প্রথম নম্বরযুক্ত সংস্করণে সাইডবারের ফাইল খোলা, সেভ, এডিট ও ডিলিট এখন তাৎক্ষণিক; ছোট লোকাল মডেল আটকে গেলে কেবল সেই ধাপটুকু নীরবে চেইন-মডেলকে দেওয়া হয় (Silent Relay); মেমোরি এখন প্রতিটি তথ্যের উৎস জানায়; উত্তরে সূত্র ও যাচাই যুক্ত হয়েছে; আর `sdcd mcp` এখন ১৩টি টুল দেয়।
+
+---
+
 ## [3.1.2] — every model sees the tools it needs, and working memory is switched on
 
 - **Fixed (3.1.0 and 3.1.1): the prompt diet hid tools.** It kept the first six *registered* tools for every model - `read_file, list_dir, search, git_diff, write_file, edit_file` - so no model, cloud ones included, was offered `run_command`, `grep`, `ranked_search` or `code_graph`. The six-tool cap now applies to local (Ollama) models only, keeps the ones that matter (read, search, edit, write, run, ranked search), and a tool the model asks for that was not offered joins the list. Cloud models get every tool again.
