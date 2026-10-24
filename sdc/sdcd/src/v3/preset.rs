@@ -67,6 +67,25 @@ pub fn plan(preset: Preset) -> Vec<(&'static str, Option<bool>)> {
         .collect()
 }
 
+/// The switches that are **in force** for a model of this class under a preset (M5-1): the default-on ones whose scope reaches the class, with the
+/// preset's changes on top. A cloud model is not in any class - its cell is the `All`-scope switches. It is what a person can read to learn what
+/// "Balanced on a small local model" means, and a test holds it equal to what the code does.
+pub fn cell(preset: Preset, class: Option<crate::sme::budget::Class>) -> Vec<&'static str> {
+    let ctx = match class {
+        Some(class) => super::ModelCtx { local: true, class },
+        None => super::ModelCtx::cloud(),
+    };
+    let says = plan(preset);
+    let says_for = |name: &str| says.iter().find(|(feature, _)| *feature == name).and_then(|(_, says)| *says);
+
+    FEATURES
+        .iter()
+        .filter(|feature| feature.scope.allows(&ctx))
+        .filter(|feature| says_for(feature.name).unwrap_or(feature.default_on) && !(feature.token_technique && max_quality(preset)))
+        .map(|feature| feature.name)
+        .collect()
+}
+
 /// Whether Max quality (every token technique off) belongs to the preset.
 pub fn max_quality(preset: Preset) -> bool {
     preset == Preset::Safe
@@ -159,5 +178,67 @@ mod tests {
         assert_eq!(current(&tweaked), "custom");
         assert_eq!(Preset::parse(" Safe "), Some(Preset::Safe));
         assert_eq!(Preset::parse("wild"), None);
+    }
+
+    /// M5-1: three presets by three classes (and the cloud). The cells are what the code does, not a second opinion: the matrix is built from the
+    /// switches' scopes, so a class-L model really is given lighter scaffolding.
+    #[test]
+    fn the_matrix_says_what_each_class_gets_and_a_large_model_gets_the_lightest_scaffolding() {
+        use crate::sme::budget::Class;
+
+        let balanced = |class| cell(Preset::Balanced, Some(class));
+        let small = balanced(Class::Small);
+        let medium = balanced(Class::Medium);
+        let large = balanced(Class::Large);
+
+        assert!(small.contains(&"sme.prompt_diet") && medium.contains(&"sme.prompt_diet"));
+        assert!(!large.contains(&"sme.prompt_diet"), "a class-L model keeps every tool and is not put on a diet");
+        assert!(large.contains(&"sme.retrieval") && large.contains(&"edit.transaction"), "what protects, and the free helpers, stay");
+        assert!(large.len() < medium.len() && medium.len() == small.len(), "lighter for L, the same for S and M");
+
+        let cloud = cell(Preset::Balanced, None);
+
+        assert!(!cloud.contains(&"sme.prompt_diet") && !cloud.contains(&"sme.retrieval") && !cloud.contains(&"effort"), "no unmeasured scaffolding reaches a cloud model");
+        assert!(cloud.contains(&"redact") && cloud.contains(&"edit.transaction"));
+    }
+
+    #[test]
+    fn safe_adds_the_protective_switches_and_removes_the_surprising_ones_in_every_class() {
+        use crate::sme::budget::Class;
+
+        for class in [Class::Small, Class::Medium, Class::Large] {
+            let safe = cell(Preset::Safe, Some(class));
+
+            for name in PROTECTIVE {
+                assert!(safe.contains(name), "{name} is on in Safe for {class:?}");
+            }
+
+            for name in SURPRISING {
+                assert!(!safe.contains(name), "{name} is off in Safe for {class:?}");
+            }
+
+            assert!(FEATURES.iter().filter(|feature| feature.token_technique).all(|feature| !safe.contains(&feature.name)), "Max quality: no technique in Safe");
+        }
+
+        let economical = cell(Preset::Economical, Some(Class::Medium));
+
+        for name in SAVING {
+            assert!(economical.contains(name), "{name} is on in Economical");
+        }
+    }
+
+    /// The matrix and the code agree: for every default-on switch and every class, the cell lists it exactly when `on_in` says it is on.
+    #[test]
+    fn the_matrix_equals_what_on_in_does() {
+        use crate::sme::budget::Class;
+
+        for class in [Class::Small, Class::Medium, Class::Large] {
+            let ctx = crate::v3::ModelCtx { local: true, class };
+            let balanced = cell(Preset::Balanced, Some(class));
+
+            for feature in FEATURES.iter().filter(|feature| feature.default_on) {
+                assert_eq!(balanced.contains(&feature.name), crate::v3::on_in(feature.name, &ctx), "{} for {class:?}", feature.name);
+            }
+        }
     }
 }

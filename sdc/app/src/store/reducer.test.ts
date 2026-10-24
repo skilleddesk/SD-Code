@@ -1086,6 +1086,7 @@ describe('0.14.2: a tool call the model is still writing', () => {
       costUsd: 0.001,
       costLabel: 'priced',
       durationMs: 800,
+      overheadMs: 0,
       outcome,
     });
     let state = fold(EMPTY_STATE, step('t1.r1', 'failed'));

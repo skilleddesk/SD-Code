@@ -65,6 +65,42 @@ pub struct ToolSpec {
     pub schema: Value,
 }
 
+/// The Anthropic models that take `output_config.effort` (Anthropic's effort page, GA, no beta header): Opus 4.5 and later, Sonnet 4.6 and later, Haiku 5.5, the
+/// Fable and Mythos families.
+pub fn anthropic_takes_effort(model: &str) -> bool {
+    let id = model.rsplit('/').next().unwrap_or(model).to_ascii_lowercase();
+
+    ["opus-4-5", "opus-4-6", "opus-4-7", "opus-4-8", "opus-5", "sonnet-4-6", "sonnet-5", "haiku-5", "fable", "mythos"].iter().any(|family| id.contains(family))
+}
+
+/// SDC's effort word as the provider spells it: `low`, `medium`, `high`, `max` are the same words; anything else (auto, nothing) sends nothing.
+pub fn native_effort(dialect: Dialect, model: &str, effort: Option<&str>) -> Option<Value> {
+    if dialect != Dialect::Anthropic || !anthropic_takes_effort(model) {
+        return None;
+    }
+
+    match effort? {
+        level @ ("low" | "medium" | "high" | "max") => Some(json!({ "effort": level })),
+        _ => None,
+    }
+}
+
+/// The system prompt as the blocks of a request: one, or - with `prefix.date_tail` and a prompt that ends in its own `Today: …` line - the stable part
+/// (the cache breakpoint is after it) and the date line after the breakpoint, so a new day changes only the tail.
+fn system_blocks(system: &str) -> Vec<Value> {
+    let mark = json!({ "type": "ephemeral" });
+
+    if crate::v3::on("prefix.date_tail") {
+        if let Some((stable, tail)) = system.rsplit_once("\n\nToday: ") {
+            if !tail.contains('\n') && !stable.is_empty() {
+                return vec![json!({ "type": "text", "text": stable, "cache_control": mark }), json!({ "type": "text", "text": format!("Today: {tail}") })];
+            }
+        }
+    }
+
+    vec![json!({ "type": "text", "text": system, "cache_control": mark })]
+}
+
 /// The request body for one step of the loop.
 pub fn body(
     dialect: Dialect,
@@ -82,7 +118,7 @@ pub fn body(
                 "stream": true,
                 /* The system prompt and the tool list are the same for every step of a turn, so they are
                    cached once and read back on every later step for a tenth of the price. */
-                "system": [{ "type": "text", "text": system, "cache_control": { "type": "ephemeral" } }],
+                "system": system_blocks(system),
                 "tools": tools.iter().map(|tool| json!({
                     "name": tool.name,
                     "description": tool.description,
@@ -124,7 +160,7 @@ pub fn mark_system_cache(body: &Value) -> Value {
 
     if let Some(first) = marked["messages"].get_mut(0).filter(|message| message["role"] == "system") {
         if let Some(text) = first["content"].as_str().map(str::to_string) {
-            first["content"] = json!([{ "type": "text", "text": text, "cache_control": { "type": "ephemeral" } }]);
+            first["content"] = json!(system_blocks(&text));
         }
     }
 
@@ -1009,5 +1045,54 @@ mod tests {
         assert_eq!(messages[11]["content"][0]["content"], long, "the newest result is whole");
         assert!(messages[1]["content"][0]["content"].as_str().unwrap().starts_with("[Output folded"));
         assert_eq!(fold_old_results(Dialect::Anthropic, &mut messages, 2), 0, "folding twice changes nothing");
+    }
+
+    /// M5-2: with `prefix.date_tail` the date is a block of its own after the cache breakpoint; without it the request is what it always was.
+    #[test]
+    fn the_date_is_a_block_after_the_cache_breakpoint_only_when_the_switch_is_on() {
+        let system = "You are SDC Agent.\n\nRules go here.\n\nToday: 2026-10-24";
+        let request = |on: bool| {
+            let build = || body(Dialect::Anthropic, "claude-sonnet-5-5", system, &[user_message("hi")], &[], false);
+
+            if on { crate::v3::forcing(&["prefix.date_tail"], build) } else { build() }
+        };
+        let (off, on) = (request(false), request(true));
+
+        assert_eq!(off["system"].as_array().unwrap().len(), 1);
+        assert!(off["system"][0]["text"].as_str().unwrap().ends_with("Today: 2026-10-24"));
+
+        assert_eq!(on["system"].as_array().unwrap().len(), 2);
+        assert_eq!(on["system"][0]["text"], "You are SDC Agent.\n\nRules go here.");
+        assert_eq!(on["system"][0]["cache_control"], json!({ "type": "ephemeral" }), "the breakpoint is after the stable part");
+        assert_eq!(on["system"][1]["text"], "Today: 2026-10-24");
+        assert!(on["system"][1].get("cache_control").is_none(), "and the date is outside it");
+
+        /* A different day changes only the tail: the cached block is byte-identical. */
+        let tomorrow = crate::v3::forcing(&["prefix.date_tail"], || body(Dialect::Anthropic, "claude-sonnet-5-5", &system.replace("2026-10-24", "2026-10-25"), &[user_message("hi")], &[], false));
+
+        assert_eq!(on["system"][0], tomorrow["system"][0]);
+
+        /* A prompt without a date line is one block either way. */
+        let plain = crate::v3::forcing(&["prefix.date_tail"], || body(Dialect::Anthropic, "m", "No date here.", &[user_message("hi")], &[], false));
+
+        assert_eq!(plain["system"].as_array().unwrap().len(), 1);
+
+        /* The OpenAI-shaped mark (Model Studio) splits the same way. */
+        let marked = crate::v3::forcing(&["prefix.date_tail"], || mark_system_cache(&body(Dialect::OpenAi, "qwen", system, &[user_message("hi")], &[], false)));
+
+        assert_eq!(marked["messages"][0]["content"].as_array().unwrap().len(), 2);
+    }
+
+    /// M5-3: Anthropic's own effort parameter, for the models that document it, and nothing for anyone else.
+    #[test]
+    fn effort_goes_to_the_anthropic_models_that_document_it_and_to_nobody_else() {
+        assert_eq!(native_effort(Dialect::Anthropic, "claude-sonnet-5-5", Some("medium")), Some(json!({ "effort": "medium" })));
+        assert_eq!(native_effort(Dialect::Anthropic, "claude-opus-5-5", Some("max")), Some(json!({ "effort": "max" })));
+        assert_eq!(native_effort(Dialect::Anthropic, "claude-opus-4-5-20251101", Some("low")), Some(json!({ "effort": "low" })));
+        assert_eq!(native_effort(Dialect::Anthropic, "claude-haiku-5-5", Some("high")), Some(json!({ "effort": "high" })));
+        assert_eq!(native_effort(Dialect::Anthropic, "claude-3-5-haiku-20241022", Some("low")), None, "a model that does not document it");
+        assert_eq!(native_effort(Dialect::Anthropic, "claude-sonnet-5-5", None), None, "no effort chosen: the model's own default");
+        assert_eq!(native_effort(Dialect::Anthropic, "claude-sonnet-5-5", Some("auto")), None);
+        assert_eq!(native_effort(Dialect::OpenAi, "gpt-5", Some("high")), None, "another provider's parameter is not this one");
     }
 }

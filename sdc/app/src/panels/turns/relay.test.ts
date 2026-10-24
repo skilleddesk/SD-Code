@@ -17,6 +17,7 @@ const step = (over: Partial<RelayStepEvent> = {}): RelayStepEvent => ({
   costUsd: 0.0016,
   costLabel: 'priced',
   durationMs: 900,
+  overheadMs: 0,
   outcome: 'done',
   ...over,
 });
@@ -109,6 +110,7 @@ describe('the Cost Center line', () => {
       costLabel: 'priced',
       byModel: [],
       reasons: [],
+      overhead: null,
       trend: [],
     });
 

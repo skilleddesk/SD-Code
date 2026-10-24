@@ -36,6 +36,8 @@ pub struct Step {
     pub verify: Option<String>,
     pub cost_usd: Option<f64>,
     pub escalation_reason: Option<String>,
+    /// Input tokens the provider's prompt cache served (0 when it said nothing, or nothing was cached): the rest of the input was a miss.
+    pub cached_tokens: u64,
 }
 
 impl Step {
@@ -128,11 +130,11 @@ fn insert(store: &Store, step: &Step, at: &str) -> rusqlite::Result<usize> {
     let connection = store.connection.lock().unwrap_or_else(|poison| poison.into_inner());
 
     connection.execute(
-        "INSERT INTO step_trace (task_id, step_id, session_id, step, model_key, mode, purpose, tokens_in, tokens_out, thinking_tokens, ttft_ms, tok_per_s, wall_ms, verify, cost_usd, escalation_reason, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+        "INSERT INTO step_trace (task_id, step_id, session_id, step, model_key, mode, purpose, tokens_in, tokens_out, thinking_tokens, ttft_ms, tok_per_s, wall_ms, verify, cost_usd, escalation_reason, created_at, cached_tokens)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
         params![
             step.task_id, step.step_id, step.session_id, step.step, step.model_key, step.mode, step.purpose, step.tokens_in as i64, step.tokens_out as i64, step.thinking_tokens as i64, step.ttft_ms as i64,
-            step.tok_per_s, step.wall_ms as i64, step.verify, step.cost_usd, step.escalation_reason, at
+            step.tok_per_s, step.wall_ms as i64, step.verify, step.cost_usd, step.escalation_reason, at, step.cached_tokens as i64
         ],
     )
 }
@@ -149,7 +151,7 @@ fn set_verify(store: &Store, session_id: &str, verdict: &str) -> rusqlite::Resul
 /// The newest `limit` steps, oldest first - of one session when given, else of everything.
 pub fn recent(store: &Store, session_id: Option<&str>, limit: usize) -> Vec<Value> {
     let connection = store.connection.lock().unwrap_or_else(|poison| poison.into_inner());
-    let columns = "task_id, step_id, session_id, step, model_key, mode, purpose, tokens_in, tokens_out, thinking_tokens, ttft_ms, tok_per_s, wall_ms, verify, cost_usd, escalation_reason, created_at";
+    let columns = "task_id, step_id, session_id, step, model_key, mode, purpose, tokens_in, tokens_out, thinking_tokens, ttft_ms, tok_per_s, wall_ms, verify, cost_usd, escalation_reason, created_at, cached_tokens";
     let sql = format!("SELECT {columns} FROM step_trace WHERE (?1 = '' OR session_id = ?1) ORDER BY id DESC LIMIT ?2");
     let Ok(mut statement) = connection.prepare(&sql) else {
         return Vec::new();
@@ -161,7 +163,7 @@ pub fn recent(store: &Store, session_id: Option<&str>, limit: usize) -> Vec<Valu
             "tokensIn": row.get::<_, i64>(7)?, "tokensOut": row.get::<_, i64>(8)?, "thinkingTokens": row.get::<_, i64>(9)?,
             "ttftMs": row.get::<_, i64>(10)?, "tokPerS": row.get::<_, f64>(11)?, "wallMs": row.get::<_, i64>(12)?,
             "verify": row.get::<_, Option<String>>(13)?, "costUsd": row.get::<_, Option<f64>>(14)?, "escalationReason": row.get::<_, Option<String>>(15)?,
-            "at": row.get::<_, String>(16)?,
+            "at": row.get::<_, String>(16)?, "cachedTokens": row.get::<_, i64>(17)?,
         }))
     });
     let mut out: Vec<Value> = rows.map(|rows| rows.flatten().collect()).unwrap_or_default();

@@ -201,7 +201,7 @@ fn every_default_on_switch_is_measured_safe_or_local_only_and_honest_about_it() 
         let honest = match feature.evidence {
             Evidence::Bench { label, models } => !label.is_empty() && !models.is_empty(),
             Evidence::Safety => true,
-            Evidence::None => feature.scope == Scope::LocalOnly && feature.what.contains("unmeasured"),
+            Evidence::None => matches!(feature.scope, Scope::LocalOnly | Scope::Classes(_)) && feature.what.contains("unmeasured"),
         };
 
         if !honest {
@@ -234,6 +234,11 @@ fn a_local_only_switch_never_reaches_a_cloud_model() {
     for feature in crate::v3::FEATURES.iter().filter(|feature| feature.scope == Scope::LocalOnly) {
         assert!(!crate::v3::forcing(&[feature.name], || crate::v3::on_in(feature.name, &cloud)), "{} reached a cloud model", feature.name);
         assert!(crate::v3::forcing(&[feature.name], || crate::v3::on_in(feature.name, &local)), "{} did not reach a local model", feature.name);
+    }
+
+    /* A class scope is local too: a cloud model is outside every class. */
+    for feature in crate::v3::FEATURES.iter().filter(|feature| matches!(feature.scope, Scope::Classes(_))) {
+        assert!(!crate::v3::forcing(&[feature.name], || crate::v3::on_in(feature.name, &cloud)), "{} reached a cloud model", feature.name);
     }
 
     /* An `All` switch is not narrowed. */

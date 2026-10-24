@@ -640,6 +640,13 @@ fn ask_model(backend: Backend, target: &Target, turn: (&str, crate::guard::model
         body["reasoning_effort"] = serde_json::json!(if level == "max" { "high" } else { level });
     }
 
+    /* M5-3 (`provider.native_effort`): the turn's effort in Anthropic's own parameter, for the models that document it. */
+    if crate::v3::on("provider.native_effort") {
+        if let Some(effort) = dialect::native_effort(target.dialect, &target.model, target.effort.as_deref()) {
+            body["output_config"] = effort;
+        }
+    }
+
     /* P0-8, the Local Runtime Guard: the request is counted before it is sent. A prompt that does not fit the window
        is never sent - Ollama would answer 200 and drop the start of it, a cloud API would refuse it - the caller gets
        `ContextOverflow` and splits the work. A local model's window is the `num_ctx` it is asked for; a cloud
@@ -1515,7 +1522,8 @@ fn drive(
     let skills_found = if research_session.is_some() { Vec::new() } else { skills::find(workspace) };
     let mut system = match &research_session {
         Some(session) => research::system_prompt(&language, &session.limits, research_config.provider.label(), window < 32_000),
-        None => system_prompt(workspace, vision, &language, technique("stable_prefix")) + &skills::brief(&skills_found),
+        /* M5-2: with `prefix.date_tail` the date is not in the prompt's middle: it is added as the last line, below. */
+        None => system_prompt(workspace, vision, &language, technique("stable_prefix") || technique("prefix.date_tail")) + &skills::brief(&skills_found),
     };
     /* P1-5: the rules cut to this class's cap - a 4K window keeps the rules that matter, not the prose around them. */
     let diet = crate::v3::on_in("sme.prompt_diet", &crate::v3::ModelCtx { class: crate::sme::budget::Class::of(window), ..scope_model });
@@ -1590,7 +1598,7 @@ fn drive(
 
     /* P1-5: at most six tool schemas a step - a small model given twenty picks the wrong one, and the schemas are the largest fixed cost
        of a small window. */
-    let capped = crate::v3::on("sme.prompt_diet") && backend == Backend::Ollama;
+    let capped = backend == Backend::Ollama && crate::v3::on_in("sme.prompt_diet", &crate::v3::ModelCtx { class: crate::sme::budget::Class::of(window), ..scope_model });
 
     if capped {
         specs = crate::sme::diet::at_most(&crate::sme::diet::prioritise(&specs, |spec| spec.name), crate::sme::diet::MAX_SCHEMAS);
@@ -1628,6 +1636,11 @@ fn drive(
     if provenance {
         system.push_str("\n\n");
         system.push_str(crate::sme::frame::SYSTEM_RULE);
+    }
+
+    /* M5-2: the date, last - everything above it is the same bytes all day, and across days. (Not with `stable_prefix`, which sends it in the message.) */
+    if research_session.is_none() && technique("prefix.date_tail") && !technique("stable_prefix") {
+        system.push_str(&format!("\n\nToday: {}", chrono::Local::now().format("%Y-%m-%d")));
     }
 
     let mut messages: Vec<Value> = prompt
@@ -2123,11 +2136,13 @@ fn drive(
                 session_id: prompt.session_id.clone(),
                 step: step as u32,
                 model_key: format!("{}:{}", prompt.provider.as_deref().unwrap_or(if backend == Backend::Ollama { "ollama" } else { "" }), target.model),
-                mode: match &reply.profile {
-                    Some(profile) => format!("{}·{profile}", gate.mode.name()),
-                    None => gate.mode.name().to_string(),
+                /* A relayed step is traced under the mode of the turn it belongs to, not the pin of the nested loop. */
+                mode: match (&reply.profile, relay::in_scope()) {
+                    (_, true) => crate::guard::modelgate::Mode::SilentRelay.name().to_string(),
+                    (Some(profile), false) => format!("{}·{profile}", gate.mode.name()),
+                    (None, false) => gate.mode.name().to_string(),
                 },
-                purpose: "main".to_string(),
+                purpose: if relay::in_scope() { "chain".to_string() } else { "main".to_string() },
                 tokens_in: reply.input_tokens,
                 tokens_out: reply.output_tokens,
                 thinking_tokens: reply.thinking_tokens,
@@ -2136,7 +2151,8 @@ fn drive(
                 wall_ms,
                 verify: None,
                 cost_usd: target.price.map(|(input, output)| (reply.input_tokens - reply.cached_tokens.min(reply.input_tokens)) as f64 * input / 1e6 + reply.cached_tokens as f64 * input * 0.1 / 1e6 + reply.output_tokens as f64 * output / 1e6),
-                escalation_reason: None,
+                escalation_reason: relay::scope_reason(),
+                cached_tokens: reply.cached_tokens,
             });
         }
 

@@ -34,6 +34,13 @@ thread_local! {
     static SCOPE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// When the chain model's time on the step runs out (the watchdog, M1-9).
     static DEADLINE: std::cell::Cell<Option<std::time::Instant>> = const { std::cell::Cell::new(None) };
+    /// Why this step was relayed (the reason's name), for the Step Trace row of every call it makes.
+    static REASON: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
+/// The reason of the relayed step the current thread is inside, if it is inside one.
+pub(super) fn scope_reason() -> Option<String> {
+    REASON.with(|reason| reason.borrow().clone())
 }
 
 /// Has the chain model used up its time on this step? `drive` asks it with the Stop button: either one ends the nested loop.
@@ -49,8 +56,9 @@ pub(super) fn in_scope() -> bool {
 struct Scope;
 
 impl Scope {
-    fn enter(limit: std::time::Duration) -> Self {
+    fn enter(limit: std::time::Duration, reason: RelayReason) -> Self {
         SCOPE.with(|scope| scope.set(true));
+        REASON.with(|slot| *slot.borrow_mut() = Some(reason.name().to_string()));
         DEADLINE.with(|deadline| deadline.set(Some(std::time::Instant::now() + limit)));
 
         Scope
@@ -61,6 +69,7 @@ impl Drop for Scope {
     fn drop(&mut self) {
         SCOPE.with(|scope| scope.set(false));
         DEADLINE.with(|deadline| deadline.set(None));
+        REASON.with(|slot| *slot.borrow_mut() = None);
     }
 }
 
@@ -236,6 +245,7 @@ impl Hook {
 
     /// Relays the step to the chain. Appends what the local model needs to carry on to `messages`; answers whether the step was done.
     fn relay(&mut self, env: &Env, messages: &mut Vec<Value>, reason: RelayReason) -> bool {
+        let started = std::time::Instant::now();
         let root = self.root.clone();
         let session = env.prompt.session_id.clone();
         let turn = env.prompt.turn_id.clone();
@@ -282,8 +292,8 @@ impl Hook {
             &self.chain,
             reason,
             env.gate,
-            &mut |model, position| {
-                let (attempt, label) = attempt(env, model, position, &built.text, built.tokens);
+            &mut |model, _position| {
+                let (attempt, label) = attempt(env, model, reason, &built.text, built.tokens);
 
                 labels.set(labels.get().weakest(label));
 
@@ -300,11 +310,17 @@ impl Hook {
         self.relays += 1;
         self.streak += 1;
 
-        for record in &relayed.records {
+        /* What SDC itself spent around the model: the whole relay minus the time the chain models took (M1-10). */
+        let model_ms: u64 = relayed.records.iter().map(|record| record.duration_ms).sum();
+        let overhead = (started.elapsed().as_millis() as u64).saturating_sub(model_ms);
+
+        for (index, record) in relayed.records.iter().enumerate() {
             let step_id = format!("{turn}.r{}", self.relays);
 
-            env.sink.send(EngineEvent::RelayStep(ledger::step_json(&session, &turn, &step_id, &local_label, record, labels.get())));
+            env.sink.send(EngineEvent::RelayStep(ledger::step_json(&session, &turn, &step_id, &local_label, record, labels.get(), if index == 0 { overhead } else { 0 })));
         }
+
+        self.ledger.overhead_ms.push(overhead);
 
         self.ledger.relayed(&relayed, labels.get());
         self.used.cloud_steps += 1;
@@ -372,7 +388,7 @@ impl Hook {
 }
 
 /// One call to a chain model: the nested loop on the same turn, its events forwarded, its numbers captured.
-fn attempt(env: &Env, model: &ChainModel, _position: usize, capsule_text: &str, capsule_tokens: u64) -> (Attempt, Label) {
+fn attempt(env: &Env, model: &ChainModel, reason: RelayReason, capsule_text: &str, capsule_tokens: u64) -> (Attempt, Label) {
     let nested = Prompt { provider: Some(model.provider.clone()), model: model.model.clone(), text: capsule_text.to_string(), history: Vec::new(), images: Vec::new(), resume: None, ..env.prompt.clone() };
     let target = match resolve_target(&nested) {
         Ok(target) => target,
@@ -412,7 +428,7 @@ fn attempt(env: &Env, model: &ChainModel, _position: usize, capsule_text: &str, 
         }
     });
     let switches = crate::v3::TurnSwitches::snapshot(&env.prompt.turn_id);
-    let _scope = Scope::enter(std::time::Duration::from_secs(u64::from(env.call_timeout_s)));
+    let _scope = Scope::enter(std::time::Duration::from_secs(u64::from(env.call_timeout_s)), reason);
 
     drive(Backend::Api, &target, env.workspace, Options { autonomy: env.options.autonomy, max_steps: STEP_CALLS, auto_check: true, research: None }, env.checkpoint.clone(), env.policy, &nested, &sink);
 

@@ -20,7 +20,7 @@ fn a_step_is_recorded_with_everything_the_plan_lists_and_read_back() {
         &store,
         &Step {
             task_id: "turn-1".into(), step_id: "turn-1.s1".into(), session_id: "s1".into(), step: 1, model_key: "ollama:qwen3.5:9b".into(), mode: "local-only".into(), purpose: "main".into(),
-            tokens_in: 1200, tokens_out: 80, thinking_tokens: 30, ttft_ms: 400, tok_per_s: 25.0, wall_ms: 3600, verify: Some("PASS".into()), cost_usd: Some(0.0), escalation_reason: None,
+            tokens_in: 1200, tokens_out: 80, thinking_tokens: 30, ttft_ms: 400, tok_per_s: 25.0, wall_ms: 3600, verify: Some("PASS".into()), cost_usd: Some(0.0), escalation_reason: None, cached_tokens: 900,
         },
         "2026-10-17T00:00:00Z",
     )
@@ -29,6 +29,7 @@ fn a_step_is_recorded_with_everything_the_plan_lists_and_read_back() {
     let rows = recent(&store, Some("s1"), 10);
 
     assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["cachedTokens"], 900, "what the provider's cache served is on the row");
     assert_eq!(rows[0]["modelKey"], "ollama:qwen3.5:9b");
     assert_eq!((rows[0]["tokensIn"].clone(), rows[0]["thinkingTokens"].clone(), rows[0]["ttftMs"].clone(), rows[0]["wallMs"].clone()), (json!(1200), json!(30), json!(400), json!(3600)));
     assert_eq!(rows[0]["verify"], "PASS");

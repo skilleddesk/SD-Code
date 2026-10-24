@@ -1007,6 +1007,8 @@ export interface RelayStepEvent {
   /** `measured`, `priced` or `estimate`: an estimate is never shown as measured. */
   costLabel: string;
   durationMs: number;
+  /** The time SDC itself spent around the chain model(s) of this relay, in ms: on the relay's first attempt, 0 on the others. */
+  overheadMs: number;
   /** `done`, `done-unverified`, `failed`, `red` or `refused`. */
   outcome: string;
 }
@@ -1050,6 +1052,8 @@ export interface RelayReport {
   costLabel: string;
   byModel: { model: string; steps: number; tokensIn: number; tokensOut: number; costUsd: number }[];
   reasons: { reason: string; count: number }[];
+  /** p50 / p90 of the relays' own overhead; `null` before any relay. */
+  overhead: { samples: number; p50Ms: number; p90Ms: number } | null;
   trend: { day: string; stepsLocal: number; stepsCloud: number; cloudPercent: number }[];
 }
 

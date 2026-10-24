@@ -242,6 +242,13 @@ CREATE TABLE IF NOT EXISTS working_memory (
 CREATE INDEX IF NOT EXISTS working_memory_kind ON working_memory(task, kind, seq);
 "#,
     ),
+    /* M5-2 / M1-10: what the provider's prompt cache served on a step, and - for a relayed step - the time SDC itself spent around the model. */
+    (
+        "0204-trace-cache",
+        r#"
+ALTER TABLE step_trace ADD COLUMN cached_tokens INTEGER NOT NULL DEFAULT 0;
+"#,
+    ),
 ];
 
 /// The daemon's database handle.

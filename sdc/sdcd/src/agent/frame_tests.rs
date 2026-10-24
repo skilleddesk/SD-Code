@@ -224,3 +224,15 @@ fn a_skill_the_request_is_about_is_mentioned_once_when_the_first_edit_skips_it()
 fn root_file_written(bodies: &[Value]) -> bool {
     bodies.len() >= 2
 }
+
+#[test]
+fn with_date_tail_the_date_is_the_last_line_of_the_system_prompt_and_nowhere_else() {
+    let (on, _) = cloud_turn("date-tail", "say hello", vec![says("Hello.")], 3, &["prefix.date_tail", "context.provenance"], |_| {});
+    let (off, _) = cloud_turn("date-head", "say hello", vec![says("Hello.")], 3, &[], |_| {});
+    let tail = system_of(&on[0]);
+    let head = system_of(&off[0]);
+
+    assert!(tail.lines().last().unwrap().starts_with("Today: "), "the date is last, even beside the provenance rule: {tail}");
+    assert_eq!(tail.matches("Today: ").count(), 1);
+    assert!(head.contains("Today: ") && !head.lines().last().unwrap().starts_with("Today: "), "off: the date is where it always was");
+}

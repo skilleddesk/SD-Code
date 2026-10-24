@@ -68,11 +68,13 @@ pub struct TurnLedger {
     pub unverified: u32,
     /// Steps nobody could do.
     pub failed: u32,
+    /// For each relay: the time SDC itself spent around the model (capsule, safety checkpoint, checks, undo), in milliseconds.
+    pub overhead_ms: Vec<u64>,
 }
 
 impl Default for TurnLedger {
     fn default() -> Self {
-        Self { steps_local: 0, steps_cloud: 0, attempts: 0, by_model: BTreeMap::new(), tokens_in: 0, tokens_out: 0, cost_usd: 0.0, label: Label::Measured, reasons: Vec::new(), unverified: 0, failed: 0 }
+        Self { steps_local: 0, steps_cloud: 0, attempts: 0, by_model: BTreeMap::new(), tokens_in: 0, tokens_out: 0, cost_usd: 0.0, label: Label::Measured, reasons: Vec::new(), unverified: 0, failed: 0, overhead_ms: Vec::new() }
     }
 }
 
@@ -161,12 +163,28 @@ impl TurnLedger {
             "costUsd": self.cost_usd,
             "costLabel": self.label.name(),
             "reasons": self.reasons.iter().map(|(reason, count)| json!({ "reason": reason.name(), "count": count })).collect::<Vec<_>>(),
+            "overheadMs": self.overhead_ms,
         })
     }
 }
 
+/// The p50 and p90 of some numbers (nearest rank); `None` for no numbers.
+pub fn percentiles(values: &[u64]) -> Option<(u64, u64)> {
+    if values.is_empty() {
+        return None;
+    }
+
+    let mut sorted = values.to_vec();
+
+    sorted.sort_unstable();
+
+    let at = |p: usize| sorted[((sorted.len() * p).div_ceil(100)).clamp(1, sorted.len()) - 1];
+
+    Some((at(50), at(90)))
+}
+
 /// The `RelayStep` event's fields for one attempt.
-pub fn step_json(session_id: &str, turn_id: &str, step_id: &str, from_model: &str, record: &StepRecord, label: Label) -> Value {
+pub fn step_json(session_id: &str, turn_id: &str, step_id: &str, from_model: &str, record: &StepRecord, label: Label, overhead_ms: u64) -> Value {
     json!({
         "sessionId": session_id,
         "turnId": turn_id,
@@ -180,6 +198,7 @@ pub fn step_json(session_id: &str, turn_id: &str, step_id: &str, from_model: &st
         "costUsd": record.cost_usd,
         "costLabel": label.name(),
         "durationMs": record.duration_ms,
+        "overheadMs": overhead_ms,
         "outcome": record.outcome,
     })
 }
@@ -190,6 +209,7 @@ pub fn report(summaries: &[Value]) -> Value {
     let mut label = Label::Measured;
     let mut turns_with_cloud = 0u32;
     let mut daily: BTreeMap<String, (u32, u32)> = BTreeMap::new();
+    let mut overheads: Vec<u64> = Vec::new();
 
     for summary in summaries {
         let number = |key: &str| summary[key].as_u64().unwrap_or(0);
@@ -233,6 +253,8 @@ pub fn report(summaries: &[Value]) -> Value {
             }
         }
 
+        overheads.extend(summary["overheadMs"].as_array().into_iter().flatten().filter_map(Value::as_u64));
+
         if let Some(day) = summary["day"].as_str() {
             let entry = daily.entry(day.to_string()).or_default();
 
@@ -260,6 +282,7 @@ pub fn report(summaries: &[Value]) -> Value {
         "costLabel": if turns_with_cloud == 0 { "none" } else { label.name() },
         "byModel": ledger.by_model.iter().map(|(model, used)| json!({ "model": model, "steps": used.steps, "tokensIn": used.tokens_in, "tokensOut": used.tokens_out, "costUsd": used.cost_usd })).collect::<Vec<_>>(),
         "reasons": ledger.reasons.iter().map(|(reason, count)| json!({ "reason": reason.name(), "count": count })).collect::<Vec<_>>(),
+        "overhead": match percentiles(&overheads) { Some((p50, p90)) => json!({ "samples": overheads.len(), "p50Ms": p50, "p90Ms": p90 }), None => Value::Null },
         "trend": daily.iter().map(|(day, (local, cloud))| json!({ "day": day, "stepsLocal": local, "stepsCloud": cloud, "cloudPercent": if local + cloud == 0 { 0.0 } else { (f64::from(*cloud) * 1000.0 / f64::from(local + cloud)).round() / 10.0 } })).collect::<Vec<_>>(),
     })
 }
@@ -348,6 +371,14 @@ pub fn report_text(report: &Value, bengali: bool) -> String {
 
     if number("unverified") > 0 {
         lines.push(digits(if bengali { format!("{}টি ধাপ যাচাই করা যায়নি (প্রজেক্টে কোনো check নেই)।", number("unverified")) } else { format!("{} relayed step(s) could not be verified (the folder has no checks).", number("unverified")) }));
+    }
+
+    if let Some(overhead) = report["overhead"].as_object() {
+        lines.push(digits(if bengali {
+            format!("রিলের নিজস্ব সময় (মডেলের সময় বাদে): p50 {} ms, p90 {} ms ({}টি রিলে)", overhead["p50Ms"], overhead["p90Ms"], overhead["samples"])
+        } else {
+            format!("Relay overhead around the model: p50 {} ms, p90 {} ms ({} relays)", overhead["p50Ms"], overhead["p90Ms"], overhead["samples"])
+        }));
     }
 
     let trend = report["trend"].as_array().cloned().unwrap_or_default();
@@ -490,12 +521,13 @@ mod tests {
 
     #[test]
     fn a_step_event_names_where_it_went_and_why() {
-        let event = step_json("s1", "t1", "t1.r1", "ollama:qwen3.5:9b", &record("deepseek:deepseek-chat", "done", (4_000, 500), Some(0.002)), Label::Priced);
+        let event = step_json("s1", "t1", "t1.r1", "ollama:qwen3.5:9b", &record("deepseek:deepseek-chat", "done", (4_000, 500), Some(0.002)), Label::Priced, 120);
 
         assert_eq!(event["toModel"], "deepseek:deepseek-chat");
         assert_eq!(event["reason"], "verify_fail");
         assert_eq!(event["costLabel"], "priced");
         assert_eq!(event["attempt"], 1);
+        assert_eq!(event["overheadMs"], 120);
     }
 
     #[test]
@@ -521,5 +553,22 @@ mod tests {
         assert!(bangla.contains("মোট ১০টি ধাপ (১টি turn): লোকালে ৯টি, ক্লাউডে ১টি (১০.০%)"), "{bangla}");
         assert_eq!(report_text(&report(&[]), false), "No steps recorded yet.");
         assert_eq!(report_text(&report(&[]), true), "এখনো কোনো ধাপ রেকর্ড হয়নি।");
+    }
+
+    #[test]
+    fn the_overhead_is_reported_as_p50_and_p90() {
+        assert_eq!(percentiles(&[]), None);
+        assert_eq!(percentiles(&[100]), Some((100, 100)));
+        assert_eq!(percentiles(&[10, 20, 30, 40, 50, 60, 70, 80, 90, 100]), Some((50, 90)));
+
+        let mut ledger = TurnLedger::default();
+
+        ledger.local_step();
+        ledger.overhead_ms = vec![200, 400, 900];
+
+        let data = report(&[ledger.summary_json("s", "t")]);
+
+        assert_eq!(data["overhead"], json!({ "samples": 3, "p50Ms": 400, "p90Ms": 900 }));
+        assert!(report_text(&data, false).contains("p50 400 ms, p90 900 ms (3 relays)"));
     }
 }
