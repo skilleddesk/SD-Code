@@ -8,6 +8,10 @@
 //! | `sdc_verify` | the folder's own checks (tests, types, lint, build), in SDC's sandbox | none | no (checks may write caches) |
 //! | `sdc_checkpoint` / `sdc_checkpoints` | a Time Machine checkpoint of the folder / the list | none | adds a checkpoint |
 //! | `sdc_restore` | puts the folder back to a checkpoint - **needs `confirm: true`**, and takes a safety checkpoint first so it can be undone | none | yes |
+//! | `sdc_code_graph` / `sdc_ranked_search` | where a name is declared and used / the code that answers a question - from the Code Graph and BM25, files the policy keeps from models left out | none | no |
+//! | `sdc_memory_read` | the project's memory (stated and observed facts only) and the rules in CLAUDE.md / AGENTS.md, tagged `[file]` | none | no |
+//! | `sdc_slopguard_check` | which packages an install command names do not exist in their registry | none (a registry lookup) | no |
+//! | `sdc_trace_recent` / `sdc_relay_report` | SDC's own Step Trace rows / the Silent Relay report (need a running SDC) | none | no |
 //! | `sdc_vps_run` | a command on one of SDC's connected servers, through its signed-in connection - read-only commands run; anything else needs `confirm: true`; destructive patterns are refused | none | only with confirm |
 //!
 //! Nothing here sends anything to a model. The tools that need a running SDC (only `sdc_vps_run`) say so when it is not. Protocol: JSON-RPC 2.0,
@@ -30,6 +34,12 @@ fn tools() -> Value {
         { "name": "sdc_checkpoint", "description": "Save a Time Machine checkpoint of the folder before a risky change. Returns its id.", "inputSchema": { "type": "object", "properties": { "path": path, "title": { "type": "string" } }, "required": ["path"] } },
         { "name": "sdc_checkpoints", "description": "List the folder's Time Machine checkpoints, newest first.", "inputSchema": { "type": "object", "properties": { "path": path }, "required": ["path"] } },
         { "name": "sdc_restore", "description": "Put the folder back exactly as a checkpoint recorded it. Destructive for changes made since, so it requires confirm=true; a safety checkpoint of the current state is taken first, so it can itself be undone.", "inputSchema": { "type": "object", "properties": { "path": path, "id": { "type": "string", "description": "A checkpoint id from sdc_checkpoints" }, "confirm": { "type": "boolean" } }, "required": ["path", "id"] } },
+        { "name": "sdc_code_graph", "description": "Ask the project's Code Graph (no model): where a name is declared and who calls it (`name`), or the declarations and tests of one file (`file`, relative to the folder). Files the policy lists in secret_paths are never shown.", "inputSchema": { "type": "object", "properties": { "path": path, "name": { "type": "string" }, "file": { "type": "string" } }, "required": ["path"] } },
+        { "name": "sdc_ranked_search", "description": "Find the code that answers a question, ranked from names, declarations and BM25, with no model: the best chunks as path:lines and a skim of the best one. Files the policy lists in secret_paths are never shown.", "inputSchema": { "type": "object", "properties": { "path": path, "query": { "type": "string" }, "k": { "type": "integer", "description": "How many chunks (1-20, default 6)" } }, "required": ["path", "query"] } },
+        { "name": "sdc_memory_read", "description": "What the project remembers: the facts in .sdc/memory.md, lessons and recipes that a person stated or a tool observed (a model's guesses, marked [inferred], are left out), and the rules in CLAUDE.md and AGENTS.md tagged [file].", "inputSchema": { "type": "object", "properties": { "path": path }, "required": ["path"] } },
+        { "name": "sdc_slopguard_check", "description": "Before running an install command (npm install, pip install, cargo add ...): look every package it names up in its registry and say which do not exist (a name a model made up). Needs the network; an unreachable registry is reported as unchecked, never as missing.", "inputSchema": { "type": "object", "properties": { "command": { "type": "string" } }, "required": ["command"] } },
+        { "name": "sdc_trace_recent", "description": "The newest Step Trace rows of SDC's own model calls (model, tokens, time, cost, verify), oldest first. Needs SDC running.", "inputSchema": { "type": "object", "properties": { "limit": { "type": "integer", "description": "1-500, default 20" }, "sessionId": { "type": "string" } } } },
+        { "name": "sdc_relay_report", "description": "How much of the work the local model did and how much went to the Rotation Chain (Silent Relay), with tokens, cost labels and overhead. Needs SDC running.", "inputSchema": { "type": "object", "properties": { "since": { "type": "string", "description": "A period like 7d or 24h, or an RFC 3339 time" }, "sessionId": { "type": "string" } } } },
         { "name": "sdc_vps_run", "description": "Run a command on one of the servers connected in SDC (needs SDC running). Read-only commands (uptime, df, free, systemctl status, docker ps, journalctl --no-pager ...) run at once; anything else needs confirm=true; destructive patterns (rm -rf /, mkfs, dd to a device, shutdown, fork bombs) are always refused.", "inputSchema": { "type": "object", "properties": { "host": { "type": "string", "description": "A host id or name from SDC" }, "command": { "type": "string" }, "confirm": { "type": "boolean" } }, "required": ["host", "command"] } }
     ])
 }
@@ -216,6 +226,115 @@ fn vps_run(arguments: &Value, daemon: &mut dyn FnMut(&str, Value) -> Result<Valu
     Ok(answer.to_string())
 }
 
+/// Hides what the folder's policy keeps from models: a `secret_paths` match, or a file name that says it holds a secret.
+fn withheld(policy: &crate::trust::policy::Policy, root: &Path, relative: &str) -> bool {
+    policy.secret(relative, Some(&root.to_string_lossy())).is_some() || crate::trust::secretguard::sensitive_name(relative).is_some()
+}
+
+fn code_graph(arguments: &Value) -> Result<String, String> {
+    let root = folder(arguments)?;
+    let policy = crate::trust::policy::Policy::load_local(&root);
+    let (index, _) = crate::graph::index::refreshed(&root);
+    let name = arguments["name"].as_str().map(str::trim).filter(|name| !name.is_empty());
+    let file = arguments["file"].as_str().map(str::trim).filter(|file| !file.is_empty());
+    let def_json = |path: &str, def: &crate::graph::parse::Def| json!({ "file": path, "kind": def.kind, "name": def.qualified, "startLine": def.start_line, "endLine": def.end_line });
+
+    match (name, file) {
+        (Some(name), _) => {
+            let declared: Vec<Value> = index.where_is(name).iter().filter(|(path, _)| !withheld(&policy, &root, path)).map(|(path, def)| def_json(path, def)).collect();
+            let callers: Vec<Value> = index.callers(name).iter().filter(|(path, _, _)| !withheld(&policy, &root, path)).take(200).map(|(path, line, call)| json!({ "file": path, "line": line, "call": call })).collect();
+
+            Ok(json!({ "name": name, "declared": declared, "usedAt": callers }).to_string())
+        }
+        (None, Some(file)) => {
+            if withheld(&policy, &root, file) {
+                return Err(format!("{file} is kept from models by the project's policy"));
+            }
+
+            let symbols: Vec<Value> = index.symbols_of(file).iter().map(|def| def_json(file, def)).collect();
+            let tests: Vec<String> = index.tests_for(file).into_iter().filter(|path| !withheld(&policy, &root, path)).collect();
+
+            Ok(json!({ "file": file, "symbols": symbols, "tests": tests }).to_string())
+        }
+        (None, None) => Err("give `name` (a function, type or method) or `file`".into()),
+    }
+}
+
+fn ranked_search(arguments: &Value) -> Result<String, String> {
+    let root = folder(arguments)?;
+    let query = arguments["query"].as_str().map(str::trim).filter(|query| !query.is_empty()).ok_or("`query` is required")?;
+    let k = arguments["k"].as_u64().unwrap_or(6).clamp(1, 20) as usize;
+    let policy = crate::trust::policy::Policy::load_local(&root);
+    let hits: Vec<_> = crate::sme::retrieval::retrieve(&root, query, k + 10).into_iter().filter(|hit| !withheld(&policy, &root, &hit.path)).take(k).collect();
+
+    if hits.is_empty() {
+        return Ok(format!("Nothing in this project matches `{query}`."));
+    }
+
+    Ok(crate::sme::retrieval::skim(&hits, 24))
+}
+
+/// `.sdc/memory.md`, lessons and recipes minus what a model only guessed, then CLAUDE.md and AGENTS.md as `[file]` rules.
+fn memory_read(arguments: &Value) -> Result<String, String> {
+    use crate::v3::memory_v2::{entries, parse, Origin};
+
+    let root = folder(arguments)?;
+    let mut lines: Vec<String> = Vec::new();
+
+    for entry in entries(&root) {
+        let Ok(text) = std::fs::read_to_string(root.join(&entry.path)) else {
+            continue;
+        };
+
+        for fact in parse(&text).into_iter().filter(|fact| fact.origin != Origin::Inferred) {
+            lines.push(format!("{} {} ({})", fact.origin.tag(), fact.text, entry.path));
+        }
+    }
+
+    for name in ["CLAUDE.md", "AGENTS.md"] {
+        let Ok(text) = std::fs::read_to_string(root.join(name)) else {
+            continue;
+        };
+
+        for line in text.lines().map(str::trim).filter(|line| !line.is_empty() && !line.starts_with('#')).take(200) {
+            lines.push(format!("[file] {} ({name})", line.trim_start_matches(['-', '*', ' '])));
+        }
+    }
+
+    Ok(if lines.is_empty() { "This project remembers nothing yet.".to_string() } else { lines.join("\n") })
+}
+
+fn slopguard_check(arguments: &Value) -> Result<String, String> {
+    let command = arguments["command"].as_str().map(str::trim).filter(|command| !command.is_empty()).ok_or("`command` is required")?;
+    let verdict = crate::trust::slopguard::check(command);
+    let names = |packages: &[crate::trust::slopguard::Package]| packages.iter().map(|package| package.name.clone()).collect::<Vec<_>>();
+
+    Ok(json!({ "refused": verdict.refusal().is_some(), "missing": names(&verdict.missing), "unchecked": names(&verdict.unchecked), "message": verdict.refusal().or_else(|| verdict.note()) }).to_string())
+}
+
+fn trace_recent(arguments: &Value, daemon: &mut dyn FnMut(&str, Value) -> Result<Value, String>) -> Result<String, String> {
+    let limit = arguments["limit"].as_i64().unwrap_or(20).clamp(1, 500);
+    let mut params = json!({ "limit": limit });
+
+    if let Some(session) = arguments["sessionId"].as_str() {
+        params["sessionId"] = json!(session);
+    }
+
+    Ok(daemon("trace.list", params)?.to_string())
+}
+
+fn relay_report(arguments: &Value, daemon: &mut dyn FnMut(&str, Value) -> Result<Value, String>) -> Result<String, String> {
+    let mut params = json!({});
+
+    for key in ["since", "sessionId"] {
+        if let Some(value) = arguments[key].as_str() {
+            params[key] = json!(value);
+        }
+    }
+
+    Ok(daemon("relay.report", params)?.to_string())
+}
+
 /// Calls one tool. `daemon` reaches a running SDC for the tools that need it.
 pub fn call(name: &str, arguments: &Value, daemon: &mut dyn FnMut(&str, Value) -> Result<Value, String>) -> Result<String, String> {
     match name {
@@ -226,6 +345,12 @@ pub fn call(name: &str, arguments: &Value, daemon: &mut dyn FnMut(&str, Value) -
         "sdc_checkpoints" => checkpoints(arguments),
         "sdc_restore" => restore(arguments),
         "sdc_vps_run" => vps_run(arguments, daemon),
+        "sdc_code_graph" => code_graph(arguments),
+        "sdc_ranked_search" => ranked_search(arguments),
+        "sdc_memory_read" => memory_read(arguments),
+        "sdc_slopguard_check" => slopguard_check(arguments),
+        "sdc_trace_recent" => trace_recent(arguments, daemon),
+        "sdc_relay_report" => relay_report(arguments, daemon),
         other => Err(format!("unknown tool `{other}`")),
     }
 }
@@ -242,7 +367,7 @@ pub fn handle(message: &Value, daemon: &mut dyn FnMut(&str, Value) -> Result<Val
             "protocolVersion": message["params"]["protocolVersion"].as_str().unwrap_or(PROTOCOL),
             "capabilities": { "tools": {} },
             "serverInfo": { "name": "sdc", "version": crate::VERSION },
-            "instructions": "SDC's safety layer: scan for secrets, check a policy, verify a project, checkpoint and restore with the Time Machine, and run safe commands on connected servers. Nothing here calls an AI model.",
+            "instructions": "SDC's safety layer: scan for secrets, check a policy, verify a project, checkpoint and restore with the Time Machine, search the code graph and memory, check install commands for made-up packages, read SDC's trace and relay report, and run safe commands on connected servers. Nothing here calls an AI model.",
         })),
         "ping" => reply(json!({})),
         "tools/list" => reply(json!({ "tools": tools() })),
@@ -320,7 +445,7 @@ mod tests {
     }
 
     #[test]
-    fn it_introduces_itself_lists_seven_tools_and_ignores_notifications() {
+    fn it_introduces_itself_lists_thirteen_tools_and_ignores_notifications() {
         let mut daemon = no_daemon;
         let init = handle(&json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": { "protocolVersion": "2025-03-26" } }), &mut daemon).unwrap();
 
@@ -332,7 +457,7 @@ mod tests {
         let listed = handle(&json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list" }), &mut daemon).unwrap();
         let names: Vec<&str> = listed["result"]["tools"].as_array().unwrap().iter().filter_map(|tool| tool["name"].as_str()).collect();
 
-        assert_eq!(names, ["sdc_secret_scan", "sdc_policy_check", "sdc_verify", "sdc_checkpoint", "sdc_checkpoints", "sdc_restore", "sdc_vps_run"]);
+        assert_eq!(names, ["sdc_secret_scan", "sdc_policy_check", "sdc_verify", "sdc_checkpoint", "sdc_checkpoints", "sdc_restore", "sdc_code_graph", "sdc_ranked_search", "sdc_memory_read", "sdc_slopguard_check", "sdc_trace_recent", "sdc_relay_report", "sdc_vps_run"]);
         assert!(listed["result"]["tools"].as_array().unwrap().iter().all(|tool| tool["inputSchema"]["type"] == "object"));
         assert_eq!(handle(&json!({ "jsonrpc": "2.0", "id": 3, "method": "nope" }), &mut daemon).unwrap()["error"]["code"], -32601);
         assert_eq!(handle(&json!({ "jsonrpc": "2.0", "id": 4, "method": "ping" }), &mut daemon).unwrap()["result"], json!({}));
@@ -451,5 +576,96 @@ mod tests {
         assert!(folder(&json!({ "path": dirs::home_dir().unwrap().to_string_lossy() })).is_err());
         assert!(folder(&json!({ "path": "/no/such/folder/anywhere" })).is_err());
         assert!(folder(&json!({})).is_err());
+    }
+
+    fn project() -> PathBuf {
+        let root = folder_with("read-tools");
+
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::create_dir_all(root.join(".sdc")).unwrap();
+        std::fs::write(root.join("src/ledger.rs"), "pub fn compute_total(items: &[u64]) -> u64 {\n    items.iter().sum()\n}\n").unwrap();
+        std::fs::write(root.join("src/main.rs"), "fn main() {\n    let total = compute_total(&[1, 2]);\n    println!(\"{total}\");\n}\n").unwrap();
+        std::fs::write(root.join("src/vault.rs"), "pub fn compute_total_secret() -> u64 { 42 }\n").unwrap();
+        std::fs::write(root.join(".sdc/policy.toml"), "secret_paths = [\"src/vault.rs\"]\n").unwrap();
+        root
+    }
+
+    #[test]
+    fn the_code_graph_answers_where_and_who_and_hides_what_the_policy_keeps() {
+        let root = project();
+        let mut daemon = no_daemon;
+        let named = call("sdc_code_graph", &json!({ "path": root.to_string_lossy(), "name": "compute_total" }), &mut daemon).unwrap();
+
+        assert!(named.contains("src/ledger.rs") && named.contains("src/main.rs"), "{named}");
+
+        let secret = call("sdc_code_graph", &json!({ "path": root.to_string_lossy(), "name": "compute_total_secret" }), &mut daemon).unwrap();
+
+        assert!(!secret.contains("vault.rs"), "a secret_paths file is not shown: {secret}");
+        assert!(call("sdc_code_graph", &json!({ "path": root.to_string_lossy(), "file": "src/vault.rs" }), &mut daemon).is_err());
+        assert!(call("sdc_code_graph", &json!({ "path": root.to_string_lossy() }), &mut daemon).is_err(), "a name or a file is needed");
+    }
+
+    #[test]
+    fn the_ranked_search_finds_code_and_never_returns_a_withheld_file() {
+        let root = project();
+        let mut daemon = no_daemon;
+        let found = call("sdc_ranked_search", &json!({ "path": root.to_string_lossy(), "query": "compute total of items" }), &mut daemon).unwrap();
+
+        assert!(found.contains("src/ledger.rs"), "{found}");
+
+        let secret = call("sdc_ranked_search", &json!({ "path": root.to_string_lossy(), "query": "compute_total_secret" }), &mut daemon).unwrap();
+
+        assert!(!secret.contains("vault.rs"), "{secret}");
+        assert!(call("sdc_ranked_search", &json!({ "path": root.to_string_lossy(), "query": " " }), &mut daemon).is_err());
+    }
+
+    #[test]
+    fn memory_read_leaves_out_guesses_and_tags_the_rules_files() {
+        let root = folder_with("memory-read");
+        let mut daemon = no_daemon;
+
+        std::fs::create_dir_all(root.join(".sdc")).unwrap();
+        std::fs::write(root.join(".sdc/memory.md"), "- [stated] Deploys go through make ship.\n- [inferred] The team may prefer tabs.\n- [observed] Tests run with pnpm test.\n").unwrap();
+        std::fs::write(root.join("CLAUDE.md"), "# Rules\n- Never edit generated files.\n").unwrap();
+
+        let text = call("sdc_memory_read", &json!({ "path": root.to_string_lossy() }), &mut daemon).unwrap();
+
+        assert!(text.contains("[stated] Deploys go through make ship."), "{text}");
+        assert!(text.contains("[observed] Tests run with pnpm test."), "{text}");
+        assert!(!text.contains("prefer tabs"), "an [inferred] guess is not handed on: {text}");
+        assert!(text.contains("[file] Never edit generated files."), "{text}");
+        assert!(!text.contains("# Rules"), "headings are not rules");
+        assert_eq!(call("sdc_memory_read", &json!({ "path": folder_with("memory-empty").to_string_lossy() }), &mut daemon).unwrap(), "This project remembers nothing yet.");
+    }
+
+    #[test]
+    fn trace_and_relay_tools_ask_the_running_daemon_and_say_so_when_it_is_not() {
+        let mut asked: Vec<(String, Value)> = Vec::new();
+        let mut daemon = |method: &str, params: Value| -> Result<Value, String> {
+            asked.push((method.to_string(), params));
+
+            Ok(json!({ "ok": true }))
+        };
+
+        call("sdc_trace_recent", &json!({ "limit": 9999, "sessionId": "s1" }), &mut daemon).unwrap();
+        call("sdc_relay_report", &json!({ "since": "7d" }), &mut daemon).unwrap();
+
+        assert_eq!(asked[0].0, "trace.list");
+        assert_eq!(asked[0].1["limit"], 500, "the limit is clamped");
+        assert_eq!(asked[0].1["sessionId"], "s1");
+        assert_eq!(asked[1], ("relay.report".to_string(), json!({ "since": "7d" })));
+        assert!(call("sdc_trace_recent", &json!({}), &mut no_daemon).unwrap_err().contains("not running"));
+        assert!(call("sdc_relay_report", &json!({}), &mut no_daemon).unwrap_err().contains("not running"));
+    }
+
+    #[test]
+    fn the_slopguard_tool_needs_a_command_and_reports_the_shape() {
+        let mut daemon = no_daemon;
+
+        assert!(call("sdc_slopguard_check", &json!({}), &mut daemon).is_err());
+
+        let plain = call("sdc_slopguard_check", &json!({ "command": "ls -la" }), &mut daemon).unwrap();
+
+        assert!(plain.contains("\"refused\":false") && plain.contains("\"missing\":[]"), "{plain}");
     }
 }
