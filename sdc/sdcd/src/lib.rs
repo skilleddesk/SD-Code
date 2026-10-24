@@ -64,8 +64,6 @@ pub mod mcp;
 pub mod intent;
 pub mod ops;
 pub mod paths;
-pub mod plan;
-pub mod precision;
 pub mod preview;
 pub mod providers;
 pub mod pty;

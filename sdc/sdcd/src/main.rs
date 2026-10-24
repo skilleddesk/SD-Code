@@ -58,7 +58,6 @@ fn main() -> Result<()> {
             std::process::exit(sdcd::bench::main(&all[1..]));
         }
 
-        /* P0-0: `sdcd plan next|status|validate|sync|set` reads the plan files and needs no runtime. */
         /* P0-9: `sdcd probe MODEL` measures an installed Ollama model; needs a running Ollama and no runtime here. */
         /* Phase 2: `sdcd runtimes` prints what local model runtimes this computer has (nothing is started, nothing is changed). */
         if all.first().map(String::as_str) == Some("runtimes") {
@@ -80,12 +79,7 @@ fn main() -> Result<()> {
             std::process::exit(sdcd::sme::probe::main(&all[1..]));
         }
 
-        if all.first().map(String::as_str) == Some("plan") {
-            std::process::exit(sdcd::plan::main(&all[1..]));
-        }
-
-        /* P0-2: `sdcd keys migrate|stray` talks to the OS key store and the file system directly; like `plan`
-           it needs no runtime, so a locked or missing keychain cannot be reported as a daemon failure. */
+        /* P0-2: `sdcd keys migrate|stray` talks to the OS key store and the file system directly; it needs no runtime, so a locked or missing keychain cannot be reported as a daemon failure. */
         if all.first().map(String::as_str) == Some("keys") {
             std::process::exit(sdcd::auth::migrate::main(&all[1..]));
         }
@@ -158,7 +152,7 @@ async fn run() -> Result<()> {
             }
             "--help" => {
                 println!(
-                    "sdcd {VERSION}\n  --port <n>        loopback port (default {})\n  --database <p>    SQLite file (default: the platform data directory)\n  --idle-exit <secs> exit after <secs> with no client (default: never)\n\n  run|verify|kill|audit …   talk to a running daemon\n  bench …                   measure models (v3)\n  plan next|status|validate|sync|set   follow the Master Plan (P0-0)\n  keys migrate [--apply] | keys stray [DIR]   where the API keys live (P0-2)",
+                    "sdcd {VERSION}\n  --port <n>        loopback port (default {})\n  --database <p>    SQLite file (default: the platform data directory)\n  --idle-exit <secs> exit after <secs> with no client (default: never)\n\n  run|verify|kill|audit …   talk to a running daemon\n  bench …                   measure models (v3)\n  keys migrate [--apply] | keys stray [DIR]   where the API keys live (P0-2)",
                     paths::DEFAULT_PORT
                 );
                 return Ok(());

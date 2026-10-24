@@ -1,6 +1,6 @@
 # Parallel corpus for `sdcd bench lang` (A-14): the same coding request in each language.
 # Sentences are typical of what people type to SDC. Translations: bn/hi/ar written for this corpus;
-# review by native speakers is tracked in docs/plan/PROGRESS.md.
+# review by native speakers is still open.
 
 [[sentence]]
 en = "Fix the login bug: users with a capital letter in their email cannot sign in."
