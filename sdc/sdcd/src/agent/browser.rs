@@ -206,13 +206,23 @@ impl Browser {
 
         self.next += 1;
         self.last_used = Instant::now();
-        self.socket
-            .send(Message::Text(json!({ "id": id, "method": method, "params": params }).to_string()))
-            .map_err(|error| format!("{method}: {error}"))?;
+        /* An interrupted write has already been queued by the socket: only the flush is made again. */
+        let mut sent = self.socket.send(Message::Text(json!({ "id": id, "method": method, "params": params }).to_string()));
+
+        for _ in 0..5 {
+            match sent {
+                Err(tungstenite::Error::Io(ref error)) if error.kind() == ErrorKind::Interrupted => sent = self.socket.flush(),
+                _ => break,
+            }
+        }
+
+        sent.map_err(|error| format!("{method}: {error}"))?;
 
         loop {
             let message = match self.socket.read() {
                 Ok(message) => message,
+                /* EINTR out of a blocking read means nothing was consumed: read again (Linux CI failed `Page.enable` this way). */
+                Err(tungstenite::Error::Io(error)) if error.kind() == ErrorKind::Interrupted => continue,
                 Err(tungstenite::Error::Io(error)) if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {
                     return Err(format!("{method}: the browser did not answer in 45 s"));
                 }
