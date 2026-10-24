@@ -826,6 +826,8 @@ export interface RelaySettings {
   showChip: boolean;
   preroute: boolean;
   learn: boolean;
+  /** Seconds a chain model may take on one step before the next one is asked. */
+  callTimeoutS: number;
 }
 
 /** `rotation.toml` as the Agents tab edits it (Phase 3). `warning` is set when the file on disk did not parse (the chain then reads as empty). */

@@ -8,6 +8,7 @@
 //! sdcd kill                 # the kill switch
 //! sdcd audit                # verify the ledger's chain
 //! sdcd verify --session n12 # run Verify on a chat's newest turn
+//! sdcd relay report --since 7d   # how much of the work stayed on the local model (M1-7)
 //! ```
 //!
 //! Exit codes: `0` the turn passed, `1` it failed or was stopped, `2` the daemon could not be reached,
@@ -161,9 +162,48 @@ pub fn main(command: &str, args: &[String], port: u16) -> i32 {
         },
         "verify" => verify(&mut client, args),
         "run" => run(&mut client, args),
+        "relay" => relay(&mut client, args),
         _ => {
-            eprintln!("unknown command `{command}`: run, verify, kill, audit");
+            eprintln!("unknown command `{command}`: run, verify, kill, audit, relay");
             3
+        }
+    }
+}
+
+/// `sdcd relay report [--session ID] [--since 7d] [--lang en|bn]`: how much of the work the local model did and how much went to the chain.
+fn relay(client: &mut Client, args: &[String]) -> i32 {
+    if args.first().map(String::as_str) != Some("report") {
+        eprintln!("usage: sdcd relay report [--session ID] [--since 7d|24h|RFC3339] [--lang bn|en]");
+
+        return 3;
+    }
+
+    let mut params = serde_json::Map::new();
+
+    if let Some(session) = flag(args, "--session") {
+        params.insert("sessionId".into(), json!(session));
+    }
+
+    if let Some(since) = flag(args, "--since") {
+        params.insert("since".into(), json!(since));
+    }
+
+    match client.call("relay.report", Value::Object(params)) {
+        Ok(report) => {
+            /* Bengali unless `--lang en`: the owner reads it in Bengali (R10). */
+            let bengali = flag(args, "--lang").is_none_or(|lang| lang != "en");
+
+            if args.iter().any(|arg| arg == "--json") {
+                println!("{report}");
+            } else {
+                println!("{}", crate::rotation::ledger::report_text(&report, bengali));
+            }
+
+            0
+        }
+        Err(error) => {
+            eprintln!("{error}");
+            1
         }
     }
 }

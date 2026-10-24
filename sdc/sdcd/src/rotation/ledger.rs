@@ -311,6 +311,58 @@ pub fn receipt_lines(summary: &Value, bengali: bool) -> Vec<String> {
     }
 }
 
+/// `sdcd relay report` as text: the share that went to the chain, where, why, what it cost and how the share moved day by day.
+pub fn report_text(report: &Value, bengali: bool) -> String {
+    let number = |key: &str| report[key].as_u64().unwrap_or(0);
+    let digits = |text: String| -> String { if bengali { text.chars().map(|c| if c.is_ascii_digit() { char::from_u32('০' as u32 + c.to_digit(10).unwrap_or(0)).unwrap_or(c) } else { c }).collect() } else { text } };
+    let (total, local, cloud) = (number("stepsTotal"), number("stepsLocal"), number("stepsCloud"));
+    let mut lines = Vec::new();
+
+    if total == 0 {
+        return if bengali { "এখনো কোনো ধাপ রেকর্ড হয়নি।".to_string() } else { "No steps recorded yet.".to_string() };
+    }
+
+    lines.push(digits(if bengali {
+        format!("মোট {total}টি ধাপ ({}টি turn): লোকালে {local}টি, ক্লাউডে {cloud}টি ({}%)", number("turns"), report["cloudPercent"])
+    } else {
+        format!("{total} steps over {} turn(s): {local} on the local model, {cloud} on the chain ({}%)", number("turns"), report["cloudPercent"])
+    }));
+
+    if number("attempts") == 0 {
+        lines.push(if bengali { "কোনো ধাপ ক্লাউডে যায়নি।".to_string() } else { "Nothing went to the chain.".to_string() });
+    } else {
+        lines.push(digits(if bengali {
+            format!("ক্লাউডে {}টি চেষ্টা ({}টি ব্যর্থ ধাপ) · {} token পাঠানো, {} এসেছে · খরচ ${:.4} ({})", number("attempts"), number("failed"), number("tokensIn"), number("tokensOut"), report["costUsd"].as_f64().unwrap_or(0.0), report["costLabel"].as_str().unwrap_or("estimate"))
+        } else {
+            format!("{} attempt(s) on the chain ({} step(s) nobody could do) · {} tokens sent, {} back · cost ${:.4} ({})", number("attempts"), number("failed"), number("tokensIn"), number("tokensOut"), report["costUsd"].as_f64().unwrap_or(0.0), report["costLabel"].as_str().unwrap_or("estimate"))
+        }));
+
+        for row in report["byModel"].as_array().into_iter().flatten() {
+            lines.push(digits(format!("  {} - {} step(s), ${:.4}", row["model"].as_str().unwrap_or_default(), row["steps"].as_u64().unwrap_or(0), row["costUsd"].as_f64().unwrap_or(0.0))));
+        }
+
+        let reasons: Vec<String> = report["reasons"].as_array().into_iter().flatten().map(|row| format!("{} {}", row["count"].as_u64().unwrap_or(0), row["reason"].as_str().unwrap_or_default().replace('_', " "))).collect();
+
+        lines.push(digits(format!("{} {}", if bengali { "কারণ:" } else { "Why:" }, reasons.join(", "))));
+    }
+
+    if number("unverified") > 0 {
+        lines.push(digits(if bengali { format!("{}টি ধাপ যাচাই করা যায়নি (প্রজেক্টে কোনো check নেই)।", number("unverified")) } else { format!("{} relayed step(s) could not be verified (the folder has no checks).", number("unverified")) }));
+    }
+
+    let trend = report["trend"].as_array().cloned().unwrap_or_default();
+
+    if trend.len() > 1 {
+        lines.push(if bengali { "দিনে দিনে ক্লাউড-শতাংশ:".to_string() } else { "Chain share by day:".to_string() });
+
+        for row in trend {
+            lines.push(digits(format!("  {} - {}%", row["day"].as_str().unwrap_or_default(), row["cloudPercent"])));
+        }
+    }
+
+    lines.join("\n")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -444,5 +496,30 @@ mod tests {
         assert_eq!(event["reason"], "verify_fail");
         assert_eq!(event["costLabel"], "priced");
         assert_eq!(event["attempt"], 1);
+    }
+
+    #[test]
+    fn the_report_reads_as_text_in_both_languages() {
+        let mut ledger = TurnLedger::default();
+
+        for _ in 0..9 {
+            ledger.local_step();
+        }
+
+        ledger.relayed(&relayed(vec![record("deepseek:deepseek-chat", "done-unverified", (4_000, 500), Some(0.002))], true), Label::Priced);
+
+        let mut summary = ledger.summary_json("s", "t1");
+
+        summary["day"] = json!("2026-10-01");
+
+        let data = report(&[summary]);
+        let english = report_text(&data, false);
+        let bangla = report_text(&data, true);
+
+        assert!(english.contains("10 steps over 1 turn(s): 9 on the local model, 1 on the chain (10.0%)"), "{english}");
+        assert!(english.contains("deepseek:deepseek-chat - 1 step(s)") && english.contains("(priced)") && english.contains("could not be verified"));
+        assert!(bangla.contains("মোট ১০টি ধাপ (১টি turn): লোকালে ৯টি, ক্লাউডে ১টি (১০.০%)"), "{bangla}");
+        assert_eq!(report_text(&report(&[]), false), "No steps recorded yet.");
+        assert_eq!(report_text(&report(&[]), true), "এখনো কোনো ধাপ রেকর্ড হয়নি।");
     }
 }

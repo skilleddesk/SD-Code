@@ -93,7 +93,7 @@ fn main() -> Result<()> {
 
     /* 0.21: Git on a Windows machine that has none, fetched in the background - checkpoints need it. Only
        for the daemon itself, not for a headless `sdcd run|verify|kill|audit` that leaves in a moment. */
-    if !std::env::args().nth(1).is_some_and(|command| matches!(command.as_str(), "run" | "verify" | "kill" | "audit")) {
+    if !std::env::args().nth(1).is_some_and(|command| matches!(command.as_str(), "run" | "verify" | "kill" | "audit" | "relay")) {
         sdcd::host::tools::provision_essentials();
     }
 

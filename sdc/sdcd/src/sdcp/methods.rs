@@ -295,6 +295,9 @@ async fn run_turn(
     /* The Trust Kernel's view of the turn as it runs (0.12): what it cost so far, the files it changed,
        the shapes of a runaway, and whether the kernel already stopped it. */
     let mut usage = crate::trust::cost::Usage::default();
+    /* M1-7: what the turn's relayed steps cost (a chain model's money is real money), and the weakest way any of it was learned. */
+    let mut relay_usd = 0.0f64;
+    let mut relay_weakest: Option<crate::rotation::ledger::Label> = None;
     let mut changed: Vec<String> = Vec::new();
     let mut runaway = crate::trust::cost::Runaway::default();
     let mut halted = false;
@@ -627,6 +630,32 @@ async fn run_turn(
                 out.push(event::research_sources(&plan.turn_id, &plan.session_id, sources), session.clone(), turn.clone());
             }
             crate::engines::EngineEvent::RelayStep(fields) => {
+                relay_usd += fields["costUsd"].as_f64().unwrap_or(0.0);
+                relay_weakest = Some(match (relay_weakest, fields["costLabel"].as_str()) {
+                    (Some(seen), Some("measured")) => seen.weakest(crate::rotation::ledger::Label::Measured),
+                    (Some(seen), Some("priced")) => seen.weakest(crate::rotation::ledger::Label::Priced),
+                    (None, Some("measured")) => crate::rotation::ledger::Label::Measured,
+                    (None, Some("priced")) => crate::rotation::ledger::Label::Priced,
+                    _ => crate::rotation::ledger::Label::Estimate,
+                });
+
+                /* The turn's budget counts the chain's spending too: a cap that ignored it would be a cap on the free half. */
+                if let Some(cap) = turn_cap {
+                    let (local, _) = crate::trust::cost::settle(&plan.engine_id, plan.provider.as_deref(), &plan.model, &usage);
+
+                    if local + relay_usd > cap && !halted {
+                        halted = true;
+                        halt(
+                            &*out,
+                            &stopper,
+                            &plan,
+                            "BudgetStop",
+                            "budget",
+                            &format!("Stopped at ${:.2}: this turn, with the steps it sent to your chain, crossed its ${cap:.2} budget. The work so far is kept.", local + relay_usd),
+                        );
+                    }
+                }
+
                 out.push(event::relay_step(fields), session.clone(), turn.clone());
             }
             crate::engines::EngineEvent::RelaySummary(mut fields) => {
@@ -764,6 +793,11 @@ async fn run_turn(
        sent only tokens, and never a made-up number. "Saved" exists only against a baseline and measured tokens. */
     {
         let (cost, source) = crate::trust::cost::settle(&plan.engine_id, plan.provider.as_deref(), &plan.model, &usage);
+        /* The chain's money is added, and the source says how it was learned - never "measured" for an estimate. */
+        let (cost, source) = match relay_weakest.filter(|_| relay_usd > 0.0) {
+            Some(label) => (cost + relay_usd, label.name()),
+            None => (cost, source),
+        };
         let baseline = crate::trust::cost::baseline(&state.store, &usage);
         let site = plan
             .project_root

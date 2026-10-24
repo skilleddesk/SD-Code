@@ -299,3 +299,115 @@ fn the_ledger_switch_only_decides_whether_the_split_is_written_down() {
     clear_fakes();
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// A chain provider that is slow to answer: it waits `delay` before it sends anything.
+fn slow_provider(delay: std::time::Duration, replies: Vec<String>) -> (String, std::thread::JoinHandle<()>) {
+    use std::io::{BufRead, Read, Write};
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}/v1/chat/completions", listener.local_addr().unwrap());
+    let server = std::thread::spawn(move || {
+        for reply in replies {
+            let (socket, _) = listener.accept().unwrap();
+            let mut reader = std::io::BufReader::new(socket.try_clone().unwrap());
+            let mut length = 0usize;
+
+            loop {
+                let mut line = String::new();
+
+                reader.read_line(&mut line).unwrap();
+
+                if let Some(value) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                    length = value.trim().parse().unwrap();
+                }
+
+                if line == "\r\n" {
+                    break;
+                }
+            }
+
+            let mut body = vec![0u8; length];
+
+            reader.read_exact(&mut body).unwrap();
+            std::thread::sleep(delay);
+
+            let mut socket = socket;
+
+            let _ = write!(socket, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n{reply}");
+        }
+    });
+
+    (url, server)
+}
+
+#[test]
+fn a_chain_model_that_takes_too_long_is_given_up_on_and_its_edits_are_put_back() {
+    let root = folder("watchdog");
+    let (slow_url, slow) = slow_provider(std::time::Duration::from_millis(2_500), vec![call("c1", "write_file", json!({ "path": "late.txt", "content": "too late\n" })), chunk(json!({ "content": "done" })) + "data: [DONE]\n\n"]);
+    let (fast_url, fast) = cloud_that_writes();
+    let (local_url, _local) = raw_provider(vec![local_silent(), local_says("Carrying on.")]);
+
+    fake("slow", slow_url, "slow-model");
+    fake("fast", fast_url, "fast-model");
+
+    let mut chain = rotation(&["slow:slow-model", "fast:fast-model"], true);
+
+    chain.relay.call_timeout_s = 1;
+
+    let recorder = run_local(&root, "turn-relay-watchdog", &local_url, chain);
+    let steps = steps_of(&recorder);
+
+    assert_eq!(steps.iter().map(|step| step["outcome"].as_str().unwrap()).collect::<Vec<_>>(), ["failed", "done-unverified"], "the slow one is given up on, the next one does it");
+    assert!(!root.join("late.txt").exists(), "what the slow model wrote after its time was put back");
+    assert!(root.join("greeting.txt").exists());
+
+    fast.join().unwrap();
+    drop(slow);
+    clear_fakes();
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn past_its_allowance_the_turn_asks_once_and_a_no_keeps_the_work_local() {
+    let root = folder("allowance");
+    let (cloud_url, cloud) = cloud_that_writes();
+    let (local_url, _local) = raw_provider(vec![local_silent(), local_silent(), local_says("Staying local, as you asked.")]);
+
+    fake("cloud", cloud_url, "cloud-model");
+
+    let mut chain = rotation(&["cloud:cloud-model"], true);
+
+    chain.relay.max_cloud_steps_per_turn = 1;
+
+    let recorder = Recorder::new();
+    let answering = recorder.clone();
+    let answerer = std::thread::spawn(move || {
+        for _ in 0..200 {
+            if let Some(question) = answering.events().into_iter().find_map(|event| match event {
+                EngineEvent::Question { question_id, options, .. } => Some((question_id, options)),
+                _ => None,
+            }) {
+                assert_eq!(question.1, ["Yes, for this turn", "No, stop here"], "the choices the plan names");
+                crate::agent::gate::resolve(&question.0, "answer:No, stop here");
+
+                return true;
+            }
+
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+
+        false
+    });
+    let prompt = prompt_in(&root, "turn-relay-allowance", "make the greeting file", "qwen3.5:9b");
+
+    crate::data::rotation::forcing(chain, || {
+        drive(Backend::Ollama, &local_target(&local_url, 8_192), &Workspace::new(root.to_str().unwrap(), None), Options { autonomy: Autonomy::Auto, max_steps: 8, auto_check: false, research: None }, None, &Default::default(), &prompt, &recorder.sink());
+    });
+
+    assert!(answerer.join().unwrap(), "the person was asked");
+    assert_eq!(cloud.join().unwrap().len(), 2, "the chain was used exactly once");
+    assert_eq!(steps_of(&recorder).len(), 1, "and the refusal after the allowance did not send a second step");
+
+    clear_fakes();
+    let _ = std::fs::remove_dir_all(&root);
+}

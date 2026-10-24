@@ -1430,7 +1430,7 @@ fn drive(
     sink: &EventSink,
 ) {
     let turn_id = prompt.turn_id.clone();
-    let stopped = || crate::engines::cancel::requested(&turn_id);
+    let stopped = || crate::engines::cancel::requested(&turn_id) || relay::timed_out();
     /* M0-3: the model a switch's scope is asked about. A switch that changes what a model is told and has no bench result behind
        it (`v3::Scope::LocalOnly`) reaches a local model and no other - a cloud, API or CLI model the person picked is untouched. */
     let scope_model = crate::v3::ModelCtx::new(backend == Backend::Ollama);
@@ -1986,6 +1986,7 @@ fn drive(
                         passed_checks: &passed_checks,
                         error: &error,
                         local_model: &target.model,
+                        call_timeout_s: hook.policy.call_timeout_s,
                         gate: &gate,
                     };
                     let calls = context.calls;

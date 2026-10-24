@@ -10,6 +10,7 @@
 //! show_chip = true                  # the small cloud chip on the LiveBar
 //! preroute = false                  # send a plainly too-hard step straight to the chain (unmeasured)
 //! learn = false                     # propose what the chain solved to the knowledge core (unmeasured)
+//! call_timeout_s = 180              # a chain model that takes longer on one step is given up on, and the next one is asked
 //! ```
 //!
 //! Like the rest of the file this is a **preference**, not permission: `.sdc/policy.toml` with `privacy = "local-only"` wins over
@@ -36,6 +37,9 @@ pub struct RelayPolicy {
     pub preroute: bool,
     #[serde(default)]
     pub learn: bool,
+    /// Seconds one chain model may take on a step before the next model of the chain is asked (the watchdog, M1-9).
+    #[serde(default = "three_minutes")]
+    pub call_timeout_s: u32,
 }
 
 fn two() -> u32 {
@@ -58,9 +62,13 @@ fn yes() -> bool {
     true
 }
 
+fn three_minutes() -> u32 {
+    180
+}
+
 impl Default for RelayPolicy {
     fn default() -> Self {
-        Self { auto: false, local_attempts: 2, local_ttft_s: 45, max_cloud_steps_per_turn: 6, max_usd_per_turn: 0.25, show_chip: true, preroute: false, learn: false }
+        Self { auto: false, local_attempts: 2, local_ttft_s: 45, max_cloud_steps_per_turn: 6, max_usd_per_turn: 0.25, show_chip: true, preroute: false, learn: false, call_timeout_s: 180 }
     }
 }
 
@@ -82,6 +90,10 @@ impl RelayPolicy {
 
         if !(1..=50).contains(&self.max_cloud_steps_per_turn) {
             return Err("Relay: at most 1 to 50 cloud steps a turn.".into());
+        }
+
+        if !(10..=3600).contains(&self.call_timeout_s) {
+            return Err("Relay: a chain model's time limit per step must be between 10 and 3600 seconds.".into());
         }
 
         if !self.max_usd_per_turn.is_finite() || !(0.0..=100.0).contains(&self.max_usd_per_turn) {
@@ -165,6 +177,7 @@ mod tests {
             RelayPolicy { max_cloud_steps_per_turn: 0, ..Default::default() },
             RelayPolicy { max_usd_per_turn: -1.0, ..Default::default() },
             RelayPolicy { max_usd_per_turn: f64::NAN, ..Default::default() },
+            RelayPolicy { call_timeout_s: 3, ..Default::default() },
         ] {
             assert!(bad.validate().unwrap_err().starts_with("Relay:"), "{bad:?}");
         }

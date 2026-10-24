@@ -32,6 +32,13 @@ const COOLDOWN: u32 = 3;
 
 thread_local! {
     static SCOPE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// When the chain model's time on the step runs out (the watchdog, M1-9).
+    static DEADLINE: std::cell::Cell<Option<std::time::Instant>> = const { std::cell::Cell::new(None) };
+}
+
+/// Has the chain model used up its time on this step? `drive` asks it with the Stop button: either one ends the nested loop.
+pub(super) fn timed_out() -> bool {
+    DEADLINE.with(std::cell::Cell::get).is_some_and(|deadline| std::time::Instant::now() >= deadline)
 }
 
 /// Is the current thread inside a relayed step? `drive` reads it to narrow its tools and to ask the gate as the chain.
@@ -42,8 +49,9 @@ pub(super) fn in_scope() -> bool {
 struct Scope;
 
 impl Scope {
-    fn enter() -> Self {
+    fn enter(limit: std::time::Duration) -> Self {
         SCOPE.with(|scope| scope.set(true));
+        DEADLINE.with(|deadline| deadline.set(Some(std::time::Instant::now() + limit)));
 
         Scope
     }
@@ -52,6 +60,7 @@ impl Scope {
 impl Drop for Scope {
     fn drop(&mut self) {
         SCOPE.with(|scope| scope.set(false));
+        DEADLINE.with(|deadline| deadline.set(None));
     }
 }
 
@@ -81,6 +90,7 @@ pub(super) struct Env<'a> {
     pub passed_checks: &'a [String],
     pub error: &'a str,
     pub local_model: &'a str,
+    pub call_timeout_s: u32,
     pub gate: &'a crate::guard::modelgate::Gate,
 }
 
@@ -106,6 +116,9 @@ pub(super) struct Hook {
     ready: Option<Prepared>,
     relays: u32,
     cooldown: u32,
+    /// Relayed steps in a row, with no local step between (`rotation.toml`'s `offload_limit`).
+    streak: u32,
+    offload_limit: u32,
 }
 
 impl Hook {
@@ -129,13 +142,14 @@ impl Hook {
         /* The half of the capsule that does not depend on the failure is built while the local model is still trying. */
         let prepared = capsule::spawn_prepare(root.clone(), request.to_string(), trust.clone(), session_id.to_string());
 
-        Some(Self { policy: rotation.relay.clone(), chain, used: Used::default(), ledger: TurnLedger::default(), signals: StepSignals::default(), root, prepared: Some(prepared), ready: None, relays: 0, cooldown: 0 })
+        Some(Self { policy: rotation.relay.clone(), chain, used: Used::default(), ledger: TurnLedger::default(), signals: StepSignals::default(), root, prepared: Some(prepared), ready: None, relays: 0, cooldown: 0, streak: 0, offload_limit: rotation.global.offload_limit })
     }
 
     /// The loop finished a step on the local model.
     pub(super) fn local_step(&mut self) {
         self.ledger.local_step();
         self.cooldown = self.cooldown.saturating_sub(1);
+        self.streak = 0;
     }
 
     /// Reads one step's tool calls and answers into the signals.
@@ -173,7 +187,7 @@ impl Hook {
     }
 
     pub(super) fn decision(&self) -> Decision {
-        if self.cooldown > 0 {
+        if self.cooldown > 0 || (self.offload_limit > 0 && self.streak >= self.offload_limit) {
             return Decision::StayLocal;
         }
 
@@ -284,6 +298,7 @@ impl Hook {
         );
 
         self.relays += 1;
+        self.streak += 1;
 
         for record in &relayed.records {
             let step_id = format!("{turn}.r{}", self.relays);
@@ -379,9 +394,11 @@ fn attempt(env: &Env, model: &ChainModel, _position: usize, capsule_text: &str, 
         }
     });
     let switches = crate::v3::TurnSwitches::snapshot(&env.prompt.turn_id);
-    let _scope = Scope::enter();
+    let _scope = Scope::enter(std::time::Duration::from_secs(u64::from(env.call_timeout_s)));
 
     drive(Backend::Api, &target, env.workspace, Options { autonomy: env.options.autonomy, max_steps: STEP_CALLS, auto_check: true, research: None }, env.checkpoint.clone(), env.policy, &nested, &sink);
+
+    let timed_out = timed_out();
 
     crate::v3::TurnSwitches::restore(&env.prompt.turn_id, switches);
 
@@ -397,7 +414,7 @@ fn attempt(env: &Env, model: &ChainModel, _position: usize, capsule_text: &str, 
         _ => Label::Estimate,
     };
 
-    (Attempt { finished: finished && failed.is_none(), answer, tokens_in: input, tokens_out: output, cost_usd: cost, failure: failed.unwrap_or_default(), edited }, label)
+    (Attempt { finished: finished && failed.is_none() && !timed_out, answer, tokens_in: input, tokens_out: output, cost_usd: cost, failure: if timed_out { format!("it took longer than {} s", env.call_timeout_s) } else { failed.unwrap_or_default() }, edited }, label)
 }
 
 /// The project's own checks, after the chain model's work. Green is the only success.

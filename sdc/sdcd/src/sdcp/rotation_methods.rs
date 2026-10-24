@@ -108,6 +108,7 @@ fn relay_json(relay: &RelayPolicy) -> Value {
         "showChip": relay.show_chip,
         "preroute": relay.preroute,
         "learn": relay.learn,
+        "callTimeoutS": relay.call_timeout_s,
     })
 }
 
@@ -122,6 +123,7 @@ fn parse_relay(value: &Value, stored: &RelayPolicy) -> RelayPolicy {
         show_chip: value["showChip"].as_bool().unwrap_or(stored.show_chip),
         preroute: value["preroute"].as_bool().unwrap_or(stored.preroute),
         learn: value["learn"].as_bool().unwrap_or(stored.learn),
+        call_timeout_s: value["callTimeoutS"].as_u64().map_or(stored.call_timeout_s, |n| n.min(u32::MAX as u64) as u32),
     }
 }
 
