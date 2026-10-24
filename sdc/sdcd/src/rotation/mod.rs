@@ -10,3 +10,6 @@
 //!
 //! `crate::v3::router`, `cascade` and `failover` already hold a first cut of this; they move in here when P2 gives
 //! them a policy to follow, because a model choice is exactly the thing the person has to be able to audit.
+
+pub mod decision;
+pub mod policy;

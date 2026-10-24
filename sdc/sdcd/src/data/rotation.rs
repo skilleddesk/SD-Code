@@ -103,6 +103,9 @@ pub struct Rotation {
     pub chain: Vec<Row>,
     #[serde(default, rename = "global")]
     pub global: Global,
+    /// Silent Relay (M1-1): a failed local step goes to the chain by itself, inside the limits below.
+    #[serde(default, rename = "relay")]
+    pub relay: crate::rotation::policy::RelayPolicy,
 }
 
 impl Rotation {
@@ -210,6 +213,8 @@ pub fn validate(rotation: &Rotation) -> Result<(), String> {
     if global.offload_limit > 1000 {
         return Err("The offload limit is at most 1000 steps.".into());
     }
+
+    rotation.relay.validate()?;
 
     Ok(())
 }
@@ -398,7 +403,7 @@ mod save_tests {
     #[test]
     fn a_saved_chain_reads_back_exactly_and_keeps_its_order_and_a_backup() {
         let dir = tempfile::tempdir().unwrap();
-        let first = Rotation { chain: vec![row("deepseek:deepseek-chat"), row("anthropic-api:claude-sonnet-5-5")], global: Global { offload_limit: 3, ..Global::default() } };
+        let first = Rotation { chain: vec![row("deepseek:deepseek-chat"), row("anthropic-api:claude-sonnet-5-5")], global: Global { offload_limit: 3, ..Global::default() }, relay: crate::rotation::policy::RelayPolicy { auto: true, max_cloud_steps_per_turn: 4, ..Default::default() } };
 
         save(dir.path(), &first).unwrap();
 

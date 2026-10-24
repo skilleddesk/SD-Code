@@ -14,6 +14,7 @@ use std::sync::{Mutex, OnceLock};
 
 use super::*;
 use crate::data::rotation::{self, Global, Row, Rotation};
+use crate::rotation::policy::RelayPolicy;
 
 /// A typical step, for a price hint only: 6,000 tokens in, 1,000 out.
 const STEP_IN: f64 = 6_000.0;
@@ -71,13 +72,41 @@ fn view(rotation: &Rotation, warning: Option<String>, home: &std::path::Path) ->
             "askBeforeCloud": rotation.global.ask_before_cloud,
             "offloadLimit": rotation.global.offload_limit,
         },
+        "relay": relay_json(&rotation.relay),
         "warning": warning,
         "path": rotation::path(home).display().to_string(),
     })
 }
 
-/// The rotation a `rotation.set` call describes.
-fn parse(envelope: &Envelope) -> Result<Rotation, ErrorObject> {
+fn relay_json(relay: &RelayPolicy) -> Value {
+    json!({
+        "auto": relay.auto,
+        "localAttempts": relay.local_attempts,
+        "localTtftS": relay.local_ttft_s,
+        "maxCloudStepsPerTurn": relay.max_cloud_steps_per_turn,
+        "maxUsdPerTurn": relay.max_usd_per_turn,
+        "showChip": relay.show_chip,
+        "preroute": relay.preroute,
+        "learn": relay.learn,
+    })
+}
+
+/// The relay part of a `rotation.set`: every field the call names replaces the stored one, every field it leaves out stays as it was.
+fn parse_relay(value: &Value, stored: &RelayPolicy) -> RelayPolicy {
+    RelayPolicy {
+        auto: value["auto"].as_bool().unwrap_or(stored.auto),
+        local_attempts: value["localAttempts"].as_u64().map_or(stored.local_attempts, |n| n.min(u32::MAX as u64) as u32),
+        local_ttft_s: value["localTtftS"].as_u64().map_or(stored.local_ttft_s, |n| n.min(u32::MAX as u64) as u32),
+        max_cloud_steps_per_turn: value["maxCloudStepsPerTurn"].as_u64().map_or(stored.max_cloud_steps_per_turn, |n| n.min(u32::MAX as u64) as u32),
+        max_usd_per_turn: value["maxUsdPerTurn"].as_f64().unwrap_or(stored.max_usd_per_turn),
+        show_chip: value["showChip"].as_bool().unwrap_or(stored.show_chip),
+        preroute: value["preroute"].as_bool().unwrap_or(stored.preroute),
+        learn: value["learn"].as_bool().unwrap_or(stored.learn),
+    }
+}
+
+/// The rotation a `rotation.set` call describes. `stored_relay` is what the file holds now: a call that does not mention `relay` leaves it alone.
+fn parse(envelope: &Envelope, stored_relay: &RelayPolicy) -> Result<Rotation, ErrorObject> {
     let rows = envelope.params.get("rows").and_then(Value::as_array).ok_or_else(|| ErrorObject::bad_request("`rows` is required"))?;
     let mut chain = Vec::new();
 
@@ -102,6 +131,7 @@ fn parse(envelope: &Envelope) -> Result<Rotation, ErrorObject> {
             ask_before_cloud: global["askBeforeCloud"].as_bool().unwrap_or(defaults.ask_before_cloud),
             offload_limit: global["offloadLimit"].as_u64().unwrap_or(0) as u32,
         },
+        relay: parse_relay(envelope.params.get("relay").unwrap_or(&Value::Null), stored_relay),
     })
 }
 
@@ -143,7 +173,8 @@ impl Daemon {
 
     pub(super) fn rotation_set(&self, envelope: &Envelope) -> Result<Value, ErrorObject> {
         let home = crate::data::home_or_error().map_err(ErrorObject::internal)?;
-        let wanted = parse(envelope)?;
+        let (stored, _) = rotation::load(&home);
+        let wanted = parse(envelope, &stored.relay)?;
 
         rotation::save(&home, &wanted).map_err(ErrorObject::bad_request)?;
 
@@ -310,5 +341,19 @@ mod tests {
         note_regular_turn("chat-order");
 
         assert_eq!(counts().lock().unwrap().get("chat-order"), None);
+    }
+
+    #[test]
+    fn a_set_that_does_not_mention_the_relay_leaves_it_alone_and_one_that_does_changes_only_what_it_names() {
+        let stored = RelayPolicy { auto: true, max_usd_per_turn: 1.0, ..Default::default() };
+        let plain = Envelope { v: "0.1".into(), id: "1".into(), method: "rotation.set".into(), params: serde_json::from_value(json!({ "rows": [] })).unwrap(), host_id: None };
+
+        assert_eq!(parse(&plain, &stored).unwrap().relay, stored);
+
+        let named = Envelope { params: serde_json::from_value(json!({ "rows": [], "relay": { "maxCloudStepsPerTurn": 3, "showChip": false } })).unwrap(), ..plain };
+        let relay = parse(&named, &stored).unwrap().relay;
+
+        assert_eq!((relay.auto, relay.max_usd_per_turn, relay.max_cloud_steps_per_turn, relay.show_chip), (true, 1.0, 3, false));
+        assert_eq!(relay_json(&relay)["maxCloudStepsPerTurn"], 3);
     }
 }

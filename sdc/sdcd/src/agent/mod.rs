@@ -1394,7 +1394,7 @@ fn turn_gate(backend: Backend, target: &Target, prompt: &Prompt, policy: &crate:
     let provider = if backend == Backend::Ollama { Some("ollama") } else { prompt.provider.as_deref() };
     let named: Vec<(Option<&str>, &str)> = rows.iter().filter_map(|row| row.model.split_once(':').map(|(provider, model)| (Some(provider), model))).collect();
 
-    crate::guard::modelgate::Gate::new(provider, &target.model, !rows.is_empty(), policy.privacy_local()).with_chain(&named)
+    crate::guard::modelgate::Gate::new(provider, &target.model, !rows.is_empty(), policy.privacy_local()).with_chain(&named).with_relay(rotation.relay.enabled())
 }
 
 /// The loop over a resolved endpoint - separate from `run` so a test can point it at a loopback

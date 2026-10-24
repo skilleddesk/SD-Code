@@ -38,9 +38,9 @@ Status: `todo` · `in-progress` · `blocked` · `done`.
 | P1-13 | Confidence Signals | 1 | P1-2, Gate 0 | done | sme.confidence |  | confidence signals incl. A-B-A-B cycles; level 3 tells the model to stop (does not force it) |
 | P1-14 | Bangla/Banglish Spec Brief | 1 | P1-5, Gate 0 | done | sme.spec_brief |  | Bangla/Banglish spec brief |
 | P1-15 | Fast path and Gate 1 | 1 | P1-1, P1-2, P1-3, P1-4, P1-5, P1-6, P1-7, P1-8, P1-9, P1-10, P1-11, P1-12, P1-13, P1-14, Gate 0 | in-progress | runtime.fastpath |  | fast path done (runtime.fastpath); Gate 1 not run - needs a live 9B model (owner-to-run) |
-| P2-1 | Rotation Policy Engine | 2 | Gate 1 | todo | rotation.policy |  |  |
-| P2-2 | Rotation Chain Settings UI | 2 | P2-1, P0-5, Gate 1 | todo | ui.rotation_chain |  |  |
-| P2-3 | Capsule Minimizer, Redactor, audit | 2 | P2-1, Gate 1 | todo | rotation.capsule |  |  |
+| P2-1 | Rotation Policy Engine | 2 | Gate 1 | in-progress | rotation.policy |  | MEGHNA M1 = P2-1/P2-4/P2-5 in the form of Silent Relay (rotation/policy, decision, executor, handover) |
+| P2-2 | Rotation Chain Settings UI | 2 | P2-1, P0-5, Gate 1 | done | ui.rotation_chain |  | Settings -> Agents tab (modals/AgentsTab.tsx, rotation.get/set): the chain, order and manual Escalate; MEGHNA M1 builds on it |
+| P2-3 | Capsule Minimizer, Redactor, audit | 2 | P2-1, Gate 1 | done | rotation.capsule |  | capsule builder with redaction + .sdc/audit/sent.jsonl (sdcp/rotation_methods.rs build_capsule, v3/privacy.rs); MEGHNA M1-3 extends it to Capsule v2 |
 | P2-4 | Chain Escalation Runner | 2 | P2-3, Gate 1 | todo | rotation.runner |  |  |
 | P2-5 | Handover Bridge Note | 2 | P2-4, P1-9, Gate 1 | todo | rotation.handover |  |  |
 | P2-6 | Planner-Executor | 2 | P2-4, Gate 1 | todo | rotation.planner_exec |  |  |
@@ -48,15 +48,15 @@ Status: `todo` · `in-progress` · `blocked` · `done`.
 | P2-8 | Rotation safeguards and Gate 2 | 2 | P2-1, P2-2, P2-3, P2-4, P2-5, P2-6, P2-7, Gate 1 | todo | rotation.safeguards |  |  |
 | P3-1 | Reuse Finder | 3 | Gate 2 | todo | precision.reuse |  |  |
 | P3-2 | Diff Budget | 3 | P3-1, Gate 2 | todo | precision.diff_budget |  |  |
-| P3-3 | Hallucination and Slopsquatting Guard | 3 | P1-1, Gate 2 | todo | precision.hallucination |  |  |
+| P3-3 | Hallucination and Slopsquatting Guard | 3 | P1-1, Gate 2 | done | precision.hallucination |  | trust/slopguard + trust.slopguard switch (on): an install of a name the registry does not know is refused |
 | P3-4 | Test Impact, Characterization, Smoke | 3 | P1-1, P0-14, Gate 2 | todo | verify.test_impact |  |  |
 | P3-5 | Quality Floor and AST Duplicates | 3 | P1-1, Gate 2 | todo | precision.quality_floor |  |  |
 | P3-6 | Ripple Check | 3 | P1-12, Gate 2 | todo | precision.ripple |  |  |
 | P3-7 | Spec-to-Test | 3 | P3-4, Gate 2 | todo | precision.spec_tests |  |  |
 | P3-8 | Q3 profiling for all models | 3 | P0-11, Gate 2 | todo | n/a |  |  |
-| P3-9 | Diff Review UI | 3 | P0-7, Gate 2 | todo | ui.diff_review |  |  |
+| P3-9 | Diff Review UI | 3 | P0-7, Gate 2 | done | ui.diff_review |  | panels/right/PreviewDiff.tsx + lib/diffReview.ts (+test): per-hunk review in the Preview |
 | P3-10 | @ Context Picker | 3 | P1-1, Gate 2 | todo | ui.at_picker |  |  |
-| P3-11 | Select & Instruct | 3 | P3-9, Gate 2 | todo | ui.select_instruct |  |  |
+| P3-11 | Select & Instruct | 3 | P3-9, Gate 2 | done | ui.select_instruct |  | panels/right/SelectInstruct.tsx: select code in the Preview and instruct the agent about it |
 | P3-12 | Local Semantic Index | 3 | P1-8, Gate 2 | todo | graph.semantic |  |  |
 | P3-13 | Scoped Rules, Hooks, rule import | 3 | P1-5, Gate 2 | todo | rules.scoped |  |  |
 | P3-14 | Verified MCP Installer | 3 | P0-6, P0-2, Gate 2 | todo | mcp.installer |  |  |
@@ -64,7 +64,7 @@ Status: `todo` · `in-progress` · `blocked` · `done`.
 | P4-1 | Replay Lab | 4 | Gate 3 | todo | learn.replay |  |  |
 | P4-2 | Smart Router | 4 | P4-1, Gate 3 | todo | rotation.smart_router |  |  |
 | P4-3 | Night Learning, Drift Monitor, weekly report | 4 | P4-1, Gate 3 | todo | learn.night |  |  |
-| P4-4 | SDC as MCP Server | 4 | P0-6, Gate 3 | todo | mcp.server |  |  |
+| P4-4 | SDC as MCP Server | 4 | P0-6, Gate 3 | done | mcp.server |  | sdcd mcp (mcp.rs, docs/MCP.md): policy, trace and memory tools for Claude Code/Codex; MEGHNA M5-4 extends it |
 | P4-5 | VS Code Companion | 4 | P4-4, Gate 3 | todo | ext.vscode |  |  |
 | P5-1 | Continuity Sync | 5 | Gate 4 | todo | sync.continuity |  |  |
 | P5-2 | DevOps Dry-run and Playbook Verifier | 5 | P5-1, Gate 4 | todo | ops.dryrun |  |  |

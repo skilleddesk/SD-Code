@@ -4,7 +4,8 @@
 //! | what the person chose | mode | what may run |
 //! |---|---|---|
 //! | a cloud, API or CLI model | [`Mode::Pinned`] | only that model, for every call: the loop, sub-agents, review |
-//! | a local model, and a Rotation Chain with an enabled row | [`Mode::LocalRotation`] | the local model, and chain rows - only as [`Purpose::Chain`] |
+//! | a local model, and a Rotation Chain with an enabled row | [`Mode::LocalRotation`] | the local model, and chain rows - only as [`Purpose::Chain`], on the person's click |
+//! | the same, with `relay.auto` on (Settings -> Agents) | [`Mode::SilentRelay`] | the local model, and chain rows as [`Purpose::Chain`] by themselves, inside the relay's limits |
 //! | a local model, an empty or disabled chain, or `privacy = "local-only"` | [`Mode::LocalOnly`] | only that local model |
 //!
 //! Every model call asks [`Gate::permit`] first. The automatic model-changers - the router (W6), the cascade (I3),
@@ -21,6 +22,8 @@ use std::sync::{Mutex, OnceLock};
 pub enum Mode {
     Pinned,
     LocalRotation,
+    /// Local Rotation, with the person's one-time consent to relay a failed step by itself (M1-1).
+    SilentRelay,
     LocalOnly,
 }
 
@@ -30,6 +33,7 @@ impl Mode {
         match self {
             Mode::Pinned => "pinned",
             Mode::LocalRotation => "local-rotation",
+            Mode::SilentRelay => "silent-relay",
             Mode::LocalOnly => "local-only",
         }
     }
@@ -132,6 +136,21 @@ impl Gate {
         Self { mode: Mode::Pinned, pinned: (String::new(), String::new()), exceptions: Vec::new(), chain: None, enforcing: false }
     }
 
+    /// Silent Relay (M1-1): a Local Rotation gate becomes a Silent Relay one when the person consented. Any other mode is returned as it
+    /// was - a model picked by hand (Pinned) and a local-only project never relay, whatever is switched on.
+    pub fn with_relay(mut self, consented: bool) -> Self {
+        if consented && self.mode == Mode::LocalRotation {
+            self.mode = Mode::SilentRelay;
+        }
+
+        self
+    }
+
+    /// Does a chain model get called by itself (Silent Relay), as opposed to on a click (Local Rotation)?
+    pub fn relays(&self) -> bool {
+        self.mode == Mode::SilentRelay
+    }
+
     pub fn with_exception(mut self, purpose: Purpose, provider: Option<&str>, model: &str) -> Self {
         if purpose.is_user_exception() {
             self.exceptions.push((purpose, normal(provider, model)));
@@ -169,7 +188,7 @@ impl Gate {
 
         match purpose {
             Purpose::Main | Purpose::ResearchFinal | Purpose::DuelReviewer | Purpose::Reviewer => true,
-            Purpose::Chain => self.mode == Mode::LocalRotation,
+            Purpose::Chain => matches!(self.mode, Mode::LocalRotation | Mode::SilentRelay),
             Purpose::SubAgentFast | Purpose::Router | Purpose::Cascade | Purpose::Failover | Purpose::Ladder | Purpose::PlannerExecutor | Purpose::Bandit => false,
         }
     }
@@ -182,7 +201,7 @@ impl Gate {
 
         let wanted = normal(provider, model);
         let fine = same(&wanted, &self.pinned)
-            || (purpose == Purpose::Chain && self.mode == Mode::LocalRotation && self.chain.as_ref().is_none_or(|list| list.iter().any(|row| same(row, &wanted))))
+            || (purpose == Purpose::Chain && matches!(self.mode, Mode::LocalRotation | Mode::SilentRelay) && self.chain.as_ref().is_none_or(|list| list.iter().any(|row| same(row, &wanted))))
             || self.exceptions.iter().any(|(allowed, named)| *allowed == purpose && same(named, &wanted));
 
         if fine {
@@ -339,6 +358,38 @@ mod tests {
         drop(held);
 
         assert!(of("turn-gate-test").permit(Purpose::Main, Some("openai-api"), "gpt-5").is_ok(), "released");
+    }
+}
+
+#[cfg(test)]
+mod relay_tests {
+    use super::*;
+
+    fn local(chain: bool, project_local: bool) -> Gate {
+        Gate { enforcing: true, ..Gate::new(Some("ollama"), "qwen3.5:9b", chain, project_local) }.with_chain(&[(Some("deepseek"), "deepseek-chat")])
+    }
+
+    /// M1-1: the four rows of the plan's table.
+    #[test]
+    fn the_mode_is_one_of_four_and_only_a_local_model_with_a_chain_and_consent_relays() {
+        assert_eq!(Gate { enforcing: true, ..Gate::new(Some("deepseek"), "deepseek-chat", true, false) }.with_relay(true).mode, Mode::Pinned, "a model picked by hand never relays");
+        assert_eq!(local(false, false).with_relay(true).mode, Mode::LocalOnly, "no chain, no relay");
+        assert_eq!(local(true, true).with_relay(true).mode, Mode::LocalOnly, "a local-only project never relays");
+        assert_eq!(local(true, false).with_relay(false).mode, Mode::LocalRotation, "without consent it stays the manual Local Rotation");
+        assert_eq!(local(true, false).with_relay(true).mode, Mode::SilentRelay);
+        assert_eq!(Mode::SilentRelay.name(), "silent-relay");
+    }
+
+    #[test]
+    fn a_relaying_gate_still_lets_only_the_chain_through_and_only_as_the_chain() {
+        let gate = local(true, false).with_relay(true);
+
+        assert!(gate.relays() && gate.allows(Purpose::Chain));
+        assert!(gate.permit(Purpose::Chain, Some("deepseek"), "deepseek-chat").is_ok());
+        assert!(gate.permit(Purpose::Chain, Some("openai-api"), "gpt-5").is_err(), "a model nobody listed");
+        assert!(gate.permit(Purpose::Router, Some("deepseek"), "deepseek-chat").is_err(), "not as a router's choice");
+        assert!(!gate.allows(Purpose::Cascade) && !gate.allows(Purpose::Failover) && !gate.allows(Purpose::Bandit), "the other model-changers stay unreachable");
+        assert!(!local(true, false).relays());
     }
 }
 
