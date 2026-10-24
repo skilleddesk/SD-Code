@@ -14,5 +14,6 @@
 pub mod capsule;
 pub mod decision;
 pub mod executor;
+pub mod handover;
 pub mod ledger;
 pub mod policy;

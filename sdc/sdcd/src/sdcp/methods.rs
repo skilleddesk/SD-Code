@@ -626,6 +626,14 @@ async fn run_turn(
             crate::engines::EngineEvent::Sources(sources) => {
                 out.push(event::research_sources(&plan.turn_id, &plan.session_id, sources), session.clone(), turn.clone());
             }
+            crate::engines::EngineEvent::RelayStep(fields) => {
+                out.push(event::relay_step(fields), session.clone(), turn.clone());
+            }
+            crate::engines::EngineEvent::RelaySummary(mut fields) => {
+                /* The day it happened, for the report's trend: the daemon's clock, not the model's. */
+                fields["day"] = json!(chrono::Utc::now().format("%Y-%m-%d").to_string());
+                out.push(event::relay_summary(fields), session.clone(), turn.clone());
+            }
             crate::engines::EngineEvent::Plan(steps) => {
                 /* The plan outlives the turn and the daemon (long-task memory, 0.12): the next agent turn in
                    this chat is told where it left off. */

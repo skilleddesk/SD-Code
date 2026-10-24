@@ -592,7 +592,7 @@ pub fn open_stream_patient(
     socket.write_all(request.as_bytes()).map_err(|error| error.to_string())?;
     socket.set_read_timeout(Some(std::time::Duration::from_secs(1))).map_err(|error| error.to_string())?;
 
-    let patient = Patient::new(socket, turn_id, LOCAL_SILENCE_FIRST, LOCAL_SILENCE_AFTER);
+    let patient = Patient::new(socket, turn_id, crate::rotation::policy::first_silence(turn_id), LOCAL_SILENCE_AFTER);
     let silent = patient.silent.clone();
     let mut reader = std::io::BufReader::new(patient);
     let head = read_head(&mut reader).map_err(|error| if silent.load(std::sync::atomic::Ordering::SeqCst) { "silent".to_string() } else { error.to_string() })?;

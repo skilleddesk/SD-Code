@@ -25,6 +25,7 @@ impl Daemon {
             "rotation.get" => self.rotation_get(),
             "rotation.set" => self.rotation_set(envelope),
             "rotation.escalate" => self.rotation_escalate(envelope, out),
+            "relay.report" => self.relay_report(envelope),
             "ship.check" => self.ship_check(envelope),
             "graph.query" => self.graph_query(envelope),
             "secrets.sweep" => self.secrets_sweep(envelope),

@@ -282,6 +282,7 @@ export type SdcpMethod =
   | 'rotation.escalate'
   | 'rotation.set'
   | 'rotation.get'
+  | 'relay.report'
   | 'local.scan'
   | 'voice.model.download'
   | 'secrets.move'
@@ -812,10 +813,26 @@ export interface RotationGlobal {
   offloadLimit: number;
 }
 
+/** The `[relay]` part of `rotation.toml` (M1-1): Silent Relay's consent and limits. */
+export interface RelaySettings {
+  /** On = the person's consent that a step the local model cannot do goes to the chain by itself. */
+  auto: boolean;
+  localAttempts: number;
+  /** Seconds a local model may stay silent before the step is relayed. */
+  localTtftS: number;
+  maxCloudStepsPerTurn: number;
+  maxUsdPerTurn: number;
+  /** The small cloud chip on the LiveBar. */
+  showChip: boolean;
+  preroute: boolean;
+  learn: boolean;
+}
+
 /** `rotation.toml` as the Agents tab edits it (Phase 3). `warning` is set when the file on disk did not parse (the chain then reads as empty). */
 export interface RotationView {
   rows: RotationRow[];
   global: RotationGlobal;
+  relay: RelaySettings;
   warning: string | null;
   path: string;
 }
@@ -969,6 +986,69 @@ export interface ContextUpdatedEvent {
   percent: number;
   compacted: boolean;
   resumed: boolean;
+}
+
+/** One attempt on a Rotation Chain model (M1-6, `relay.step` in the plan). Append-only. */
+export interface RelayStepEvent {
+  type: 'RelayStep';
+  sessionId: string;
+  turnId: string;
+  stepId: string;
+  fromModel: string;
+  toModel: string;
+  /** `invalid_tool_call`, `verify_fail`, `loop`, `context_overflow`, `slow`, `refusal` or `quote_fail`. */
+  reason: string;
+  attempt: number;
+  tokensOut: number;
+  tokensIn: number;
+  costUsd: number | null;
+  /** `measured`, `priced` or `estimate`: an estimate is never shown as measured. */
+  costLabel: string;
+  durationMs: number;
+  /** `done`, `done-unverified`, `failed`, `red` or `refused`. */
+  outcome: string;
+}
+
+/** What a turn did on the local model and what went to the chain (M1-6, `relay.summary`). */
+export interface RelaySummaryEvent {
+  type: 'RelaySummary';
+  sessionId: string;
+  turnId: string;
+  stepsTotal: number;
+  stepsLocal: number;
+  stepsCloud: number;
+  attempts: number;
+  failed: number;
+  unverified: number;
+  byModel: { model: string; steps: number; tokensIn: number; tokensOut: number; costUsd: number }[];
+  tokensIn: number;
+  tokensOut: number;
+  costUsd: number;
+  costLabel: string;
+  reasons: { reason: string; count: number }[];
+  /** The day it was written (daemon clock, `YYYY-MM-DD`). */
+  day?: string;
+}
+
+/** `relay.report`: the summaries of a chat or a period, added up. */
+export interface RelayReport {
+  turns: number;
+  turnsWithCloud: number;
+  stepsTotal: number;
+  stepsLocal: number;
+  stepsCloud: number;
+  cloudPercent: number;
+  attempts: number;
+  failed: number;
+  unverified: number;
+  tokensIn: number;
+  tokensOut: number;
+  costUsd: number;
+  /** `none` when nothing went to the chain. */
+  costLabel: string;
+  byModel: { model: string; steps: number; tokensIn: number; tokensOut: number; costUsd: number }[];
+  reasons: { reason: string; count: number }[];
+  trend: { day: string; stepsLocal: number; stepsCloud: number; cloudPercent: number }[];
 }
 
 /** The agent asks the person something and waits (0.13, `ask_user`); `question.answer` replies. */
@@ -1784,6 +1864,8 @@ export type SdcpEvent =
   | ResearchSourcesEvent
   | TurnSteeredEvent
   | ContextUpdatedEvent
+  | RelayStepEvent
+  | RelaySummaryEvent
   | QuestionAskedEvent
   | QuestionAnsweredEvent
   | VerifyUpdatedEvent
@@ -1841,6 +1923,8 @@ export const SDCP_EVENT_TYPES = [
   'ResearchSources',
   'TurnSteered',
   'ContextUpdated',
+  'RelayStep',
+  'RelaySummary',
   'QuestionAsked',
   'QuestionAnswered',
   'VerifyUpdated',
@@ -2576,7 +2660,8 @@ export interface SdcpMethodMap {
   'features.preset': { params: { preset: "safe" | "balanced" | "economical" }; result: FeaturesView };
   'features.list': { params: Record<string, never>; result: FeaturesView };
   'rotation.escalate': { params: { sessionId: string; confirm?: boolean; autonomy?: string }; result: EscalateAnswer };
-  'rotation.set': { params: { rows: RotationRowInput[]; global?: RotationGlobal }; result: RotationView };
+  'rotation.set': { params: { rows: RotationRowInput[]; global?: RotationGlobal; relay?: Partial<RelaySettings> }; result: RotationView };
+  'relay.report': { params: { sessionId?: string; since?: string }; result: RelayReport };
   'rotation.get': { params: Record<string, never>; result: RotationView };
   'local.scan': { params: Record<string, never>; result: LocalScan };
   'voice.model.download': { params: { id: string; confirm: boolean }; result: { state: string; id?: string; done?: number; total?: number; error?: string } };

@@ -31,6 +31,7 @@ pub mod orient;
 pub mod patch;
 pub mod rescue;
 pub mod research;
+mod relay;
 pub mod search;
 pub mod skills;
 pub mod tools;
@@ -716,7 +717,7 @@ fn ask_model(backend: Backend, target: &Target, turn: (&str, crate::guard::model
                 let (lines, silent) = if target.local_context.is_some() {
                     crate::engines::native_api::open_stream_patient(&target.url, &target.headers, body, turn.0)
                         .map(|(lines, silent)| (lines, Some(silent)))
-                        .map_err(|reason| if reason == "silent" { quiet(crate::engines::native_api::LOCAL_SILENCE_FIRST.as_secs()) } else { reason })?
+                        .map_err(|reason| if reason == "silent" { quiet(crate::rotation::policy::first_silence(turn.0).as_secs()) } else { reason })?
                 } else {
                     (crate::engines::native_api::open_stream(&target.url, &target.headers, body)?, None)
                 };
@@ -1382,6 +1383,24 @@ fn review_note(workspace: &Workspace, changed: &HashSet<String>) -> Option<Strin
     ))
 }
 
+/// Says how the turn split between the local model and the chain, when it ends - however it ends (M1-7).
+struct RelaySummaryOnExit<'a> {
+    hook: &'a std::cell::RefCell<Option<relay::Hook>>,
+    sink: &'a EventSink,
+    session: &'a str,
+    turn: &'a str,
+}
+
+impl Drop for RelaySummaryOnExit<'_> {
+    fn drop(&mut self) {
+        if let Ok(hook) = self.hook.try_borrow() {
+            if let Some(hook) = hook.as_ref() {
+                hook.summary(self.sink, self.session, self.turn);
+            }
+        }
+    }
+}
+
 /// The gate of a turn (P0-10): the person's model, whether a Rotation Chain has an enabled row, whether the project is
 /// local-only, and the exceptions the person wrote down themselves.
 fn turn_gate(backend: Backend, target: &Target, prompt: &Prompt, policy: &crate::trust::policy::Policy) -> crate::guard::modelgate::Gate {
@@ -1572,6 +1591,11 @@ fn drive(
 
     if capped {
         specs = crate::sme::diet::at_most(&crate::sme::diet::prioritise(&specs, |spec| spec.name), crate::sme::diet::MAX_SCHEMAS);
+    }
+
+    /* M1-4: a step relayed to the chain gets the short tool list of the plan, not the whole agent's. */
+    if relay::in_scope() {
+        specs.retain(|spec| relay::TOOLS.contains(&spec.name));
     }
 
     let mut messages: Vec<Value> = prompt
@@ -1928,6 +1952,51 @@ fn drive(
         true
     };
 
+    /* M1: Silent Relay - only in that mode (a local model, a chain with a cloud row, the person's consent, a project that may leave this computer). */
+    let rotation_now = crate::data::home().map(|home| crate::data::rotation::load(&home).0).unwrap_or_default();
+    let relay_hook: std::cell::RefCell<Option<relay::Hook>> = std::cell::RefCell::new(if research_session.is_none() && backend == Backend::Ollama && !relay::in_scope() {
+        relay::Hook::start(&gate, &rotation_now, policy, workspace, &request_text, &prompt.session_id)
+    } else {
+        None
+    });
+    /* Whether this turn relays at all does not change while it runs; asked once, so no borrow is held where the hook is used. */
+    let relay_on = relay_hook.borrow().is_some();
+    let _relay_summary = RelaySummaryOnExit { hook: &relay_hook, sink, session: &prompt.session_id, turn: &turn_id };
+    /* M1-2: in this mode the local model is given `local_ttft_s` to say anything, not ten minutes. */
+    let _first_silence = relay_hook.borrow().as_ref().map(|hook| crate::rotation::policy::FirstSilence::set(&turn_id, hook.policy.local_ttft_s));
+
+    /* Asks the relay what to do about this step, from the signals it holds; answers what became of the step (`relay::Handled`). */
+    macro_rules! relay_step {
+        ($error:expr) => {{
+            let mut hook = relay_hook.borrow_mut();
+
+            match hook.as_mut() {
+                Some(hook) => {
+                    let error: String = $error;
+                    let env = relay::Env {
+                        workspace,
+                        options,
+                        policy,
+                        prompt,
+                        sink,
+                        checkpoint: context.checkpoint.clone(),
+                        dialect: target.dialect,
+                        goal: &request_text,
+                        changed: context.changed.iter().cloned().collect(),
+                        passed_checks: &passed_checks,
+                        error: &error,
+                        local_model: &target.model,
+                        gate: &gate,
+                    };
+                    let calls = context.calls;
+
+                    hook.handle(&env, &mut messages, &|question, options| gate::ask_question(sink, &turn_id, calls, question, options))
+                }
+                None => relay::Handled::Local,
+            }
+        }};
+    }
+
     for step in 1..=options.max_steps {
         if stopped() {
             return;
@@ -1958,7 +2027,7 @@ fn drive(
         let step_specs: &[dialect::ToolSpec] = if out_of_time { &[] } else { &specs };
         let shape = (ledger_on || receipt_on).then(|| crate::bench::ledger::shape(&system, step_specs, &messages, history_len, map_chars));
         let asked_at = std::time::Instant::now();
-        let asked = ask_model(backend, target, (&turn_id, crate::guard::modelgate::Purpose::Main), &system, &messages, step_specs, &notes_sink(said_something), &stopped);
+        let asked = ask_model(backend, target, (&turn_id, if relay::in_scope() { crate::guard::modelgate::Purpose::Chain } else { crate::guard::modelgate::Purpose::Main }), &system, &messages, step_specs, &notes_sink(said_something), &stopped);
 
         model_time += asked_at.elapsed();
 
@@ -2032,6 +2101,20 @@ fn drive(
             Err(reason) if reason == "stopped" => return,
             /* 1.0: a request the model finds too long is folded hard and asked again, once - it used to end the
                turn, with all of its work, on a window SDC had guessed. */
+            /* M1-2: a local model that stayed silent past the relay's limit, or a prompt that will not fit even folded: the chain takes the step. */
+            Err(reason) if relay_on && (reason.contains("stopped answering") || (too_long(&reason) && shrunk)) && {
+                if let Some(hook) = relay_hook.borrow_mut().as_mut() {
+                    if reason.contains("stopped answering") {
+                        hook.signals.ttft_ms = Some(u64::MAX);
+                    } else {
+                        hook.signals.context_overflow = true;
+                    }
+                }
+
+                relay_step!(reason.clone()) != relay::Handled::Local
+            } => {
+                continue;
+            }
             Err(reason) if too_long(&reason) && !shrunk => {
                 shrunk = true;
                 dialect::fold_old_results(target.dialect, &mut messages, 2);
@@ -2163,6 +2246,19 @@ fn drive(
 
         if !reply.text.trim().is_empty() {
             last_words = reply.text.clone();
+        }
+
+        /* M1-2: a model that declined, or answered with nothing at all, has not done the step: the chain tries it. */
+        if relay_on && (reply.stop == "refusal" || (reply.tool_uses.is_empty() && reply.text.trim().is_empty() && reply.stop != "max_tokens" && reply.stop != "length")) {
+            let said = if reply.text.trim().is_empty() { "the local model gave no answer".to_string() } else { reply.text.clone() };
+
+            if let Some(hook) = relay_hook.borrow_mut().as_mut() {
+                hook.signals.gave_up = true;
+            }
+
+            if relay_step!(said) != relay::Handled::Local {
+                continue;
+            }
         }
 
         if reply.stop == "refusal" {
@@ -2381,6 +2477,11 @@ fn drive(
 
             let estimate = crate::v3::on("router").then(|| crate::v3::router::estimate(&request_text, target.price, fixed + crate::context::tokens_of(&text))).flatten().map(|cost| format!(" · estimated ${cost:.3}"));
 
+            /* M1-7: the step that wrote the answer was the local model's too. */
+            if let Some(hook) = relay_hook.borrow_mut().as_mut() {
+                hook.local_step();
+            }
+
             sink.send(EngineEvent::Done {
                 summary: summary.to_string(),
                 meta: format!("{}{}{}{}", meta(step, input_tokens, output_tokens, target.price) + &cached(cached_tokens), timing(model_time, tool_time), estimate.unwrap_or_default(), if receipt_on { crate::v3::receipt(&receipt_parts, &saved) } else { String::new() }),
@@ -2576,6 +2677,26 @@ fn drive(
 
         if let Some(note) = pending_note.take() {
             dialect::append_user_text(target.dialect, &mut messages, &note);
+        }
+
+        /* M1-2: what this step showed, joined into one decision. A step the chain takes is not counted as a local one. */
+        if relay_on {
+            let level = crate::sme::confidence::assess(&turn_history, None).level;
+
+            if let Some(hook) = relay_hook.borrow_mut().as_mut() {
+                hook.observe(&reply.tool_uses, &results, context.edits, printed_refusals, level, reply.ttft_ms);
+            }
+
+            let error = results.iter().rev().find(|result| result.2 || crate::v3::lessons::exit_code(&result.1).is_some_and(|code| code != 0)).map(|result| result.1.clone()).unwrap_or_else(|| last_words.clone());
+
+            match relay_step!(error) {
+                relay::Handled::Local => {
+                    if let Some(hook) = relay_hook.borrow_mut().as_mut() {
+                        hook.local_step();
+                    }
+                }
+                relay::Handled::Done | relay::Handled::Failed => printed_refusals = 0,
+            }
         }
 
         /* v3 I3: the draft model is stuck - the strong one takes the task over from a capsule of the state. */
@@ -3011,7 +3132,7 @@ mod end_to_end {
 
     /// One SSE reply per request, in order. Each request's body is kept so the test can read what the
     /// agent sent back.
-    fn provider(replies: Vec<String>) -> (String, std::thread::JoinHandle<Vec<Value>>) {
+    pub(super) fn provider(replies: Vec<String>) -> (String, std::thread::JoinHandle<Vec<Value>>) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("http://{}/v1/chat/completions", listener.local_addr().unwrap());
         let server = std::thread::spawn(move || {
@@ -3054,7 +3175,7 @@ mod end_to_end {
 
     /// Like [`provider`], but each entry is the whole HTTP response (status line and all) rather than an
     /// always-200 SSE body - for a reply the provider refuses outright, such as a content filter's 400.
-    fn raw_provider(responses: Vec<String>) -> (String, std::thread::JoinHandle<Vec<Value>>) {
+    pub(super) fn raw_provider(responses: Vec<String>) -> (String, std::thread::JoinHandle<Vec<Value>>) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("http://{}/v1/chat/completions", listener.local_addr().unwrap());
         let server = std::thread::spawn(move || {
@@ -3096,7 +3217,7 @@ mod end_to_end {
     }
 
     /// A 400 in Alibaba's shape: the provider's own filter refused the reply before anyone saw it.
-    fn blocked() -> String {
+    pub(super) fn blocked() -> String {
         let body = serde_json::json!({
             "error": { "message": "<400> InternalError.Algo.DataInspectionFailed: Output data may contain inappropriate content." }
         })
@@ -3106,22 +3227,22 @@ mod end_to_end {
     }
 
     /// A normal 200 SSE reply, for [`raw_provider`].
-    fn ok(sse: String) -> String {
+    pub(super) fn ok(sse: String) -> String {
         format!("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n{sse}")
     }
 
-    fn chunk(delta: Value) -> String {
+    pub(super) fn chunk(delta: Value) -> String {
         format!("data: {}\n\n", serde_json::json!({ "choices": [{ "delta": delta }] }))
     }
 
-    fn call(id: &str, name: &str, arguments: Value) -> String {
+    pub(super) fn call(id: &str, name: &str, arguments: Value) -> String {
         chunk(serde_json::json!({ "tool_calls": [{ "index": 0, "id": id, "function": { "name": name, "arguments": arguments.to_string() } }] }))
             + "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n"
             + "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":20}}\n\ndata: [DONE]\n\n"
     }
 
     /// Several tool calls in one reply, the way OpenAI-shaped providers stream them: one delta, an index each.
-    fn calls(list: Vec<(&str, &str, Value)>) -> String {
+    pub(super) fn calls(list: Vec<(&str, &str, Value)>) -> String {
         let deltas: Vec<Value> = list
             .into_iter()
             .enumerate()
@@ -4155,7 +4276,7 @@ mod end_to_end {
         let _ = std::fs::remove_dir_all(&root);
     }
 
-    fn prompt_in(root: &std::path::Path, turn: &str, text: &str, model: &str) -> Prompt {
+    pub(super) fn prompt_in(root: &std::path::Path, turn: &str, text: &str, model: &str) -> Prompt {
         Prompt {
             session_id: "s1".into(),
             turn_id: turn.into(),
@@ -4173,7 +4294,7 @@ mod end_to_end {
     }
 
     /// Ollama's own NDJSON, as one HTTP response.
-    fn ndjson(lines: &[Value]) -> String {
+    pub(super) fn ndjson(lines: &[Value]) -> String {
         let body = lines.iter().map(|line| line.to_string()).collect::<Vec<_>>().join("\n") + "\n";
 
         format!("HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\nConnection: close\r\n\r\n{body}")
@@ -4389,7 +4510,7 @@ mod end_to_end {
         assert!(cloud.iter().any(|name| name == "run_command"));
     }
 
-    fn local_target(url: &str, num_ctx: u64) -> Target {
+    pub(super) fn local_target(url: &str, num_ctx: u64) -> Target {
         Target {
             url: url.to_string(),
             headers: vec![("content-type".to_string(), "application/json".to_string())],
@@ -4455,7 +4576,7 @@ mod end_to_end {
     }
 
     /// A loopback address that must never be called: nothing accepts on it, and `untouched` says whether anyone tried.
-    fn forbidden_provider() -> (String, impl Fn() -> bool) {
+    pub(super) fn forbidden_provider() -> (String, impl Fn() -> bool) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("http://{}/v1/chat/completions", listener.local_addr().unwrap());
 
@@ -4464,7 +4585,7 @@ mod end_to_end {
         (url, move || matches!(listener.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock))
     }
 
-    fn fake_target(url: String, model: &str) -> Target {
+    pub(super) fn fake_target(url: String, model: &str) -> Target {
         Target {
             url,
             headers: vec![("content-type".to_string(), "application/json".to_string())],
@@ -4783,3 +4904,6 @@ mod l5_budget {
         assert!(prompt.contains("Banglish"), "so is the language the person writes in");
     }
 }
+
+#[cfg(test)]
+mod relay_tests;

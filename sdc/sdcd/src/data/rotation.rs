@@ -246,8 +246,30 @@ pub fn save(home: &Path, rotation: &Rotation) -> Result<(), String> {
     std::fs::rename(&partial, &file).map_err(|error| error.to_string())
 }
 
+#[cfg(test)]
+thread_local! {
+    /// A rotation a test turn runs with, instead of the data directory's file (which every test in the process shares).
+    static FORCED: std::cell::RefCell<Option<Rotation>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Runs `body` on this thread with `rotation` as the person's `rotation.toml` (tests).
+#[cfg(test)]
+pub fn forcing<T>(rotation: Rotation, body: impl FnOnce() -> T) -> T {
+    FORCED.with(|forced| *forced.borrow_mut() = Some(rotation));
+
+    let result = body();
+
+    FORCED.with(|forced| *forced.borrow_mut() = None);
+    result
+}
+
 /// The rotation to use, plus the one-line warning to show if the file was broken.
 pub fn load(home: &Path) -> (Rotation, Option<String>) {
+    #[cfg(test)]
+    if let Some(forced) = FORCED.with(|forced| forced.borrow().clone()) {
+        return (forced, None);
+    }
+
     match read(home) {
         Read::Ok(rotation) => (rotation, None),
         Read::Broken(reason) => (Rotation::default(), Some(reason)),

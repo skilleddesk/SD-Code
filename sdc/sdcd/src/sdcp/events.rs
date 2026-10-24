@@ -548,6 +548,16 @@ pub mod event {
         base("PermissionResolved", json!({ "permissionId": permission_id, "decision": decision }))
     }
 
+    /// One attempt on a chain model (M1-6, `relay.step`): `fields` come from `rotation::ledger::step_json`.
+    pub fn relay_step(fields: Value) -> Value {
+        base("RelayStep", fields)
+    }
+
+    /// A turn's split between the local model and the chain (M1-6, `relay.summary`): `rotation::ledger::TurnLedger::summary_json`.
+    pub fn relay_summary(fields: Value) -> Value {
+        base("RelaySummary", fields)
+    }
+
     pub fn checkpoint_saved(session_id: &str, checkpoint: Value) -> Value {
         base("CheckpointSaved", json!({ "sessionId": session_id, "checkpoint": checkpoint }))
     }

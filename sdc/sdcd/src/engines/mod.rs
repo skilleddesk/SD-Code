@@ -199,6 +199,10 @@ pub enum EngineEvent {
     },
     /// The agent's checklist, as it stands now: `[{text, status}]` (the plan card, v4).
     Plan(Value),
+    /// One attempt on a Rotation Chain model (M1-6): the `RelayStep` event's fields.
+    RelayStep(Value),
+    /// A turn's local-versus-cloud split (M1-6): the `RelaySummary` event's fields.
+    RelaySummary(Value),
     /// What the turn has used so far, as the provider reported it (0.12, the cost governor). Totals, not
     /// increments: a later `Usage` of the same turn supersedes an earlier one field by field.
     Usage { input_tokens: u64, output_tokens: u64, cost_usd: Option<f64> },

@@ -353,6 +353,7 @@
           "rotation.escalate",
           "rotation.set",
           "rotation.get",
+          "relay.report",
           "local.scan",
           "voice.model.download",
           "secrets.move",
@@ -447,6 +448,8 @@
           "ShadowDbUpdated",
           "StagingUpdated",
           "ContextUpdated",
+          "RelayStep",
+          "RelaySummary",
           "QuestionAsked",
           "QuestionAnswered"
         ]
@@ -2066,7 +2069,9 @@
             "programMissing": "boolean",
             "modelMissing": "boolean",
             "installHint": "string?",
-            "models": ["object"],
+            "models": [
+              "object"
+            ],
             "download": "object"
           }
         },
@@ -2510,7 +2515,8 @@
             "rows": [
               "object"
             ],
-            "global": "object?"
+            "global": "object?",
+            "relay": "object?"
           },
           "result": {
             "rows": [
@@ -2518,7 +2524,8 @@
             ],
             "global": "object",
             "warning": "string?",
-            "path": "string"
+            "path": "string",
+            "relay": "object"
           }
         },
         "rotation.get": {
@@ -2529,7 +2536,8 @@
             ],
             "global": "object",
             "warning": "string?",
-            "path": "string"
+            "path": "string",
+            "relay": "object"
           }
         },
         "local.scan": {
@@ -2881,6 +2889,36 @@
           },
           "result": {
             "erasing": "boolean"
+          }
+        },
+        "relay.report": {
+          "params": {
+            "sessionId": "string?",
+            "since": "string?"
+          },
+          "result": {
+            "turns": "number",
+            "turnsWithCloud": "number",
+            "stepsTotal": "number",
+            "stepsLocal": "number",
+            "stepsCloud": "number",
+            "cloudPercent": "number",
+            "attempts": "number",
+            "failed": "number",
+            "unverified": "number",
+            "tokensIn": "number",
+            "tokensOut": "number",
+            "costUsd": "number",
+            "costLabel": "string",
+            "byModel": [
+              "object"
+            ],
+            "reasons": [
+              "object"
+            ],
+            "trend": [
+              "object"
+            ]
           }
         }
       }

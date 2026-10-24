@@ -475,6 +475,21 @@ impl Store {
         rows.collect::<std::result::Result<Vec<_>, _>>().map_err(Into::into)
     }
 
+    /// The events of one type, oldest first - optionally from a time on (RFC 3339) and for one chat. What `relay.report` adds up.
+    pub fn events_of_type(&self, kind: &str, since: Option<&str>, session_id: Option<&str>) -> Result<Vec<StoredEvent>> {
+        let connection = self.connection.lock().unwrap();
+        let mut statement = connection.prepare(
+            "SELECT seq, ts, session_id, turn_id, payload FROM events WHERE type = ?1 AND (?2 IS NULL OR ts >= ?2) AND (?3 IS NULL OR session_id = ?3) ORDER BY seq ASC",
+        )?;
+        let rows = statement.query_map(params![kind, since, session_id], |row| {
+            let payload: String = row.get(4)?;
+
+            Ok(StoredEvent { seq: row.get(0)?, ts: row.get(1)?, session_id: row.get(2)?, turn_id: row.get(3)?, event: serde_json::from_str(&payload).unwrap_or(Value::Null) })
+        })?;
+
+        rows.collect::<std::result::Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
     /// The turns that completed after `seq` - the ones a compaction pass has not seen.
     pub fn turns_completed_after(&self, seq: i64) -> Result<Vec<String>> {
         let connection = self.connection.lock().unwrap();

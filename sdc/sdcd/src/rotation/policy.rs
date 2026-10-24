@@ -92,6 +92,42 @@ impl RelayPolicy {
     }
 }
 
+/// How long a local model may stay silent before it says its first word, per turn. Without an entry it is the old ten minutes (Local-only
+/// and the manual Local Rotation keep that); a Silent Relay turn registers the relay's own, much shorter limit (M1-2).
+fn silences() -> &'static std::sync::Mutex<std::collections::HashMap<String, u64>> {
+    static SILENCES: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, u64>>> = std::sync::OnceLock::new();
+
+    SILENCES.get_or_init(Default::default)
+}
+
+/// The first-word limit of a turn.
+pub fn first_silence(turn_id: &str) -> std::time::Duration {
+    let own = silences().lock().ok().and_then(|map| map.get(turn_id).copied());
+
+    own.map_or(crate::engines::native_api::LOCAL_SILENCE_FIRST, std::time::Duration::from_secs)
+}
+
+/// Holds a turn's first-word limit for as long as the turn runs.
+pub struct FirstSilence(String);
+
+impl FirstSilence {
+    pub fn set(turn_id: &str, seconds: u32) -> Self {
+        if let Ok(mut map) = silences().lock() {
+            map.insert(turn_id.to_string(), u64::from(seconds));
+        }
+
+        Self(turn_id.to_string())
+    }
+}
+
+impl Drop for FirstSilence {
+    fn drop(&mut self) {
+        if let Ok(mut map) = silences().lock() {
+            map.remove(&self.0);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -137,6 +173,20 @@ mod tests {
     #[test]
     fn the_v3_switch_turns_the_relay_on_without_a_file() {
         assert!(crate::v3::forcing(&["relay.auto"], || RelayPolicy::default().enabled()));
+    }
+
+    #[test]
+    fn a_relay_turn_has_its_own_first_word_limit_and_gives_it_back() {
+        assert_eq!(first_silence("turn-silence-none"), crate::engines::native_api::LOCAL_SILENCE_FIRST, "the old limit unless the turn registered one");
+
+        {
+            let _held = FirstSilence::set("turn-silence-45", 45);
+
+            assert_eq!(first_silence("turn-silence-45"), std::time::Duration::from_secs(45));
+            assert_eq!(first_silence("turn-silence-other"), crate::engines::native_api::LOCAL_SILENCE_FIRST, "another turn is untouched");
+        }
+
+        assert_eq!(first_silence("turn-silence-45"), crate::engines::native_api::LOCAL_SILENCE_FIRST);
     }
 
     #[test]

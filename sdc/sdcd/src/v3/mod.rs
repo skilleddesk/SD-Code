@@ -370,6 +370,19 @@ impl TurnSwitches {
     }
 }
 
+impl TurnSwitches {
+    /// A turn's settled switches, to be put back after a nested loop on the same turn (a relayed step) has replaced and removed them.
+    pub fn snapshot(turn_id: &str) -> Option<Vec<&'static str>> {
+        turns().lock().unwrap_or_else(|poison| poison.into_inner()).get(turn_id).cloned()
+    }
+
+    pub fn restore(turn_id: &str, switches: Option<Vec<&'static str>>) {
+        if let Some(on) = switches {
+            turns().lock().unwrap_or_else(|poison| poison.into_inner()).insert(turn_id.to_string(), on);
+        }
+    }
+}
+
 impl Drop for TurnSwitches {
     fn drop(&mut self) {
         turns().lock().unwrap_or_else(|poison| poison.into_inner()).remove(&self.turn_id);

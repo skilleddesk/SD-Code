@@ -78,6 +78,26 @@ fn view(rotation: &Rotation, warning: Option<String>, home: &std::path::Path) ->
     })
 }
 
+/// `7d`, `24h`, `30m` or an RFC 3339 time, as the RFC 3339 time it means (now minus the period).
+pub fn parse_since(text: &str, now: chrono::DateTime<chrono::Utc>) -> Option<String> {
+    let text = text.trim();
+
+    if let Ok(time) = chrono::DateTime::parse_from_rfc3339(text) {
+        return Some(time.with_timezone(&chrono::Utc).to_rfc3339());
+    }
+
+    let (number, unit) = text.split_at(text.len().checked_sub(1)?);
+    let count: i64 = number.parse().ok().filter(|count| *count > 0)?;
+    let span = match unit {
+        "d" => chrono::Duration::days(count),
+        "h" => chrono::Duration::hours(count),
+        "m" => chrono::Duration::minutes(count),
+        _ => return None,
+    };
+
+    Some((now - span).to_rfc3339())
+}
+
 fn relay_json(relay: &RelayPolicy) -> Value {
     json!({
         "auto": relay.auto,
@@ -181,6 +201,19 @@ impl Daemon {
         let (saved, warning) = rotation::load(&home);
 
         Ok(view(&saved, warning, &home))
+    }
+
+    /// `relay.report` (M1-7): how much of the work the local model did and how much went to the chain, from the `RelaySummary` events of the log.
+    /// `sessionId` narrows it to one chat, `since` (`7d`, `24h`, or an RFC 3339 time) to a period.
+    pub(super) fn relay_report(&self, envelope: &Envelope) -> Result<Value, ErrorObject> {
+        let since = match envelope.opt_str("since") {
+            Some(text) => Some(parse_since(&text, chrono::Utc::now()).ok_or_else(|| ErrorObject::bad_request("`since` is a period like 7d or 24h, or an RFC 3339 time"))?),
+            None => None,
+        };
+        let summaries = self.store().events_of_type("RelaySummary", since.as_deref(), envelope.opt_str("sessionId").as_deref()).map_err(ErrorObject::internal)?;
+        let values: Vec<Value> = summaries.into_iter().map(|stored| stored.event).collect();
+
+        Ok(crate::rotation::ledger::report(&values))
     }
 
     /// The two-step Escalate (see the module's note).
@@ -355,5 +388,18 @@ mod tests {
 
         assert_eq!((relay.auto, relay.max_usd_per_turn, relay.max_cloud_steps_per_turn, relay.show_chip), (true, 1.0, 3, false));
         assert_eq!(relay_json(&relay)["maxCloudStepsPerTurn"], 3);
+    }
+
+    #[test]
+    fn a_period_becomes_a_time_and_nonsense_is_refused() {
+        let now = chrono::DateTime::parse_from_rfc3339("2026-10-20T12:00:00Z").unwrap().with_timezone(&chrono::Utc);
+
+        assert_eq!(parse_since("7d", now).as_deref(), Some("2026-10-13T12:00:00+00:00"));
+        assert_eq!(parse_since("24h", now).as_deref(), Some("2026-10-19T12:00:00+00:00"));
+        assert_eq!(parse_since("2026-10-01T00:00:00Z", now).as_deref(), Some("2026-10-01T00:00:00+00:00"));
+
+        for bad in ["", "d", "0d", "-3d", "7x", "soon", "7"] {
+            assert_eq!(parse_since(bad, now), None, "{bad:?}");
+        }
     }
 }
