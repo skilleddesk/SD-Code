@@ -41,6 +41,14 @@ pub fn check_fact(command: &str) -> Option<String> {
 
 /// Writes a fact SDC learned into the memory file, below the person's own, once. Answers whether it was new.
 pub fn remember(root: &Path, fact: &str) -> bool {
+    /* M3-1: a fact SDC learned from a passing check was shown by a tool: `[observed]` (Memory 2.0). */
+    let marked;
+    let fact = if crate::v3::on("memory.v2") && !fact.trim_start().starts_with('[') {
+        marked = format!("{} {}", crate::v3::memory_v2::Origin::Observed.tag(), fact.trim());
+        marked.as_str()
+    } else {
+        fact
+    };
     let path = root.join(FILE);
     let text = std::fs::read_to_string(&path).unwrap_or_default();
 

@@ -2532,6 +2532,16 @@ fn drive(
                 }
             }
 
+            /* M3-2: once the turn is over - never during it - a pass in code tidies the project's memory: marks, adds what the turn established,
+               replaces what the person corrected, merges repeats. No model is called. */
+            if summary == "Done" && research_session.is_none() && prompt.remote.is_none() && crate::v3::on("memory.v2") {
+                let (root, turn) = (std::path::PathBuf::from(workspace.root()), crate::v3::memory_v2::Turn { request: request_text.clone(), passed_checks: passed_checks.clone() });
+
+                std::thread::spawn(move || {
+                    let _ = crate::v3::memory_v2::pass(&root, &turn);
+                });
+            }
+
             /* v3 L4: what this turn taught the bandit - it got there, and what it cost to get there. */
             if bandit {
                 let cost = crate::v3::router::estimate(&routed_request, target.price, fixed + crate::context::tokens_of(&text));

@@ -108,6 +108,8 @@ impl Daemon {
     fn memory_add(&self, envelope: &Envelope) -> Result<Value, ErrorObject> {
         let place = self.memory_place(envelope)?;
         let fact = envelope.require_str("text")?;
+        /* M3-1: what the person tells SDC to remember is theirs - `[stated]` (Memory 2.0). */
+        let fact = if crate::v3::on("memory.v2") && !matches!(place, MemoryPlace::Global(_)) { format!("{} {}", crate::v3::memory_v2::Origin::Stated.tag(), fact.trim()) } else { fact };
         let text = append_fact(&place.read(), &fact);
 
         place.write(&text)?;

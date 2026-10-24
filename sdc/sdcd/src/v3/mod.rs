@@ -23,6 +23,7 @@ pub mod knowledge;
 pub mod knowledge_core;
 pub mod lessons;
 pub mod memory;
+pub mod memory_v2;
 pub mod ledger_diff;
 pub mod outline;
 pub mod preset;
@@ -198,6 +199,7 @@ pub const FEATURES: &[Feature] = &[
     Feature { name: "sme.rule_capsule", default_on: false, token_technique: true, scope: Scope::All, evidence: Evidence::None, what: "M2-4: every eighth step a reminder of at most 120 tokens - the goal, what done means, what is never allowed and the language to answer in" },
     Feature { name: "context.provenance", default_on: false, token_technique: true, scope: Scope::All, evidence: Evidence::None, what: "M2-5: every part of the context is tagged [user], [policy], [tool-output], [web], [file] or [memory], and the system prompt says only the first two can instruct" },
     Feature { name: "turn.contract", default_on: false, token_technique: false, scope: Scope::All, evidence: Evidence::None, what: "M2-6: a soft limit of tool calls by the job's size (3 / 10 / 25) that informs and carries on, and a final answer of three parts (what changed, what was verified, what was not done) after a turn that changed files" },
+    Feature { name: "memory.v2", default_on: false, token_technique: true, scope: Scope::All, evidence: Evidence::None, what: "M3: memory facts carry [stated] / [observed] / [inferred] (an inferred one is never a rule); a code-only pass after the turn adds, corrects and merges; the model is sent an index of the memory files instead of their text; temporary facts are not kept and a file has a size limit. Unmeasured" },
     Feature { name: "parallel", default_on: true, token_technique: false, scope: Scope::All, evidence: Evidence::Safety, what: "PAR: several agents at once, each in its own git worktree, on one board" },
 ];
 

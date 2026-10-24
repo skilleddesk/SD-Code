@@ -108,7 +108,19 @@ impl Daemon {
                     /* v3 L0: with `v3.memory` only the facts this request touches travel (off until it passes Q3). */
                     let text = if crate::v3::on("memory") { crate::v3::memory::select(&text, request, crate::v3::memory::MAX_FACTS) } else { text };
 
-                    parts.push(format!("What this project remembers (.sdc/memory.md):\n{}", text.chars().take(4000).collect::<String>()));
+                    /* M3: with Memory 2.0 a small memory travels whole but a guess is not a rule, and a larger one travels as an index of its files. */
+                    if crate::v3::on("memory.v2") {
+                        let facts = crate::v3::memory_v2::parse(&text).len();
+                        let listed = if remote.is_none() { crate::v3::memory_v2::entries(std::path::Path::new(root)) } else { Vec::new() };
+
+                        if facts > 5 && !listed.is_empty() {
+                            parts.push(crate::v3::memory_v2::index_block(&listed));
+                        } else {
+                            parts.push(format!("What this project remembers (.sdc/memory.md):\n{}", crate::v3::memory_v2::for_context(&text).chars().take(4000).collect::<String>()));
+                        }
+                    } else {
+                        parts.push(format!("What this project remembers (.sdc/memory.md):\n{}", text.chars().take(4000).collect::<String>()));
+                    }
                 }
             }
         }

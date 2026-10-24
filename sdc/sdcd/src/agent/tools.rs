@@ -2091,8 +2091,22 @@ fn remember(context: &mut ToolContext, call_id: &str, fact: &str, scope: &str, i
     } else {
         format!("{fact} ({source}: `{quote}`)")
     };
-    let fact = fact.as_str();
     let global = scope == "global";
+
+    /* M3: with Memory 2.0 a fact a model keeps says where it came from - checked against a file's own line, it was observed; otherwise it is a guess -
+       and a fact that is only true today is not memory (it belongs in the plan). */
+    let fact = if crate::v3::on("memory.v2") && !global {
+        if !crate::v3::memory_v2::lasts_a_month(&fact) {
+            return Outcome::error("That sounds like how things are today, not something that will still be true in a month, so it is not kept in memory. Put it in the plan (update_plan), or keep only the lasting part.");
+        }
+
+        let origin = if quote.is_empty() { crate::v3::memory_v2::Origin::Inferred } else { crate::v3::memory_v2::Origin::Observed };
+
+        format!("{} {fact}", origin.tag())
+    } else {
+        fact
+    };
+    let fact = fact.as_str();
 
     /* SDC's own memory, not a change to the project: no checkpoint, not in the turn's changed files. */
     started(context, call_id, "read", "Remember", fact);
