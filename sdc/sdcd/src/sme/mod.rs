@@ -15,6 +15,7 @@
 
 pub mod budget;
 pub mod catalog;
+pub mod cite;
 pub mod confidence;
 pub mod diet;
 pub mod fast;

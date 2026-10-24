@@ -323,11 +323,13 @@ pub struct Session {
     searches: AtomicUsize,
     pages: AtomicUsize,
     sources: Mutex<Vec<Source>>,
+    /// The sentences of every page read in full, by source number (M4-2): what a `[n:i]` pointer is checked against.
+    sentences: Mutex<std::collections::HashMap<usize, Vec<String>>>,
 }
 
 impl Session {
     pub fn new(limits: Limits) -> Self {
-        Self { limits, started: Instant::now(), searches: AtomicUsize::new(0), pages: AtomicUsize::new(0), sources: Mutex::new(Vec::new()) }
+        Self { limits, started: Instant::now(), searches: AtomicUsize::new(0), pages: AtomicUsize::new(0), sources: Mutex::new(Vec::new()), sentences: Mutex::new(Default::default()) }
     }
 
     /// Whether the time is up.
@@ -399,6 +401,18 @@ impl Session {
         n
     }
 
+    /// Keeps a page's sentences under its source number.
+    pub fn keep_sentences(&self, n: usize, sentences: Vec<String>) {
+        if let Ok(mut pages) = self.sentences.lock() {
+            pages.insert(n, sentences);
+        }
+    }
+
+    /// The sentences of source `n`, when its page was read in full.
+    pub fn sentences_of(&self, n: usize) -> Option<Vec<String>> {
+        self.sentences.lock().ok()?.get(&n).cloned()
+    }
+
     pub fn sources(&self) -> Vec<Source> {
         self.sources.lock().map(|sources| sources.clone()).unwrap_or_default()
     }
@@ -446,10 +460,11 @@ pub fn system_prompt(language: &crate::understand::Reading, limits: &Limits, pro
          - First call update_plan with 3 to 5 search queries that together cover the question (split a broad question into parts). For anything that changes, put the current year ({year}) in the query - never an older year from your training. Write the queries in English (the web's largest index), unless the topic belongs to another language's sources.\n\
          - Run the searches with web_search. Every result has a number [n]; the same page keeps its number all through.\n\
          - Read the most useful pages with web_fetch - official documentation, the primary source, recent dates - at least two different sources before you answer, unless the first one fully answers the question.{per_page}\n\
-         - Then answer. Every claim carries the [n] of the source it comes from. Prefer recent sources and say the date when it matters. When sources disagree, say so.\n\
+         - Then answer. Every claim carries the [n] of the source it comes from{pointer}. Prefer recent sources and say the date when it matters. When sources disagree, say so.\n\
          - If the sources do not answer the question, say exactly what could not be found. Never fill a gap with a guess, and never cite a number you were not given.\n\
          - Keep the answer focused: a short direct answer first, then the details. Do not list the sources yourself - SDC adds the numbered list under your answer.\n\
          - Language: the person writes in {label}. Write the answer in {reply}; keep names, numbers, code and quotes as they are.",
+        pointer = if crate::v3::on("research.sentence_cite") { ", and the sentence: a page is shown as numbered sentences like [2:14], so cite [2:14] or [2:14-16] for the sentences that say it" } else { "" },
         today = chrono::Local::now().format("%Y-%m-%d"),
         year = chrono::Local::now().format("%Y"),
         searches = limits.max_searches,
@@ -538,5 +553,24 @@ mod tests {
         assert!(brief.contains("5 searches, 10 pages, 10 minutes"));
         assert!(brief.contains("task sub-agent"));
         assert!(brief.contains(bengali.reply_in));
+    }
+
+    /// M4-2: with sentence citations the prompt asks for pointers, and a session keeps a page's sentences under its source number.
+    #[test]
+    fn sentence_citations_change_the_prompt_only_when_switched_on_and_the_session_remembers_the_sentences() {
+        let language = crate::understand::Reading::of("what is the rate limit?");
+        let limits = Limits { max_searches: 3, max_pages: 3, max_minutes: 5 };
+        let off = system_prompt(&language, &limits, "DuckDuckGo", false);
+        let on = crate::v3::forcing(&["research.sentence_cite"], || system_prompt(&language, &limits, "DuckDuckGo", false));
+
+        assert!(!off.contains("numbered sentences") && on.contains("cite [2:14] or [2:14-16]"));
+
+        let session = Session::new(limits);
+        let n = session.cite("https://example.com/limits", "Limits", None, true);
+
+        session.keep_sentences(n, vec!["The limit is 100 requests per minute.".to_string()]);
+
+        assert_eq!(session.sentences_of(n).unwrap().len(), 1);
+        assert_eq!(session.sentences_of(n + 1), None);
     }
 }

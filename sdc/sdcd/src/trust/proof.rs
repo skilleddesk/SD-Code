@@ -106,6 +106,8 @@ pub fn build(store: &Store, log: &[StoredEvent], session_id: &str, turn_id: Opti
             "cost": store.usage_of(turn).ok().flatten(),
             /* M1-7: what went to the chain, from the turn's own relay events - null for a turn that never relayed or counted. */
             "relay": relay_of(&events),
+            /* M4-3: the closing contract's three parts, filled from the record - not from what the model said it did. */
+            "completion": if crate::v3::on("turn.contract") { completion_of(&files, &commands, verify_ref(&events), &row["state"]) } else { Value::Null },
             "rollbackPoint": checkpoint,
             "audit": audit,
         }));
@@ -122,6 +124,68 @@ pub fn build(store: &Store, log: &[StoredEvent], session_id: &str, turn_id: Opti
     })
 }
 
+fn verify_ref<'a>(events: &'a [&StoredEvent]) -> Option<&'a Value> {
+    events.iter().rev().find(|entry| entry.event["type"] == "VerifyUpdated" && entry.event["state"] == "done").map(|entry| &entry.event)
+}
+
+/// What changed, what was verified and what was not done, from the pack's own record: the files and commands the tools reported, Verify's
+/// checks and the turn's state. A part with nothing in it says so in words - "nothing" is a statement, an empty list is a silence.
+pub fn completion_of(files: &[Value], commands: &[Value], verify: Option<&Value>, state: &Value) -> Value {
+    let mut changed = Vec::new();
+    let mut not_done = Vec::new();
+
+    for file in files {
+        let line = format!("{} ({}{})", file["path"].as_str().unwrap_or_default(), file["action"].as_str().unwrap_or("edit").to_lowercase(), file["meta"].as_str().filter(|meta| !meta.is_empty()).map(|meta| format!(", {meta}")).unwrap_or_default());
+
+        if file["status"] == "done" || file["status"].is_null() {
+            changed.push(line);
+        } else {
+            not_done.push(format!("{} was not changed ({})", file["path"].as_str().unwrap_or_default(), file["status"].as_str().unwrap_or("failed")));
+        }
+    }
+
+    let mut verified = Vec::new();
+
+    match verify {
+        Some(event) => {
+            for check in event["checks"].as_array().cloned().unwrap_or_default() {
+                let name = check["name"].as_str().or_else(|| check["command"].as_str()).unwrap_or("a check");
+
+                match check["status"].as_str() {
+                    Some("pass") => verified.push(format!("{name} passed")),
+                    Some("fail") => not_done.push(format!("{name} failed")),
+                    _ => not_done.push(format!("{name} did not finish")),
+                }
+            }
+
+            if event["pass"] == false && verified.is_empty() {
+                not_done.push("Verify did not pass".to_string());
+            }
+        }
+        None => {
+            if !changed.is_empty() {
+                not_done.push("Verify was not run on this turn".to_string());
+            }
+        }
+    }
+
+    let ran = commands.iter().filter(|command| command["status"] == "done").count();
+
+    if ran > 0 && verified.is_empty() {
+        verified.push(format!("{ran} command(s) ran; Verify did not check the change"));
+    }
+
+    if state != "done" && !state.is_null() && state != "completed" {
+        not_done.push(format!("the turn ended as `{}`", state.as_str().unwrap_or("unfinished")));
+    }
+
+    json!({
+        "changed": if changed.is_empty() { vec!["no files".to_string()] } else { changed },
+        "verified": if verified.is_empty() { vec!["nothing ran".to_string()] } else { verified },
+        "notDone": if not_done.is_empty() { vec!["nothing".to_string()] } else { not_done },
+    })
+}
+
 /// The relay part of a turn's pack: its summary and every attempt, as the events recorded them. `Null` for a turn with neither.
 fn relay_of(events: &[&StoredEvent]) -> Value {
     let summary = events.iter().rev().find(|entry| entry.event["type"] == "RelaySummary").map(|entry| entry.event.clone());
@@ -134,37 +198,42 @@ fn relay_of(events: &[&StoredEvent]) -> Value {
 }
 
 /// The report's words, in the languages SDC writes reports in; English for anything else.
-fn words(lang: &str) -> [&'static str; 25] {
+fn words(lang: &str) -> [&'static str; 28] {
     match lang.split('-').next().unwrap_or("en") {
         "bn" => [
             "প্রমাণপত্র", "অনুরোধ", "ইঞ্জিন", "যা বদলেছে", "যে কমান্ড চলেছে", "যাচাই", "পাস", "পাস হয়নি", "যাচাই হয়নি",
             "বিশ্বাস স্কোর", "খরচ", "ফেরার বিন্দু", "অডিট লেজার", "অক্ষত — কেউ বদলায়নি", "ভাঙা — এই সারিতে বদল ধরা পড়েছে",
             "দ্বিতীয় AI-এর রায়", "গোপন তথ্য (secret)", "ঝুঁকিপূর্ণ কোড", "কিছু পাওয়া যায়নি", "আনুমানিক", "মাপা", "তৈরি",
             "সাইলেন্ট রিলে", "লোকাল ধাপ", "ক্লাউড চেইনের ধাপ",
+            "যা বদলেছে (রেকর্ড থেকে)", "যা যাচাই হয়েছে", "যা করা হয়নি",
         ],
         "hi" => [
             "प्रमाण पत्र", "अनुरोध", "इंजन", "क्या बदला", "कौन से कमांड चले", "जाँच", "पास", "पास नहीं", "जाँच नहीं हुई",
             "भरोसा स्कोर", "खर्च", "वापसी बिंदु", "ऑडिट लेजर", "सुरक्षित — किसी ने नहीं बदला", "टूटा — इस पंक्ति में बदलाव मिला",
             "दूसरे AI का निर्णय", "गुप्त जानकारी", "जोखिम भरा कोड", "कुछ नहीं मिला", "अनुमानित", "मापा गया", "बनाया",
             "साइलेंट रिले", "लोकल चरण", "चेन के चरण",
+            "क्या बदला (रिकॉर्ड से)", "क्या जाँचा गया", "क्या नहीं हुआ",
         ],
         "ar" => [
             "حزمة الإثبات", "الطلب", "المحرك", "ما الذي تغيّر", "الأوامر التي نُفّذت", "التحقق", "نجح", "لم ينجح", "لم يُتحقق",
             "درجة الثقة", "التكلفة", "نقطة الاستعادة", "سجل التدقيق", "سليم — لم يُعدَّل", "مكسور — تغيير في هذا الصف",
             "رأي الذكاء الثاني", "أسرار", "شيفرة خطرة", "لم يُعثر على شيء", "تقديري", "مُقاس", "أُنشئ",
             "التتابع الصامت", "خطوات محلية", "خطوات السلسلة",
+            "ما تغيّر (من السجل)", "ما تم التحقق منه", "ما لم يُنجز",
         ],
         "es" => [
             "Paquete de prueba", "Solicitud", "Motor", "Qué cambió", "Comandos ejecutados", "Verificación", "Aprobado", "No aprobado", "Sin verificar",
             "Puntuación de confianza", "Costo", "Punto de restauración", "Registro de auditoría", "Intacto: nadie lo modificó", "Roto: cambio en esta fila",
             "Veredicto de la segunda IA", "Secretos", "Código riesgoso", "No se encontró nada", "estimado", "medido", "Generado",
             "Relevo silencioso", "pasos locales", "pasos de la cadena",
+            "Qué cambió (según el registro)", "Qué se verificó", "Qué no se hizo",
         ],
         _ => [
             "Proof Pack", "Request", "Engine", "What changed", "Commands that ran", "Verification", "Passed", "Did not pass", "Not verified",
             "Trust score", "Cost", "Rollback point", "Audit ledger", "Intact - nobody has edited it", "Broken - a change was found at this row",
             "Second AI's verdict", "Secrets", "Risky code", "Nothing found", "estimated", "measured", "Generated",
             "Silent Relay", "local steps", "chain steps",
+            "What changed (from the record)", "What was verified", "What was not done",
         ],
     }
 }
@@ -300,6 +369,18 @@ pub fn html(pack: &Value, lang: &str) -> String {
             ));
         }
 
+        if let Some(completion) = turn["completion"].as_object() {
+            for (title, key) in [(w[25], "changed"), (w[26], "verified"), (w[27], "notDone")] {
+                body.push_str(&format!("<h3>{title}</h3><ul>"));
+
+                for line in completion.get(key).and_then(Value::as_array).cloned().unwrap_or_default() {
+                    body.push_str(&format!("<li>{}</li>", escape(line.as_str().unwrap_or_default())));
+                }
+
+                body.push_str("</ul>");
+            }
+        }
+
         if let Some(summary) = turn["relay"]["summary"].as_object().filter(|summary| summary.get("attempts").and_then(Value::as_u64).unwrap_or(0) > 0) {
             body.push_str(&format!(
                 "<h3>{}</h3><p>{}: {} · {}: {} · ${:.4} ({})</p>",
@@ -419,5 +500,51 @@ mod tests {
 
         assert!(page.contains("সাইলেন্ট রিলে") && page.contains("deepseek:deepseek-chat") && page.contains("loop"), "{page}");
         assert!(html(&pack, "en").contains("Silent Relay"));
+    }
+
+    #[test]
+    fn the_closing_contract_is_filled_from_the_record_and_not_from_what_the_model_said() {
+        let files = vec![json!({ "path": "pay.py", "action": "Edit", "status": "done", "meta": "+3 −1" }), json!({ "path": "locked.py", "action": "Edit", "status": "declined", "meta": "" })];
+        let commands = vec![json!({ "command": "python3 -m unittest", "status": "done", "meta": "" })];
+        let verify = json!({ "pass": false, "checks": [{ "name": "unit tests", "status": "pass" }, { "name": "lint", "status": "fail" }] });
+        let done = completion_of(&files, &commands, Some(&verify), &json!("done"));
+
+        assert_eq!(done["changed"], json!(["pay.py (edit, +3 −1)"]));
+        assert_eq!(done["verified"], json!(["unit tests passed"]));
+        assert_eq!(done["notDone"], json!(["locked.py was not changed (declined)", "lint failed"]));
+
+        let bare = completion_of(&[], &[], None, &json!("done"));
+
+        assert_eq!((bare["changed"].clone(), bare["verified"].clone(), bare["notDone"].clone()), (json!(["no files"]), json!(["nothing ran"]), json!(["nothing"])));
+
+        let unverified = completion_of(&files[..1], &commands, None, &json!("done"));
+
+        assert_eq!(unverified["verified"], json!(["1 command(s) ran; Verify did not check the change"]));
+        assert_eq!(unverified["notDone"], json!(["Verify was not run on this turn"]));
+        assert_eq!(completion_of(&[], &[], None, &json!("stopped"))["notDone"], json!(["the turn ended as `stopped`"]));
+    }
+
+    #[test]
+    fn the_pack_carries_the_completion_only_when_the_contract_switch_is_on() {
+        let store = Store::in_memory().unwrap();
+
+        store.upsert_host("local", "Local", "local", None, "connected", None).unwrap();
+        store.insert_session("s1", "local", "T", "fix", None).unwrap();
+        store.start_turn("turn-c", "s1", 1, "native_api", "m", "Fast", "do it").unwrap();
+
+        let log = vec![
+            StoredEvent { seq: 1, ts: String::new(), session_id: Some("s1".into()), turn_id: Some("turn-c".into()), event: json!({ "type": "ToolCallStarted", "callId": "c1", "tool": "edit", "name": "Edit", "target": "a.py" }) },
+            StoredEvent { seq: 2, ts: String::new(), session_id: Some("s1".into()), turn_id: Some("turn-c".into()), event: json!({ "type": "ToolCallCompleted", "callId": "c1", "status": "done", "meta": "+1 −0" }) },
+        ];
+
+        assert!(build(&store, &log, "s1", Some("turn-c"))["turns"][0]["completion"].is_null());
+
+        let on = crate::v3::forcing(&["turn.contract"], || build(&store, &log, "s1", Some("turn-c")));
+
+        assert_eq!(on["turns"][0]["completion"]["changed"], json!(["a.py (edit, +1 −0)"]));
+
+        let page = crate::v3::forcing(&["turn.contract"], || html(&on, "bn"));
+
+        assert!(page.contains("যা বদলেছে (রেকর্ড থেকে)") && page.contains("a.py"));
     }
 }

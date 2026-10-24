@@ -29,6 +29,7 @@
 //!   * **the acceptance criteria** of a confirmed Intent Contract, which the reviewer judges one by one;
 //!   * a **security focus** for the role pipeline's SecReview step.
 
+pub mod api_exists;
 pub mod lsp;
 
 use std::sync::Arc;

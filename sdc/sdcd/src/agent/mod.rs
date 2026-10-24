@@ -2454,6 +2454,13 @@ fn drive(
             };
 
             if let Some(session) = &research_session {
+                /* M4-2: every [n:i] pointer of the answer is checked against the sentences it names; what does not hold is flagged under the answer. */
+                if crate::v3::on("research.sentence_cite") {
+                    if let Some(note) = crate::sme::cite::report(&crate::sme::cite::check(&reply.text, &|n| session.sentences_of(n))) {
+                        sink.send(EngineEvent::Delta(format!("\n\n{note}")));
+                    }
+                }
+
                 if let Some((provider, model)) = &synthesis {
                     let (input, output) = synthesize(prompt, provider, model, &language, &messages, sink, &stopped);
 

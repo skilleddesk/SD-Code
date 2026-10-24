@@ -1381,9 +1381,20 @@ fn language_server_note(context: &ToolContext, path: &str, text: &str) -> Option
     (!note.is_empty()).then_some(note)
 }
 
+/// M4-1 (`verify.api_exists`): the imports of the edited text looked up in the installed dependencies. A warning for the model, never a refusal.
+fn api_exists_note(context: &ToolContext, path: &str, text: &str) -> Option<String> {
+    if !crate::v3::on("verify.api_exists") || context.workspace.is_remote() {
+        return None;
+    }
+
+    let relative = context.workspace.resolve(path).ok().map(|absolute| context.workspace.relative(&absolute))?;
+
+    crate::verify::api_exists::warning(&crate::verify::api_exists::check(std::path::Path::new(context.workspace.root()), &relative, text))
+}
+
 /// The text after a successful edit: the hooks' failure, and the language server's errors, each only when there is one.
 fn after_edit_notes(context: &ToolContext, path: &str, text: &str, hooks: Option<String>) -> Option<String> {
-    let notes: Vec<String> = hooks.into_iter().chain(language_server_note(context, path, text)).collect();
+    let notes: Vec<String> = hooks.into_iter().chain(language_server_note(context, path, text)).chain(api_exists_note(context, path, text)).collect();
 
     (!notes.is_empty()).then(|| notes.join("\n\n"))
 }
@@ -1874,6 +1885,16 @@ fn web_fetch(context: &mut ToolContext, call_id: &str, url: &str) -> Outcome {
             match &context.research {
                 Some(session) => {
                     let n = session.cite(&page.url, &page.title, page.date.clone(), true);
+
+                    /* M4-2: with sentence citations the page is shown as numbered sentences, and the same sentences are kept to check the pointers against. */
+                    if crate::v3::on("research.sentence_cite") {
+                        let sentences = crate::sme::cite::sentences(&page.text);
+                        let shown = crate::sme::cite::numbered(n, &sentences);
+
+                        session.keep_sentences(n, sentences);
+
+                        return Outcome::ok(format!("[{n}] {}{dated}\n{}\n\n{}", page.title, page.url, shown));
+                    }
 
                     Outcome::ok(format!("[{n}] {}{dated}\n{}\n\n{}", page.title, page.url, page.text))
                 }
@@ -2893,6 +2914,34 @@ mod tests {
                 assert!(!answered.content.is_empty(), "a call to a tool that is off still gets an answer");
             }
         });
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// M4-1: an edit that imports a name the installed package does not have is answered with a warning and the nearest real name - and the edit is still made.
+    #[test]
+    fn an_edit_that_uses_a_name_the_installed_package_lacks_gets_a_warning_and_is_not_blocked() {
+        let (root, workspace) = folder("api-exists");
+        let recorder = Recorder::new();
+        let sink = recorder.sink();
+        let mut context = context(&workspace, &sink, Autonomy::Auto);
+
+        std::fs::create_dir_all(root.join("node_modules/react-query")).unwrap();
+        std::fs::write(root.join("node_modules/react-query/index.d.ts"), "export declare function useQuery(): void;\n").unwrap();
+
+        let invented = execute(&mut context, &call("write_file", json!({ "path": "app.ts", "content": "import { useQuerry } from 'react-query';\n" })));
+
+        assert!(!invented.is_error, "{}", invented.content);
+        assert!(invented.content.contains("`useQuerry` is not declared by `react-query`") && invented.content.contains("did you mean `useQuery`"), "{}", invented.content);
+        assert!(root.join("app.ts").exists(), "nothing was blocked");
+
+        let real = execute(&mut context, &call("write_file", json!({ "path": "ok.ts", "content": "import { useQuery } from 'react-query';\n" })));
+
+        assert!(!real.content.contains("SDC check"), "{}", real.content);
+
+        let off = crate::v3::ablating(&["verify.api_exists"], || execute(&mut context, &call("write_file", json!({ "path": "off.ts", "content": "import { nope } from 'react-query';\n" }))));
+
+        assert!(!off.content.contains("SDC check"), "switched off, it says nothing");
 
         let _ = std::fs::remove_dir_all(&root);
     }
