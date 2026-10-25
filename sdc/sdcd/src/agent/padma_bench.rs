@@ -512,7 +512,7 @@ pub fn render(outcomes: &[Outcome], live: bool) -> String {
         text.push_str(&format!(
             "| {} | {} | {} | {} | {}/{} | {}/{} | {}/{} | {}/{} | {}% | {}/{} |\n",
             task.id,
-            if on.recipe.is_empty() { "-" } else { &on.recipe },
+            if on.recipe.is_empty() { "-".to_string() } else if on.recipe == task.recipe { on.recipe.clone() } else { format!("{} (expected {})", on.recipe, task.recipe) },
             if off.completed { "yes" } else { "NO" },
             if on.completed { "yes" } else { "NO" },
             cell(off.stopped_without_tool),

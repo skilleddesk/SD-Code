@@ -524,6 +524,7 @@ pub mod event {
     /// Where a turn's task stands (PADMA P1-1): `done` and `blocked` steps of `total`.
     /// `counts` is done, blocked, total; `split` is the model requests that ran on this computer and in the cloud. `findings` (ranked review lines)
     /// and `split` are sent only when a recipe has them, so a plain turn's event stays what it was.
+    #[allow(clippy::too_many_arguments)]
     pub fn task_progress(session_id: &str, turn_id: &str, task_id: &str, counts: [u64; 3], label: &str, recipe: &str, findings: &[String], split: [u64; 2]) -> Value {
         let mut fields = json!({ "sessionId": session_id, "turnId": turn_id, "taskId": task_id, "done": counts[0], "blocked": counts[1], "total": counts[2], "label": label, "recipe": recipe });
 

@@ -124,7 +124,7 @@ fn analyze(place: &str, html: &str, https: bool) -> Page {
     let at = |line: usize| if place.contains("://") { place.to_string() } else { format!("{place}:{line}") };
     let title = html.to_lowercase().find("<title").and_then(|start| html[start..].find('>').map(|open| (start + open + 1, start))).map(|(open, _)| html[open..].split('<').next().unwrap_or("").trim().to_string());
 
-    if title.as_deref().map_or(true, str::is_empty) {
+    if title.as_deref().is_none_or(str::is_empty) {
         findings.push(Found { place: at(1), severity: "medium", category: "seo", problem: "the page has no title".into(), evidence: if title.is_none() { "no <title> element".into() } else { "<title></title>".into() } });
     }
 

@@ -1,6 +1,12 @@
 //! **Recovery Ladder (P0-4, switch `padma.recovery`)**: an empty or contentless reply never ends the task. The rungs, in order:
-//! 1. the same request with a one-line nudge; 2. thinking off; 3. a tighter context (masking `k=1`); 4. Best-of-N (only when
-//! `nr.best_of_n` is on); 5. the next row of the rotation chain (only when `relay.auto` is on); 6. the step is `blocked(reason)`.
+//!
+//! - the same request with a one-line nudge;
+//! - thinking off;
+//! - a tighter context (masking `k=1`);
+//! - Best-of-N (only when `nr.best_of_n` is on);
+//! - the next row of the rotation chain (only when `relay.auto` is on);
+//! - the step is `blocked(reason)`.
+//!
 //! At most six rungs per step; each rung is written to the step trace with its reason.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

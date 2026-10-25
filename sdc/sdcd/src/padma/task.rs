@@ -87,6 +87,7 @@ pub(super) fn progress(ledger: &Ledger, task_id: &str, sink: &EventSink, label: 
 }
 
 /// What a message is to the session's unfinished task (P1-5, switch `padma.continue_bind`).
+#[allow(clippy::large_enum_variant)]
 pub enum Bound {
     /// A new request: a new contract.
     Fresh,

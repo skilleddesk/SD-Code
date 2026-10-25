@@ -655,7 +655,7 @@ pub fn execute(context: &mut ToolContext, call: &ToolUse) -> Outcome {
     if context.result_cap < RESULT_CAP && outcome.content.len() > context.result_cap {
         /* PADMA P0-5: what is cut is kept in the vault, so the model can read the rest with `obs_read` instead of losing it. */
         if crate::v3::on("padma.obs_cap") && call.name != "obs_read" {
-            return Outcome { content: crate::padma::budget::vault_cut(&context.session_id, &outcome.content, context.result_cap), ..outcome };
+            return Outcome { content: crate::padma::budget::vault_cut(context.session_id, &outcome.content, context.result_cap), ..outcome };
         }
 
         return Outcome { content: cap_to(&outcome.content, context.result_cap), ..outcome };
@@ -1163,7 +1163,7 @@ fn obs_read_spec() -> ToolSpec {
 fn obs_read(context: &ToolContext, input: &Value) -> Outcome {
     let n = input["n"].as_u64().unwrap_or(0) as u32;
 
-    match crate::padma::budget::read(&context.session_id, n, input["range"].as_str().unwrap_or_default(), context.result_cap.saturating_sub(400).max(1_500)) {
+    match crate::padma::budget::read(context.session_id, n, input["range"].as_str().unwrap_or_default(), context.result_cap.saturating_sub(400).max(1_500)) {
         Ok(text) => Outcome::ok(text),
         Err(error) => Outcome::error(error),
     }

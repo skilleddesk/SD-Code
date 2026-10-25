@@ -208,6 +208,7 @@ pub fn finish(ledger: &mut Ledger, task_id: &str, sink: &EventSink, bengali: boo
 }
 
 /// The whole path for a task of one list of units: classify and contract are done (the caller wrote the contract), then plan, the units, finish, report.
+#[allow(clippy::too_many_arguments)]
 pub fn conduct(ledger: &mut Ledger, task_id: &str, noun: &str, units: &[&str], sink: &EventSink, bengali: bool, budget: Budget, work: impl FnMut(&str, usize) -> UnitRun) -> Outcome {
     let clock = Clock::start(budget);
     let (steps, paused) = run_units(ledger, task_id, noun, units, sink, &clock, work);

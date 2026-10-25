@@ -263,6 +263,7 @@ pub struct Overflow {
 }
 
 impl Overflow {
+    #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> Move {
         let step = Move::ORDER[self.at.min(Move::ORDER.len() - 1)];
 

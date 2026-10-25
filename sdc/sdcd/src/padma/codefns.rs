@@ -427,7 +427,7 @@ fn strip_line_number(evidence: &str) -> &str {
 
 /// One finding line cut into `[location, severity, category, problem, evidence]`, or `None` when it does not have the five parts.
 fn fields(line: &str) -> Option<[String; 5]> {
-    let line = line.trim().trim_start_matches(|c: char| c == '-' || c == '*' || c == '`').trim();
+    let line = line.trim().trim_start_matches(['-', '*', '`']).trim();
     let line = match line.split_once(". ") {
         Some((number, rest)) if !number.is_empty() && number.chars().all(|c| c.is_ascii_digit()) => rest,
         _ => line,
