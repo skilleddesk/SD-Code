@@ -15,6 +15,27 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [1.2.0] — PADMA: a short prompt for a big job is finished, or stopped honestly
+
+Twenty `padma.*` switches, one for each new behaviour of the PADMA plan (`sdc/docs/padma/PADMA.md`, 26 cards P0-P4). Thirteen are on by default and only protect, verify or
+record (`padma.tolerant_parse`, `intent_guard`, `recovery`, `overflow_rule`, `obs_cap`, `clean_history`, `evidence_trust`, `tool_hints`, `ledger`, `finish_gate`, `scope`,
+`continue_bind`, `model_profile`); the other seven (`conductor`, `think_policy`, `tool_subset`, `inner_english`, `recipes`, `recipe_engines`, `site_probe`) are off until the live
+bench (P4-3, run by the owner with Ollama) justifies them. Everything here was tested on scripted fakes; nothing was measured on a live 9B.
+
+- **The 25 Oct incident as tests (P0-1):** `agent/never_again_tests.rs` holds one test per guarantee; an expected-fail list means a fixed test can never keep its marker.
+- **A turn no longer ends on words alone (P0-2..P0-8):** a tool call printed as text or hidden in the thinking is read and run; "now I will..." without a tool call, a reply that ends in a colon, and an empty reply are asked again (a ladder of at most six rungs, then an honest *Blocked*); an observation is cut before it fills the window; a prompt that cannot fit is split, not failed with `ContextOverflow`; SDC's own notices are never fed back to the model; a Trust score needs evidence.
+- **The task is written down (P1-1..P1-5):** a Task Ledger per project, a Finish Gate (a turn ends *Done*, *Blocked* or *Paused*, never silently half done), a Scope Classifier (English, Bengali, Banglish), the Conductor (a budget per unit, pause and resume) and "continue / ok koro / a pasted SDC error" going on with the unfinished task. A question about why it stopped is answered from the ledger.
+- **A small model is used as it is (P2-1..P2-4):** a model profile and a read-only capability probe, a thinking policy per step kind, a tool subset per step, and a Bengali or Banglish request put into English once for the work.
+- **Recipes (P3-1..P3-6):** a TOML recipe engine (code, model and gate steps; checkpointed; a failed check asks again with the reason) and four recipes - **R-REVIEW-CODE** (one file per request; a finding is kept only when its evidence is in the file), **R-REVIEW-SITE** (code probes the pages, the model writes only the summary), **R-BUILD-PAGE** (a plan, one file per request, each checked, written only into `landing-page/`) and **R-FIX** (the real failure is reproduced; a patch is kept only if every test passes, otherwise it is undone). The window shows a recipe chip, a progress card and the findings.
+- **P4-1 `padma.recipe_engines`:** a recipe step is a fresh short request with the goal first and last, related files as skeletons, the tests kept as anchors, a function replaced by name, a git shadow of the tree, a file registry, and - only with the person's consent and a non-local-only project - one request to the Rotation Chain when the local model failed its check. The window shows a receipt of what ran.
+- **P4-2 `sdcd bench padma`:** twelve two-line prompts (English, Bengali, Banglish) - review the whole repo, find UI errors, review a website, build a landing page, fix failing tests - run with every `padma.*` switch off, then on, against a scripted model; it prints completion, stops without a tool, empty-reply stops, overflow deaths, unmatched findings, local share and time. `--live` uses the real Ollama (P4-3, the owner's).
+- **Fixed (found by the bench):** a recipe unit whose model answered with nothing was blocked at once; it is now asked again (twice) first. The `outputs_present` gate no longer counts the engines' own `_`-keys.
+- **Honest limits:** the Finish Gate and the scope classifier use keyword heuristics; the scripted bench measures the code around the model, not a real 9B; the recipe relay is a one-shot plain request to the first chain row; the git shadow needs a git repository.
+
+**বাংলায় সারাংশ:** ছোট দুই লাইনের প্রম্পটে বড় কাজ (পুরো প্রজেক্ট রিভিউ, সাইট রিভিউ, ল্যান্ডিং পেজ, ফেইলিং টেস্ট ঠিক করা) এখন ধাপে ধাপে চলে, লেজারে লেখা থাকে, "continue" বললে যেখানে থেমেছিল সেখান থেকে চলে, আর শেষে হয় Done, নয়তো কারণসহ সৎ Blocked। উত্তর ফাঁকা বা "এখন করছি" বলে থেমে গেলে আবার চেষ্টা হয়; বানানো finding রিপোর্টে ঢোকে না। `sdcd bench padma` দিয়ে সুইচ চালু বনাম বন্ধ মাপা যায়; আসল 9B-র মাপ মালিকের কাজ (P4-3)।
+
+---
+
 ## [1.1.1] — the step executor shows each step's real goal, and a Windows git-snapshot fix
 
 - **Fixed: a step's goal was `1.`** The first sentence of a numbered request (`1. In shop.py, write ...`) was cut at the list number, so the model was told its goal was "1." and the step trace said so. A list marker (`1.`, `2)`, `-`, `*`, `•`) is now taken off before the first sentence is found.
