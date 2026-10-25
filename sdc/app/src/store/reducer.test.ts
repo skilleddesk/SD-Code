@@ -1045,6 +1045,20 @@ describe('0.13: the agent asks, and the context meter', () => {
   });
 });
 
+describe('PADMA P0-6: notices are not part of the turn', () => {
+  it('keeps what SDC said per chat, newest last, once each, at most three, and leaves the turn untouched', () => {
+    let state = fold(EMPTY_STATE, { type: 'TurnStarted', turnId: 't1', sessionId: 's1', engine: 'ollama', model: 'qwen', tier: 'Balanced', prompt: 'hi' });
+    const before = state.turns;
+
+    for (const text of ['a', 'b', 'a', 'c', 'd']) {
+      state = fold(state, { type: 'NoticeShown', sessionId: 's1', turnId: 't1', kind: 'gpu', text });
+    }
+
+    expect(state.notices['s1']?.map((notice) => notice.text)).toEqual(['a', 'c', 'd']);
+    expect(state.turns).toEqual(before);
+  });
+});
+
 describe('0.14.2: a tool call the model is still writing', () => {
   it('shows the newest draft, keeps its first stamp and path, and drops it when the card opens', () => {
     let state = fold(EMPTY_STATE, { type: 'TurnStarted', turnId: 't1', sessionId: 's1', engine: 'claude_code', model: 'sonnet', tier: 'Balanced', prompt: 'write notes' });

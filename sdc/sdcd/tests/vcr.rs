@@ -55,6 +55,8 @@ fn kind_of(event: &EngineEvent) -> &'static str {
         EngineEvent::SessionRef(_) => "SessionRef",
         EngineEvent::Question { .. } => "Question",
         EngineEvent::Context { .. } => "Context",
+        EngineEvent::Notice { .. } => "Notice",
+        EngineEvent::TaskProgress { .. } => "TaskProgress",
         EngineEvent::Sources(_) => "Sources",
         EngineEvent::RelayStep(_) => "RelayStep",
         EngineEvent::RelaySummary(_) => "RelaySummary",

@@ -215,6 +215,10 @@ pub enum EngineEvent {
     Question { question_id: String, question: String, options: Vec<String> },
     /// How full the model's context is (0.13): what the turn is sending, against what the model holds.
     Context { used_tokens: u64, window_tokens: u64, compacted: bool },
+    /// What SDC itself tells the person (PADMA P0-6): shown in the window, never part of the answer, the stored turn or the history.
+    Notice { kind: String, text: String },
+    /// Where the turn's task stands (PADMA P1-1): steps done and blocked of the total, and a short label.
+    TaskProgress { task_id: String, done: u64, blocked: u64, total: u64, label: String, recipe: String, findings: Vec<String>, local: u64, cloud: u64 },
     /// A `/research` turn's sources (0.16.1): `[{n, title, url, date, read}]`, cited in the answer as [n].
     Sources(Value),
     Failed(String),

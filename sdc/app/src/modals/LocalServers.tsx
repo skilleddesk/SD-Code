@@ -111,6 +111,11 @@ export function LocalServers() {
                       {strings.prompt.model.quantAdvice(model.probe.advice)}
                     </span>
                   ) : null}
+                  {model.profileLine ? (
+                    <span className="max-w-[46%] truncate font-sans text-[10.5px] text-text-faint" title={model.profileLine} data-local-profile={model.id}>
+                      {model.profileLine}
+                    </span>
+                  ) : null}
                 </li>
               ))}
             </ul>

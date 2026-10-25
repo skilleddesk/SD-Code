@@ -376,8 +376,12 @@ export interface AppState {
   questions: QuestionView[];
   /** How full the model's context is, per chat, as the newest `ContextUpdated` said (0.13). */
   contexts: Record<string, ContextView>;
+  /** What SDC itself told the person in each chat (PADMA P0-6): newest last, at most three - never part of an answer. */
+  notices: Record<string, NoticeView[]>;
   /** What Silent Relay did in each turn (M1-6): the attempts as they happened, and the split once the turn ended. */
   relays: Record<string, RelayView>;
+  /** Where each turn's task stands, newest event per turn (PADMA P3-6); a recipe's findings and split are kept once they arrive. */
+  taskProgress: Record<string, import('../../../protocol/types').TaskProgressEvent>;
 }
 
 /** The chain's part in one turn. */
@@ -393,6 +397,12 @@ export interface QuestionView {
   turnId: string;
   question: string;
   options: string[];
+}
+
+/** One `NoticeShown`: a slow model, a model partly on the CPU, a step finished after a crash. */
+export interface NoticeView {
+  kind: string;
+  text: string;
 }
 
 /** The context meter of one chat (0.13). */

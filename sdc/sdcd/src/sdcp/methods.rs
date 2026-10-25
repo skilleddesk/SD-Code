@@ -629,6 +629,12 @@ async fn run_turn(
                     turn.clone(),
                 );
             }
+            crate::engines::EngineEvent::Notice { kind, text } => {
+                out.push(event::notice_shown(&plan.session_id, &plan.turn_id, &kind, &text), session.clone(), turn.clone());
+            }
+            crate::engines::EngineEvent::TaskProgress { task_id, done, blocked, total, label, recipe, findings, local, cloud } => {
+                out.push(event::task_progress(&plan.session_id, &plan.turn_id, &task_id, [done, blocked, total], &label, &recipe, &findings, [local, cloud]), session.clone(), turn.clone());
+            }
             crate::engines::EngineEvent::Sources(sources) => {
                 out.push(event::research_sources(&plan.turn_id, &plan.session_id, sources), session.clone(), turn.clone());
             }

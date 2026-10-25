@@ -62,6 +62,16 @@ pub fn translate(tool: &str, output: &str) -> Translation {
 
     /* 0.11.8: an `ssh` that was refused at the door is a connection fact, not a file one. The log had
        `Permission denied (keyboard-interactive)` explained as "the path is not writable". */
+    /* PADMA P0-5 (G5): the request was longer than the model's window. SDC shortens it and goes on; this is never a failure without a rule. */
+    if haystack.contains("contextoverflow") || haystack.contains("needssplit") {
+        return rule(
+            "The step was too large for the model's window",
+            format!("`{first_line}`. SDC shortens the request in steps (older tool output first, then the project notes, then the answer's reserve) and splits the work; a step that still does not fit is marked blocked (too large) and the rest goes on."),
+            true,
+            "context-overflow",
+        );
+    }
+
     if haystack.contains("(keyboard-interactive)") || haystack.contains("permission denied (publickey") {
         return rule(
             "Not signed in to the host",
@@ -259,6 +269,14 @@ pub fn translate(tool: &str, output: &str) -> Translation {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_context_overflow_always_has_a_rule() {
+        let got = translate("ollama", "ContextOverflow: this step is about 12397 tokens with 4096 reserved for the answer, and the model's window is 16384; SDC splits the work instead of sending it");
+
+        assert_eq!(got.rule, "context-overflow");
+        assert!(!got.explanation.contains("no rule yet"));
+    }
 
     /// 0.15.10: a signed-out Codex says so, instead of a websocket URL and a ray id.
     #[test]

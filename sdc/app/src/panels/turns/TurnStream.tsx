@@ -7,6 +7,8 @@ import { useAppStore } from '../../store/store';
 import { FlowWork } from './FlowWork';
 import { ErrorCard } from './ErrorCard';
 import { PlanCard } from './PlanCard';
+import { RecipeCard } from './RecipeCard';
+import { isRecipe } from './recipeFacts';
 import { SourcesList } from './SourcesList';
 import { TurnFooter } from './TurnFooter';
 import { changedFiles } from './grouping';
@@ -79,6 +81,7 @@ export function TurnStream({ turns, collapsed = null, sessionId }: TurnStreamPro
 function TurnBlock({ turn, sessionId, latest }: { turn: Turn; sessionId: string; latest: boolean }) {
   const rotationRows = useModelStore((state) => state.rotationRows);
   const relay = useAppStore((state) => state.relays[turn.id]?.summary ?? null);
+  const recipe = useAppStore((state) => state.taskProgress[turn.id]);
 
   return (
     <div className="turn mb-[30px]">
@@ -100,6 +103,9 @@ function TurnBlock({ turn, sessionId, latest }: { turn: Turn; sessionId: string;
           </span>
         )}
       </div>
+
+      {/* A recipe turn: which recipe, unit n of m, what it found (PADMA P3-6). */}
+      {isRecipe(recipe) ? <RecipeCard progress={recipe} /> : null}
 
       {/* The plan first: it is the map of everything below it. */}
       <PlanCard steps={turn.plan} running={turn.running} />

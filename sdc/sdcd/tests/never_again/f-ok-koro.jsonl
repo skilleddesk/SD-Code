@@ -1,0 +1,3 @@
+{"type": "vcr", "engine": "ollama", "guarantee": ["resume_after_fail", "short_prompt_full_review"], "scenario": "the person writes ok koro after a failure; the task must resume", "user_message": "ok koro", "kinds": ["Delta", "Usage", "Done"]}
+{"message": {"role": "assistant", "content": "Resuming the review where it stopped."}, "done": false}
+{"message": {"role": "assistant", "content": ""}, "done": true, "done_reason": "stop", "prompt_eval_count": 900, "eval_count": 12}

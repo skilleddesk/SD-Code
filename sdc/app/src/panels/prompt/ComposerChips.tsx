@@ -1,4 +1,4 @@
-import { Activity, Database, Square } from 'lucide-react';
+import { Activity, Database, Info, Square } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 import { strings } from '../../strings';
@@ -45,6 +45,22 @@ export function ContextChip({ sessionId, running, onCompact }: { sessionId: stri
       <Database size={11} aria-hidden="true" />
       <span>{strings.agent.context.chip(meter.percent)}</span>
     </button>
+  );
+}
+
+/** What SDC itself said in this chat (PADMA P0-6): the GPU share of the model, a slow model. A badge with the words on hover; never in the answer. */
+export function NoticeChip({ sessionId }: { sessionId: string | undefined }) {
+  const notices = useAppStore((state) => (sessionId === undefined ? undefined : state.notices[sessionId]));
+
+  if (notices === undefined || notices.length === 0) {
+    return null;
+  }
+
+  return (
+    <span className={CHIP + ' text-state-warning'} title={[strings.agent.notice.title, ...notices.map((notice) => notice.text)].join('\n')} aria-label={strings.agent.notice.title}>
+      <Info size={11} aria-hidden="true" />
+      <span>{strings.agent.notice.chip(notices.length)}</span>
+    </span>
   );
 }
 

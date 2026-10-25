@@ -40,8 +40,10 @@ pub fn history_for(store: &Store, session_id: &str) -> Result<Vec<Message>, Erro
         }
 
         if let Some(answer) = turn.get("answer").and_then(Value::as_str) {
-            if !answer.is_empty() {
-                history.push(Message::assistant(answer));
+            let clean = if crate::v3::on("padma.clean_history") { crate::padma::notice::strip(answer) } else { answer.to_string() };
+
+            if !clean.is_empty() {
+                history.push(Message::assistant(clean));
             }
         }
     }

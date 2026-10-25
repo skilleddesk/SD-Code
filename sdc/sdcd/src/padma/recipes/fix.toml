@@ -1,0 +1,61 @@
+id = "R-FIX"
+title = "Fix a failing test: reproduce it, find the place, patch it, keep the patch only if the whole test run passes"
+deliver = ["report"]
+
+# 1. the real failing output (stops with the reason when the tests already pass or there is no test command)
+[[step]]
+id = "reproduce"
+kind = "code"
+run = "run_tests"
+outputs = ["failures"]
+
+# 2. where it points, with the code around it
+[[step]]
+id = "localize"
+kind = "code"
+run = "localize"
+needs = ["reproduce"]
+inputs = ["failures"]
+outputs = ["context"]
+
+# 3. a patch as exact SEARCH/REPLACE blocks; the check applies it, runs ALL the tests, and undoes it if anything fails
+[[step]]
+id = "patch"
+kind = "model"
+needs = ["localize"]
+inputs = ["failures", "context"]
+think = "repair_after_fail"
+check = "patch_fixes"
+retries = 2
+context = "suspects"
+tags = ["test_first", "writes"]
+outputs = ["patch"]
+done_when = "the tests pass"
+prompt = '''A test run of this project fails. Fix the code that is wrong, not the test.
+
+What was asked: {goal}
+
+The failing test output:
+{failures}
+
+The code around the failure:
+{context}
+
+Answer with one or more blocks, exactly in this form, and nothing else:
+FILE: path/relative/to/the/project
+<<<<<<< SEARCH
+the exact old lines, copied from the code above without their line numbers
+=======
+the new lines
+>>>>>>> REPLACE
+
+The SEARCH lines must appear exactly once in that file. Change as little as possible.{symbol_hint}'''
+
+# 4. the report
+[[step]]
+id = "report"
+kind = "code"
+run = "fix_report"
+needs = ["patch"]
+inputs = ["failures", "patch"]
+outputs = ["report"]

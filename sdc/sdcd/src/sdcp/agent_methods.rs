@@ -46,6 +46,8 @@ impl Daemon {
                 Ok(json!({ "stopped": crate::agent::background::stop(&id) }))
             }
             "context.get" => self.context_get(envelope),
+            "task.get" => self.task_get(envelope),
+            "task.list" => self.task_list(envelope),
             "research.status" => Ok(self.research_status()),
             "research.key.set" => self.research_key_set(envelope),
             "research.plan" => Ok(self.research_plan(envelope)),
@@ -300,6 +302,30 @@ impl Daemon {
             "ollamaRunning": if local { Some(crate::engines::ollama::daemon_running()) } else { None },
             "estimate": estimate,
         })
+    }
+
+    /// `task.get`: one task of the Task Ledger (PADMA P1-1) - its contract, done-when lines and steps. `null` when the project has none by that id.
+    fn task_get(&self, envelope: &Envelope) -> Result<Value, ErrorObject> {
+        let task_id = envelope.require_str("taskId")?;
+        let task = self
+            .root_for(envelope)?
+            .and_then(|root| crate::padma::ledger::Ledger::open(&root).ok())
+            .and_then(|ledger| ledger.get(&task_id))
+            .map(|task| task.json());
+
+        Ok(json!({ "task": task }))
+    }
+
+    /// `task.list`: the project's tasks, newest first; one chat's when `sessionId` is given.
+    fn task_list(&self, envelope: &Envelope) -> Result<Value, ErrorObject> {
+        let limit = envelope.params.get("limit").and_then(Value::as_u64).unwrap_or(20).min(200) as usize;
+        let tasks: Vec<Value> = self
+            .root_for(envelope)?
+            .and_then(|root| crate::padma::ledger::Ledger::open(&root).ok())
+            .map(|ledger| ledger.list(envelope.opt_str("sessionId").as_deref(), limit).iter().map(|task| task.json()).collect())
+            .unwrap_or_default();
+
+        Ok(json!({ "tasks": tasks }))
     }
 
     fn context_get(&self, envelope: &Envelope) -> Result<Value, ErrorObject> {

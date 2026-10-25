@@ -516,6 +516,29 @@ pub mod event {
         )
     }
 
+    /// SDC's own words to the person (PADMA P0-6): a slow model, a model partly on the CPU, a step that was finished after a crash.
+    pub fn notice_shown(session_id: &str, turn_id: &str, kind: &str, text: &str) -> Value {
+        base("NoticeShown", json!({ "sessionId": session_id, "turnId": turn_id, "kind": kind, "text": text }))
+    }
+
+    /// Where a turn's task stands (PADMA P1-1): `done` and `blocked` steps of `total`.
+    /// `counts` is done, blocked, total; `split` is the model requests that ran on this computer and in the cloud. `findings` (ranked review lines)
+    /// and `split` are sent only when a recipe has them, so a plain turn's event stays what it was.
+    pub fn task_progress(session_id: &str, turn_id: &str, task_id: &str, counts: [u64; 3], label: &str, recipe: &str, findings: &[String], split: [u64; 2]) -> Value {
+        let mut fields = json!({ "sessionId": session_id, "turnId": turn_id, "taskId": task_id, "done": counts[0], "blocked": counts[1], "total": counts[2], "label": label, "recipe": recipe });
+
+        if !findings.is_empty() {
+            fields["findings"] = json!(findings);
+        }
+
+        if split != [0, 0] {
+            fields["local"] = json!(split[0]);
+            fields["cloud"] = json!(split[1]);
+        }
+
+        base("TaskProgress", fields)
+    }
+
     /// The agent asks the person something and waits (0.13, `ask_user`); `question.answer` replies.
     pub fn question_asked(session_id: &str, turn_id: &str, question_id: &str, question: &str, options: &[String]) -> Value {
         base(

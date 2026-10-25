@@ -394,6 +394,11 @@ pub fn validate(spec: &ToolSpec, arguments: &Value) -> Result<(), String> {
 
 /// Reads a reply's text for printed tool calls.
 pub fn rescue(text: &str, specs: &[ToolSpec]) -> Rescued {
+    rescue_with(text, specs, true)
+}
+
+/// `rescue`, optionally only the tagged forms (`<tool_call>` JSON and Qwen XML) and not fenced or bare JSON objects (PADMA P0-2 tries those last).
+pub fn rescue_with(text: &str, specs: &[ToolSpec], bare_objects: bool) -> Rescued {
     let mut spans: Vec<((usize, usize), String, Value)> = Vec::new();
     let mut seen_spans: Vec<(usize, usize)> = Vec::new();
     let overlaps = |spans: &[(usize, usize)], candidate: (usize, usize)| spans.iter().any(|span| candidate.0 < span.1 && span.0 < candidate.1);
@@ -425,7 +430,7 @@ pub fn rescue(text: &str, specs: &[ToolSpec]) -> Rescued {
     }
 
     /* 3. fenced blocks and bare objects: every balanced object that reads as a call */
-    for (start, stop) in objects(text) {
+    for (start, stop) in if bare_objects { objects(text) } else { Vec::new() } {
         if overlaps(&seen_spans, (start, stop)) {
             continue;
         }

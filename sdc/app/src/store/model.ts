@@ -160,6 +160,8 @@ export interface CatalogModel {
   source: 'live' | 'cache' | 'bundled';
   /** A local model that has been measured (P0-9): its class (`S`, `M`, `L`; a `?` after it when the measurement is of an earlier file or runtime). */
   probe?: { class: string; status: 'probed' | 'provisional'; effectiveContext: number; toolCallReliability: number; advice?: string | null };
+  /** One line on how this model makes tool calls (PADMA P2-1). */
+  profileLine?: string;
 }
 
 /** One provider's models, as the dropdown draws them. */

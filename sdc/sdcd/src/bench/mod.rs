@@ -16,6 +16,7 @@
 //! sdcd bench profiles    --baseline L --candidate feature=L2[@own-baseline] [...]  # Q2: model-profiles.json from Q3 verdicts
 //! sdcd bench fleet       [--label NAME]                   # A-16 on synthetic 5/10/20-server fleets
 //! sdcd bench drift       --labels A,B,C [--target 0.8]   # Q4: a model's pass rate slipping away from where it was
+//! sdcd bench padma      [--live] [--tasks a,b] [--out FILE]  # P4-2: 12 short prompts (EN/BN/Banglish), padma.* off against on
 //! sdcd bench baseline    LABEL [--as NAME] [--note TEXT] [--force]   # P0-1: freeze a finished result set
 //! sdcd bench report      LABEL [--baseline LABEL]         # writes bench/results/LABEL/report-bn.md and summary.json
 //!
@@ -180,8 +181,10 @@ pub fn main(args: &[String]) -> i32 {
         "compare" => compare_cmd(rest),
         /* N9-2: one scripted scenario per `nr.*` switch, off against on */
         "navaratna" => crate::navaratna::bench::command(rest),
+        /* PADMA P4-2: short prompts, big tasks, every padma.* switch off against on */
+        "padma" => crate::agent::padma_bench::command(rest),
         _ => {
-            println!("{}", include_str!("mod.rs").lines().skip(2).take(19).map(|line| line.trim_start_matches("//! ")).collect::<Vec<_>>().join("\n"));
+            println!("{}", include_str!("mod.rs").lines().skip(2).take(20).map(|line| line.trim_start_matches("//! ")).collect::<Vec<_>>().join("\n"));
             Ok(())
         }
     };

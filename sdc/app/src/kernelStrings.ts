@@ -98,7 +98,7 @@ export const kernelStrings = {
 
   trust: {
     chip: (score: number, level: string): string => `Trust ${score} · ${level}`,
-    level: { high: 'high', medium: 'medium', low: 'low' },
+    level: { high: 'high', medium: 'medium', low: 'low', blocked: 'blocked' },
   },
 
   policy: {

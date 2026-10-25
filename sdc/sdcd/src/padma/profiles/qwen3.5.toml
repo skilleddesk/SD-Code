@@ -1,0 +1,20 @@
+# Built-in starting profile for the Qwen3.5 family. A probe (`sdcd models probe MODEL`) writes the measured one next to the data folder and that wins.
+matches = ["qwen3.5", "qwen3-coder", "qwen3"]
+tool_format = "hermes-json"
+max_tools_per_call = 2
+effective_ctx = 16384
+quant = "Q4_K_M"
+
+[sampling]
+temperature = 0.6
+top_p = 0.95
+top_k = 20
+presence_penalty = 1.0
+
+[thinking]
+tool_call = false
+map_review = false
+boilerplate = false
+blueprint = true
+repair_after_fail = true
+reduce_report = true

@@ -219,6 +219,7 @@ export interface ModelsView {
     source: 'live' | 'cache' | 'bundled';
     fetchedAt?: string | null;
     probe?: { class: string; status: 'probed' | 'provisional'; effectiveContext: number; toolCallReliability: number; advice?: string | null };
+    profileLine?: string;
   }[];
   rotation?: { enabledRows: number; relayAuto?: boolean; showChip?: boolean };
   snapshot: string;

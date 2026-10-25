@@ -55,6 +55,9 @@ pub struct Reply {
     /// P1-4: the step profile this request was sent with (`patch`, `format`...), when `sme.step_profile` chose one. Set by
     /// `ask_model` and written into the step's trace row; the reply itself is unaffected.
     pub profile: Option<String>,
+    /// PADMA P0-2: the reasoning text of the reply (`reasoning_content` / `reasoning` / Ollama's `message.thinking`), kept apart from `text`.
+    /// It is read for a tool call hidden inside it and never sent back to the model.
+    pub thinking: String,
 }
 
 /// A tool as the model is told about it.
@@ -636,6 +639,7 @@ impl AnthropicState {
             ttft_ms: 0,
             profile: None,
             thinking_tokens: 0,
+            thinking: String::new(),
         })
     }
 }
@@ -650,6 +654,8 @@ struct OpenAiState {
     output_tokens: u64,
     cached_tokens: u64,
     spoke: bool,
+    /// PADMA P0-2: the reasoning pieces, in order.
+    thinking: String,
     /// How often a tool call still arriving is reported (0.14.2).
     pace: crate::engines::draft::Pace,
 }
@@ -675,6 +681,7 @@ impl OpenAiState {
 
         for key in ["reasoning_content", "reasoning"] {
             if let Some(piece) = delta[key].as_str().filter(|piece| !piece.is_empty()) {
+                self.thinking.push_str(piece);
                 sink.send(EngineEvent::Thinking(piece.to_string()));
             }
         }
@@ -794,6 +801,7 @@ impl OpenAiState {
             ttft_ms: 0,
             thinking_tokens: 0,
             profile: None,
+            thinking: self.thinking,
         })
     }
 }

@@ -499,6 +499,8 @@ pub fn after_use(model: &str) {
         };
 
         if !due(lookup(&key).as_ref()) {
+            crate::padma::model::probe_if_missing(&model);
+
             return;
         }
 
@@ -510,6 +512,8 @@ pub fn after_use(model: &str) {
             }
             Err(error) => eprintln!("sdcd: the probe of {model} failed: {error}"),
         }
+
+        crate::padma::model::probe_if_missing(&model);
     });
 }
 

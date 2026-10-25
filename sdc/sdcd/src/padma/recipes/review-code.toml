@@ -1,0 +1,93 @@
+id = "R-REVIEW-CODE"
+title = "Review the whole project file by file and report only what can be proved"
+deliver = ["summary", "report"]
+
+# 1. every file of the project (.gitignore respected; node_modules, target, dist skipped)
+[[step]]
+id = "inventory"
+kind = "code"
+run = "list_files"
+outputs = ["files"]
+
+# 2. what the project's own checkers already say (real errors, sliced)
+[[step]]
+id = "check"
+kind = "code"
+run = "collect_errors"
+needs = ["inventory"]
+inputs = ["files"]
+outputs = ["errors"]
+
+# 3. risk order, long files cut into parts that fit a small window
+[[step]]
+id = "plan"
+kind = "code"
+run = "plan_units"
+needs = ["check"]
+inputs = ["files", "errors"]
+outputs = ["units"]
+
+# 4. map: one unit per request, a fixed output line
+[[step]]
+id = "review"
+kind = "model"
+needs = ["plan"]
+for_each = "units"
+inputs = ["errors"]
+think = "map_review"
+context = "imports"
+outputs = ["reviews"]
+prompt = '''Review this source file for real defects: bugs, security holes, data loss, wrong error handling, broken logic. Do not comment on style.
+
+Checker diagnostics already known for this file:
+{file_errors}
+
+{file}
+
+Answer with one finding per line, exactly in this form:
+file:line · severity · category · problem · evidence
+- file:line is the path above and a line number from the numbered text.
+- severity is high, medium or low.
+- evidence is one line copied word for word from the file, without its line number.
+If you find nothing you can prove from the text, answer exactly: NO FINDINGS'''
+
+# 5. evidence gate: a finding whose evidence is not in the file is dropped
+[[step]]
+id = "verify"
+kind = "code"
+run = "verify_findings"
+needs = ["review"]
+inputs = ["reviews"]
+outputs = ["verified"]
+
+# 6. dedupe and rank
+[[step]]
+id = "rank"
+kind = "code"
+run = "rank_findings"
+needs = ["verify"]
+inputs = ["verified"]
+outputs = ["ranked"]
+
+# 7. the report, built only from what was proved; units not reviewed are listed
+[[step]]
+id = "report"
+kind = "code"
+run = "build_report"
+needs = ["rank"]
+inputs = ["ranked", "errors", "files", "units", "_unreviewed"]
+outputs = ["report"]
+
+# 8. a short summary in the person's language
+[[step]]
+id = "summary"
+kind = "model"
+needs = ["report"]
+inputs = ["ranked"]
+think = "reduce_report"
+outputs = ["summary"]
+prompt = '''These are the verified findings of a code review, most serious first (each line: file:line · severity · category · problem · evidence):
+
+{ranked}
+
+Write a short summary in {language}: how many findings there are, which matter most, and what to fix first. Name files and lines only as they appear above. Do not add findings that are not listed. Do not repeat the list.'''

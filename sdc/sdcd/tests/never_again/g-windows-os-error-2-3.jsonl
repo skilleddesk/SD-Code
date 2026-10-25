@@ -1,0 +1,3 @@
+{"type": "vcr", "engine": "ollama", "guarantee": ["win_os_error_2_3_5"], "scenario": "read_file fails with Windows os error 2 and 3 on a path with a space", "tool_results": ["F:\\SDC Code\\SDC\\src\\my file.rs: The system cannot find the file specified. (os error 2)", "F:\\SDC Code\\no dir\\x.txt: The system cannot find the path specified. (os error 3)"], "kinds": ["Usage", "Done"]}
+{"message": {"role": "assistant", "content": "", "tool_calls": [{"function": {"name": "read_file", "arguments": {"path": "src/my file.rs"}}}]}, "done": false}
+{"message": {"role": "assistant", "content": ""}, "done": true, "done_reason": "stop", "prompt_eval_count": 900, "eval_count": 12}

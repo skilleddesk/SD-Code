@@ -66,7 +66,7 @@ impl Caps {
 /// already stream their own output, and edits carry a diff.
 const SEEN: &[&str] = &["read_file", "list_dir", "search", "grep", "glob", "git_diff", "web_fetch", "web_search", "process_output"];
 
-pub const READ_ONLY: &[&str] = &["read_file", "list_dir", "search", "grep", "glob", "git_diff", "web_fetch", "web_search", "view_image", "process_output", "spec_read"];
+pub const READ_ONLY: &[&str] = &["read_file", "list_dir", "search", "grep", "glob", "git_diff", "web_fetch", "web_search", "view_image", "process_output", "spec_read", "obs_read"];
 
 /// Every tool, for a turn whose model cannot see and which is not a sub-agent.
 pub fn specs() -> Vec<ToolSpec> {
@@ -95,6 +95,11 @@ pub fn specs_for(caps: Caps) -> Vec<ToolSpec> {
     /* N3-1 / N3-3: what was kept in the vault (a whole build log, a long prompt) is fetched by id and line range */
     if crate::v3::on_in("nr.error_slice", &caps.model()) || crate::v3::on_in("nr.fresh_step", &caps.model()) {
         all.push(spec_read_spec());
+    }
+
+    /* PADMA P0-5: the rest of a tool output that was cut to the window's 10% is read back by its `‹obs:N›` number. */
+    if crate::v3::on("padma.obs_cap") {
+        all.push(obs_read_spec());
     }
 
     if caps.vision {
@@ -648,6 +653,11 @@ pub fn execute(context: &mut ToolContext, call: &ToolUse) -> Outcome {
 
     /* A local model's window holds less than one full answer (0.16.1): the cap follows the window. */
     if context.result_cap < RESULT_CAP && outcome.content.len() > context.result_cap {
+        /* PADMA P0-5: what is cut is kept in the vault, so the model can read the rest with `obs_read` instead of losing it. */
+        if crate::v3::on("padma.obs_cap") && call.name != "obs_read" {
+            return Outcome { content: crate::padma::budget::vault_cut(&context.session_id, &outcome.content, context.result_cap), ..outcome };
+        }
+
         return Outcome { content: cap_to(&outcome.content, context.result_cap), ..outcome };
     }
 
@@ -707,6 +717,7 @@ fn execute_call(context: &mut ToolContext, call: &ToolUse) -> Outcome {
         "patch_symbol" => patch_symbol(context, &call_id, &call.input),
         "replace_symbol" => replace_symbol(context, &call_id, &call.input),
         "spec_read" => spec_read(context, &call.input),
+        "obs_read" => obs_read(context, &call.input),
         "web_fetch" => web_fetch(context, &call_id, &text("url")),
         "web_search" => web_search(context, &call_id, &text("query")),
         "start_process" => start_process(context, &call_id, &text("command"), number("wait_seconds").unwrap_or(6).min(60)),
@@ -827,7 +838,7 @@ fn read_file(context: &mut ToolContext, call_id: &str, path: &str) -> Outcome {
         Err(error) => {
             completed(context, call_id, false, "failed", None);
 
-            Outcome::error(error.message)
+            Outcome::error(file_error(context, path, error.message))
         }
     }
 }
@@ -1132,6 +1143,32 @@ fn patch_symbol(context: &mut ToolContext, call_id: &str, input: &Value) -> Outc
     }
 }
 
+/// `obs_read` (PADMA P0-5): lines of a tool output that was cut to fit the window.
+fn obs_read_spec() -> ToolSpec {
+    ToolSpec {
+        name: "obs_read",
+        description: "Read part of a tool output that was cut short or shortened to a line `‹obs:N›`. Give N and the line range.",
+        schema: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "n": { "type": "integer", "description": "The number N in ‹obs:N›." },
+                "range": { "type": "string", "description": "Lines, like \"120-240\". Default: the first 120." },
+            },
+            "required": ["n"],
+            "additionalProperties": false,
+        }),
+    }
+}
+
+fn obs_read(context: &ToolContext, input: &Value) -> Outcome {
+    let n = input["n"].as_u64().unwrap_or(0) as u32;
+
+    match crate::padma::budget::read(&context.session_id, n, input["range"].as_str().unwrap_or_default(), context.result_cap.saturating_sub(400).max(1_500)) {
+        Ok(text) => Outcome::ok(text),
+        Err(error) => Outcome::error(error),
+    }
+}
+
 /// `spec_read` (N3): lines of something SDC kept outside the conversation - the whole log behind an error slice, the full request.
 fn spec_read_spec() -> ToolSpec {
     ToolSpec {
@@ -1386,7 +1423,7 @@ fn list_dir(context: &mut ToolContext, call_id: &str, path: &str) -> Outcome {
         Err(error) => {
             completed(context, call_id, false, "failed", None);
 
-            Outcome::error(error.message)
+            Outcome::error(file_error(context, shown, error.message))
         }
     }
 }
@@ -1614,7 +1651,7 @@ fn write_file(context: &mut ToolContext, call_id: &str, path: &str, content: &st
         Err(error) => {
             completed(context, call_id, false, "failed", None);
 
-            Outcome::error(error.message)
+            Outcome::error(file_error(context, path, error.message))
         }
     }
 }
@@ -1627,7 +1664,7 @@ fn edit_file(context: &mut ToolContext, call_id: &str, path: &str, old: &str, ne
     let before = match context.workspace.read(path) {
         Ok((_, true)) => return Outcome::error(format!("{path} is too large to edit in place; it is longer than 256 KB.")),
         Ok((text, false)) => text,
-        Err(error) => return Outcome::error(error.message),
+        Err(error) => return Outcome::error(file_error(context, path, error.message)),
     };
     let found = before.matches(old).count();
 
@@ -1820,6 +1857,18 @@ fn run_command(context: &mut ToolContext, call_id: &str, line: &str, timeout: Du
 
             Outcome::error(error.message)
         }
+    }
+}
+
+/// A file tool's error in words (PADMA P0-8, `padma.tool_hints`): what the operating system said, the path SDC looked at, and what is near it.
+fn file_error(context: &ToolContext, path: &str, message: String) -> String {
+    if !crate::v3::on("padma.tool_hints") || context.workspace.is_remote() {
+        return message;
+    }
+
+    match context.workspace.resolve(path) {
+        Ok(resolved) => crate::padma::hints::explain(context.workspace.root(), &resolved, &message),
+        Err(_) => message,
     }
 }
 
@@ -3369,7 +3418,7 @@ mod tests {
 
         let read = execute(&mut local, &ToolUse { id: "r1".into(), name: "read_file".into(), input: json!({ "path": "long.txt" }) });
 
-        assert!(read.content.len() < 3_200 && read.content.contains("characters cut"), "{}", read.content.len());
+        assert!(read.content.len() < 3_200 && read.content.contains("obs_read"), "{}", read.content.len());
 
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -3391,11 +3440,11 @@ mod tests {
     fn every_tool_has_a_strict_object_schema() {
         let specs = specs_for(Caps { vision: true, subagent: false, patch: true, local: true });
 
-        assert_eq!(specs.len(), 23);
-        assert_eq!(specs_for(Caps { local: true, ..Caps::default() }).len(), 20, "no image tools, no patch");
-        assert_eq!(specs_for(Caps::default()).len(), 19, "a cloud model is not offered ranked_search: it is unmeasured, so it is local-only (M0-3)");
+        assert_eq!(specs.len(), 24);
+        assert_eq!(specs_for(Caps { local: true, ..Caps::default() }).len(), 21, "no image tools, no patch");
+        assert_eq!(specs_for(Caps::default()).len(), 20, "a cloud model is not offered ranked_search: it is unmeasured, so it is local-only (M0-3)");
         assert!(!specs_for(Caps::default()).iter().any(|spec| spec.name == "ranked_search"));
-        assert_eq!(specs_for(Caps { vision: false, subagent: true, patch: true, local: true }).len(), 9, "a sub-agent only reads");
+        assert_eq!(specs_for(Caps { vision: false, subagent: true, patch: true, local: true }).len(), 10, "a sub-agent only reads");
         assert!(specs_for(Caps { vision: false, subagent: true, patch: false, local: true }).iter().all(|spec| READ_ONLY.contains(&spec.name)));
 
         for spec in specs {

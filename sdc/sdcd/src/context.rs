@@ -56,7 +56,11 @@ pub fn live_turns(store: &Store, session_id: &str, exclude: &str) -> Vec<TurnRec
             id: turn["turnId"].as_str().unwrap_or_default().to_string(),
             engine: turn["engine"].as_str().unwrap_or_default().to_string(),
             prompt: turn["prompt"].as_str().unwrap_or_default().to_string(),
-            answer: turn["answer"].as_str().unwrap_or_default().to_string(),
+            answer: {
+                let answer = turn["answer"].as_str().unwrap_or_default();
+
+                if crate::v3::on("padma.clean_history") { crate::padma::notice::strip(answer) } else { answer.to_string() }
+            },
         })
         .collect()
 }

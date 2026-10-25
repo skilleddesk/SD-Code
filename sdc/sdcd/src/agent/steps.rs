@@ -25,8 +25,11 @@ use crate::navaratna::steps::{self as nr, plan::PlanStep, Check, Config};
 const SYSTEM: &str = "You are a careful programming assistant working on a project folder. Follow the requested answer format exactly and answer with nothing else.";
 
 /// Is this turn one for the step executor?
-pub(super) fn applies(backend: Backend, options: &Options, remote: bool, research: bool, request: &str, scope: &crate::v3::ModelCtx) -> bool {
-    backend == Backend::Ollama && !remote && !research && options.autonomy == Autonomy::Auto && request.len() >= crate::navaratna::spec::BIG_PROMPT_CHARS && crate::v3::on_in("nr.fresh_step", scope)
+pub(super) fn applies(backend: Backend, options: &Options, remote: bool, research: bool, request: &str, scope: &crate::v3::ModelCtx, repo: &crate::padma::scope::RepoStats) -> bool {
+    /* PADMA P1-3: a long request is a big job - and so is a short one that points at more than one Context Pack (`padma.scope`). Either starts the executor. */
+    let big = request.len() >= crate::navaratna::spec::BIG_PROMPT_CHARS || (crate::v3::on("padma.scope") && crate::padma::scope::classify(request, repo).large);
+
+    backend == Backend::Ollama && !remote && !research && options.autonomy == Autonomy::Auto && big && crate::v3::on_in("nr.fresh_step", scope)
 }
 
 pub(super) struct Turn<'a> {

@@ -1,0 +1,20 @@
+# Built-in starting profile for a Llama 3.x instruct model: native tool calls, no thinking mode. The probe replaces it.
+matches = ["llama3", "llama3.1", "llama3.2", "llama3.3"]
+tool_format = "native"
+max_tools_per_call = 1
+effective_ctx = 8192
+quant = "Q4_K_M"
+
+[sampling]
+temperature = 0.4
+top_p = 0.9
+top_k = 40
+presence_penalty = 0.0
+
+[thinking]
+tool_call = false
+map_review = false
+boilerplate = false
+blueprint = false
+repair_after_fail = false
+reduce_report = false

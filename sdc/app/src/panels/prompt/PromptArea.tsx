@@ -13,7 +13,7 @@ import { pickFiles, type PickKind, type PickedFile } from '../../lib/picker';
 import { interruptTurn, sendPrompt, steerTurn, type TurnImage } from '../../store/intents';
 import { findFiles, listCommands } from '../../store/agentIntents';
 import { ComposerMenu, type MenuItem } from './ComposerMenu';
-import { ContextChip, ProcessesChip } from './ComposerChips';
+import { ContextChip, NoticeChip, ProcessesChip } from './ComposerChips';
 import { QuestionCard } from './QuestionCard';
 import { runSlash, type SlashOutcome } from './slash';
 import { useAppStore } from '../../store/store';
@@ -632,6 +632,7 @@ export function PromptArea({ sessionId }: PromptAreaProps = {}) {
                 }
               }}
             />
+            <NoticeChip sessionId={sessionId} />
             <ProcessesChip sessionId={sessionId} />
 
             <div className="ml-auto flex shrink-0 items-center gap-[6px] pl-[4px]">

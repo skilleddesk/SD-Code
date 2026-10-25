@@ -69,7 +69,9 @@ export const EMPTY_STATE: AppState = {
   kernel: EMPTY_KERNEL,
   questions: [],
   contexts: {},
+  notices: {},
   relays: {},
+  taskProgress: {},
 };
 
 
@@ -625,6 +627,19 @@ function reduce(state: AppState, entry: AppEvent): AppState {
       return { ...state, relays: { ...state.relays, [event.turnId]: { ...before, summary: event } } };
     }
 
+    /* P3-6: the newest event per turn; findings and the local/cloud split arrive once, at the end, and later events must not erase them. */
+    case 'TaskProgress': {
+      const before = state.taskProgress[event.turnId];
+
+      return {
+        ...state,
+        taskProgress: {
+          ...state.taskProgress,
+          [event.turnId]: { ...event, findings: event.findings ?? before?.findings, local: event.local ?? before?.local, cloud: event.cloud ?? before?.cloud },
+        },
+      };
+    }
+
     case 'ContextUpdated':
       return {
         ...state,
@@ -639,6 +654,12 @@ function reduce(state: AppState, entry: AppEvent): AppState {
           },
         },
       };
+
+    case 'NoticeShown': {
+      const seen = (state.notices[event.sessionId] ?? []).filter((notice) => notice.text !== event.text);
+
+      return { ...state, notices: { ...state.notices, [event.sessionId]: [...seen, { kind: event.kind, text: event.text }].slice(-3) } };
+    }
 
     case 'TurnSteered':
       return patchTurn(state, event.turnId, (turn) => {

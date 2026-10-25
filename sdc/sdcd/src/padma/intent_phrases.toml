@@ -1,0 +1,19 @@
+# PADMA P0-3: words that announce an action. Edit this file to teach the guard a phrase; nothing else changes.
+# Matching is on the lower-cased reply, as a substring.
+
+[future_intent]
+phrases = [
+    "i'll", "i will", "i’ll", "let me", "let's", "now checking", "now i", "next i", "next, i", "i am going to", "i'm going to", "going to check",
+    "first, i", "first i", "now let me", "i need to check", "i should check",
+    "দেখছি", "করছি", "শুরু করছি", "দেখে নিচ্ছি", "চেক করছি", "দেখবো", "দেখব", "করবো", "করব", "এখন দেখি",
+    "dekhchi", "korchi", "shuru korchi", "dekhbo", "korbo",
+]
+
+[numbered_start]
+# the first item of a list the reply opens and does not continue
+first = ["1.", "1)", "১.", "১)", "ধাপ ১", "step 1", "dhap 1"]
+second = ["2.", "2)", "২.", "২)", "ধাপ ২", "step 2", "dhap 2"]
+
+[final_marker]
+# a reply that starts with one of these is a deliberate end
+prefixes = ["final:", "final answer:", "চূড়ান্ত:"]

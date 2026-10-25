@@ -64,6 +64,7 @@ pub mod mcp;
 pub mod navaratna;
 pub mod intent;
 pub mod ops;
+pub mod padma;
 pub mod paths;
 pub mod preview;
 pub mod providers;

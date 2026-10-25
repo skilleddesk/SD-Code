@@ -100,6 +100,7 @@ fn ollama(config: &Config) -> Option<Value> {
                         "ctx": crate::engines::ollama::context_for(name),
                         "sizeBytes": model["size"],
                         "probe": probe,
+                        "profileLine": crate::padma::model::row_summary(name),
                         "local": true,
                     }))
                 })

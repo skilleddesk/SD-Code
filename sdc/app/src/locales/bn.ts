@@ -54,6 +54,18 @@ export const bn: StringsPack = {
     },
   },
   turns: {
+    recipe: {
+      title: 'রেসিপি',
+      names: { 'R-REVIEW-CODE': 'কোড রিভিউ', 'R-REVIEW-SITE': 'সাইট রিভিউ', 'R-BUILD-PAGE': 'পেজ বানানো', 'R-FIX': 'ফেইলিং টেস্ট ঠিক করা' },
+      units: (done: number, total: number): string => `ইউনিট ${total}-এর মধ্যে ${done}`,
+      state: { done: 'শেষ', blocked: 'থেমে আছে', paused: 'বিরতিতে', running: 'চলছে' },
+      findings: (count: number): string => `${count}টা পাওয়া সমস্যা`,
+      findingsTitle: 'পাওয়া সমস্যা, সবচেয়ে গুরুতর আগে',
+      none: 'কোনো সমস্যা পাওয়া যায়নি।',
+      split: (local: number, cloud: number): string => `${local}টা এই কম্পিউটারে · ${cloud}টা ক্লাউডে`,
+      severity: { high: 'বেশি', medium: 'মাঝারি', low: 'কম' },
+      open: (place: string): string => `${place} খুলুন`,
+    },
     proof: {
       verified: (passed: number): string => `✓ ${passed}টা check পাস`,
       failed: 'রসিদ পড়া গেল না।',
@@ -508,7 +520,7 @@ export const bn: StringsPack = {
     },
     trust: {
       chip: (score: number, level: string): string => `বিশ্বাস ${score} · ${level}`,
-      level: { high: 'উচ্চ', medium: 'মাঝারি', low: 'নিম্ন' },
+      level: { high: 'উচ্চ', medium: 'মাঝারি', low: 'নিম্ন', blocked: 'আটকে গেছে' },
     },
     policy: {
       title: 'নীতি (Policy)',
@@ -976,6 +988,10 @@ export const bn: StringsPack = {
       remove: 'ছবি সরান',
       tooBig: 'ছবিটা ১০ MB-এর বেশি বড়',
       pasted: 'ছবি যোগ হয়েছে',
+    },
+    notice: {
+      chip: (count: number): string => `${count}টা নোট`,
+      title: 'SDC মডেল নিয়ে এটা জানিয়েছে - এটা উত্তরের অংশ নয়',
     },
     context: {
       chip: (percent: number): string => `কনটেক্সট ${percent}%`,

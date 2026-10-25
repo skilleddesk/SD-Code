@@ -890,6 +890,11 @@ fn with_probe_classes(mut listed: Value) -> Value {
             if let Some(profile) = row["id"].as_str().and_then(|id| crate::sme::probe::latest("ollama", id)) {
                 row["probe"] = crate::sme::probe::row(&profile);
             }
+
+            /* PADMA P2-1: one line of what is known about how this model makes tool calls (Settings -> Models). */
+            if let Some(line) = row["id"].as_str().and_then(crate::padma::model::row_summary) {
+                row["profileLine"] = json!(line);
+            }
         }
     }
 

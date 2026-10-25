@@ -33,6 +33,7 @@ pub mod patch;
 pub mod rescue;
 pub mod research;
 mod relay;
+pub mod padma_bench;
 mod steps;
 pub mod search;
 pub mod skills;
@@ -445,6 +446,15 @@ fn reasoning_model(model: &str) -> bool {
 ///
 /// The answer is every step's text in a row; without a break, "Reading the file." and "Fixed it." of
 /// two steps run together into one sentence.
+/// SDC's own words to the person (PADMA P0-6): an event of their own, or - with `padma.clean_history` off - the italic line in the answer.
+fn notice(sink: &EventSink, kind: &str, text: String) {
+    if crate::v3::on("padma.clean_history") {
+        sink.send(EngineEvent::Notice { kind: kind.to_string(), text });
+    } else {
+        sink.send(EngineEvent::Delta(format!("_({text})_\n\n")));
+    }
+}
+
 fn step_sink(sink: &EventSink, separate: bool) -> EventSink {
     let inner = sink.clone();
     let pending = std::sync::Mutex::new(separate);
@@ -532,14 +542,14 @@ pub fn run(
     /* P0-14: a step transaction a crash left half-committed is undone before anything else touches the project. */
     if prompt.remote.is_none() && crate::v3::on("edit.transaction") {
         for (id, what) in crate::runtime::transaction::recover(std::path::Path::new(root)) {
-            sink.send(EngineEvent::Delta(format!("_(SDC finished a step that was interrupted: {id} - {what:?})_\n\n")));
+            notice(sink, "recovered", format!("SDC finished a step that was interrupted: {id} - {what:?}"));
         }
     }
 
     /* N6-2 (`nr.git_shadow`): a step a crash left half-done is put back from its hidden snapshot; a step that was verified is finished. */
     if prompt.remote.is_none() && crate::v3::on("nr.git_shadow") {
         for step in crate::navaratna::shadow::recover(std::path::Path::new(root)) {
-            sink.send(EngineEvent::Delta(format!("_(SDC put the files back after an interrupted step: {step})_\n\n")));
+            notice(sink, "recovered", format!("SDC put the files back after an interrupted step: {step}"));
         }
     }
 
@@ -557,11 +567,276 @@ pub fn run(
         }
     };
 
-    drive(backend, &target, &workspace, options, checkpoint, policy, &prompt, sink);
+    /* PADMA P1-1: the turn is written down first; the ledger watches its events and closes the task when the turn ends. */
+    /* PADMA P1-5: "continue", "ok koro" or a pasted SDC error goes on with the unfinished task; a question about why it stopped is answered from the ledger. */
+    let (prompt, resume) = if prompt.remote.is_none() && crate::v3::on("padma.ledger") {
+        match crate::padma::task::bind(root, &prompt) {
+            crate::padma::task::Bound::Fresh => (prompt, None),
+            crate::padma::task::Bound::Resume { task_id, prompt } => (prompt, Some(task_id)),
+            crate::padma::task::Bound::Explain(text) => {
+                sink.send(EngineEvent::Delta(text));
+                sink.send(EngineEvent::Done { summary: "Done".to_string(), meta: String::new(), pass: None });
+
+                return;
+            }
+        }
+    } else {
+        (prompt, None)
+    };
+    /* PADMA P2-4 (`padma.inner_english`): a Bengali or Banglish request is put into English once, by the local model; the work and the ledger use the English line. */
+    let prompt = if resume.is_none() && backend == Backend::Ollama && prompt.remote.is_none() && crate::v3::on("padma.inner_english") { english_prompt(backend, &target, &prompt) } else { prompt };
+    let prompt = &prompt;
+
+    turn_body(backend, &target, root, &workspace, options, checkpoint, policy, prompt, resume.as_deref(), sink);
 
     /* P0-9: a local model nobody has measured yet is measured once, after its first turn, so the turn never waits for it. */
     if backend == Backend::Ollama {
         crate::sme::probe::after_use(&target.model);
+    }
+}
+
+/// The turn itself, after the model is chosen: the task is written down, a recipe takes it when its contract names one, otherwise the loop runs.
+/// `run` calls it, and so does the PADMA bench - the bench measures this very path.
+#[allow(clippy::too_many_arguments)]
+fn turn_body(
+    backend: Backend,
+    target: &Target,
+    root: &str,
+    workspace: &Workspace,
+    options: Options,
+    checkpoint: Option<tools::Checkpointer>,
+    policy: &crate::trust::policy::Policy,
+    prompt: &Prompt,
+    resume: Option<&str>,
+    sink: &EventSink,
+) {
+    let tracked = if prompt.remote.is_none() && crate::v3::on("padma.ledger") { crate::padma::task::begin(root, prompt, sink, resume) } else { None };
+
+    /* PADMA P3-2 (`padma.recipes`): a large review goes through its recipe - a unit at a time, checkpointed - instead of one open-ended turn. */
+    let by_recipe = match &tracked {
+        Some((tracker, _)) if crate::v3::on("padma.recipes") => recipe_turn(backend, target, root, prompt, sink, tracker),
+        _ => false,
+    };
+
+    match &tracked {
+        _ if by_recipe => {}
+        Some((tracker, watched)) => {
+            crate::padma::task::with_contract(|| drive(backend, target, workspace, options, checkpoint, policy, prompt, watched));
+            tracker.finish();
+        }
+        None => drive(backend, target, workspace, options, checkpoint, policy, prompt, sink),
+    }
+
+    crate::padma::think::set(None);
+}
+
+/// Runs the turn's recipe when the contract names one that exists and the work is large (P3-2). `true` when it handled the turn, `false` when the turn should
+/// run as it always did. The recipe's model steps are plain requests through the same guards as any model call (Pin Guard, window check, thinking policy);
+/// the rows and the state of the task are the recipe's own, so the turn's end does not rewrite them.
+fn recipe_turn(backend: Backend, target: &Target, root: &str, prompt: &Prompt, sink: &EventSink, tracker: &crate::padma::task::Tracker) -> bool {
+    use crate::padma::{codefns::Env, conductor::UnitRun, recipe};
+
+    let registry = recipe::Registry::standard();
+    let Some(Some((id, large, language, goal))) = tracker.with_ledger(|ledger, task| ledger.get(task).map(|task| (task.contract.recipe, task.contract.scope == "large", task.contract.language_out, task.contract.goal_en))) else {
+        return false;
+    };
+
+    let routed = match id.as_str() {
+        "R-BUILD-PAGE" | "R-FIX" => true,
+        "R-REVIEW-SITE" => crate::v3::on("padma.site_probe"),
+        _ => large,
+    };
+
+    if !routed {
+        return false;
+    }
+
+    let Some(found) = recipe::find(std::path::Path::new(root), &id, &registry) else {
+        return false;
+    };
+
+    let window = target.local_context.or_else(|| crate::guard::context::documented_window(&target.model)).unwrap_or(8_192) as usize;
+    let mut env = Env::new(std::path::PathBuf::from(root));
+
+    env.unit_chars = (window * 3 / 2).saturating_sub(2_000).clamp(2_000, 24_000);
+    env.language_out = language;
+    env.goal = goal;
+    env.model = target.model.clone();
+
+    let turn_id = prompt.turn_id.clone();
+    let stop_id = turn_id.clone();
+    let bengali = tracker.bengali();
+    let mut model_requests = 0u64;
+    let mut cloud_requests = 0u64;
+    let mut ranked: Vec<String> = Vec::new();
+
+    /* PADMA P4-1 (`padma.recipe_engines`): the turn's gate is registered, and - only in Silent Relay, with the person's consent and a project that may leave the
+       computer - the chain's first row is the one stuck unit's last chance. Without the switch none of this exists. */
+    let engines_on = crate::padma::engines::active();
+    let trust = crate::trust::policy::Policy::load(Some(root), None);
+    let gate = turn_gate(backend, target, prompt, &trust);
+    let _gate_held = engines_on.then(|| crate::guard::modelgate::register(&turn_id, gate.clone()));
+    let rotation = crate::data::home().map(|home| crate::data::rotation::load(&home).0).unwrap_or_default();
+    let relay_row = if engines_on && backend == Backend::Ollama && gate.relays() && rotation.relay.enabled() { crate::rotation::executor::chain_of(&rotation, trust.privacy_local()).into_iter().next() } else { None };
+    let cloud_allowance = u64::from(rotation.relay.max_cloud_steps_per_turn);
+
+    crate::padma::engines::clear_receipt();
+
+    let ran = crate::padma::engines::with_engines(|| tracker.with_ledger(|ledger, task| {
+        let _ = ledger.set_step(task, "s1", crate::padma::ledger::Status::Done, Some(&format!("recipe {id}")), None);
+
+        recipe::execute(
+            &found,
+            recipe::Job { ledger, task_id: task, sink, registry: &registry, env: &env, bengali, budget: Default::default(), stop: Some(std::sync::Arc::new(move || crate::engines::cancel::requested(&stop_id))), relay: relay_row.is_some() },
+            &mut |call| {
+                if call.relay {
+                    return relay_unit(call, relay_row.as_ref(), &gate, prompt, &mut cloud_requests, cloud_allowance, root);
+                }
+
+                if call.attempt > 0 {
+                    crate::navaratna::steps::sampling::set(Some(0.7), Some(false));
+                }
+
+                model_requests += 1;
+
+                let reply = ask_model(
+                    backend,
+                    target,
+                    (&turn_id, crate::guard::modelgate::Purpose::Main),
+                    "You do one step of a larger job. Follow the instruction exactly and answer only what it asks.",
+                    &[dialect::user_message(&call.prompt)],
+                    &[],
+                    &EventSink::discarding(),
+                    &|| crate::engines::cancel::requested(&turn_id),
+                );
+
+                crate::navaratna::steps::sampling::set(None, None);
+
+                match reply {
+                    Ok(reply) => UnitRun { calls: 1, result: Ok(reply.text) },
+                    Err(reason) => UnitRun { calls: 1, result: Err(reason) },
+                }
+            },
+        )
+        .map(|done| {
+            if done.outcome.blocked == 0 && !done.outcome.paused {
+                let _ = ledger.prove(task, 0, &format!("recipe {id}"));
+            }
+
+            ranked = done.data.get("ranked").cloned().unwrap_or_default();
+
+            done.outcome
+        })
+    }));
+
+    tracker.settled();
+
+    if engines_on {
+        notice(sink, "engines", crate::padma::engines::receipt_line(&crate::padma::engines::take_receipt()));
+    }
+
+    match ran {
+        Some(Ok(outcome)) => {
+            let summary = if outcome.paused {
+                "Paused at the time limit".to_string()
+            } else if outcome.blocked > 0 {
+                format!("Blocked: {} units could not be done", outcome.blocked)
+            } else {
+                "Done".to_string()
+            };
+
+            sink.send(EngineEvent::TaskProgress {
+                task_id: tracker.with_ledger(|_, task| task.to_string()).unwrap_or_else(|| crate::padma::task::id_of(&prompt.turn_id)),
+                done: outcome.done as u64,
+                blocked: outcome.blocked as u64,
+                total: (outcome.done + outcome.blocked + outcome.remaining) as u64,
+                label: if outcome.paused { "paused" } else if outcome.blocked > 0 { "blocked" } else { "done" }.to_string(),
+                recipe: id.clone(),
+                findings: ranked.into_iter().filter(|line| !line.starts_with('#')).collect(),
+                local: model_requests,
+                cloud: cloud_requests,
+            });
+            sink.send(EngineEvent::Done { summary, meta: String::new(), pass: None });
+        }
+        Some(Err(reason)) => sink.send(EngineEvent::Failed(reason)),
+        None => sink.send(EngineEvent::Failed("the task ledger could not be opened".to_string())),
+    }
+
+    true
+}
+
+/// One unit of a recipe handed to the chain after the local model failed its check on every try (P4-1). The request is cleaned by the secret guard and the
+/// redaction vault, written to the audit before it is sent, and sent as `Purpose::Chain` - which the gate permits only to a row of the person's chain.
+fn relay_unit(call: &crate::padma::recipe::ModelCall, row: Option<&crate::rotation::executor::ChainModel>, gate: &crate::guard::modelgate::Gate, prompt: &Prompt, cloud_requests: &mut u64, allowance: u64, root: &str) -> crate::padma::conductor::UnitRun {
+    use crate::padma::conductor::UnitRun;
+
+    let refused = |reason: String| UnitRun { calls: 0, result: Err(reason) };
+    let Some(row) = row else {
+        return refused("the chain is not available for this turn".to_string());
+    };
+
+    if allowance > 0 && *cloud_requests >= allowance {
+        return refused("this turn's cloud allowance is spent".to_string());
+    }
+
+    if let Err(violation) = gate.permit(crate::guard::modelgate::Purpose::Chain, Some(&row.provider), &row.model) {
+        return refused(violation.to_string());
+    }
+
+    let mut fired = Vec::new();
+    let cleaned = crate::rotation::capsule::clean(&prompt.session_id, "recipe", &call.prompt, &mut fired);
+    let nested = Prompt { provider: Some(row.provider.clone()), model: row.model.clone(), text: cleaned.clone(), history: Vec::new(), images: Vec::new(), resume: None, ..prompt.clone() };
+    let target = match resolve_target(&nested) {
+        Ok(target) => target,
+        Err(reason) => return refused(format!("{} cannot be used for a relayed unit: {reason}", row.label())),
+    };
+
+    if crate::data::sent::append(
+        std::path::Path::new(root),
+        &crate::data::sent::Sent {
+            at: chrono::Utc::now().to_rfc3339(),
+            model: row.label(),
+            step: "recipe-relay".into(),
+            turn: prompt.turn_id.clone(),
+            session: prompt.session_id.clone(),
+            tokens: crate::tokens::estimate(&cleaned) as usize,
+            redactions: fired,
+            hash: crate::data::sent::hash(&cleaned),
+            left_the_machine: true,
+        },
+    )
+    .is_err()
+    {
+        return refused("the audit of what leaves the computer could not be written, so nothing was sent".to_string());
+    }
+
+    *cloud_requests += 1;
+
+    crate::padma::engines::note("relay", format!("{} unit {} went to {}", call.step, call.unit.as_deref().unwrap_or("-"), row.label()));
+
+    let turn_id = prompt.turn_id.clone();
+
+    match ask_model(Backend::Api, &target, (&turn_id, crate::guard::modelgate::Purpose::Chain), "You do one step of a larger job that a smaller model could not finish. Follow the instruction exactly and answer only what it asks.", &[dialect::user_message(&cleaned)], &[], &EventSink::discarding(), &|| crate::engines::cancel::requested(&turn_id)) {
+        Ok(reply) => UnitRun { calls: 1, result: Ok(reply.text) },
+        Err(reason) => UnitRun { calls: 1, result: Err(reason) },
+    }
+}
+
+/// The prompt with the person's Bengali or Banglish request put into English by the local model (one tiny call, no thinking, temperature 0), or the prompt as it was.
+fn english_prompt(backend: Backend, target: &Target, prompt: &Prompt) -> Prompt {
+    let request = crate::padma::task::request_of(prompt);
+
+    match crate::padma::english::restate(&request, |text| {
+        crate::navaratna::steps::sampling::set(Some(0.0), Some(false));
+
+        let reply = ask_model(backend, target, (&prompt.turn_id, crate::guard::modelgate::Purpose::Main), "You translate text into English. You never answer it.", &[dialect::user_message(text)], &[], &EventSink::discarding(), &|| false);
+
+        crate::navaratna::steps::sampling::set(None, None);
+
+        reply.ok().map(|reply| reply.text)
+    }) {
+        crate::padma::english::Restated::English(english) => crate::padma::english::rewrite(prompt, &english),
+        crate::padma::english::Restated::Original => prompt.clone(),
     }
 }
 
@@ -681,6 +956,22 @@ fn ask_model(backend: Backend, target: &Target, turn: (&str, crate::guard::model
     let can_think = thinking_kind.is_some() && crate::navaratna::think::supports_thinking(&Value::Null, crate::sme::probe::latest("ollama", &target.model).map(|profile| profile.thinking));
     let thinking_decision = thinking_kind.and_then(|kind| crate::navaratna::think::decide(kind, can_think));
 
+    /* PADMA P2-2 (`padma.think_policy`): the model's profile says whether it thinks for this kind of step; that overrides the coarser N7-3 rule. */
+    let thinking_decision = if target.local_context.is_some() && crate::v3::on("padma.think_policy") {
+        let capable = crate::navaratna::think::supports_thinking(&Value::Null, crate::sme::probe::latest("ollama", &target.model).map(|profile| profile.thinking));
+
+        crate::padma::think::decision(&crate::padma::model::profile_for(&target.model), crate::padma::think::current(), capable).or(thinking_decision)
+    } else {
+        thinking_decision
+    };
+
+    /* PADMA P0-5, rung 3 of the Overflow Rule: a tool-call step does not need a long answer, so its reserve (and its real limit) is 1,536. */
+    let low_reserve = crate::v3::on("padma.overflow_rule") && !specs.is_empty() && crate::padma::budget::low_reserve_on();
+
+    if low_reserve {
+        body["max_tokens"] = serde_json::json!(body["max_tokens"].as_u64().map_or(crate::padma::budget::LOW_RESERVE, |n| n.min(crate::padma::budget::LOW_RESERVE)));
+    }
+
     if let (Some(window), true) = (window, crate::v3::on("local.runtime_guard")) {
         let reserve = crate::navaratna::think::reserve(crate::guard::context::max_output(&body, window), thinking_decision);
 
@@ -693,6 +984,10 @@ fn ask_model(backend: Backend, target: &Target, turn: (&str, crate::guard::model
     /* A local model gets Ollama's own request, with the context size in it (0.16.1). */
     if let Some(num_ctx) = target.local_context {
         body = ollama_native::body(body, num_ctx);
+
+        if low_reserve {
+            body["options"]["num_predict"] = serde_json::json!(crate::padma::budget::LOW_RESERVE);
+        }
     }
 
     if let Some(think) = thinking_decision {
@@ -810,7 +1105,7 @@ fn ask_model(backend: Backend, target: &Target, turn: (&str, crate::guard::model
         if let Some(profile) = traced_profile {
             done.profile = Some(profile.name().to_string());
         }
-        done.thinking_tokens = thinking_tokens_of(&done.message);
+        done.thinking_tokens = thinking_tokens_of(&done.message).max(if done.thinking.is_empty() { 0 } else { crate::tokens::estimate(&done.thinking) });
     }
 
     /* P0-8: what the runtime says it read is set against what was sent. A count that filled the window means the start
@@ -992,7 +1287,7 @@ fn token_scale(reported: u64, counted: u64, previous: f64) -> f64 {
 fn too_long(reason: &str) -> bool {
     let lowered = reason.to_lowercase();
 
-    ["maximum context length", "context_length_exceeded", "context length", "range of input length", "prompt is too long", "input is too long", "too many tokens", "reduce the length"]
+    ["contextoverflow", "maximum context length", "context_length_exceeded", "context length", "range of input length", "prompt is too long", "input is too long", "too many tokens", "reduce the length"]
         .iter()
         .any(|needle| lowered.contains(needle))
 }
@@ -1108,7 +1403,7 @@ fn sub_agent(
         ran_at: None,
         research: research_session,
         local: backend == Backend::Ollama,
-        result_cap: if target.local_window { (window as usize).clamp(2_000, tools::RESULT_CAP) } else { result_cap(backend, window) },
+        result_cap: (if target.local_window { (window as usize).clamp(2_000, tools::RESULT_CAP) } else { result_cap(backend, window) }).min(if crate::v3::on("padma.obs_cap") { crate::padma::budget::obs_cap_chars(window).max(2_000) } else { usize::MAX }),
         reply_text: String::new(),
     };
     let mut messages = vec![dialect::user_message(job)];
@@ -1902,7 +2197,7 @@ fn drive(
         ran_at: None,
         research: research_session.clone(),
         local: backend == Backend::Ollama,
-        result_cap: if target.local_window { (window as usize).clamp(2_000, tools::RESULT_CAP) } else { result_cap(backend, window) },
+        result_cap: (if target.local_window { (window as usize).clamp(2_000, tools::RESULT_CAP) } else { result_cap(backend, window) }).min(if crate::v3::on("padma.obs_cap") { crate::padma::budget::obs_cap_chars(window).max(2_000) } else { usize::MAX }),
         reply_text: String::new(),
     };
     /* v3 R2: a turn the daemon lost continues here - its conversation rebuilt from the journal, the reads that
@@ -2024,6 +2319,8 @@ fn drive(
     let mut filtered = 0;
     let mut plan_nudged = false;
     let mut empty_retries = 0u8;
+    let mut intent_reprompts = 0u32;
+    let mut gate_retries = 0u32;
     /* A research answer from one page is asked, once, to read a second (live check, 0.16.1: a 9B model
        answered from one page with the brief saying two). */
     let mut sources_nudged = false;
@@ -2043,6 +2340,8 @@ fn drive(
     let mut scale = 1.0;
     /* The request was too long for the model once already: folded hard and asked again (1.0). */
     let mut shrunk = false;
+    let mut overflow = crate::padma::budget::Overflow::default();
+    let mut too_large_units = 0u32;
     /* The edit count when the checks last ran: they run again only after the agent changed something. */
     let mut checked_at = usize::MAX;
     /* Words sent while the turn runs join it between steps (0.12.5) - closed when the loop returns. */
@@ -2078,7 +2377,15 @@ fn drive(
 
     /* NAVARATNA (`nr.fresh_step`): a long request to a local model in Auto mode is done as steps - each a fresh short prompt, each judged by the project's own
        checks - instead of one growing chat. Every other turn takes the loop below. */
-    if resumed.is_none() && steps::applies(backend, &options, prompt.remote.is_some(), research_session.is_some(), &request_text, &scope_model) {
+    let repo_stats = if resumed.is_none() && backend == Backend::Ollama && prompt.remote.is_none() && research_session.is_none() && options.autonomy == Autonomy::Auto && crate::v3::on_in("nr.fresh_step", &scope_model) && crate::v3::on("padma.scope") {
+        let words = crate::padma::scope::classify(&request_text, &Default::default());
+
+        if words.recipe == crate::padma::scope::Recipe::Answer && words.confident { Default::default() } else { crate::padma::scope::RepoStats::of(std::path::Path::new(workspace.root())) }
+    } else {
+        Default::default()
+    };
+
+    if resumed.is_none() && steps::applies(backend, &options, prompt.remote.is_some(), research_session.is_some(), &request_text, &scope_model, &repo_stats) {
         steps::run(
             &steps::Turn {
                 backend,
@@ -2109,6 +2416,8 @@ fn drive(
     let contract_on = research_session.is_none() && crate::v3::on("turn.contract");
     let mut limit_said = false;
     let mut contract_asked = false;
+
+    let mut ladder = crate::padma::ladder::Ladder::new(crate::padma::ladder::Caps { best_of_n: crate::v3::on("nr.best_of_n"), rotation: relay_on });
 
     /* Asks the relay what to do about this step, from the signals it holds; answers what became of the step (`relay::Handled`). */
     macro_rules! relay_step {
@@ -2188,9 +2497,20 @@ fn drive(
         }
     }
 
+    /* PADMA P1-4 (`padma.conductor`): the turn has a wall-clock budget; when it is spent the work is checkpointed and "continue" picks it up. */
+    let turn_started = std::time::Instant::now();
+    let turn_budget = (crate::v3::on("padma.conductor") && crate::padma::task::contract_active()).then(|| crate::padma::conductor::budget().turn);
+    let mut out_of_turn_time = false;
+
     for step in 1..=options.max_steps {
         if stopped() {
             return;
+        }
+
+        if turn_budget.is_some_and(|budget| turn_started.elapsed() >= budget) {
+            out_of_turn_time = true;
+
+            break;
         }
 
         if let Some(journal) = &journal {
@@ -2215,7 +2535,14 @@ fn drive(
             crate::sme::profile::set_current_step(Some(crate::sme::profile::Step::of_tools(&last_tools, last_failed)));
         }
 
-        let step_specs: &[dialect::ToolSpec] = if out_of_time { &[] } else { &specs };
+        /* PADMA P2-3 (`padma.tool_subset`): a recipe step that names its tools is offered only those. */
+        let subset = if out_of_time || !crate::v3::on("padma.tool_subset") { None } else { crate::padma::tools::subset(&specs) };
+        let step_specs: &[dialect::ToolSpec] = if out_of_time { &[] } else { subset.as_deref().unwrap_or(&specs) };
+
+        if crate::v3::on("padma.think_policy") {
+            crate::padma::think::set(crate::padma::think::kind_in_loop(last_failed, !step_specs.is_empty()));
+        }
+
         let shape = (ledger_on || receipt_on).then(|| crate::bench::ledger::shape(&system, step_specs, &messages, history_len, map_chars));
         let asked_at = std::time::Instant::now();
         let asked = ask_model(backend, target, (&turn_id, if relay::in_scope() { crate::guard::modelgate::Purpose::Chain } else { crate::guard::modelgate::Purpose::Main }), &system, &messages, step_specs, &notes_sink(said_something), &stopped);
@@ -2228,16 +2555,13 @@ fn drive(
             let warning = crate::sme::tuner::watch().lock().ok().and_then(|mut watch| if reply.output_tokens >= 20 { watch.observe(rate) } else { None });
 
             if let Some(warning) = warning {
-                sink.send(EngineEvent::Delta(format!("_({warning})_\n\n")));
+                notice(sink, "slow_model", warning);
             }
 
             /* The other sign, read once per turn after the model is loaded: `ollama ps` says how much of it is on the GPU. */
             if step == 1 {
-                let ps: Option<Value> = crate::engines::ollama::call("/api/ps", None).ok().and_then(|text| serde_json::from_str(&text).ok());
-                let unified = crate::sme::tuner::detect().unified;
-
-                if let Some(note) = ps.and_then(|ps| crate::sme::tuner::gpu_share(&ps, &target.model)).and_then(|share| crate::sme::tuner::spill_warning(share, unified)) {
-                    sink.send(EngineEvent::Delta(format!("_({note})_\n\n")));
+                if let Some(note) = crate::padma::notice::gpu_notice(&target.model) {
+                    notice(sink, "gpu_share", note);
                 }
             }
         }
@@ -2289,10 +2613,71 @@ fn drive(
         let mut reply: Reply = match asked {
             Ok(reply) => {
                 filtered = 0;
+                overflow.reset();
+                crate::padma::budget::set_low_reserve(false);
 
                 reply
             }
             Err(reason) if reason == "stopped" => return,
+            /* PADMA P0-5 (G5): "ContextOverflow" is never the end of a turn. The Overflow Rule shortens the request step by step, and when nothing
+               fits the unit is blocked (too large) and the turn goes on. */
+            Err(reason) if crate::v3::on("padma.overflow_rule") && (reason.starts_with("ContextOverflow") || too_long(&reason)) => {
+                use crate::padma::budget as pb;
+
+                let rung = overflow.next();
+
+                crate::padma::ladder::trace_rung(&turn_id, &prompt.session_id, step, &target.model, &crate::padma::ladder::Taken { rung: crate::padma::ladder::Rung::TightContext, number: 1, reason: format!("overflow rule: {}", rung.name()) });
+
+                match rung {
+                    pb::Move::KeepOne => {
+                        pb::mask_old(target.dialect, &mut messages, 1, &prompt.session_id);
+                        dialect::fold_old_results(target.dialect, &mut messages, 1);
+                    }
+                    pb::Move::DropPack => {
+                        pb::drop_pack(&mut messages, 1);
+                    }
+                    pb::Move::LowReserve => pb::set_low_reserve(true),
+                    pb::Move::SplitUnit => {
+                        pb::mask_old(target.dialect, &mut messages, 0, &prompt.session_id);
+                        dialect::fold_old_results(target.dialect, &mut messages, 0);
+                        pb::drop_pack(&mut messages, 2);
+                        context.result_cap = (context.result_cap / 2).max(1_000);
+                    }
+                    pb::Move::BlockUnit => {
+                        too_large_units += 1;
+
+                        if relay_on {
+                            if let Some(hook) = relay_hook.borrow_mut().as_mut() {
+                                hook.signals.context_overflow = true;
+                            }
+
+                            if relay_step!(reason.clone()) != relay::Handled::Local {
+                                overflow.reset();
+
+                                continue;
+                            }
+                        }
+
+                        sink.send(EngineEvent::Delta("
+_This step was too large for the model's window even after everything was shortened (blocked: too large). SDC goes on with the rest._
+".to_string()));
+
+                        if too_large_units >= 3 {
+                            sink.send(EngineEvent::Done { summary: "Blocked: too large for the model's window".to_string(), meta: meta(step, input_tokens, output_tokens, target.price), pass: None });
+
+                            return;
+                        }
+
+                        dialect::append_user_text(target.dialect, &mut messages, "[SDC: the last step was too large for the model's window and was skipped. Continue with the next independent part of the task, or answer with what you have.]");
+                        overflow.reset();
+                    }
+                }
+
+                seen_reads.clear();
+                prior_reads.clear();
+
+                continue;
+            }
             /* 1.0: a request the model finds too long is folded hard and asked again, once - it used to end the
                turn, with all of its work, on a window SDC had guessed. */
             /* M1-2: a local model that stayed silent past the relay's limit, or a prompt that will not fit even folded: the chain takes the step. */
@@ -2423,16 +2808,17 @@ fn drive(
         }
         /* P1-6: a local model that printed its tool call instead of making it - the call is read, repaired and checked
            against the tool's schema; an invalid one is refused and the model is told why. */
-        if backend == Backend::Ollama && reply.tool_uses.is_empty() && crate::v3::on("sme.toolcall_rescue") {
-            let rescued = rescue::apply(&mut reply, step_specs);
+        if backend == Backend::Ollama && reply.tool_uses.is_empty() && (crate::v3::on("padma.tolerant_parse") || crate::v3::on("sme.toolcall_rescue")) {
+            /* PADMA P0-2: native calls, then <tool_call> / Qwen XML in the content, then in the thinking, then one fenced JSON object. */
+            let rejected = if crate::v3::on("padma.tolerant_parse") { crate::padma::extract::extract(&mut reply, step_specs).rejected } else { rescue::apply(&mut reply, step_specs).rejected };
 
-            if !rescued.rejected.is_empty() && reply.tool_uses.is_empty() {
+            if !rejected.is_empty() && reply.tool_uses.is_empty() {
                 printed_refusals += 1;
                 rescue::constrain_next(crate::v3::on("sme.constrained"));
             }
 
-            if !rescued.rejected.is_empty() {
-                pending_note = Some(format!("A tool call you printed was not run: {}. Make the call again with the tool-call channel and the exact arguments the tool lists.", rescued.rejected.join("; ")));
+            if !rejected.is_empty() {
+                pending_note = Some(crate::padma::extract::refusal_note(&rejected));
             }
         }
 
@@ -2464,6 +2850,10 @@ fn drive(
         }
 
         messages.push(reply.message.clone());
+
+        if !reply.tool_uses.is_empty() {
+            ladder.reset();
+        }
 
         /* v3 W9: the model wrote `‹secret:N›`; the tools get the real value - and so does the journal, whose
            intents must still mean the same thing after a restart has emptied the vault. */
@@ -2523,6 +2913,56 @@ fn drive(
         /* About to finish, but the person said something meanwhile: that is the next thing to do. */
         if reply.tool_uses.is_empty() && steer(&mut messages) {
             continue;
+        }
+
+        /* PADMA P0-3 (`padma.intent_guard`): a reply that announces an action - "Now I'll check the build:", a list it opened and did not fill - and calls
+           no tool has not finished. The model is told once or twice (never more) to make the call, or to say FINAL: when it truly is done. */
+        if crate::v3::on("padma.intent_guard")
+            && reply.tool_uses.is_empty()
+            && reply.stop != "max_tokens"
+            && reply.stop != "length"
+            && research_session.is_none()
+            && intent_reprompts < crate::padma::intent::MAX_REPROMPTS
+            && !stopped()
+            && !crate::padma::intent::is_final(&reply.text)
+            && crate::padma::intent::detect(&reply.text).announces()
+            && (crate::tokens::estimate(&reply.text) < 300 || context.open_plan_steps().is_some())
+        {
+            intent_reprompts += 1;
+            dialect::append_user_text(target.dialect, &mut messages, crate::padma::intent::REPROMPT);
+
+            continue;
+        }
+
+        /* PADMA P1-2 (`padma.finish_gate`): a request to do something does not end on "done" without a changed file or a command that ran. The reply goes
+           back twice; after that the turn ends blocked, with the reason, instead of looking finished. */
+        if crate::v3::on("padma.finish_gate") && crate::padma::task::contract_active() && reply.tool_uses.is_empty() && reply.stop != "max_tokens" && reply.stop != "length" && !specs.is_empty() {
+            let facts = crate::padma::gate::Facts {
+                request: &request_text,
+                reply: &reply.text,
+                edits: context.edits,
+                ran: context.ran_at.is_some(),
+                exempt: research_session.is_some() || stopped() || crate::padma::intent::is_final(&reply.text),
+                retries: gate_retries,
+            };
+
+            match crate::padma::gate::decide(&facts) {
+                crate::padma::gate::Verdict::Finish => {}
+                crate::padma::gate::Verdict::Retry(note) => {
+                    gate_retries += 1;
+                    dialect::append_user_text(target.dialect, &mut messages, &note);
+
+                    continue;
+                }
+                crate::padma::gate::Verdict::Block(reason) => {
+                    sink.send(EngineEvent::Delta(format!("
+
+Not finished: {reason}. Tell me how to go on, or send \"continue\" to try again.")));
+                    sink.send(EngineEvent::Done { summary: "Blocked: no evidence of the work".to_string(), meta: meta(step, input_tokens, output_tokens, target.price), pass: None });
+
+                    return;
+                }
+            }
         }
 
         if reply.tool_uses.is_empty() && reply.stop != "max_tokens" && reply.stop != "length" {
@@ -2593,33 +3033,91 @@ fn drive(
 
         /* A reply with no words and no call is not "Done": a thinking model (Qwen3.5) that spends its whole output on hidden reasoning ends exactly so.
            A local model is asked once more with thinking off; if it is still silent the person is told, in words, rather than shown a bare "Done". */
+        let mut blocked: Option<String> = None;
+
         if reply.tool_uses.is_empty() && reply.text.trim().is_empty() && reply.stop != "max_tokens" && reply.stop != "length" && !stopped() {
-            if backend == Backend::Ollama && empty_retries == 0 {
-                empty_retries += 1;
-                crate::navaratna::steps::sampling::set(None, Some(false));
-                dialect::append_user_text(target.dialect, &mut messages, "[SDC: your last reply was empty. Answer now in plain words, or make the tool call that is needed. Do not think first.]");
+            if crate::v3::on("padma.recovery") {
+                /* PADMA P0-4 (G4): the Recovery Ladder. An empty reply is never the end: nudge, thinking off, tighter context, Best-of-N, next model, then blocked(reason). */
+                use crate::padma::ladder::{self, Rung};
 
-                continue;
-            }
+                let why = if reply.thinking_tokens > 0 { "empty reply (the whole output went into thinking)" } else { "empty reply" };
+                let mut rung = ladder.next(why);
 
-            if context.changed.is_empty() {
-                sink.send(EngineEvent::Failed(format!(
-                    "{} returned an empty answer{} and made no change. Send the request again, or pick another model.",
-                    target.model,
-                    if reply.thinking_tokens > 0 { " (it used its whole output on thinking)" } else { "" }
+                if rung == Rung::NextModel {
+                    if relay_step!("the local model gave no answer".to_string()) != relay::Handled::Local {
+                        if let Some(taken) = ladder.last() {
+                            ladder::trace_rung(&turn_id, &prompt.session_id, step, &target.model, taken);
+                        }
+
+                        continue;
+                    }
+
+                    rung = ladder.next("the relay kept the step local");
+                }
+
+                if let Some(taken) = ladder.last() {
+                    ladder::trace_rung(&turn_id, &prompt.session_id, step, &target.model, taken);
+                }
+
+                match rung {
+                    Rung::Nudge => {
+                        dialect::append_user_text(target.dialect, &mut messages, ladder::note(rung));
+
+                        continue;
+                    }
+                    Rung::ThinkingOff | Rung::BestOfN | Rung::TightContext => {
+                        if backend == Backend::Ollama {
+                            crate::navaratna::steps::sampling::set(if rung == Rung::BestOfN { Some(0.7) } else { None }, Some(false));
+                        }
+
+                        if rung == Rung::TightContext {
+                            dialect::fold_old_results(target.dialect, &mut messages, 1);
+                        }
+
+                        dialect::append_user_text(target.dialect, &mut messages, if rung == Rung::BestOfN { ladder::note(Rung::ThinkingOff) } else { ladder::note(rung) });
+
+                        continue;
+                    }
+                    Rung::NextModel | Rung::Blocked => {
+                        let reason = format!("{} gave no answer after {} tries ({})", target.model, ladder.used(), ladder.taken().iter().map(|taken| taken.rung.name()).collect::<Vec<_>>().join(", "));
+
+                        sink.send(EngineEvent::Delta(format!(
+                            "_Blocked: {reason}. Nothing was lost - send the request again, or pick another model.{}_",
+                            if context.changed.is_empty() { String::new() } else { format!(" It changed: {}.", context.changed.iter().cloned().collect::<Vec<_>>().join(", ")) }
+                        )));
+                        blocked = Some(format!("Blocked: {reason}"));
+                    }
+                }
+            } else {
+                if backend == Backend::Ollama && empty_retries == 0 {
+                    empty_retries += 1;
+                    crate::navaratna::steps::sampling::set(None, Some(false));
+                    dialect::append_user_text(target.dialect, &mut messages, "[SDC: your last reply was empty. Answer now in plain words, or make the tool call that is needed. Do not think first.]");
+
+                    continue;
+                }
+
+                if context.changed.is_empty() {
+                    sink.send(EngineEvent::Failed(format!(
+                        "{} returned an empty answer{} and made no change. Send the request again, or pick another model.",
+                        target.model,
+                        if reply.thinking_tokens > 0 { " (it used its whole output on thinking)" } else { "" }
+                    )));
+
+                    return;
+                }
+
+                sink.send(EngineEvent::Delta(format!(
+                    "_The model wrote no summary. It changed: {}._",
+                    context.changed.iter().cloned().collect::<Vec<_>>().join(", ")
                 )));
-
-                return;
             }
-
-            sink.send(EngineEvent::Delta(format!(
-                "_The model wrote no summary. It changed: {}._",
-                context.changed.iter().cloned().collect::<Vec<_>>().join(", ")
-            )));
         }
 
         if reply.tool_uses.is_empty() {
-            let summary = if reply.stop == "max_tokens" || reply.stop == "length" {
+            let summary = if let Some(why) = &blocked {
+                why.as_str()
+            } else if reply.stop == "max_tokens" || reply.stop == "length" {
                 "Cut off: the answer reached the model's length limit"
             } else {
                 "Done"
@@ -3055,7 +3553,9 @@ fn drive(
 
         steer(&mut messages);
 
-        let folded = keep_small(target, window, &mut messages, fixed, scale);
+        /* PADMA P0-5 (`padma.obs_cap`): past 40% of the window, all but the newest three tool outputs become a one-line `‹obs:N›` handle. */
+        let masked = crate::v3::on("padma.obs_cap") && research_session.is_none() && (((dialect::tokens(&messages) + fixed) as f64 * scale) as u64) > window * 40 / 100 && crate::padma::budget::mask_old(target.dialect, &mut messages, 3, &prompt.session_id) > 0;
+        let folded = keep_small(target, window, &mut messages, fixed, scale) || masked;
 
         /* Folded output is gone from the conversation: a file read before it must be sent in full again. */
         if folded {
@@ -3073,12 +3573,17 @@ fn drive(
 
     /* The step budget ran out with work still going on. That is said, with the way to continue, rather
        than dressed up as a finished turn. */
-    sink.send(EngineEvent::Delta(format!(
-        "\n\nI stopped after {} steps, the limit for one turn. Send \"continue\" to let me keep going from here.",
-        options.max_steps
-    )));
+    if out_of_turn_time {
+        sink.send(EngineEvent::Delta(crate::padma::english::pause_line(false, turn_budget.map_or(0, |budget| budget.as_secs() / 60))));
+    } else {
+        sink.send(EngineEvent::Delta(format!(
+            "\n\nI stopped after {} steps, the limit for one turn. Send \"continue\" to let me keep going from here.",
+            options.max_steps
+        )));
+    }
+
     sink.send(EngineEvent::Done {
-        summary: "Paused at the step limit".to_string(),
+        summary: if out_of_turn_time { "Paused at the time limit" } else { "Paused at the step limit" }.to_string(),
         meta: format!("{}{}{}", meta(options.max_steps, input_tokens, output_tokens, target.price) + &cached(cached_tokens), timing(model_time, tool_time), if receipt_on { crate::v3::receipt(&receipt_parts, &saved) } else { String::new() }),
         pass: None,
     });
@@ -3256,6 +3761,7 @@ mod tests {
     fn a_request_too_long_for_the_model_is_recognised() {
         assert!(too_long("The provider refused the request (400): Range of input length should be [1, 393216]"));
         assert!(too_long("This model's maximum context length is 131072 tokens"));
+        assert!(too_long("ContextOverflow: this step is about 12397 tokens with 4096 reserved for the answer, and the model's window is 16384"));
         assert!(!too_long("The provider refused the request (429): rate limit"));
     }
 
@@ -5239,3 +5745,6 @@ mod relay_tests;
 mod frame_tests;
 #[cfg(test)]
 mod steps_tests;
+
+#[cfg(test)]
+mod never_again_tests;

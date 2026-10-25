@@ -1,0 +1,3 @@
+{"type": "vcr", "engine": "ollama", "guarantee": ["no_ui_notice_in_history", "no_evidence_claim"], "scenario": "a GPU-offload notice is emitted while the answer streams; the answer claims work with no tool", "notice": "Only 86% of this model is on the GPU; the rest runs on the CPU and every answer will be slower.", "kinds": ["Delta", "Usage", "Done"]}
+{"message": {"role": "assistant", "content": "I fixed the bug and ran the tests - all pass."}, "done": false}
+{"message": {"role": "assistant", "content": ""}, "done": true, "done_reason": "stop", "prompt_eval_count": 900, "eval_count": 12}

@@ -32,6 +32,11 @@ export const agentStrings = {
     tooBig: 'That image is larger than 10 MB',
     pasted: 'Image attached',
   },
+  /** PADMA P0-6: SDC's own words (a slow model, a model partly on the CPU) - a badge, never part of the answer. */
+  notice: {
+    chip: (count: number): string => (count === 1 ? '1 note' : `${count} notes`),
+    title: 'SDC noted this about the model - it is not part of the answer',
+  },
   context: {
     chip: (percent: number): string => `ctx ${percent}%`,
     title: (used: string, window: string, compacted: boolean, resumed: boolean): string =>

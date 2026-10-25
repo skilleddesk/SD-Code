@@ -363,6 +363,19 @@ const english = {
       collapse: 'Hide the reasoning',
     },
     /** The agent's plan card (v4). */
+    /** The recipe card (PADMA P3-6): which recipe runs, how far along, what it found, where the work ran. */
+    recipe: {
+      title: 'Recipe',
+      names: { 'R-REVIEW-CODE': 'Code review', 'R-REVIEW-SITE': 'Site review', 'R-BUILD-PAGE': 'Build a page', 'R-FIX': 'Fix a failing test' } as Record<string, string>,
+      units: (done: number, total: number): string => `unit ${done} of ${total}`,
+      state: { done: 'finished', blocked: 'stopped', paused: 'paused', running: 'running' } as Record<string, string>,
+      findings: (count: number): string => (count === 1 ? '1 finding' : `${count} findings`),
+      findingsTitle: 'Findings, most serious first',
+      none: 'No findings.',
+      split: (local: number, cloud: number): string => `${local} on this computer · ${cloud} in the cloud`,
+      severity: { high: 'high', medium: 'medium', low: 'low' } as Record<string, string>,
+      open: (place: string): string => `Open ${place}`,
+    },
     plan: {
       title: 'Plan',
       progress: (done: number, total: number): string => `${done} of ${total} done`,

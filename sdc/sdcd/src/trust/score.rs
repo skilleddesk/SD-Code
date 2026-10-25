@@ -31,6 +31,10 @@ pub struct TurnFacts {
     pub secrets: usize,
     pub sast_high: usize,
     pub sast_other: usize,
+    /// PADMA P0-7: tool calls the turn made (any kind), the words it said, and whether it ended `Blocked`.
+    pub tool_calls: usize,
+    pub said: String,
+    pub blocked: bool,
 }
 
 /// The facts of one turn, from the log.
@@ -41,7 +45,11 @@ pub fn facts(events: &[StoredEvent], turn_id: &str, policy: &Policy, root: Optio
         let event = &entry.event;
 
         match event["type"].as_str().unwrap_or_default() {
+            "TurnDelta" => facts.said.push_str(event["delta"].as_str().unwrap_or_default()),
+            "TurnCompleted" if event["summary"].as_str().is_some_and(|summary| summary.starts_with("Blocked")) => facts.blocked = true,
             "ToolCallStarted" => {
+                facts.tool_calls += 1;
+
                 let target = event["target"].as_str().unwrap_or_default();
 
                 match event["tool"].as_str() {
@@ -170,8 +178,33 @@ pub fn turn(facts: &TurnFacts, max_files: usize) -> (i64, &'static str, Vec<Valu
         take(&mut score, &mut reasons, 10, "The reviewer found issues".to_string());
     }
 
+    /* PADMA P0-7 (`padma.evidence_trust`): trust follows what the log can prove. An answer that says work was done when no edit or command
+       was recorded is at most "low"; a turn that ended blocked is "blocked", not "high" because nothing went wrong. */
+    let mut capped = false;
+
+    if crate::v3::on("padma.evidence_trust") {
+        if facts.files_changed.is_empty() && facts.commands == 0 && crate::padma::evidence::claims_work(&facts.said) {
+            take(&mut score, &mut reasons, 40, "The answer says work was done, but no edit or command was recorded".to_string());
+
+            if score > 49 {
+                reasons.push(reason("Capped at low: nothing in the log backs the claim", 49 - score));
+                score = 49;
+            }
+
+            capped = true;
+        }
+
+        if facts.blocked {
+            reasons.push(reason("The turn ended blocked: the task was not finished", 0));
+
+            return (score.clamp(0, 40), "blocked", reasons);
+        }
+    }
+
     let score = score.clamp(0, 100);
-    let level = if score >= 80 {
+    let level = if capped {
+        "low"
+    } else if score >= 80 {
         "high"
     } else if score >= 50 {
         "medium"

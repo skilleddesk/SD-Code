@@ -316,6 +316,8 @@ export type SdcpMethod =
   | 'process.list'
   | 'process.stop'
   | 'context.get'
+  | 'task.get'
+  | 'task.list'
   | 'app.erase'
   | 'research.status'
   | 'research.key.set'
@@ -992,6 +994,55 @@ export interface ContextUpdatedEvent {
   resumed: boolean;
 }
 
+/**
+ * SDC's own words to the person (PADMA P0-6): a slow model, a model partly on the CPU, a step finished after a crash.
+ * Shown in the window as a badge; never part of the answer, the stored turn or the model's history.
+ */
+export interface NoticeShownEvent {
+  type: 'NoticeShown';
+  sessionId: string;
+  turnId: string;
+  kind: string;
+  text: string;
+}
+
+/** Where a turn's task stands (PADMA P1-1): steps done and blocked of the total. */
+export interface TaskProgressEvent {
+  type: 'TaskProgress';
+  sessionId: string;
+  turnId: string;
+  taskId: string;
+  done: number;
+  blocked: number;
+  total: number;
+  label: string;
+  /** The recipe the task runs (`R-REVIEW-CODE`, ...); `plain` for a turn that is not a recipe (PADMA P3-6). */
+  recipe: string;
+  /** The ranked review lines (`place · severity · category · problem · evidence`) once a review recipe has them. */
+  findings?: string[];
+  /** Model requests that ran on this computer and in the cloud, once a recipe has made any. */
+  local?: number;
+  cloud?: number;
+}
+
+/** A task as the Task Ledger keeps it (PADMA P1-1): the contract, its done-when lines and its steps. */
+export interface TaskView {
+  taskId: string;
+  sessionId: string;
+  goal: string;
+  originalRef: string;
+  recipe: string;
+  scope: string;
+  deliverable: string;
+  languageOut: string;
+  createdAt: string;
+  state: 'open' | 'done' | 'blocked' | 'paused' | 'cancelled';
+  lastError: string | null;
+  doneWhen: { text: string; evidence: string | null }[];
+  steps: { stepId: string; unit: string; status: 'todo' | 'running' | 'done' | 'blocked'; attempts: number; evidenceRefs: string[]; handoverNote: string }[];
+  counts: { done: number; blocked: number; remaining: number };
+}
+
 /** One attempt on a Rotation Chain model (M1-6, `relay.step` in the plan). Append-only. */
 export interface RelayStepEvent {
   type: 'RelayStep';
@@ -1270,7 +1321,7 @@ export interface CostSummary {
   budgets: CostBudgets;
 }
 
-export type TrustLevel = 'high' | 'medium' | 'low';
+export type TrustLevel = 'high' | 'medium' | 'low' | 'blocked';
 
 export interface TrustReason {
   text: string;
@@ -1872,6 +1923,8 @@ export type SdcpEvent =
   | ResearchSourcesEvent
   | TurnSteeredEvent
   | ContextUpdatedEvent
+  | NoticeShownEvent
+  | TaskProgressEvent
   | RelayStepEvent
   | RelaySummaryEvent
   | QuestionAskedEvent
@@ -1931,6 +1984,8 @@ export const SDCP_EVENT_TYPES = [
   'ResearchSources',
   'TurnSteered',
   'ContextUpdated',
+  'NoticeShown',
+  'TaskProgress',
   'RelayStep',
   'RelaySummary',
   'QuestionAsked',
@@ -2385,6 +2440,8 @@ export interface SdcpMethodMap {
         fetchedAt?: string | null;
         /** A local model that has been measured (P0-9): its class and what was measured. */
         probe?: { class: string; status: 'probed' | 'provisional'; effectiveContext: number; toolCallReliability: number };
+        /** One line on how this model makes tool calls (PADMA P2-1), when `padma.model_profile` is on. */
+        profileLine?: string;
       }[];
       /** The day the bundled catalogue was last curated. */
       snapshot: string;
@@ -2707,6 +2764,8 @@ export interface SdcpMethodMap {
   'process.list': { params: { sessionId?: string }; result: { processes: { processId: string; sessionId: string; command: string; place: string; seconds: number; running: boolean }[] } };
   'process.stop': { params: { processId: string }; result: { stopped: boolean } };
   /** The context meter before a turn: what the next turn of the chat would send to this model. */
+  'task.get': { params: { taskId: string; sessionId?: string; projectRoot?: string }; result: { task: TaskView | null } };
+  'task.list': { params: { sessionId?: string; projectRoot?: string; limit?: number }; result: { tasks: TaskView[] } };
   'context.get': { params: { sessionId: string; engine?: string; model?: string; provider?: string }; result: { usedTokens: number; windowTokens: number; percent: number; compacted: boolean; resumed: boolean } };
   /** Settings â†’ Research (0.16.1): the search service, which keyed services have a key (masked), limits, the final-answer model, and Ollama. */
   'research.status': { params: Record<string, never>; result: ResearchStatus };
@@ -2780,7 +2839,7 @@ export interface LocalRuntime {
   kind: 'ollama' | 'openai-compatible';
   label: string;
   base: string;
-  models: { id: string; ctx: number; sizeBytes?: number | null; local?: boolean; probe?: { class: string; status: string; effectiveContext?: number; advice?: string | null } | null }[];
+  models: { id: string; ctx: number; sizeBytes?: number | null; local?: boolean; probe?: { class: string; status: string; effectiveContext?: number; advice?: string | null } | null; profileLine?: string | null }[];
   state: 'ready' | 'empty' | 'silent' | 'needs-key';
 }
 

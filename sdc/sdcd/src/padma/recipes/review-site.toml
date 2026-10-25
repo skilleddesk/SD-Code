@@ -1,0 +1,51 @@
+id = "R-REVIEW-SITE"
+title = "Review a website: probe it by code, report only what was measured"
+deliver = ["report", "summary"]
+
+# 1. a web address in the request, or the .html files of the project folder
+[[step]]
+id = "target"
+kind = "code"
+run = "site_target"
+outputs = ["target"]
+
+# 2. the probes: status, redirects, broken links and assets, title/description/alt, image sizes, mixed content
+[[step]]
+id = "probe"
+kind = "code"
+run = "probe_site"
+needs = ["target"]
+inputs = ["target"]
+outputs = ["verified"]
+
+# 3. dedupe and rank (shared with the code review)
+[[step]]
+id = "rank"
+kind = "code"
+run = "rank_findings"
+needs = ["probe"]
+inputs = ["verified"]
+outputs = ["ranked"]
+
+# 4. the report, built from the probe lines only
+[[step]]
+id = "report"
+kind = "code"
+run = "site_report"
+needs = ["rank"]
+inputs = ["ranked", "target"]
+outputs = ["report"]
+
+# 5. a short summary in the person's language
+[[step]]
+id = "summary"
+kind = "model"
+needs = ["report"]
+inputs = ["ranked"]
+think = "reduce_report"
+outputs = ["summary"]
+prompt = '''These are the measured findings of a website review, most serious first (each line: place · severity · category · problem · evidence):
+
+{ranked}
+
+Write a short summary in {language}: how many findings there are, which matter most, and what to fix first. Use only what is listed. Do not repeat the list.'''

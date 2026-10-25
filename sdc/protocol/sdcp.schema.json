@@ -384,6 +384,8 @@
           "process.list",
           "process.stop",
           "context.get",
+          "task.get",
+          "task.list",
           "app.erase",
           "research.status",
           "research.key.set",
@@ -448,6 +450,8 @@
           "ShadowDbUpdated",
           "StagingUpdated",
           "ContextUpdated",
+          "NoticeShown",
+          "TaskProgress",
           "RelayStep",
           "RelaySummary",
           "QuestionAsked",
@@ -2881,6 +2885,26 @@
             "percent": "number",
             "compacted": "boolean",
             "resumed": "boolean"
+          }
+        },
+        "task.get": {
+          "params": {
+            "taskId": "string",
+            "sessionId": "string",
+            "projectRoot": "string"
+          },
+          "result": {
+            "task": "object"
+          }
+        },
+        "task.list": {
+          "params": {
+            "sessionId": "string",
+            "projectRoot": "string",
+            "limit": "number"
+          },
+          "result": {
+            "tasks": "array"
           }
         },
         "app.erase": {

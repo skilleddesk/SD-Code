@@ -223,8 +223,8 @@ fn a_local_only_project_never_relays_whatever_is_switched_on() {
     std::fs::write(root.join(".sdc/policy.toml"), "privacy = \"local-only\"\n").unwrap();
 
     let (url, untouched) = forbidden_provider();
-    /* Silent twice: the second is the retry with thinking off, after which the turn ends with a failure. */
-    let (local_url, _local) = raw_provider(vec![local_silent(), local_silent()]);
+    /* Silent for as long as the Recovery Ladder asks (at most six rungs), after which the turn ends blocked. */
+    let (local_url, _local) = raw_provider((0..7).map(|_| local_silent()).collect());
 
     fake("cloud", url, "cloud-model");
 
@@ -247,8 +247,8 @@ fn a_local_only_project_never_relays_whatever_is_switched_on() {
 fn without_the_consent_the_local_rotation_stays_manual() {
     let root = folder("noconsent");
     let (url, untouched) = forbidden_provider();
-    /* Silent twice: the second is the retry with thinking off, after which the turn ends with a failure. */
-    let (local_url, _local) = raw_provider(vec![local_silent(), local_silent()]);
+    /* Silent for as long as the Recovery Ladder asks (at most six rungs), after which the turn ends blocked. */
+    let (local_url, _local) = raw_provider((0..7).map(|_| local_silent()).collect());
 
     fake("cloud", url, "cloud-model");
 
@@ -265,7 +265,7 @@ fn without_the_consent_the_local_rotation_stays_manual() {
 fn a_model_picked_by_hand_is_never_relayed() {
     let root = folder("pinned");
     let (url, untouched) = forbidden_provider();
-    let (api_url, _api) = provider(vec![chunk(json!({ "content": "" })) + "data: [DONE]\n\n"]);
+    let (api_url, _api) = provider((0..7).map(|_| chunk(json!({ "content": "" })) + "data: [DONE]\n\n").collect());
 
     fake("cloud", url, "cloud-model");
 

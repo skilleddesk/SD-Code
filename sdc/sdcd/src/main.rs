@@ -80,6 +80,11 @@ fn main() -> Result<()> {
             std::process::exit(sdcd::navaratna::cli::main(&all[1..]));
         }
 
+        /* PADMA P2-1: `sdcd models probe|show MODEL` measures or prints a model's profile. */
+        if all.first().map(String::as_str) == Some("models") {
+            std::process::exit(sdcd::padma::model::main(&all[1..]));
+        }
+
         if all.first().map(String::as_str) == Some("probe") {
             if all.get(1).map(String::as_str) == Some("window") {
                 std::process::exit(sdcd::navaratna::window::main(&all[2..]));

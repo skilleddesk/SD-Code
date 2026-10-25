@@ -1,0 +1,85 @@
+id = "R-BUILD-PAGE"
+title = "Build a small page: plan the files, write each from a fresh request, check, report"
+deliver = ["report"]
+
+# 1. the plan: which files, and which choices were made for the person
+[[step]]
+id = "blueprint"
+kind = "model"
+think = "blueprint"
+outputs = ["blueprint"]
+prompt = '''Plan a small static web page for this request:
+{goal}
+
+Answer only with lines in this form:
+FILE path | what this file is for
+DEFAULT: one choice you made that the person did not specify (colour, tone, sections, language)
+
+Rules: 2 to 5 FILE lines; paths are relative and simple (index.html, styles.css, script.js); exactly one html file named index.html; no other text.'''
+
+# 2. the plan as code: safe paths only; a bad plan falls back to index.html + styles.css
+[[step]]
+id = "plan"
+kind = "code"
+run = "plan_files"
+needs = ["blueprint"]
+inputs = ["blueprint"]
+outputs = ["files"]
+
+[[step]]
+id = "defaults"
+kind = "code"
+run = "defaults_of"
+needs = ["blueprint"]
+inputs = ["blueprint"]
+outputs = ["defaults"]
+
+# 3. one fresh request per file, each answer checked (one retry with the reason)
+[[step]]
+id = "page"
+kind = "model"
+needs = ["plan"]
+for_each = "files"
+inputs = ["blueprint", "files"]
+think = "boilerplate"
+check = "valid_file"
+retries = 1
+outputs = ["pages"]
+prompt = '''You are writing one file of a small static web page.
+
+The request: {goal}
+
+The plan of the page:
+{blueprint}
+
+All the files of the page:
+{files}
+
+Write the complete file {unit} now. Link the other files by exactly the names above. Every image needs alt text. Answer only with the contents of {unit}, nothing else.'''
+
+# 4. written only into landing-page/
+[[step]]
+id = "write"
+kind = "code"
+run = "write_files"
+needs = ["page"]
+inputs = ["pages", "_pages_units"]
+outputs = ["written"]
+done_when = "the page files are written"
+
+# 5. checked again from the disk
+[[step]]
+id = "verify"
+kind = "gate"
+run = "verify_page"
+needs = ["write"]
+inputs = ["written"]
+
+# 6. the report
+[[step]]
+id = "report"
+kind = "code"
+run = "page_report"
+needs = ["write", "defaults"]
+inputs = ["written", "defaults", "_unreviewed"]
+outputs = ["report"]

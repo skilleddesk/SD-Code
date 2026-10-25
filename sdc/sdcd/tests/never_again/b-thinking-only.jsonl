@@ -1,0 +1,3 @@
+{"type": "vcr", "engine": "ollama", "guarantee": ["thinking_only", "empty_answer"], "scenario": "empty content, only thinking", "kinds": ["Usage", "Done"]}
+{"message": {"role": "assistant", "content": "", "thinking": "I should read the file first."}, "done": false}
+{"message": {"role": "assistant", "content": ""}, "done": true, "done_reason": "stop", "prompt_eval_count": 900, "eval_count": 12}
