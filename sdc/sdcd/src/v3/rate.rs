@@ -354,6 +354,60 @@ mod tests {
     }
 
     #[test]
+    fn a_fractional_refill_is_kept_between_requests_not_rounded_away() {
+        let now = Instant::now();
+
+        for _ in 0..3 {
+            assert_eq!(reserve("bucket-fraction.example", 60.0, 3.0, now), Duration::ZERO);
+        }
+
+        /* 1.5s earns 1.5 tokens: one request goes at once and leaves the half token, so the next owes only the other half. */
+        let later = now + Duration::from_millis(1500);
+
+        assert_eq!(reserve("bucket-fraction.example", 60.0, 3.0, later), Duration::ZERO);
+        assert_eq!(reserve("bucket-fraction.example", 60.0, 3.0, later), Duration::from_millis(500));
+    }
+
+    #[test]
+    fn a_burst_below_one_token_still_lets_requests_through_at_the_refill_rate() {
+        let now = Instant::now();
+
+        /* Half a token in the bucket: the first request owes the other half (0.5s at 1/s), not a wait that never ends. */
+        assert_eq!(reserve("bucket-subone.example", 60.0, 0.5, now), Duration::from_millis(500));
+
+        /* Arriving the moment that wait ends, the bucket holds 0 tokens, so the next request owes a whole one. */
+        assert_eq!(reserve("bucket-subone.example", 60.0, 0.5, now + Duration::from_millis(500)), Duration::from_secs(1));
+
+        /* A second and a half on, the bucket is back at its 0.5 cap, so the owed wait is the first one's again. */
+        assert_eq!(reserve("bucket-subone.example", 60.0, 0.5, now + Duration::from_millis(2000)), Duration::from_millis(500));
+    }
+
+    #[test]
+    fn a_burst_lowered_between_calls_caps_the_tokens_already_banked() {
+        let now = Instant::now();
+
+        /* The first request leaves 4 of the 5 tokens banked. */
+        assert_eq!(reserve("bucket-shrink.example", 60.0, 5.0, now), Duration::ZERO);
+
+        /* With the burst now 1, the bank is cut to 1: this request takes it and the next owes a whole token. */
+        assert_eq!(reserve("bucket-shrink.example", 60.0, 1.0, now), Duration::ZERO);
+        assert_eq!(reserve("bucket-shrink.example", 60.0, 1.0, now), Duration::from_secs(1));
+    }
+
+    #[test]
+    fn a_burst_raised_between_calls_does_not_hand_out_tokens_that_were_never_earned() {
+        let now = Instant::now();
+
+        assert_eq!(reserve("bucket-grow.example", 60.0, 1.0, now), Duration::ZERO);
+
+        /* The bank is empty; a bigger burst only raises the cap, so this request still owes a whole token. */
+        assert_eq!(reserve("bucket-grow.example", 60.0, 5.0, now), Duration::from_secs(1));
+
+        /* Two seconds on, the debt is paid and one token is left over, so this request goes at once. */
+        assert_eq!(reserve("bucket-grow.example", 60.0, 5.0, now + Duration::from_secs(2)), Duration::ZERO);
+    }
+
+    #[test]
     fn a_query_or_fragment_straight_after_the_host_does_not_make_a_new_bucket() {
         assert_eq!(host("https://api.example.com?key=1"), "api.example.com");
         assert_eq!(host("https://api.example.com#top"), "api.example.com");

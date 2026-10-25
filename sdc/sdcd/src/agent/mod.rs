@@ -33,6 +33,7 @@ pub mod patch;
 pub mod rescue;
 pub mod research;
 mod relay;
+mod steps;
 pub mod search;
 pub mod skills;
 pub mod tools;
@@ -696,6 +697,17 @@ fn ask_model(backend: Backend, target: &Target, turn: (&str, crate::guard::model
 
     if let Some(think) = thinking_decision {
         body["think"] = serde_json::json!(think);
+    }
+
+    /* The step executor sets the temperature and thinking of one request (a candidate at another temperature, a fix step). */
+    if let Some((temperature, think)) = crate::navaratna::steps::sampling::take() {
+        if let Some(temperature) = temperature {
+            body["options"]["temperature"] = serde_json::json!(temperature);
+        }
+
+        if let Some(think) = think {
+            body["think"] = serde_json::json!(think);
+        }
     }
 
     /* P1-6 (`sme.constrained`): the retry after a refused printed call can only answer with a tool call of a known tool. */
@@ -2062,6 +2074,31 @@ fn drive(
     let _relay_summary = RelaySummaryOnExit { hook: &relay_hook, sink, session: &prompt.session_id, turn: &turn_id };
     /* M1-2: in this mode the local model is given `local_ttft_s` to say anything, not ten minutes. */
     let _first_silence = relay_hook.borrow().as_ref().map(|hook| crate::rotation::policy::FirstSilence::set(&turn_id, hook.policy.local_ttft_s));
+
+    /* NAVARATNA (`nr.fresh_step`): a long request to a local model in Auto mode is done as steps - each a fresh short prompt, each judged by the project's own
+       checks - instead of one growing chat. Every other turn takes the loop below. */
+    if resumed.is_none() && steps::applies(backend, &options, prompt.remote.is_some(), research_session.is_some(), &request_text, &scope_model) {
+        steps::run(
+            &steps::Turn {
+                backend,
+                target,
+                workspace,
+                options,
+                policy,
+                prompt,
+                sink,
+                checkpoint: context.checkpoint.clone(),
+                gate: &gate,
+                relay: &relay_hook,
+                request: &request_text,
+                window,
+                turn_id: &turn_id,
+            },
+            &stopped,
+        );
+
+        return;
+    }
 
     /* M2-3: the skill files read so far, and whether the one reminder has been given. */
     let mut read_skills: HashSet<String> = HashSet::new();
@@ -5172,3 +5209,5 @@ mod relay_tests;
 
 #[cfg(test)]
 mod frame_tests;
+#[cfg(test)]
+mod steps_tests;

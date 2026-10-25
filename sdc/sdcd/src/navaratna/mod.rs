@@ -36,6 +36,7 @@ pub mod shadow;
 pub mod roles;
 pub mod route;
 pub mod spec;
+pub mod steps;
 pub mod symbols;
 pub mod think;
 pub mod testfirst;
