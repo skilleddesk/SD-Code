@@ -15,7 +15,7 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
-## [Unreleased] — NAVARATNA: a small local model finishing large jobs
+## [1.1.0] — NAVARATNA: a small local model finishing large jobs
 
 Twenty-five new `nr.*` switches, one for each part of the NAVARATNA plan. Seven are on by default and only protect, verify or record
 (`nr.ctx_lock`, `nr.quant_advice`, `nr.sentence_cover`, `nr.symbol_index`, `nr.edit_gate`, `nr.exist_gate`, `nr.registry`); the other eighteen are off until the
