@@ -769,6 +769,7 @@ async fn read_structured(
     let mut pending: Vec<u8> = Vec::new();
     let mut chunk = [0u8; 8192];
     let mut drafts = crate::engines::draft::DraftTracker::new();
+    let mut background: Vec<String> = Vec::new();
 
     loop {
         match tokio::time::timeout(INTERACTIVE_STALL, stdout.read(&mut chunk)).await {
@@ -780,7 +781,7 @@ async fn read_structured(
                     let raw: Vec<u8> = pending.drain(..=end).collect();
                     let line = String::from_utf8_lossy(&raw).trim_end().to_string();
 
-                    take_stream_line(line, &mut lines, &mut ended, sink, &mut drafts);
+                    take_stream_line(line, &mut lines, &mut ended, sink, &mut drafts, &mut background);
                 }
 
                 let tail = String::from_utf8_lossy(&pending).trim().to_string();
@@ -808,28 +809,87 @@ async fn read_structured(
     let last = String::from_utf8_lossy(&pending).trim().to_string();
 
     if !last.is_empty() && serde_json::from_str::<serde_json::Value>(&last).is_ok() {
-        take_stream_line(last, &mut lines, &mut ended, sink, &mut drafts);
+        take_stream_line(last, &mut lines, &mut ended, sink, &mut drafts, &mut background);
     }
 
     (lines, ended, None)
 }
 
 /// One complete line of a CLI's stream: its drafts, its event, and the record of it.
+///
+/// `background` is Claude Code's own list of background tasks that are still running, kept current from
+/// its `background_tasks_changed` lines. A headless turn stops them the moment its `result` is written
+/// (measured on 2.1.278), so a turn that ends with that list non-empty has promised a result that will
+/// never come - and says so, instead of ending on "it is still running, I will tell you".
 fn take_stream_line(
     line: String,
     lines: &mut Vec<String>,
     ended: &mut bool,
     sink: &EventSink,
     drafts: &mut crate::engines::draft::DraftTracker,
+    background: &mut Vec<String>,
 ) {
-    if !*ended {
+    let was_ended = *ended;
+
+    if !was_ended {
         for draft in drafts.observe(&line) {
             sink.send(draft);
         }
+
+        observe_background(&line, background);
     }
 
     push_stream_line_with(&line, ended, sink, drafts);
+
+    if !was_ended && *ended && !background.is_empty() {
+        sink.send(EngineEvent::Delta(abandoned_background_sentence(background)));
+    }
+
     lines.push(line);
+}
+
+/// Keeps `open` equal to the background tasks Claude Code says are running, one description each.
+fn observe_background(line: &str, open: &mut Vec<String>) {
+    if !line.contains("background_tasks_changed") {
+        return;
+    }
+
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+        return;
+    };
+
+    if value.get("type").and_then(serde_json::Value::as_str) != Some("system")
+        || value.get("subtype").and_then(serde_json::Value::as_str) != Some("background_tasks_changed")
+    {
+        return;
+    }
+
+    *open = value
+        .get("tasks")
+        .and_then(serde_json::Value::as_array)
+        .map(|tasks| {
+            tasks
+                .iter()
+                .map(|task| {
+                    ["description", "task_id"]
+                        .iter()
+                        .find_map(|key| task.get(key).and_then(serde_json::Value::as_str))
+                        .unwrap_or("a background task")
+                        .to_string()
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+}
+
+/// What the turn's last paragraph says when it ended with work still running in the background.
+fn abandoned_background_sentence(open: &[String]) -> String {
+    let tasks: Vec<String> = open.iter().map(|task| format!("`{}`", task.chars().take(120).collect::<String>())).collect();
+
+    format!(
+        "\n\n[SDC: Claude Code ended this turn while a background task was still running - {}. A turn stops its background tasks when it ends, so that work did not finish and no result will arrive. Send the request again and ask for the command to run in the foreground.]",
+        tasks.join(", ")
+    )
 }
 
 /// The half-written line that means a CLI has stopped to talk to a person, when it has.
@@ -1392,4 +1452,48 @@ mod tests {
         assert_eq!(plain_text_of(&[r#"{"a":1}"#.to_string()]), None);
     }
 
+    fn run_lines(lines: &[&str]) -> Vec<EngineEvent> {
+        let recorder = crate::engines::Recorder::new();
+        let sink = recorder.sink();
+        let mut kept = Vec::new();
+        let mut ended = false;
+        let mut drafts = crate::engines::draft::DraftTracker::new();
+        let mut background = Vec::new();
+
+        for line in lines {
+            take_stream_line(line.to_string(), &mut kept, &mut ended, &sink, &mut drafts, &mut background);
+        }
+
+        recorder.events()
+    }
+
+    const RESULT: &str = r#"{"type":"result","subtype":"success","is_error":false,"result":"still running"}"#;
+    const ONE_TASK: &str = r#"{"type":"system","subtype":"background_tasks_changed","tasks":[{"task_id":"b1","task_type":"local_bash","description":"cargo build"}]}"#;
+    const NO_TASKS: &str = r#"{"type":"system","subtype":"background_tasks_changed","tasks":[]}"#;
+
+    /// The defect: the model backgrounds a build, says "I will tell you", and the turn ends on that
+    /// sentence. The person is now told what really happened, once, before the turn completes.
+    #[test]
+    fn a_turn_that_ends_with_a_background_task_running_says_so() {
+        let events = run_lines(&[ONE_TASK, RESULT, NO_TASKS, r#"{"type":"system","subtype":"task_notification","status":"stopped"}"#]);
+        let warnings: Vec<&EngineEvent> =
+            events.iter().filter(|event| matches!(event, EngineEvent::Delta(text) if text.contains("background task was still running"))).collect();
+
+        assert_eq!(warnings.len(), 1, "{events:?}");
+        assert!(matches!(warnings[0], EngineEvent::Delta(text) if text.contains("`cargo build`")));
+    }
+
+    #[test]
+    fn a_task_that_finished_before_the_result_adds_nothing() {
+        let events = run_lines(&[ONE_TASK, NO_TASKS, RESULT]);
+
+        assert!(!events.iter().any(|event| matches!(event, EngineEvent::Delta(_))), "{events:?}");
+    }
+
+    #[test]
+    fn a_turn_that_never_used_the_background_adds_nothing() {
+        let events = run_lines(&[RESULT]);
+
+        assert!(!events.iter().any(|event| matches!(event, EngineEvent::Delta(_))), "{events:?}");
+    }
 }

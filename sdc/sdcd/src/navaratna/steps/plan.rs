@@ -105,10 +105,18 @@ fn label(units: Vec<Unit>, engine: &mut dyn Engine, notes: &mut Vec<String>) -> 
     }
 
     let mut fallback = Vec::new();
+    let mut overridden = Vec::new();
+    let framing = spec::framing(&units);
     let map = spec::label(units.clone(), &mut |unit, last| match answers.get(&unit.id) {
+        _ if framing.contains(&unit.id) => Some(Label::Background),
         Some(Label::PartOf(owner)) if !matches!(answers.get(owner), Some(Label::Requirement)) => {
             fallback.push(unit.id.clone());
             spec::heuristic(unit, last)
+        }
+        /* the model calls a clear task background (a 9B model sometimes does, for a whole list): a unit that asks for something and names a file is a requirement */
+        Some(Label::Background) if matches!(unit.kind, spec::Kind::ListItem | spec::Kind::Sentence) && !crate::runtime::decompose::files_in(&unit.text).is_empty() && spec::heuristic(unit, last) == Some(Label::Requirement) => {
+            overridden.push(unit.id.clone());
+            Some(Label::Requirement)
         }
         Some(label) => Some(label.clone()),
         None => {
@@ -116,6 +124,10 @@ fn label(units: Vec<Unit>, engine: &mut dyn Engine, notes: &mut Vec<String>) -> 
             spec::heuristic(unit, last)
         }
     });
+
+    if !overridden.is_empty() {
+        notes.push(format!("the model called {} unit(s) background that ask for a change to a named file ({}); they are requirements", overridden.len(), overridden.join(", ")));
+    }
 
     if !fallback.is_empty() {
         notes.push(format!("the model left {} unit(s) unlabelled ({}); the deterministic labeller labelled them", fallback.len(), fallback.join(", ")));
@@ -286,6 +298,40 @@ mod tests {
 
         assert_eq!(labels.len(), 5);
         assert_eq!(labels[4], ("S-005".to_string(), Label::PartOf("S-003".into())));
+    }
+
+    #[test]
+    fn the_lead_in_and_the_closing_rules_around_a_list_are_background_not_steps() {
+        let prompt = "Work through these two changes one after the other.\n\n1. In a.py add a function `one()` that returns 1.\n\n2. In b.py add a function `two()` that returns 2.\n\nFor every new function add a test. Do not install anything.\n";
+        let plan = build(prompt, &mut Scripted(vec![], vec![]), &|_| vec![]).unwrap();
+
+        assert_eq!(plan.steps.len(), 2, "{:?}", plan.steps.iter().map(|step| &step.goal).collect::<Vec<_>>());
+        assert!(plan.steps[0].goal.contains("a.py") && plan.steps[1].goal.contains("b.py"));
+        assert_eq!(plan.background.len(), 3, "the lead-in and both closing sentences are carried by every step");
+
+        let lone = build("Add the following function `one()` to a.py.\n", &mut Scripted(vec![], vec![]), &|_| vec![]).unwrap();
+
+        assert_eq!(lone.steps.len(), 1, "without a list there is no framing");
+    }
+
+    #[test]
+    fn one_task_with_loose_rules_and_a_closing_report_is_one_step() {
+        let prompt = "Work through this small change to the pkg package and make the tests pass after it.\n\n1. In pkg/a.py add a function `one()` that returns 1.\n\nFor every new function add two tests to tests/test_a.py. Do not change the behaviour of the functions that exist now. Read each file before you edit it, and when all is done say in one short paragraph what you added. If a test fails, fix the code rather than the test.\n";
+        let plan = build(prompt, &mut Scripted(vec![], vec![]), &|_| vec![]).unwrap();
+
+        assert_eq!(plan.steps.len(), 2, "{:?}", plan.steps.iter().map(|step| &step.goal).collect::<Vec<_>>());
+        assert!(plan.steps[0].goal.contains("pkg/a.py") && plan.steps[1].goal.contains("tests/test_a.py"));
+    }
+
+    #[test]
+    fn a_model_that_calls_every_task_of_a_list_background_is_overruled_by_the_file_they_name() {
+        let prompt = "Work through these two changes.\n\n1. In a.py add a function `one()` that returns 1.\n\n2. In b.py add a function `two()` that returns 2.\n\nIf a test fails, fix the code rather than the test.\n";
+        let mut engine = Scripted(vec!["S-001: B\nS-002: B\nS-003: B\nS-004: R".into()], vec![]);
+        let plan = build(prompt, &mut engine, &|_| vec![]).unwrap();
+
+        assert_eq!(plan.steps.len(), 2, "{:?}", plan.steps.iter().map(|step| &step.goal).collect::<Vec<_>>());
+        assert!(plan.steps[0].goal.contains("a.py") && plan.steps[1].goal.contains("b.py"));
+        assert!(plan.notes.iter().any(|note| note.contains("background that ask for a change to a named file")), "{:?}", plan.notes);
     }
 
     #[test]

@@ -6,7 +6,7 @@
 //! report is one row per switch: the metric, the value off, the value on, and whether the switch helped.
 //!
 //! These numbers measure the **code** around the model on scripted behaviour. They say nothing about how the real 9B behaves; that is N9-3
-//! (`sdcd bench navaratna --live`, with Ollama running), which the owner runs.
+//! (`sdcd bench navaratna --live`, with Ollama running; see `live.rs`).
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -652,10 +652,10 @@ pub fn render(rows: &[Row]) -> String {
     out
 }
 
-/// `sdcd bench navaratna [--out FILE] [--live]`.
+/// `sdcd bench navaratna [--out FILE]`, or `--live` for the live bench (see `live`).
 pub fn command(args: &[String]) -> Result<(), String> {
     if args.iter().any(|arg| arg == "--live") {
-        return Err("OWNER-LATER (N9-3): the live bench needs Ollama running with the 9B and is run by the owner; this build only has the scripted bench (`sdcd bench navaratna`)".into());
+        return live::command(args);
     }
 
     let rows = run_all();
@@ -670,6 +670,8 @@ pub fn command(args: &[String]) -> Result<(), String> {
 
     Ok(())
 }
+
+mod live;
 
 #[cfg(test)]
 mod tests;

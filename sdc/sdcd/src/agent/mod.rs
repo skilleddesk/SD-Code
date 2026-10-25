@@ -2023,6 +2023,7 @@ fn drive(
     /* Replies in a row the provider's content filter blocked. */
     let mut filtered = 0;
     let mut plan_nudged = false;
+    let mut empty_retries = 0u8;
     /* A research answer from one page is asked, once, to read a second (live check, 0.16.1: a 9B model
        answered from one page with the brief saying two). */
     let mut sources_nudged = false;
@@ -2588,6 +2589,33 @@ fn drive(
 
                 continue;
             }
+        }
+
+        /* A reply with no words and no call is not "Done": a thinking model (Qwen3.5) that spends its whole output on hidden reasoning ends exactly so.
+           A local model is asked once more with thinking off; if it is still silent the person is told, in words, rather than shown a bare "Done". */
+        if reply.tool_uses.is_empty() && reply.text.trim().is_empty() && reply.stop != "max_tokens" && reply.stop != "length" && !stopped() {
+            if backend == Backend::Ollama && empty_retries == 0 {
+                empty_retries += 1;
+                crate::navaratna::steps::sampling::set(None, Some(false));
+                dialect::append_user_text(target.dialect, &mut messages, "[SDC: your last reply was empty. Answer now in plain words, or make the tool call that is needed. Do not think first.]");
+
+                continue;
+            }
+
+            if context.changed.is_empty() {
+                sink.send(EngineEvent::Failed(format!(
+                    "{} returned an empty answer{} and made no change. Send the request again, or pick another model.",
+                    target.model,
+                    if reply.thinking_tokens > 0 { " (it used its whole output on thinking)" } else { "" }
+                )));
+
+                return;
+            }
+
+            sink.send(EngineEvent::Delta(format!(
+                "_The model wrote no summary. It changed: {}._",
+                context.changed.iter().cloned().collect::<Vec<_>>().join(", ")
+            )));
         }
 
         if reply.tool_uses.is_empty() {

@@ -507,6 +507,46 @@ pub fn heuristic(unit: &Unit, last_requirement_unit: Option<&str>) -> Option<Lab
     }
 }
 
+const LEAD_IN_CUES: [&str; 12] = ["these", "following", "below", "one after the other", "one by one", "in order", "steps", "changes", "tasks", "this change", "small change", "the change"];
+const RULE_CUES: [&str; 8] = ["every", "each", "all ", "do not", "don't", "never", "always", "whole"];
+const GUIDE_CUES: [&str; 6] = ["say ", "tell me", "report", "rather than", "unless", "must not"];
+
+/// The prose around a list of two or more items that is about the whole list, not one more thing to build: the lead-in before it ("Work through
+/// these changes one after the other") and the rules after it ("for every new function ..."). Such a sentence is background that every step
+/// carries, not a step of its own.
+pub fn framing(units: &[Unit]) -> std::collections::BTreeSet<String> {
+    let items: Vec<usize> = units.iter().enumerate().filter(|(_, unit)| unit.kind == Kind::ListItem).map(|(at, _)| at).collect();
+    let mut out = std::collections::BTreeSet::new();
+
+    /* a request with one task (or none in a list) and loose rules around it: a sentence that names no file and only lays down a rule is background */
+    let (Some(&first), Some(&last), true) = (items.first(), items.last(), items.len() >= 2) else {
+        let anchored = units.iter().any(|unit| matches!(unit.kind, Kind::Sentence | Kind::ListItem) && !crate::runtime::decompose::files_in(&unit.text).is_empty() && heuristic(unit, None) == Some(Label::Requirement));
+
+        if anchored {
+            for unit in units.iter().filter(|unit| unit.kind == Kind::Sentence && crate::runtime::decompose::files_in(&unit.text).is_empty()) {
+                let lower = unit.text.to_lowercase();
+
+                if RULE_CUES.iter().chain(LEAD_IN_CUES.iter()).chain(GUIDE_CUES.iter()).any(|cue| has_cue(&lower, cue)) {
+                    out.insert(unit.id.clone());
+                }
+            }
+        }
+
+        return out;
+    };
+
+    for (at, unit) in units.iter().enumerate().filter(|(_, unit)| unit.kind == Kind::Sentence) {
+        let lower = unit.text.to_lowercase();
+        let named = |cues: &[&str]| cues.iter().any(|cue| has_cue(&lower, cue));
+
+        if (at < first && named(&LEAD_IN_CUES)) || (at > last && (named(&RULE_CUES) || crate::runtime::decompose::files_in(&unit.text).is_empty())) {
+            out.insert(unit.id.clone());
+        }
+    }
+
+    out
+}
+
 /// The result of the coverage gate.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Blocked {

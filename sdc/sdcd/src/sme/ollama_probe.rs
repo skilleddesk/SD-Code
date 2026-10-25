@@ -97,6 +97,10 @@ fn request_body(model: &str, ask: &Ask) -> Value {
         "logprobs": true,
     });
 
+    if let Some(think) = ask.think {
+        body["think"] = json!(think);
+    }
+
     if let Some((name, schema)) = &ask.tool {
         body["tools"] = json!([{ "type": "function", "function": { "name": name, "description": "A tool.", "parameters": schema } }]);
     }
@@ -198,9 +202,11 @@ mod tests {
 
     #[test]
     fn the_request_pins_the_seed_and_asks_for_logprobs() {
-        let ask = Ask { prompt: "hi".into(), tool: None, schema: Some(json!({ "type": "object" })), num_ctx: 4_096, max_output: 50, seed: 9 };
+        let ask = Ask { prompt: "hi".into(), tool: None, schema: Some(json!({ "type": "object" })), num_ctx: 4_096, max_output: 50, seed: 9, think: Some(false) };
         let body = request_body("m", &ask);
 
+        assert_eq!(body["think"], false, "a thinking model must not spend the probe's few output tokens on hidden reasoning");
+        assert!(request_body("m", &Ask { think: None, ..ask.clone() }).get("think").is_none());
         assert_eq!(body["options"]["seed"], 9);
         assert_eq!(body["options"]["temperature"], 0);
         assert_eq!(body["options"]["num_ctx"], 4_096);

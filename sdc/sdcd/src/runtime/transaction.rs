@@ -153,6 +153,18 @@ fn write_synced(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     file.sync_all()
 }
 
+/// A symlink needs Developer Mode or elevation on Windows; a junction needs neither, and is the same thing for a read-only dependency folder.
+#[cfg(windows)]
+fn link_dir_windows(source: &Path, dest: &Path) {
+    use std::os::windows::process::CommandExt;
+
+    if std::os::windows::fs::symlink_dir(source, dest).is_ok() {
+        return;
+    }
+
+    let _ = std::process::Command::new("cmd").arg("/C").arg("mklink").arg("/J").arg(dest).arg(source).creation_flags(0x0800_0000).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status();
+}
+
 /// The shadow: a real copy of the project's sources, with the dependency folders linked in.
 fn copy_shadow(from: &Path, to: &Path) -> std::io::Result<()> {
     std::fs::create_dir_all(to)?;
@@ -171,7 +183,7 @@ fn copy_shadow(from: &Path, to: &Path) -> std::io::Result<()> {
             #[cfg(unix)]
             let _ = std::os::unix::fs::symlink(&source, &dest);
             #[cfg(windows)]
-            let _ = std::os::windows::fs::symlink_dir(&source, &dest);
+            link_dir_windows(&source, &dest);
         } else if kind.is_dir() {
             copy_shadow(&source, &dest)?;
         } else if kind.is_file() && entry.metadata().is_ok_and(|meta| meta.len() <= MAX_COPY_BYTES) {

@@ -10,7 +10,8 @@ fn mock(crash_after: Option<u32>) -> (String, Vec<String>) {
         args.push(format!("--crash-after={n}"));
     }
 
-    ("python3".to_string(), args)
+    /* `python3` is only a Store stub on Windows. */
+    ((if cfg!(windows) { "python" } else { "python3" }).to_string(), args)
 }
 
 fn project(name: &str) -> PathBuf {

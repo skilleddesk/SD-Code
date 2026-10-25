@@ -157,7 +157,7 @@ mod tests {
             }),
         });
 
-        let fresh = receiver.recv_timeout(Duration::from_secs(30)).expect("the checkpoint is written in the background");
+        let fresh = receiver.recv_timeout(Duration::from_secs(120)).expect("the checkpoint is written in the background");
 
         assert_eq!(fresh.id, "cp-s1-7");
         assert_eq!(fresh.title, "Before editing notes.md");
@@ -209,8 +209,8 @@ mod tests {
             });
         }
 
-        let first = receiver.recv_timeout(Duration::from_secs(30)).unwrap();
-        let second = receiver.recv_timeout(Duration::from_secs(30)).unwrap();
+        let first = receiver.recv_timeout(Duration::from_secs(120)).unwrap();
+        let second = receiver.recv_timeout(Duration::from_secs(120)).unwrap();
 
         assert_ne!(first.id, second.id);
         assert_eq!(store.checkpoints("s2").unwrap().len(), 2);

@@ -41,7 +41,18 @@ pub const CLAUDE_SPEC: CliSpec = CliSpec {
     args: &["-p", "--output-format", "stream-json", PARTIAL_MESSAGES_FLAG, "--verbose"],
     prompt: PromptPlacement::Stdin,
     model_flag: Some("--model"),
-    env: &[("NO_COLOR", "1"), ("CLAUDE_NO_UPDATE_CHECK", "1")],
+    /* A `-p` turn ends at `result` and the CLI kills every background task with it. Measured on Claude
+       Code 2.1.278: a Bash call past its 2-minute default timeout is moved to the background, the model
+       answers "the build is still running, I will tell you when it ends", and the turn completes with
+       that sentence - nothing ever reports the build's outcome. So backgrounding is off and a command
+       gets a long foreground timeout instead. */
+    env: &[
+        ("NO_COLOR", "1"),
+        ("CLAUDE_NO_UPDATE_CHECK", "1"),
+        ("CLAUDE_CODE_DISABLE_BACKGROUND_TASKS", "1"),
+        ("BASH_DEFAULT_TIMEOUT_MS", "600000"),
+        ("BASH_MAX_TIMEOUT_MS", "1800000"),
+    ],
     /* `--permission-mode acceptEdits` lets the checkpointed folder be edited; `--allowedTools Bash`
        adds commands; `--dangerously-skip-permissions` is the CLI's own full-autonomy switch.
 
@@ -95,5 +106,19 @@ impl Engine for ClaudeCode {
         } else {
             EngineStatus::Idle
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_turn_cannot_hand_work_to_a_background_task_that_dies_with_it() {
+        let env = |name: &str| CLAUDE_SPEC.env.iter().find(|(key, _)| *key == name).map(|(_, value)| *value);
+
+        assert_eq!(env("CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"), Some("1"));
+        assert_eq!(env("BASH_DEFAULT_TIMEOUT_MS"), Some("600000"));
+        assert_eq!(env("BASH_MAX_TIMEOUT_MS"), Some("1800000"));
     }
 }

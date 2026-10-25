@@ -1,0 +1,11 @@
+Work through these four small changes to the textkit package, one after the other, and make the tests pass after each one.
+
+1. In textkit/slug.py add a function `slugify_unique(text, taken)` that returns the usual slug of `text`, but when that slug is already in the collection `taken` it appends "-2", "-3" and so on until the result is not in `taken`. It must not modify `taken`.
+
+2. In textkit/stats.py add a function `top_words(text, n=3)` that returns a list of the n most frequent words as (word, count) tuples, most frequent first, ties broken alphabetically. Words are compared in lower case and use the tokenizer that already exists in textkit/tokenize.py.
+
+3. In textkit/wrap.py add a function `indent_block(text, prefix)` that puts `prefix` at the start of every non-empty line of `text` and leaves empty lines empty. A trailing newline in the input must be kept.
+
+4. In textkit/markdown.py add a function `table_of_contents(markdown)` that returns one line per heading, indented by two spaces for every level below the first, in the form "- Title". Use the heading helper that is already in that file if there is one.
+
+For every new function add at least two tests to tests/test_textkit.py in the style of the tests already there. Do not change the behaviour of the functions that exist now. Read each file before you edit it, keep the changes small, run the tests with `python -m pytest -q` after each step, and when all four are done say in one short paragraph what you added and whether the whole test suite passes. If a test fails, fix the code rather than the test unless the test itself is wrong. Do not create any files other than the ones named above, and do not install anything.

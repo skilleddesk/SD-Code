@@ -56,7 +56,9 @@ pub fn elision(code: &str) -> Option<String> {
         let lower = trimmed.to_ascii_lowercase();
         let comment = ["//", "#", "/*", "*", "--", "<!--"].iter().any(|start| trimmed.starts_with(start));
         let only_dots = !trimmed.is_empty() && trimmed.chars().all(|c| c == '.' || c == '…' || c.is_whitespace());
-        let dotted_comment = comment && (trimmed.contains("...") || trimmed.contains('…'));
+        /* a comment that BEGINS or ENDS in dots stands for code left out; dots inside a sentence (`join(...)`) are just text */
+        let body = trimmed.trim_start_matches(['/', '*', '#', '-', '!', '<', ' ']).trim_end_matches(['*', '/', '>', '-', ' ']);
+        let dotted_comment = comment && ["...", "…"].iter().any(|dots| body.starts_with(dots) || body.ends_with(dots));
         let phrase = comment && ELISION_PHRASES.iter().any(|phrase| lower.contains(phrase));
 
         if only_dots || dotted_comment || phrase {
@@ -243,6 +245,65 @@ pub fn replace_symbol(path: &str, text: &str, wanted: &str, answer: &str) -> Res
 
 /// Inserts the new definition in `answer` after the symbol `after`. The new symbol must be new to the file.
 pub fn insert_after(path: &str, text: &str, after: &str, answer: &str) -> Result<String, Refused> {
+    let symbols = symbols::index_text(path, text).ok_or(Refused::NoGrammar)?;
+    let anchor = find_one(&symbols, after)?;
+
+    insert_at(path, text, &symbols, anchor, answer, false)
+}
+
+/// Puts import lines into a file: after its last import line (one that is already there is not repeated), or at the top when it has none.
+pub fn add_imports(text: &str, code: &str) -> String {
+    let is_import = |line: &str| {
+        let t = line.trim_start();
+
+        !line.starts_with([' ', '\t']) && (t.starts_with("import ") || t.starts_with("from ") || t.starts_with("use ") || t.starts_with("pub use ") || t.starts_with("#include") || t.contains("require("))
+    };
+    let lines: Vec<&str> = text.lines().collect();
+    let fresh: Vec<&str> = code.lines().filter(|line| !line.trim().is_empty() && !lines.iter().any(|old| old.trim() == line.trim())).collect();
+
+    if fresh.is_empty() {
+        return text.to_string();
+    }
+
+    /* only the leading part of the file counts, up to its first declaration */
+    let first_decl = lines.iter().position(|line| ["def ", "class ", "fn ", "pub fn ", "struct ", "pub struct ", "impl ", "function ", "export ", "async def "].iter().any(|start| line.starts_with(start))).unwrap_or(lines.len());
+    let after = lines[..first_decl].iter().rposition(|line| is_import(line)).map_or(0, |n| n + 1);
+    let mut out: Vec<&str> = lines[..after].to_vec();
+
+    out.extend(fresh);
+
+    if after == 0 && lines.first().is_some_and(|line| !line.trim().is_empty()) {
+        out.push("");
+    }
+
+    out.extend(&lines[after..]);
+
+    let mut joined = out.join("\n");
+
+    if text.ends_with('\n') {
+        joined.push('\n');
+    }
+
+    joined
+}
+
+/// Adds the new definition(s) in `answer` at the end of the file: what a model means by `SYMBOL: name` for a name that is not there yet. Code that is
+/// indented (methods, as a model writes the tests of a `TestCase`) goes after the last member of the last class instead.
+pub fn append(path: &str, text: &str, answer: &str) -> Result<String, Refused> {
+    let symbols = symbols::index_text(path, text).ok_or(Refused::NoGrammar)?;
+    let indented = code_block(answer).lines().find(|line| !line.trim().is_empty()).is_some_and(|line| line.starts_with([' ', '\t']));
+    let inside = |outer: &Symbol, inner: &Symbol| outer.start_byte <= inner.start_byte && inner.end_byte <= outer.end_byte;
+    let member = indented.then(|| symbols.iter().filter(|outer| outer.depth == 0).filter_map(|outer| symbols.iter().filter(|inner| inner.depth == 1 && inside(outer, inner)).max_by_key(|inner| inner.end_byte)).max_by_key(|inner| inner.end_byte)).flatten();
+    let last = match member {
+        Some(member) => member,
+        None => symbols.iter().filter(|symbol| symbol.depth == 0).max_by_key(|symbol| symbol.end_byte).ok_or(Refused::NoGrammar)?,
+    };
+
+    insert_at(path, text, &symbols, last, answer, true)
+}
+
+/// `several`: the block may bring more than one new symbol (a model's answer for `append` often carries a function and its tests).
+fn insert_at(path: &str, text: &str, symbols: &[Symbol], anchor: &Symbol, answer: &str, several: bool) -> Result<String, Refused> {
     let code = code_block(answer);
 
     if code.trim().is_empty() {
@@ -254,16 +315,14 @@ pub fn insert_after(path: &str, text: &str, after: &str, answer: &str) -> Result
     }
 
     let lang = Lang::of(path).filter(|lang| lang.has_symbols()).ok_or(Refused::NoGrammar)?;
-    let symbols = symbols::index_text(path, text).ok_or(Refused::NoGrammar)?;
-    let anchor = find_one(&symbols, after)?;
-    let defines = defined(lang, &code).ok_or(Refused::NoGrammar)?;
+    let defines = defined(lang, &dedent(&code)).ok_or(Refused::NoGrammar)?;
 
-    if defines.len() != 1 {
+    if defines.is_empty() || (defines.len() != 1 && !several) {
         return Err(Refused::Renamed { wanted: "one new symbol".into(), found: defines.into_iter().map(|(name, _)| name).collect() });
     }
 
-    if symbols.iter().any(|symbol| symbol.name == defines[0].0 && symbol.depth == anchor.depth) {
-        return Err(Refused::AlreadyExists(defines[0].0.clone()));
+    if let Some((name, _)) = defines.iter().find(|(name, _)| symbols.iter().any(|symbol| &symbol.name == name && symbol.depth == anchor.depth)) {
+        return Err(Refused::AlreadyExists(name.clone()));
     }
 
     let indent = indent_of(text, anchor.start_byte);
@@ -295,7 +354,7 @@ fn verify(lang: Lang, old: &str, new: &str, target: &Symbol, inserted: bool) -> 
     if inserted {
         let before = parse::definitions(lang, &parse::parse(lang, old).ok_or(Refused::NoGrammar)?, old);
         let after = parse::definitions(lang, &tree, new);
-        let missing: Vec<String> = before.iter().filter(|b| b.kind != "impl" && b.kind != "mod" && !after.iter().any(|a| a.qualified == b.qualified && a.hash == b.hash)).map(|b| b.qualified.clone()).collect();
+        let missing: Vec<String> = before.iter().filter(|b| b.kind != "impl" && b.kind != "mod" && !(b.start_byte <= target.start_byte && target.end_byte <= b.end_byte && b.qualified != target.qualified) && !after.iter().any(|a| a.qualified == b.qualified && a.hash == b.hash)).map(|b| b.qualified.clone()).collect();
 
         if !missing.is_empty() {
             return Err(Refused::Breaks(format!("the patch would have changed other symbols: {missing:?}")));
@@ -334,6 +393,8 @@ mod tests {
 
         assert!(matches!(replace_symbol("a.py", "def f():\n    return 1\n", "f", "def f():\n    # rest unchanged\n    return 2\n"), Err(Refused::Elision(_))));
         assert_eq!(elision("let x = 1;\nlet y = x + 1;"), None);
+        assert_eq!(elision("# \"abc\\n\" -> \"\\n\".join(...) -> \"abc\\n\" (correct)\nx = 1\n"), None, "dots inside a comment sentence are text");
+        assert!(elision("    # ... more code ...\n").is_some());
     }
 
     #[test]
@@ -386,6 +447,18 @@ mod tests {
     }
 
     #[test]
+    fn imports_go_after_the_last_import_once_and_to_the_top_of_a_file_without_any() {
+        let py = "import unittest\n\nfrom textkit.slug import slugify\n\n\nclass T:\n    pass\n";
+
+        assert_eq!(
+            add_imports(py, "from textkit.stats import top_words\nimport unittest\n"),
+            "import unittest\n\nfrom textkit.slug import slugify\nfrom textkit.stats import top_words\n\n\nclass T:\n    pass\n"
+        );
+        assert_eq!(add_imports("def f():\n    pass\n", "import re"), "import re\n\ndef f():\n    pass\n");
+        assert_eq!(add_imports(py, "import unittest"), py, "nothing new, nothing changed");
+    }
+
+    #[test]
     fn the_chooser_follows_the_plan() {
         assert_eq!(choose(500, true, 0, 0), Mode::WholeFile);
         assert_eq!(choose(20, false, 10, 10), Mode::WholeFile);
@@ -398,5 +471,13 @@ mod tests {
     fn a_fenced_block_is_taken_out_of_the_answer() {
         assert_eq!(code_block("Here:\n```rust\nfn a() {}\n```\nDone."), "fn a() {}");
         assert_eq!(code_block("fn a() {}"), "fn a() {}");
+    }
+
+    #[test]
+    fn a_name_that_is_not_in_the_file_yet_is_added_at_the_end_when_the_code_defines_exactly_it() {
+        let new = append("a.rs", RUST, "pub fn unit() -> Shape {\n    make(1.0)\n}").unwrap();
+
+        assert!(new.ends_with("pub fn make(side: f64) -> Shape {\n    Shape { side }\n}\n\npub fn unit() -> Shape {\n    make(1.0)\n}\n"), "{new}");
+        assert!(matches!(append("a.rs", RUST, "pub fn make() {}"), Err(Refused::AlreadyExists(_))));
     }
 }

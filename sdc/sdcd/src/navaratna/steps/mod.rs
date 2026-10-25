@@ -209,7 +209,9 @@ impl Report {
 const RULES: &str = "You are doing ONE step of a larger job. Answer ONLY with the edits for this step, no explanation. Each edit is a header and a code block:\n\
 FILE: path/relative/to/the/project\n\
 SYMBOL: Qualified::name   (to change one declaration, e.g. Cart::total or Cart.total; leave the line out to write a new file)\n\
-MODE: replace | insert_after | create   (replace is the default with SYMBOL)\n\
+MODE: replace | insert_after | append | imports | create   (replace is the default with SYMBOL)\n\
+A new function or test that uses a name from another file needs its import: add it with `FILE: path` and `MODE: imports` (only the import lines in the block).\n\
+To ADD new functions or tests to a file that already exists, write `FILE: path` and `MODE: append` with no SYMBOL line, and put ONLY the new code in the block - the rest of the file stays as it is. Never write a whole existing file again, and never repeat a function that is already in it.\n\
 then the COMPLETE new code in a fenced block. Never leave code out (no `// ...`, no `rest unchanged`); a block with SYMBOL must define exactly that one declaration. Keep every name, signature and constant the contracts and glossary list.";
 
 /// Edits that are in, what the files were before, and what the checks said.
@@ -350,7 +352,7 @@ impl Exec<'_> {
 
     /// Reads an answer, lays its edits over the tree, judges them: `Ok` when they are in and the checks are not red.
     fn try_answer(&mut self, step: &PlanStep, answer: &str) -> Result<Landed, String> {
-        let parsed = edits::parse(answer)?;
+        let parsed = edits::parse_in(answer, step.files.first().map(String::as_str))?;
 
         /* N6-1: nothing is built twice - a file an earlier step built is changed, not created again */
         for edit in parsed.iter().filter(|edit| edit.mode == edits::Mode::Create) {
@@ -530,7 +532,7 @@ impl Exec<'_> {
                 request.temperature = Some(temperature);
 
                 let Ok(answer) = self.exec.engine.complete(&request) else { return Vec::new() };
-                let Ok(parsed) = edits::parse(&answer) else { return Vec::new() };
+                let Ok(parsed) = edits::parse_in(&answer, self.step.files.first().map(String::as_str)) else { return Vec::new() };
 
                 edits::apply(&parsed, &|path| self.exec.project.read(path)).unwrap_or_default()
             }
@@ -600,7 +602,7 @@ impl Exec<'_> {
                 let Ok(pack) = self.exec.build_pack(self.plan, self.step, None) else { return Vec::new() };
                 let Ok(answer) = self.exec.engine.complete(&Request::new(Purpose::Code, pack.text)) else { return Vec::new() };
 
-                match edits::parse(&answer).and_then(|parsed| edits::apply(&parsed, &|path| self.exec.project.read(path))) {
+                match edits::parse_in(&answer, self.step.files.first().map(String::as_str)).and_then(|parsed| edits::apply(&parsed, &|path| self.exec.project.read(path))) {
                     Ok(writes) => writes,
                     Err(error) => {
                         self.last_error = Some(error);

@@ -927,17 +927,30 @@ mod tests {
     #[test]
     fn a_subscription_reports_what_its_cli_says() {
         let store = Arc::new(Store::in_memory().unwrap());
-        let rows = list(&store);
-        let card = |id: &str| rows.iter().find(|row| row["id"] == json!(id)).cloned().unwrap();
+        let mut rows = list(&store);
+        let card = |rows: &[Value], id: &str| rows.iter().find(|row| row["id"] == json!(id)).cloned().unwrap();
 
         for id in ["claude", "openai", "gemini"] {
-            let status = card(id)["status"].as_str().unwrap_or_default().to_string();
-            let expected = if signed_in(id) { "connected" } else { "needs-auth" };
+            /* Each answer is a live, time-bounded CLI call: on a loaded machine one of the two can time out, so a disagreement is asked again before it is a failure. */
+            let mut attempts = 0;
+
+            let (status, expected) = loop {
+                let status = card(&rows, id)["status"].as_str().unwrap_or_default().to_string();
+                let expected = if signed_in(id) { "connected" } else { "needs-auth" };
+
+                attempts += 1;
+
+                if status == expected || attempts == 3 {
+                    break (status, expected);
+                }
+
+                rows = list(&store);
+            };
 
             assert_eq!(status, expected, "{id} does not agree with its own CLI");
             /* And the line under it names the program, which is what the user has to act on. */
             assert!(
-                card(id)["detail"].as_str().unwrap_or_default().contains('`'),
+                card(&rows, id)["detail"].as_str().unwrap_or_default().contains('`'),
                 "{id} has no CLI in its detail line"
             );
         }

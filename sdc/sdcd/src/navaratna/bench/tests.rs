@@ -92,10 +92,10 @@ fn the_report_is_a_table_with_one_line_per_switch_and_says_it_is_scripted() {
 }
 
 #[test]
-fn live_mode_is_honestly_owner_later() {
-    let error = command(&["--live".to_string()]).unwrap_err();
+fn live_mode_is_wired_and_names_ollama_when_it_cannot_reach_it() {
+    let error = command(&["--live".to_string(), "--ollama".to_string(), "http://127.0.0.1:9".to_string()]).unwrap_err();
 
-    assert!(error.contains("OWNER-LATER") && error.contains("Ollama"));
+    assert!(error.contains("Ollama") && !error.contains("OWNER-LATER"), "{error}");
 }
 
 #[test]

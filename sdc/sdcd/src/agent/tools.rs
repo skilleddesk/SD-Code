@@ -3143,7 +3143,7 @@ mod tests {
         let script = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/lsp/mock_server.py");
 
         std::fs::write(root.join("pay.py"), "def BAD(a):\n    return a\n").unwrap();
-        std::env::set_var("SDC_LSP_COMMAND", serde_json::to_string(&["python3", "-I", &script.to_string_lossy()]).unwrap());
+        std::env::set_var("SDC_LSP_COMMAND", serde_json::to_string(&[if cfg!(windows) { "python" } else { "python3" }, "-I", &script.to_string_lossy()]).unwrap());
 
         let on = crate::v3::forcing(&["verify.lsp"], || execute(&mut context, &call("write_file", json!({ "path": "app.py", "content": "import pay\nx = BAD(1)\n" }))));
         let off = execute(&mut context, &call("write_file", json!({ "path": "app2.py", "content": "import pay\nx = BAD(1)\n" })));

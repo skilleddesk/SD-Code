@@ -73,6 +73,8 @@ pub struct Ask {
     pub num_ctx: u64,
     pub max_output: u64,
     pub seed: u64,
+    /// `Some(false)` keeps a thinking model (Qwen3.5) from spending the whole `max_output` on hidden reasoning and answering with nothing; `None` leaves the model's own default.
+    pub think: Option<bool>,
 }
 
 /// What a runtime has to be able to do to be probed.
@@ -148,6 +150,28 @@ const WORDS: [&str; 24] = [
     "tundra", "umber", "velvet", "willow", "zephyr",
 ];
 
+/// What a filler word was assumed to cost before it was measured.
+pub const DEFAULT_TOKENS_PER_WORD: f64 = 1.5;
+
+/// Tokens per filler word on this model's tokenizer, measured with one small request that counts `sample`, a prompt of `words` filler words.
+///
+/// A prompt sized by a guessed ratio overflows `num_ctx` on a tokenizer that splits more finely (Qwen3.5 costs about 2.8 tokens a word of this
+/// filler, not 1.5), and Ollama then drops the start of it without a word - so every needle "is lost" at the smallest size and the model measures 0.
+/// A runtime that does not count gets 3.0: prompts come out shorter than named, never longer. The measured ratio is padded by 5%.
+pub fn tokens_per_word(runner: &mut dyn Runner, sample: &str, words: u64, seed: u64) -> f64 {
+    /* a unique first line, so a prompt cache that remembers an earlier run cannot make the count come out low */
+    let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|elapsed| elapsed.as_nanos()).unwrap_or(0);
+    let ask = Ask { prompt: format!("Run {nonce}.\n{sample}"), tool: None, schema: None, num_ctx: 4_096, max_output: 1, seed, think: Some(false) };
+
+    match runner.ask(&ask) {
+        Ok(reply) if reply.prompt_tokens > 0 => (reply.prompt_tokens as f64 / words.max(1) as f64 * 1.05).clamp(1.0, 8.0),
+        _ => 3.0,
+    }
+}
+
+/// Words of filler a calibration request carries: about 850 tokens on a fine tokenizer, well inside the 4,096 it is sent with.
+const CALIBRATION_WORDS: u64 = 300;
+
 /// A small generator, so the probe asks the same questions for the same seed on every machine.
 struct Rng(u64);
 
@@ -165,9 +189,13 @@ impl Plan {
     /// About `tokens` tokens of filler with `needle` at `depth` (0.0..=1.0) of the way in, ending in the question.
     /// A pure function of its arguments - the probe never reads anything of the person's.
     pub fn prompt_text(&self, tokens: u64, depth: f64, needle: &str) -> String {
+        self.prompt_text_with(tokens, depth, needle, DEFAULT_TOKENS_PER_WORD)
+    }
+
+    /// [`Plan::prompt_text`] for a model whose tokenizer costs `tokens_per_word` tokens a filler word (measured by [`tokens_per_word`]; Qwen3.5 costs about 2.8, not 1.5).
+    pub fn prompt_text_with(&self, tokens: u64, depth: f64, needle: &str, tokens_per_word: f64) -> String {
         let mut rng = Rng(self.seed ^ tokens.rotate_left(17) ^ ((depth * 100.0) as u64).rotate_left(41) | 1);
-        /* ~1.3 tokens per word in this list, so words = tokens / 1.5 stays under the target. */
-        let words = (tokens * 2 / 3).saturating_sub(40).max(10);
+        let words = ((tokens as f64 / tokens_per_word.max(1.0)) as u64).saturating_sub(40).max(10);
         let at = ((words as f64) * depth.clamp(0.0, 1.0)) as u64;
         let mut text = String::new();
 
@@ -181,6 +209,19 @@ impl Plan {
         }
 
         text.push_str("\n\nQuestion: what is the access code? Answer with the code only.");
+
+        text
+    }
+
+    /// `words` filler words and nothing else - what [`tokens_per_word`] counts.
+    pub fn filler_text(&self, words: u64) -> String {
+        let mut rng = Rng(self.seed | 1);
+        let mut text = String::new();
+
+        for index in 0..words {
+            text.push_str(WORDS[(rng.next() % WORDS.len() as u64) as usize]);
+            text.push(if index % 12 == 11 { '.' } else { ' ' });
+        }
 
         text
     }
@@ -222,6 +263,7 @@ pub fn follows_person_schema(text: &str) -> bool {
 pub fn run(runner: &mut dyn Runner, plan: &Plan, now: &str) -> Result<Profile, String> {
     let key = runner.identity()?;
     let largest = plan.contexts.last().copied().unwrap_or(4_096);
+    let per_word = tokens_per_word(runner, &plan.filler_text(CALIBRATION_WORDS), CALIBRATION_WORDS, plan.seed);
 
     /* 1. Effective context: needles at 25/50/75/100% of each candidate size; the largest size where all four are
        found (and no smaller size failed first - a model that loses the middle of 8k is not "good to 32k"). */
@@ -232,7 +274,7 @@ pub fn run(runner: &mut dyn Runner, plan: &Plan, now: &str) -> Result<Profile, S
 
         for depth in [0.25, 0.5, 0.75, 1.0] {
             let needle = plan.needle(tokens, depth);
-            let ask = Ask { prompt: plan.prompt_text(tokens, depth, &needle), tool: None, schema: None, num_ctx: tokens + 512, max_output: 24, seed: plan.seed };
+            let ask = Ask { prompt: plan.prompt_text_with(tokens, depth, &needle, per_word), tool: None, schema: None, num_ctx: tokens + 512, max_output: 24, seed: plan.seed, think: Some(false) };
             let found = runner.ask(&ask).map(|reply| reply.text.contains(&needle)).unwrap_or(false);
 
             if !found {
@@ -253,7 +295,7 @@ pub fn run(runner: &mut dyn Runner, plan: &Plan, now: &str) -> Result<Profile, S
 
     for trial in 0..plan.tool_trials {
         let (a, b) = (3 + trial, 40 + 2 * trial);
-        let ask = Ask { prompt: format!("Use the add tool to add {a} and {b}."), tool: Some(add_tool()), schema: None, num_ctx: 2_048, max_output: 128, seed: plan.seed + u64::from(trial) };
+        let ask = Ask { prompt: format!("Use the add tool to add {a} and {b}."), tool: Some(add_tool()), schema: None, num_ctx: 2_048, max_output: 128, seed: plan.seed + u64::from(trial), think: Some(false) };
 
         if let Ok(reply) = runner.ask(&ask) {
             let valid = reply.tool_calls.iter().any(|(name, args)| name == "add" && args["a"].as_i64() == Some(i64::from(a)) && args["b"].as_i64() == Some(i64::from(b)));
@@ -270,7 +312,7 @@ pub fn run(runner: &mut dyn Runner, plan: &Plan, now: &str) -> Result<Profile, S
     let mut followed = 0u32;
 
     for trial in 0..plan.schema_trials {
-        let ask = Ask { prompt: format!("Describe a fictional person number {trial} as JSON."), tool: None, schema: Some(person_schema()), num_ctx: 2_048, max_output: 200, seed: plan.seed + u64::from(trial) };
+        let ask = Ask { prompt: format!("Describe a fictional person number {trial} as JSON."), tool: None, schema: Some(person_schema()), num_ctx: 2_048, max_output: 200, seed: plan.seed + u64::from(trial), think: Some(false) };
 
         if runner.ask(&ask).map(|reply| follows_person_schema(&reply.text)).unwrap_or(false) {
             followed += 1;
@@ -281,7 +323,7 @@ pub fn run(runner: &mut dyn Runner, plan: &Plan, now: &str) -> Result<Profile, S
     let mut longest = 0u64;
 
     for &lines in &plan.outputs {
-        let ask = Ask { prompt: format!("Write the numbers from 1 to {lines}, one per line, as `N. word`."), tool: None, schema: None, num_ctx: (lines * 12).max(2_048), max_output: lines * 10, seed: plan.seed };
+        let ask = Ask { prompt: format!("Write the numbers from 1 to {lines}, one per line, as `N. word`."), tool: None, schema: None, num_ctx: (lines * 12).max(2_048), max_output: lines * 10, seed: plan.seed, think: Some(false) };
         let complete = runner.ask(&ask).map(|reply| reply.text.lines().filter(|line| line.trim_start().starts_with(|c: char| c.is_ascii_digit())).count() as u64 >= lines && reply.text.contains(&format!("{lines}."))).unwrap_or(false);
 
         if !complete {
@@ -293,7 +335,7 @@ pub fn run(runner: &mut dyn Runner, plan: &Plan, now: &str) -> Result<Profile, S
 
     /* 5. Speed, logprobs and thinking, from one ordinary request; memory from the runtime. */
     let speed = runner
-        .ask(&Ask { prompt: "Count from one to thirty in English words, separated by commas.".into(), tool: None, schema: None, num_ctx: 2_048, max_output: 200, seed: plan.seed })
+        .ask(&Ask { prompt: "Count from one to thirty in English words, separated by commas.".into(), tool: None, schema: None, num_ctx: 2_048, max_output: 200, seed: plan.seed, think: None })
         .unwrap_or_default();
     let generating = speed.total_ms.saturating_sub(speed.first_token_ms).max(1);
     let tokens_per_second = if speed.output_tokens == 0 { 0.0 } else { speed.output_tokens as f64 * 1000.0 / generating as f64 };

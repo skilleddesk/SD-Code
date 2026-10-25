@@ -434,7 +434,15 @@ fn attempt(env: &Env, model: &ChainModel, reason: RelayReason, capsule_text: &st
     let nested = Prompt { provider: Some(model.provider.clone()), model: model.model.clone(), text: capsule_text.to_string(), history: Vec::new(), images: Vec::new(), resume: None, ..env.prompt.clone() };
     let target = match resolve_target(&nested) {
         Ok(target) => target,
-        Err(reason) => return (Attempt { failure: format!("{} cannot run as a relayed step ({reason})", model.label()), ..Default::default() }, Label::Estimate),
+        Err(reason) => {
+            let hint = if reason.contains("API key for custom") && model.provider != "custom" {
+                format!(" - `{}` is not a provider with an API key here (a command-line tool such as Claude Code cannot be relayed to); use its API row, for example anthropic-api:<model>, in the chain", model.provider)
+            } else {
+                String::new()
+            };
+
+            return (Attempt { failure: format!("{} cannot run as a relayed step ({reason}){hint}", model.label()), ..Default::default() }, Label::Estimate);
+        }
     };
     let shared = Arc::new(Mutex::new(Capture::default()));
     let capture = Arc::clone(&shared);

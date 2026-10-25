@@ -223,7 +223,8 @@ fn a_local_only_project_never_relays_whatever_is_switched_on() {
     std::fs::write(root.join(".sdc/policy.toml"), "privacy = \"local-only\"\n").unwrap();
 
     let (url, untouched) = forbidden_provider();
-    let (local_url, _local) = raw_provider(vec![local_silent()]);
+    /* Silent twice: the second is the retry with thinking off, after which the turn ends with a failure. */
+    let (local_url, _local) = raw_provider(vec![local_silent(), local_silent()]);
 
     fake("cloud", url, "cloud-model");
 
@@ -246,7 +247,8 @@ fn a_local_only_project_never_relays_whatever_is_switched_on() {
 fn without_the_consent_the_local_rotation_stays_manual() {
     let root = folder("noconsent");
     let (url, untouched) = forbidden_provider();
-    let (local_url, _local) = raw_provider(vec![local_silent()]);
+    /* Silent twice: the second is the retry with thinking off, after which the turn ends with a failure. */
+    let (local_url, _local) = raw_provider(vec![local_silent(), local_silent()]);
 
     fake("cloud", url, "cloud-model");
 
@@ -383,7 +385,8 @@ fn past_its_allowance_the_turn_asks_once_and_a_no_keeps_the_work_local() {
     let recorder = Recorder::new();
     let answering = recorder.clone();
     let answerer = std::thread::spawn(move || {
-        for _ in 0..200 {
+        /* Two minutes, not seconds: under a loaded machine the chain's first step takes long, and a question nobody answers waits for ever. */
+        for _ in 0..2_400 {
             if let Some(question) = answering.events().into_iter().find_map(|event| match event {
                 EngineEvent::Question { question_id, options, .. } => Some((question_id, options)),
                 _ => None,

@@ -79,7 +79,17 @@ const WORDS: [&str; 12] = ["amber", "birch", "cobalt", "dune", "ember", "fjord",
 
 /// A prompt of about `tokens` tokens with three key-value facts at 5%, 50% and 95% of the way in, and the question for all three.
 pub fn probe_prompt(tokens: u64, seed: u64) -> (String, [String; 3]) {
-    let words = (tokens * 2 / 3).saturating_sub(60).max(30);
+    probe_prompt_with(tokens, seed, crate::sme::probe::DEFAULT_TOKENS_PER_WORD)
+}
+
+/// Filler words in a probe prompt of `tokens` tokens when a word costs `tokens_per_word` tokens.
+fn filler_words(tokens: u64, tokens_per_word: f64) -> u64 {
+    ((tokens as f64 / tokens_per_word.max(1.0)) as u64).saturating_sub(60).max(30)
+}
+
+/// [`probe_prompt`] for a tokenizer that costs `tokens_per_word` tokens a filler word (measured, see [`crate::sme::probe::tokens_per_word`]).
+pub fn probe_prompt_with(tokens: u64, seed: u64, tokens_per_word: f64) -> (String, [String; 3]) {
+    let words = filler_words(tokens, tokens_per_word);
     let values = [0, 1, 2].map(|n| format!("V{:04}{}", (seed.wrapping_mul(2_654_435_761).wrapping_add(n * 7_919 + tokens)) % 10_000, (b'A' + n as u8) as char));
     let at = [words / 20, words / 2, words * 19 / 20];
     let mut text = String::new();
@@ -99,15 +109,21 @@ pub fn probe_prompt(tokens: u64, seed: u64) -> (String, [String; 3]) {
     (text, values)
 }
 
+/// The size of the prompt that is counted to learn what a word costs.
+const CALIBRATION_TOKENS: u64 = 1_000;
+
 /// Runs the probe over `sizes` (ascending). The first size that fails ends it - a model that loses the middle of 8k is not "good to 32k".
 pub fn probe_window(runner: &mut dyn Runner, sizes: &[u64], seed: u64, now: &str) -> Result<WindowProbe, String> {
     let key = runner.identity()?;
     let mut tested = Vec::new();
     let mut usable = 0;
+    /* Sized by a guessed 1.5 tokens a word the prompt overflowed num_ctx on Qwen3.5 (2.8), Ollama cut its start without a word, and the model measured 0. */
+    let (sample, _) = probe_prompt(CALIBRATION_TOKENS, seed);
+    let per_word = crate::sme::probe::tokens_per_word(runner, &sample, filler_words(CALIBRATION_TOKENS, crate::sme::probe::DEFAULT_TOKENS_PER_WORD), seed);
 
     for &size in sizes {
-        let (prompt, values) = probe_prompt(size, seed);
-        let ask = Ask { prompt, tool: None, schema: None, num_ctx: size + 512, max_output: 48, seed };
+        let (prompt, values) = probe_prompt_with(size, seed, per_word);
+        let ask = Ask { prompt, tool: None, schema: None, num_ctx: size + 512, max_output: 48, seed, think: Some(false) };
         let recalled = runner.ask(&ask).map(|reply| values.iter().all(|value| reply.text.contains(value))).unwrap_or(false);
 
         tested.push((size, recalled));
@@ -217,8 +233,33 @@ mod tests {
             let values: Vec<&str> = ask.prompt.split("has the value ").skip(1).map(|rest| rest.split('.').next().unwrap_or_default()).collect();
             let shown: Vec<&str> = if words <= self.reach { values } else { values.into_iter().enumerate().filter(|(n, _)| *n != 1).map(|(_, v)| v).collect() };
 
-            Ok(Reply { text: shown.join(", "), ..Reply::default() })
+            Ok(Reply { text: shown.join(", "), prompt_tokens: words as u64 * 3 / 2, ..Reply::default() })
         }
+    }
+
+    /// A tokenizer that costs 2.8 tokens a word and a runtime that drops the start of a prompt that does not fit `num_ctx`, as Ollama does.
+    struct FineTokenizer;
+
+    impl Runner for FineTokenizer {
+        fn identity(&self) -> Result<ModelKey, String> {
+            Fake { reach: 0 }.identity()
+        }
+
+        fn ask(&mut self, ask: &Ask) -> Result<Reply, String> {
+            let tokens = ask.prompt.split_whitespace().count() as u64 * 28 / 10;
+            let values: Vec<&str> = ask.prompt.split("has the value ").skip(1).map(|rest| rest.split('.').next().unwrap_or_default()).collect();
+            let shown: Vec<&str> = if tokens <= ask.num_ctx { values } else { Vec::new() };
+
+            Ok(Reply { text: shown.join(", "), prompt_tokens: tokens.min(ask.num_ctx), ..Reply::default() })
+        }
+    }
+
+    #[test]
+    fn a_tokenizer_that_costs_more_than_one_and_a_half_tokens_a_word_does_not_make_every_window_measure_zero() {
+        let probe = probe_window(&mut FineTokenizer, &[2_048, 4_096, 8_192], 7, "now").unwrap();
+
+        assert_eq!(probe.usable_tokens, 8_192, "{:?}", probe.tested);
+        assert!(probe.tested.iter().all(|(_, recalled)| *recalled));
     }
 
     #[test]

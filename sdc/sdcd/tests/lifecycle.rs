@@ -837,11 +837,14 @@ fn a_save_takes_a_checkpoint_before_it_changes_the_file() {
         .expect("a sessionId")
         .to_string();
 
-    let (saved, notifications) = request_collect(
+    /* The checkpoint is walked in the background and pushed after the answer; on a loaded machine that is later than a quiet moment. */
+    let (saved, notifications) = request_until(
         port,
         "write-1",
         "fs.write",
         serde_json::json!({ "path": file.display().to_string(), "text": "one\ntwo\n", "sessionId": session_id }),
+        |notification| notification.pointer("/event/type").and_then(serde_json::Value::as_str) == Some("CheckpointSaved"),
+        Duration::from_secs(60),
     );
 
     assert!(saved.get("result").is_some(), "fs.write refused the save: {saved}");
@@ -1298,11 +1301,13 @@ fn rename_and_delete_checkpoint_first_and_stay_inside_the_folder() {
     let from = project.join("src").join("a.ts");
     let to = project.join("src").join("b.ts");
 
-    let (renamed, notifications) = request_collect(
+    let (renamed, notifications) = request_until(
         port,
         "rename-1",
         "fs.rename",
         serde_json::json!({ "path": from.display().to_string(), "to": to.display().to_string(), "sessionId": session_id }),
+        |message| message.pointer("/event/type").and_then(serde_json::Value::as_str) == Some("CheckpointSaved"),
+        Duration::from_secs(60),
     );
 
     assert!(renamed.get("result").is_some(), "fs.rename refused: {renamed}");

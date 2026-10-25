@@ -141,6 +141,8 @@ pub fn files_in(text: &str) -> Vec<String> {
     for word in text.split_whitespace() {
         let cleaned = word.trim_matches(|c: char| matches!(c, ',' | ';' | ':' | '"' | '\'' | '(' | ')' | '`' | '।' | '?' | '!'));
 
+        let cleaned = cleaned.trim_end_matches('.');
+
         if cleaned.is_empty() || cleaned.len() > 160 {
             continue;
         }

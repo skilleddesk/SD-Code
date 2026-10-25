@@ -59,7 +59,8 @@ impl nr::Engine for ModelEngine<'_, '_> {
             return Err("the turn was stopped".into());
         }
 
-        nr::sampling::set(request.temperature, request.think);
+        /* A step answers in a fixed format from a short prompt: a thinking model (Qwen3.5) that is left to think spends minutes and often its whole output on hidden reasoning, which ends as "the answer holds no edit". Thinking is on only when the step asked for it (`nr.think_budget`). */
+        nr::sampling::set(request.temperature, request.think.or(Some(false)));
 
         let messages = vec![dialect::user_message(&request.prompt)];
         let reply = ask_model(self.turn.backend, self.turn.target, (self.turn.turn_id, crate::guard::modelgate::Purpose::Main), SYSTEM, &messages, &[], &EventSink::discarding(), self.stopped)?;
@@ -67,6 +68,16 @@ impl nr::Engine for ModelEngine<'_, '_> {
         self.input.set(self.input.get() + reply.input_tokens);
         self.output.set(self.output.get() + reply.output_tokens);
         self.calls.set(self.calls.get() + 1);
+
+        /* `SDC_STEP_TRACE=file`: every step prompt and answer is appended to the file, to see what a local model was asked and what it said. */
+        if let Some(path) = std::env::var_os("SDC_STEP_TRACE") {
+            use std::io::Write;
+
+            if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+                let _ = writeln!(file, "===== PROMPT ({:?}) =====\n{}\n===== ANSWER ({} output tokens) =====\n{}\n", request.purpose, request.prompt, reply.output_tokens, reply.text);
+            }
+        }
+
         Ok(reply.text)
     }
 

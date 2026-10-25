@@ -9,6 +9,8 @@ struct Scripted {
     json_ok: bool,
     /// The most numbered lines it ever finishes.
     line_cap: u64,
+    /// How many characters one token covers: 4.5 is a coarse tokenizer; Qwen3.5 splits this filler at about 2.3.
+    chars_per_token: f64,
     asked: Vec<Ask>,
 }
 
@@ -24,7 +26,7 @@ fn key(digest: &str) -> ModelKey {
 }
 
 fn scripted(window: u64) -> Scripted {
-    Scripted { key: key("sha256:aaaa"), window, tools: Tools::Structured, json_ok: true, line_cap: 4_096, asked: Vec::new() }
+    Scripted { key: key("sha256:aaaa"), window, tools: Tools::Structured, json_ok: true, line_cap: 4_096, chars_per_token: 4.5, asked: Vec::new() }
 }
 
 impl Runner for Scripted {
@@ -35,8 +37,9 @@ impl Runner for Scripted {
     fn ask(&mut self, ask: &Ask) -> Result<Reply, String> {
         self.asked.push(ask.clone());
 
-        /* The prompt for a size T is about 4.7 characters per token of T. */
-        let tokens = (ask.prompt.len() as f64 / 4.5) as u64;
+        let tokens = (ask.prompt.len() as f64 / self.chars_per_token) as u64;
+        /* A runtime keeps no more than the window it was asked for, whatever the model could hold: Ollama cuts the front of a prompt that overflows num_ctx. */
+        let window = self.window.min(ask.num_ctx);
         let mut reply = Reply { prompt_tokens: tokens, first_token_ms: 100, total_ms: 1_100, output_tokens: 50, had_logprobs: true, ..Reply::default() };
 
         if let Some((name, _)) = &ask.tool {
@@ -60,7 +63,7 @@ impl Runner for Scripted {
         if let Some(start) = ask.prompt.find("The access code is ") {
             /* Position of the needle as a share of the prompt; the front is lost past the window. */
             let share = start as f64 / ask.prompt.len() as f64;
-            let kept_from = if tokens > self.window { 1.0 - self.window as f64 / tokens as f64 } else { 0.0 };
+            let kept_from = if tokens > window { 1.0 - window as f64 / tokens as f64 } else { 0.0 };
             let code: String = ask.prompt[start + 19..].split('.').next().unwrap_or("").to_string();
 
             reply.text = if share >= kept_from { code } else { "I do not see a code.".into() };
@@ -104,6 +107,17 @@ fn a_model_that_holds_everything_is_measured_at_the_top_candidate() {
     let profile = run(&mut model, &small_plan(), "t").unwrap();
 
     assert_eq!(profile.effective_context, 8_192);
+}
+
+#[test]
+fn a_finer_tokenizer_does_not_push_the_prompt_past_num_ctx_and_measure_every_model_as_zero() {
+    let mut model = scripted(1_000_000);
+
+    model.chars_per_token = 2.3;
+
+    let profile = run(&mut model, &small_plan(), "t").unwrap();
+
+    assert_eq!(profile.effective_context, 8_192, "a model that holds everything is measured at the top size, not at 0");
 }
 
 #[test]
@@ -168,14 +182,15 @@ fn the_probe_is_deterministic_for_a_seed() {
     let second = run(&mut b, &small_plan(), "t").unwrap();
 
     assert_eq!(first, second);
-    assert_eq!(a.asked.iter().map(|ask| ask.prompt.clone()).collect::<Vec<_>>(), b.asked.iter().map(|ask| ask.prompt.clone()).collect::<Vec<_>>(), "same questions, byte for byte");
+    /* The first question calibrates the tokenizer and carries a per-run nonce so a cached prompt cannot undercount; the rest are fixed. */
+    assert_eq!(a.asked.iter().skip(1).map(|ask| ask.prompt.clone()).collect::<Vec<_>>(), b.asked.iter().skip(1).map(|ask| ask.prompt.clone()).collect::<Vec<_>>(), "same questions, byte for byte");
 
     let other = Plan { seed: 8, ..small_plan() };
     let mut c = scripted(5_000);
 
     run(&mut c, &other, "t").unwrap();
 
-    assert_ne!(a.asked[0].prompt, c.asked[0].prompt, "another seed asks different questions");
+    assert_ne!(a.asked[1].prompt, c.asked[1].prompt, "another seed asks different questions");
 }
 
 #[test]
