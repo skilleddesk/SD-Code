@@ -59,7 +59,9 @@ impl Journal {
 fn git(root: &Path, args: &[&str], index: Option<&Path>) -> Result<String, String> {
     let mut command = Command::new("git");
 
-    command.current_dir(root).args(args).env("GIT_OPTIONAL_LOCKS", "0");
+    /* A snapshot must give back the very bytes it took. On Windows git would otherwise convert line endings on the way in and out (autocrlf), so a
+       restored file would differ from the one that was there; the snapshot and the restore both run with the conversion off. */
+    command.current_dir(root).args(["-c", "core.autocrlf=false", "-c", "core.safecrlf=false", "-c", "core.eol=lf"]).args(args).env("GIT_OPTIONAL_LOCKS", "0");
 
     if let Some(index) = index {
         command.env("GIT_INDEX_FILE", index);
