@@ -2105,6 +2105,38 @@ fn drive(
         }};
     }
 
+    /* N8-1 (`nr.tag_route`): the request is tagged simple / code / hard / architecture by rules; an architecture job goes to the chain's architect
+       row once (only here, where the relay is on, the project is not local-only and no model was picked by hand). The tag and reason are shown. */
+    if relay_on && crate::v3::on_in("nr.tag_route", &scope_model) {
+        use crate::navaratna::route;
+        use crate::rotation::preroute as pre;
+
+        let (files, symbols) = pre::mentions(&request_text);
+        let lower = request_text.to_lowercase();
+        let facts = route::Facts {
+            kind: match pre::kind_of(&request_text) {
+                pre::Kind::Question => route::Kind::Read,
+                pre::Kind::Bugfix | pre::Kind::Edit | pre::Kind::Refactor => route::Kind::Edit,
+            },
+            files_touched: files.max(symbols / 3),
+            blueprint_marker: ["folder structure", "data model", "architecture", "interface contract", "design the", "project skeleton"].iter().any(|marker| lower.contains(marker)),
+            failed_attempts: 0,
+            text: &request_text,
+        };
+        let architect_row = relay_hook.borrow().as_ref().is_some_and(|hook| hook.chain.iter().any(|row| matches!(crate::navaratna::roles::Role::parse(&row.role), crate::navaratna::roles::Role::Architect | crate::navaratna::roles::Role::Any)));
+        let decision = route::decide(&facts, &route::Mode { manual_pin: false, local_only: false, relay_auto: true, architect_row }, None);
+
+        sink.send(EngineEvent::Thinking(format!("[SDC] {}\n", decision.trace_line())));
+
+        if decision.route == route::Route::Architect {
+            if let Some(hook) = relay_hook.borrow_mut().as_mut() {
+                hook.signals.preroute = true;
+            }
+
+            let _ = relay_step!(String::new());
+        }
+    }
+
     /* M1-13: a step plainly beyond the local model goes to the chain before it is tried (switch `relay.preroute`, off: the heuristic is unmeasured). */
     if relay_on && relay_hook.borrow().as_ref().is_some_and(|hook| hook.policy.preroute || crate::v3::on("relay.preroute")) {
         let facts = crate::rotation::preroute::facts_for(std::path::Path::new(workspace.root()), &request_text, crate::sme::budget::Class::of(window));
@@ -2432,6 +2464,19 @@ fn drive(
         if reply.tool_uses.is_empty() && printed_refusals > 0 && printed_refusals <= 2 {
             if let Some(note) = pending_note.take() {
                 dialect::append_user_text(target.dialect, &mut messages, &note);
+
+                continue;
+            }
+        }
+
+        /* N7-2 (`nr.tool_envelope`): a local model that was asked to change something and answered with code in prose, having changed nothing, is asked
+           once more with the tool-call envelope forced (only the envelope; its reasoning above stays free text). */
+        if backend == Backend::Ollama && reply.tool_uses.is_empty() {
+            let wants_change = !matches!(crate::rotation::preroute::kind_of(&request_text), crate::rotation::preroute::Kind::Question);
+
+            if envelope.reask_with_tool(wants_change && context.edits == 0 && reply.text.contains("```"), false) {
+                rescue::constrain_next(true);
+                dialect::append_user_text(target.dialect, &mut messages, "[SDC: this step needs a tool call, not code in the message. Make the call now with the exact arguments the tool lists.]");
 
                 continue;
             }

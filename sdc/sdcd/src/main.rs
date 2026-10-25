@@ -75,6 +75,11 @@ fn main() -> Result<()> {
             std::process::exit(sdcd::intent::voice::main(&all[1..]));
         }
 
+        /* NAVARATNA: `sdcd navaratna spec|skeleton|slice|status` work on files and need no runtime. */
+        if all.first().map(String::as_str) == Some("navaratna") {
+            std::process::exit(sdcd::navaratna::cli::main(&all[1..]));
+        }
+
         if all.first().map(String::as_str) == Some("probe") {
             if all.get(1).map(String::as_str) == Some("window") {
                 std::process::exit(sdcd::navaratna::window::main(&all[2..]));

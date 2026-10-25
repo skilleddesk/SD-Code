@@ -19,6 +19,7 @@ pub mod bench;
 pub mod bestofn;
 pub mod blueprint;
 pub mod chunk;
+pub mod cli;
 pub mod contracts;
 pub mod envelope;
 pub mod errslice;
