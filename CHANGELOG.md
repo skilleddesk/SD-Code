@@ -15,6 +15,20 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [1.1.1] — the step executor shows each step's real goal, and a Windows git-snapshot fix
+
+- **Fixed: a step's goal was `1.`** The first sentence of a numbered request (`1. In shop.py, write ...`) was cut at the list number, so the model was told its goal was "1." and the step trace said so. A list marker (`1.`, `2)`, `-`, `*`, `•`) is now taken off before the first sentence is found.
+- **Fixed on Windows: the git shadow gave back different bytes.** Git converts line endings (`autocrlf`) on the way in and out; a restored file differed from the one that was there, so `git status` was not identical after a failed step. Snapshot and restore now run with the conversion off. (Found by the Windows CI of 1.1.0.)
+- **Fixed on Windows: single tests run with `python`**, the interpreter the project's own check already uses; `python3` is often only a Microsoft Store stub there.
+- **The deterministic labeller reads whole words.** An English cue must begin a word, so "already" is no longer `read`, "bread" no longer `read` and "make" in "makers" no longer a request. (It only fills what the model left unlabelled.)
+- **Fixed: three NAVARATNA tests failed only when the whole suite ran.** Their gates cap how long they read (250 ms, so an edit is never slowed down), and with 1600 tests running at once on a loaded machine the cap ran out before a single file was read, so the warning gates quietly found nothing. Under `cfg(test)` the cap is now generous; in the shipped build it is unchanged.
+- **Fixed: two `mcp` tests shared one temp folder** (`sdc-mcp-read-tools-<pid>`), so running at the same time one deleted the other's project - `the_code_graph_answers_where_and_who_and_hides_what_the_policy_keeps` failed for that and nothing else. Each test now has its own folder name.
+- **Docs:** `sdc/docs/navaratna/` holds the NAVARATNA plan, its prompt cards and `navaratna-skip.txt` - what is left and how to do it from a Windows machine, step by step, with a ready demo project and request.
+
+**বাংলায় সারাংশ:** ধাপের লক্ষ্য আর "1." দেখায় না, Windows-এ git snapshot হুবহু ফেরত আসে, Windows-এ টেস্ট `python` দিয়ে চলে, আর পুরো টেস্ট একসাথে চালালেও আর ভুল করে ফেল করে না। `sdc/docs/navaratna/` ফোল্ডারে প্ল্যান ও Windows-এ ধাপে ধাপে করণীয়ের ফাইল।
+
+---
+
 ## [1.1.0] — NAVARATNA: a small local model finishing large jobs
 
 Twenty-five new `nr.*` switches, one for each part of the NAVARATNA plan. Seven are on by default and only protect, verify or record

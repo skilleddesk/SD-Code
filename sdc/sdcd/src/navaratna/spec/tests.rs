@@ -172,3 +172,11 @@ fn only_a_big_prompt_is_checked_and_stored() {
     assert_eq!(super::super::vault::get(dir.path(), "spec", &spec).unwrap(), big);
     crate::v3::ablating(&["nr.sentence_cover"], || assert!(check_big_prompt(dir.path(), &big).is_none()));
 }
+
+#[test]
+fn an_english_cue_must_begin_a_word() {
+    let map = analyse("The bakery bakes bread already. Nothing here asks for anything.\n\nPlease read the file and add a test.");
+    let requirements: Vec<&str> = map.requirements.values().flat_map(|units| units.iter()).map(|id| map.units.iter().find(|u| &u.id == id).unwrap().text.as_str()).collect();
+
+    assert_eq!(requirements, vec!["Please read the file and add a test."], "{requirements:?}");
+}

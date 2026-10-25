@@ -105,6 +105,16 @@ pub fn unknown_members(index: &ProjectIndex, path: &str, text: &str) -> Vec<Stri
         .collect()
 }
 
+/// How long the index may spend reading. Under `cfg(test)` it is generous: the whole suite runs at once on a loaded machine, and a gate
+/// that silently read no file would fail a test for the machine's load instead of for its own code.
+fn read_budget() -> std::time::Duration {
+    if cfg!(test) {
+        std::time::Duration::from_secs(60)
+    } else {
+        std::time::Duration::from_millis(250)
+    }
+}
+
 /// Reads the project files that mention one of the candidate types, up to a cap, into an index.
 pub fn index_for(root: &Path, candidate_types: &BTreeSet<String>, new_path: &str, new_text: &str) -> ProjectIndex {
     let mut index = ProjectIndex::default();
@@ -114,7 +124,7 @@ pub fn index_for(root: &Path, candidate_types: &BTreeSet<String>, new_path: &str
 
     for relative in crate::search::files(root, 4_000) {
         /* this runs after an edit that calls a member of a project type: a bounded number of files and a bounded time */
-        if read >= 60 || started.elapsed() > std::time::Duration::from_millis(250) {
+        if read >= 60 || started.elapsed() > read_budget() {
             break;
         }
 

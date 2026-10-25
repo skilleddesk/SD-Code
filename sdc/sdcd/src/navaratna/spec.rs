@@ -483,6 +483,16 @@ const CUES: &[&str] = &[
     "করো", "কর ", "করতে", "করবে", "চাই", "দরকার", "বানাও", "বানাতে", "যোগ", "দেখাও", "লেখো", "ঠিক", "korbe", "korte", "chai", "banao", "dekhao",
 ];
 
+/// Does the text hold the cue? An English cue must begin a word (so "already" is not "read" and "bread" is not "read"); a Bengali or Banglish
+/// cue is found anywhere, because those scripts do not separate the stem like that.
+fn has_cue(lower: &str, cue: &str) -> bool {
+    if !cue.is_ascii() {
+        return lower.contains(cue);
+    }
+
+    lower.match_indices(cue).any(|(at, _)| !lower[..at].chars().last().is_some_and(char::is_alphanumeric))
+}
+
 /// A deterministic stand-in for the model's labelling (and the fallback when none is available): prose with an instruction in it is a
 /// requirement, a heading is background, a block that follows a requirement belongs to it.
 pub fn heuristic(unit: &Unit, last_requirement_unit: Option<&str>) -> Option<Label> {
@@ -492,7 +502,7 @@ pub fn heuristic(unit: &Unit, last_requirement_unit: Option<&str>) -> Option<Lab
         Kind::Sentence | Kind::ListItem => {
             let lower = unit.text.to_lowercase();
 
-            Some(if CUES.iter().any(|cue| lower.contains(cue)) { Label::Requirement } else { Label::Background })
+            Some(if CUES.iter().any(|cue| has_cue(&lower, cue)) { Label::Requirement } else { Label::Background })
         }
     }
 }

@@ -191,9 +191,18 @@ impl std::fmt::Display for Duplicate {
     }
 }
 
-/// The most project files one duplicate check reads, and the time it may spend reading them.
+/// The most project files one duplicate check reads.
 const MAX_FILES_READ: usize = 60;
-const READ_BUDGET: std::time::Duration = std::time::Duration::from_millis(250);
+
+/// The time one duplicate check may spend reading. Under `cfg(test)` it is generous: the whole suite runs at once on a loaded machine, and a
+/// check that silently read no file would fail a test for the machine's load instead of for its own code.
+fn read_budget() -> std::time::Duration {
+    if cfg!(test) {
+        std::time::Duration::from_secs(60)
+    } else {
+        std::time::Duration::from_millis(250)
+    }
+}
 
 /// A body shorter than this many lines is not worth reporting as a copy.
 const MIN_COPY_LINES: usize = 4;
@@ -262,7 +271,7 @@ pub fn duplicate_note(root: &Path, path: &str, text: &str) -> Option<String> {
 
     for relative in crate::search::files(root, 4_000) {
         /* this runs after every edit: a bounded number of files and a bounded time, so a big project is not slowed down */
-        if files.len() > MAX_FILES_READ || started.elapsed() > READ_BUDGET {
+        if files.len() > MAX_FILES_READ || started.elapsed() > read_budget() {
             break;
         }
 

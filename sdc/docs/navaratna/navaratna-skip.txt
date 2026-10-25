@@ -1,0 +1,367 @@
+NAVARATNA - যা যা বাকি আছে, আর Windows (বা যেকোনো ডিভাইস) থেকে কীভাবে করবেন
+=============================================================================
+তৈরি: ২০২৬-১০-২৫ · SDC ভার্সন: 1.1.1 · কোড: https://github.com/skilleddesk/SD-Code
+ডাউনলোড: https://github.com/skilleddesk/SD-Code/releases/latest
+এই ফাইলের অনলাইন কপি (যেকোনো ডিভাইস থেকে খোলা যায়):
+  https://github.com/skilleddesk/SD-Code/blob/main/sdc/docs/navaratna/navaratna-skip.txt
+  (প্ল্যান ও প্রম্পট-কার্ডও একই ফোল্ডারে: NAVARATNA.md, NAVARATNA-PROMPTS.md)
+
+কীভাবে পড়বেন
+-------------
+- প্রতিটি ধাপের কমান্ড হুবহু কপি করে টার্মিনালে বসালেই চলবে।
+    [Windows]   = PowerShell-এ চালান (Start মেনুতে "PowerShell" লিখে খুলুন; "Administrator" লাগবে না)
+    [Mac/Linux] = Terminal-এ চালান
+    [সব]        = দুই জায়গাতেই একই
+- "আমি যাচাই করিনি" লেখা থাকলে মানে আমি (Claude) সেটা আসল Windows-এ চালিয়ে দেখিনি; আপনার ফলই প্রমাণ।
+- সবচেয়ে জরুরি ধাপ: ১ -> ২ -> ৩ -> ৪ -> ৫ -> ৬ -> ৭। বাকিগুলো পরে।
+
+------------------------------------------------------------------------------------------------
+ক. এক নজরে অবস্থা
+------------------------------------------------------------------------------------------------
+হয়েছে:
+  - NAVARATNA-র ২৬টি টাস্কের ২৫টির কোড লেখা, স্ক্রিপ্ট-করা নকল মডেলে টেস্ট পাস, GitHub-এ push, রিলিজ।
+  - বড় অনুরোধ (১৫০০+ অক্ষর) ছোট লোকাল মডেলে "ধাপে ধাপে" চালানোর ব্যবস্থা (ধাপ-এক্সিকিউটর)।
+  - প্রতিটি নতুন আচরণ nr.* নামের সুইচের পেছনে। ডিফল্টে চালু ৭টি (শুধু রক্ষা/হিসাবের), বন্ধ ১৮টি।
+  - 1.1.1-এ ঠিক হয়েছে: ধাপের লক্ষ্য আর "1." দেখায় না; Windows-এ git snapshot বাইট-হুবহু ফেরত আসে;
+    পুরো টেস্ট একসাথে চালালেও আর ভুল করে ফেল করে না (৩টি সময়-সীমার টেস্ট + ১টি ভাগ-করা টেম্প ফোল্ডার)।
+বাকি আছে - তিন ভাগে:
+  ভাগ ১ (আপনি Windows থেকে, কমান্ডসহ নিচে আছে): আসল Ollama + মডেলে পরীক্ষা; ফল নোট করা; কোন সুইচ চালু রাখবেন ঠিক করা।
+  ভাগ ২ (Claude Code-কে বলে করাতে হবে - কোড-কাজ): ধাপ ১১ দেখুন (লাইভ bench জোড়া, ইত্যাদি)।
+  ভাগ ৩ (ঐচ্ছিক, আলাদা কাজ): ক্লাউড chain, অন্য ইঞ্জিন (Codex/Gemini), API key বদল - ধাপ ৮, ১২।
+সবচেয়ে বড় অজানা: এই সব কিছু আসল 9B মডেলে এখনো মাপা হয়নি। "৯০–৯৫% ধাপ লোকালে হবে" দাবিটা তাই অপ্রমাণিত।
+এই Mac-এ (৮ GB RAM) চেষ্টা করেছিলাম: qwen3.5:4b মডেলে ৩৫ মিনিটেও প্রথম ধাপ শেষ হয়নি (মেমরি প্রায় শেষ, মেশিন swap করছিল)। তাই আসল পরীক্ষা বড় RAM-এর Windows মেশিনে করুন।
+
+------------------------------------------------------------------------------------------------
+ধাপ ১ - আপনার Windows মেশিন মডেলের জন্য যথেষ্ট কি না দেখুন
+------------------------------------------------------------------------------------------------
+[Windows] PowerShell-এ:
+     "{0:N1} GB RAM" -f ((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB)
+     Get-CimInstance Win32_VideoController | Select-Object Name, @{n="VRAM_GB";e={[math]::Round($_.AdapterRAM/1GB,1)}}
+     nvidia-smi          (NVIDIA কার্ড থাকলে; ঠিক VRAM দেখায়। "AdapterRAM" ৪ GB-র বেশি ঠিকমতো দেখায় না)
+     Get-PSDrive C | Select-Object @{n="FreeGB";e={[math]::Round($_.Free/1GB)}}
+সিদ্ধান্ত (আমার হিসাব ও এই Mac-এর অভিজ্ঞতা থেকে, Windows-এ যাচাই করিনি):
+  - qwen3.5:9b ফাইল ৭.৬ GB। চলার সময় ফাইল + প্রসঙ্গ-স্মৃতি (১৬K প্রসঙ্গে প্রায় ২.৫ GB) = প্রায় ১০ GB লাগে।
+  - ১৬ GB বা বেশি RAM, অথবা ১২ GB-র বেশি VRAM-এর NVIDIA কার্ড: 9B চালানো যাবে। কার্ড ছাড়া শুধু CPU হলে চলবে কিন্তু ধীর (প্রতি ধাপে কয়েক মিনিট)।
+  - ৮ GB RAM: 9B লোডই হবে না। qwen3.5:4b (৪.০ GB) চলে কিন্তু খুব ধীর, পরীক্ষার উপযোগী নয়।
+  - ডিস্কে অন্তত ২০ GB খালি রাখুন।
+  - পরীক্ষার সময় ব্রাউজার ও ভারী অ্যাপ বন্ধ রাখুন।
+
+------------------------------------------------------------------------------------------------
+ধাপ ২ - দরকারি প্রোগ্রাম ইনস্টল করুন
+------------------------------------------------------------------------------------------------
+২.১ SDC নতুন ভার্সন [Windows]
+   ব্রাউজারে https://github.com/skilleddesk/SD-Code/releases/latest খুলে "Assets" থেকে নামান:
+     SDC_1.1.1_x64-setup.exe   (সবচেয়ে সহজ)     অথবা     SDC_1.1.1_x64_en-US.msi
+   ডাবল-ক্লিকে ইনস্টল। "অপরিচিত প্রকাশক" (SmartScreen) দেখালে "More info" -> "Run anyway" (ইনস্টলার সই করা নয়)।
+   মেলানো (ঐচ্ছিক): একই পাতার SHA256SUMS.txt নামান, তারপর
+     Get-FileHash $HOME\Downloads\SDC_1.1.1_x64-setup.exe -Algorithm SHA256
+   যে সংখ্যা আসবে তা SHA256SUMS.txt-এ ওই ফাইলের পাশের সংখ্যার সাথে হুবহু মিলতে হবে।
+   !! 1.1.0 নামাবেন না - ওতে একটি বাগ ছিল (ধাপের লক্ষ্য "1." দেখাত)। 1.1.1-এ ঠিক করা।
+   Mac: SDC_1.1.1_aarch64.dmg (Apple Silicon) / SDC_1.1.1_x64.dmg (Intel)
+   Linux: SDC_1.1.1_amd64.AppImage / .deb / SDC-1.1.1-1.x86_64.rpm
+   আগে 1.0.x বা 1.1.0 থাকলে নতুনটা ইনস্টল করলেই আপডেট হয়ে যায়।
+
+২.২ Ollama (লোকাল মডেল চালানোর প্রোগ্রাম)
+   সহজতম: SDC নিজেই ইনস্টল করে দেয় - SDC খুলে মডেল-হাবে ("Local models" ট্যাব ও "Environment doctor" ট্যাব) এক ক্লিকে।
+   হাতে করতে চাইলে [Windows]:
+     winget install Ollama.Ollama
+     (না পারলে https://ollama.com/download থেকে OllamaSetup.exe)
+   তারপর PowerShell বন্ধ করে নতুন খুলুন, এবং:
+     ollama --version
+   [Mac]  brew install ollama      [Linux]  curl -fsSL https://ollama.com/install.sh | sh
+   নোট: SDC সবসময় 127.0.0.1:11434 পোর্টে Ollama খোঁজে (বদলানো যায় না)। OLLAMA_HOST অন্য কিছু দেবেন না।
+
+২.৩ Python + pytest (নিচের ডেমো পরীক্ষার জন্য) [Windows]
+     winget install Python.Python.3.12
+     PowerShell নতুন খুলে:   python --version
+     python -m pip install pytest
+   (Microsoft Store-এর `python3` নাম ব্যবহার করবেন না; SDC Windows-এ `python` নামই চালায়।)
+
+২.৪ Git: SDC নিজেই একটি ছোট Git এনে নেয়। তবু নিজের জন্য:   winget install Git.Git
+   (git shadow/checkpoint সুবিধার জন্য Git দরকার।)
+
+------------------------------------------------------------------------------------------------
+ধাপ ৩ - মডেল নামান ও চালিয়ে দেখুন
+------------------------------------------------------------------------------------------------
+[সব]  (কয়েক GB নামবে; ইন্টারনেট ও জায়গা লাগবে)
+     ollama pull qwen3.5:9b
+     ollama list
+     ollama show qwen3.5:9b
+  - "quantization" লাইনে Q4_... দেখালে: SDC মডেল-তালিকায় পরামর্শ দেখাবে এবং প্রতি ধাপের লক্ষ্য ৮০% থেকে ৬০%-এ নামাবে।
+    বেশি মেমরি থাকলে Q5_K_M/Q8_0 সংস্করণ নিন (ট্যাগের নাম https://ollama.com/library/qwen3.5-এ দেখুন; আমি ট্যাগের নাম যাচাই করিনি)।
+  - KV cache ৪-বিট করবেন না। ঠিক রাখতে [Windows]:
+       [Environment]::SetEnvironmentVariable("OLLAMA_KV_CACHE_TYPE","f16","User")
+    তারপর Ollama বন্ধ করে (tray আইকনে Quit) আবার চালু করুন। [Mac/Linux]: export OLLAMA_KV_CACHE_TYPE=f16
+চালু কি না:
+     ollama run qwen3.5:9b "say hello in one word"
+  উত্তর এলে ঠিক। বের হতে /bye। না এলে নিচের "সমস্যা-সমাধান" দেখুন।
+  পোর্ট দেখতে [Windows]:   Invoke-RestMethod http://127.0.0.1:11434/api/tags | ConvertTo-Json -Depth 3
+
+------------------------------------------------------------------------------------------------
+ধাপ ৪ - sdcd কমান্ডটা খুঁজে নিন (ধাপ ৫, ৮, ১০-এ লাগবে)
+------------------------------------------------------------------------------------------------
+sdcd হলো SDC-র ইঞ্জিন; অ্যাপের সাথেই ইনস্টল হয় (সাধারণত sdcd.exe নামে, SDC.exe-র পাশে; নামটা আমি Windows-এ যাচাই করিনি)।
+[Windows] খুঁজুন:
+     Get-ChildItem -Path "$env:LOCALAPPDATA","$env:ProgramFiles" -Recurse -Filter "sdcd*.exe" -ErrorAction SilentlyContinue | Select-Object -First 3 FullName
+   যে পথ আসবে সেটা দিয়ে (পথটা নিজেরটা বসান; একবার চালালে এই PowerShell জানালার জন্য থাকে):
+     Set-Alias sdcd "C:\Users\আপনার-নাম\AppData\Local\SDC\sdcd.exe"
+   মেলান:
+     sdcd navaratna status
+   (nr.* সুইচের তালিকা আসবে)
+[Mac] /Applications/SDC.app/Contents/MacOS/ -এর ভেতরে sdcd* দেখুন।
+সোর্স থেকে বানাতে চাইলে (যেকোনো ডিভাইসে; Rust দরকার - https://rustup.rs):
+     git clone https://github.com/skilleddesk/SD-Code.git
+     cd SD-Code\sdc\sdcd
+     cargo build --release
+   (target\release\sdcd.exe তৈরি হয়; বানাতে ১০–২০ মিনিট লাগে)
+
+------------------------------------------------------------------------------------------------
+ধাপ ৫ - মডেলের আসল "ব্যবহারযোগ্য জানালা" মাপুন (N1-1)
+------------------------------------------------------------------------------------------------
+[সব]  Ollama চালু থাকা অবস্থায়:
+     sdcd probe window --model qwen3.5:9b
+  - মডেলকে বড় বড় প্রম্পটে শুরু/মাঝ/শেষের তিনটি তথ্য মনে রাখতে বলে; সবচেয়ে বড় নিরাপদ দৈর্ঘ্য মাপে।
+  - ফল সেভ হয়: [Windows] %APPDATA%\sdc\models\qwen3.5_9b.toml   (দেখতে:  Get-Content $env:APPDATA\sdc\models\qwen3.5_9b.toml)
+  - এরপর মডেলকে এর চেয়ে বড় প্রম্পট পাঠানো হবে না; দরকারে ভেঙে ছোট করা হবে।
+  - সময় লাগে (কয়েক মিনিট; মডেল লোড হয়)। এ সময় অন্য ভারী কাজ করবেন না।
+পুরো প্রোফাইল (টুল-কল, আউটপুট-দৈর্ঘ্য, গতি সহ) চাইলে:   sdcd probe qwen3.5:9b
+  - এটা ফল দেয় "ক্লাস S/M/L"; ক্লাস L না হলে কিছু সুবিধা কম পাবেন।
+
+------------------------------------------------------------------------------------------------
+ধাপ ৬ - SDC অ্যাপে সব ঠিক করুন
+------------------------------------------------------------------------------------------------
+দুটি আলাদা "Simple/Pro" আছে, গুলিয়ে ফেলবেন না:
+  (ক) চ্যাটের মোড-বোতাম "Simple / Pro / Auto" (কতবার জিজ্ঞেস করবে):  এটা Auto রাখুন।
+        কারণ ধাপ-এক্সিকিউটর শুধু Auto-তে চলে। Auto-তে শুধু বিপজ্জনক কমান্ড (delete, push, sudo, database) জিজ্ঞেস করে।
+  (খ) Settings-এর "Mode: Simple / Pro" (কী দেখাবে):  Pro করলে "Advanced" ট্যাব আসে, যেখানে প্রতিটি সুইচ দেখা ও বদলানো যায়।
+১. SDC খুলুন। একটি প্রজেক্ট ফোল্ডার খুলুন (নিজের মেশিনের লোকাল ফোল্ডার; server বা SSH ফোল্ডার নয়)।
+২. মডেল বাছুন: Ollama -> qwen3.5:9b। মডেল-তালিকায় "class S/M/L · ১৬K context" দেখাবে। Q4 হলে পরামর্শ-লাইনও।
+৩. মোড-বোতামে Auto বাছুন।
+৪. Settings -> Mode = Pro, তারপর Settings -> Advanced খুলে সুইচ খুঁজুন:
+     nr.fresh_step -> on        (এটাই ধাপ-এক্সিকিউটর চালু করে)
+   সুইচ বদলানো নিরাপদ; ফেরাতে আগের অবস্থায় আনুন।
+   Advanced ট্যাবে সুইচ না পেলে বিকল্প: পরিবেশ-চলক দিয়ে চালু করা (আমি Windows-এ যাচাই করিনি):
+     [Windows]  [Environment]::SetEnvironmentVariable("SDC_V3_ENABLE","nr.fresh_step","User")
+                তারপর SDC পুরো বন্ধ করে (tray থেকে Quit) আবার খুলুন। একাধিক হলে কমা দিয়ে: nr.fresh_step,nr.best_of_n
+     ফেরাতে:      [Environment]::SetEnvironmentVariable("SDC_V3_ENABLE",$null,"User")
+   কোন সুইচ চালু/বন্ধ দেখতে:   sdcd navaratna status   (এটা আপনার PowerShell-এর চলকই দেখায়, অ্যাপের Advanced-এর সেটিং নয়)
+৫. প্রসঙ্গ-সীমা: SDC ডিফল্টে Ollama-কে ১৬,৩৮৪ টোকেনের প্রসঙ্গ চায়, আর qwen3.5:9b-র ক্যাটালগে সর্বোচ্চও ১৬,৩৮৪।
+   Settings -> Research-এর "Local model context (tokens)" ঘরে (সেটিং-কী ollama.contextTokens) বাড়ালেও qwen3.5:9b-র জন্য ১৬,৩৮৪-র বেশি হবে না;
+   বেশি প্রসঙ্গ চাইলে ক্যাটালগে নাম নেই এমন মডেল নিন (তখন ডিফল্ট ৩২,০০০ ধরা হয়)। বেশি প্রসঙ্গ মানে বেশি মেমরি।
+৬. ধীর লাগলে চ্যাটে "Thinking" (চিন্তা) সুইচ থাকলে বন্ধ করে দেখুন; Qwen3.5 ডিফল্টে লম্বা চিন্তা করে, তাতে প্রতি ধাপে সময় বাড়ে।
+৭. ক্লাউড সাহায্য (ঐচ্ছিক, খরচ হয়) - ধাপ ১২ দেখুন।
+
+------------------------------------------------------------------------------------------------
+ধাপ ৭ - ডেমো প্রজেক্ট বানান ও পরীক্ষার অনুরোধ চালান (মূল পরীক্ষা)
+------------------------------------------------------------------------------------------------
+৭.১ ডেমো ফোল্ডার বানান [Windows] (একবারে সবটা কপি-পেস্ট করুন):
+
+     mkdir $HOME\navaratna-demo ; cd $HOME\navaratna-demo ; mkdir tests
+     "def total(prices):`n    raise NotImplementedError`n`n`ndef apply_discount(amount, percent):`n    raise NotImplementedError`n" | Set-Content -Encoding ascii shop.py
+     "def count(items):`n    raise NotImplementedError`n`n`ndef cheapest(items):`n    raise NotImplementedError`n" | Set-Content -Encoding ascii cart.py
+     "import cart`nimport shop`n`n`ndef test_the_files_have_their_functions():`n    assert callable(shop.total) and callable(shop.apply_discount)`n    assert callable(cart.count) and callable(cart.cheapest)`n" | Set-Content -Encoding ascii tests\test_basic.py
+     "" | Set-Content -Encoding ascii conftest.py
+     "pytest" | Set-Content -Encoding ascii requirements.txt
+     git init -b main ; git add -A ; git -c user.name=demo -c user.email=d@d.d commit -m start
+     python -m pytest -q
+
+   শেষ কমান্ডে "1 passed" আসা চাই (মানে পরীক্ষার ঘর ঠিক আছে)। না এলে ধাপ ২.৩ আবার দেখুন।
+   [Mac/Linux] একই ফাইলগুলো যেকোনো এডিটরে বানাতে পারেন; ফাইলের লেখা উপরের `n-এর জায়গায় নতুন লাইন ধরুন।
+
+৭.২ SDC-তে এই ফোল্ডারটি প্রজেক্ট হিসেবে খুলুন ($HOME\navaratna-demo)।
+৭.৩ মডেল Ollama -> qwen3.5:9b, মোড Auto, nr.fresh_step on (ধাপ ৬)। চ্যাট বাক্সে নিচের লেখাটা হুবহু পেস্ট করে পাঠান
+     (এটা ১৫৮০ অক্ষরের; ১৫০০-র কম হলে ধাপ-এক্সিকিউটর চালু হয় না):
+
+-----8<-----  এখান থেকে  -----8<-----
+# Bakery shop program
+
+## Background
+
+This is a small bakery shop program written in Python.
+The owner of the bakery sells rolls, cakes and coffee.
+Every price in the program is a whole number of cents.
+The shop is open every morning and the customers like the warm rolls best.
+The program has no screen, no database and no network connection.
+The owner looks at the code once a week, so every function stays short and plain.
+Only the two files shop.py and cart.py are part of this job, and the tests folder stays exactly as it is.
+The files already exist with placeholder functions that do nothing yet.
+The shop keeps everything inside the shop and the owner works on one old computer.
+The cakes are baked in the afternoon, the rolls in the early morning and the coffee all day long.
+On Fridays the shop closes at noon, and on Sundays it stays closed for the whole day.
+
+## Jobs
+
+1. In shop.py, write the function total(prices) that returns the sum of a list of prices, and returns 0 for an empty list. The prices are whole numbers of cents.
+
+2. In shop.py, write the function apply_discount(amount, percent) that returns the amount after taking off the percent, rounded down to a whole number of cents. A percent below 0 or above 100 must raise a ValueError with a short message.
+
+3. In cart.py, write the function count(items) that returns how many items are in the cart, and returns 0 for an empty cart.
+
+4. In cart.py, write the function cheapest(items) that returns the lowest price in the cart, and returns None for an empty cart. The items are plain whole numbers of cents.
+-----8<-----  এই পর্যন্ত  -----8<-----
+
+৭.৪ কী দেখবেন (ঠিকঠাক চললে):
+   ▸ NAVARATNA: this request is long, so it is done as steps ... (প্রতি ধাপ ~৯,০০০ টোকেন)
+   ▸ 4 requirement(s) in 4 step(s); every one of the request's 18 parts is accounted for.
+   ▸ step-1 - In shop.py, write the function total(prices) ...     <- লক্ষ্যে "1." নয়, পুরো বাক্য থাকা চাই (1.1.1-এ ঠিক)
+   ▸ step-1 done (local) ... এভাবে ৪টি ধাপ
+   শেষে "4 of 4 steps done, N of them by the local model" ও প্রতিটি requirement-এর (R-001..R-004) ধাপ, মডেল ও প্রমাণ।
+   "checks passed" লেখা থাকলে python -m pytest পাস করেছে। "not proven" মানে ফোল্ডারে কোনো check পায়নি (ধাপ ২.৩ ঠিক আছে কি দেখুন)।
+৭.৫ নিজে যাচাই করুন ধাপ শেষে:
+     python -m pytest -q          (পাস করা চাই)
+     git status ; git diff        (শুধু shop.py ও cart.py বদলেছে; tests\ অক্ষত থাকা চাই)
+৭.৬ সময়: ভালো GPU-তে প্রতি ধাপে ১–৩ মিনিট; শুধু CPU-তে ১০+ মিনিট হতে পারে। ৪০ মিনিটেও প্রথম ধাপ না এগোলে
+     থামান (চ্যাটের Stop) এবং ধাপ ১ আর "সমস্যা-সমাধান" দেখুন।
+
+------------------------------------------------------------------------------------------------
+ধাপ ৮ - ফল নোট করুন (এটাই আপনার "প্রমাণ")
+------------------------------------------------------------------------------------------------
+প্রতিটি পরীক্ষায় এই ছক পূরণ করে রাখুন (Notepad-এ):
+   তারিখ / মেশিন (RAM, GPU) / মডেল ও quantization / সুইচ কোনগুলো চালু
+   ধাপ ক'টি / ক'টি শেষ / ক'টি BLOCKED (কারণ কী লেখা ছিল)
+   ক'টি ধাপ লোকালে হলো / ক'টি ক্লাউডে (relay)
+   মোট সময় / python -m pytest পাস করল কি না / কোনো ভুল ফাইল বদলেছে কি না
+   মডেল কী ভুল করল (যেমন "holds no edit" = ফরম্যাট মানেনি; "leaves something out" = কোড বাদ দিয়েছে)
+নিয়ম (প্ল্যান থেকে): কোনো সুইচ ডিফল্টে চালু রাখার আগে প্রমাণ চাই যে চালু থাকলে ফল বন্ধ থাকার চেয়ে ভালো।
+  সফল ধরার মাপ (লক্ষ্য, এখনো প্রমাণিত নয়): লোকালে ≥৯০% ধাপ; হারানো requirement ০; ভাঙা ফাইল ০।
+ফল Claude Code-কে দেখাতে বলুন: "NAVARATNA-র লাইভ ফল নিচে; কোন সুইচ ডিফল্ট হবে প্রস্তাব দাও: <ছক পেস্ট>"।
+
+------------------------------------------------------------------------------------------------
+ধাপ ৯ - বাড়তি সুইচ একটি একটি করে চালিয়ে দেখুন (ধাপ ৭-এর একই ডেমো দিয়ে)
+------------------------------------------------------------------------------------------------
+Settings -> Advanced-এ চালু করুন, ডেমো আবার চালান (git reset --hard করে আগের অবস্থায় ফিরে: `git reset --hard ; git clean -fd`):
+  nr.test_first    আগে টেস্ট লেখে (মডেল done-when থেকে টেস্ট বানায়, কোড পরে, আলাদা কলে)।
+                   পাস শর্ত: pytest চলা চাই। ঠিক হলে "local, tests first" দেখাবে এবং tests\ ফোল্ডারে নতুন ফাইল আসবে।
+  nr.best_of_n     ব্যর্থ ধাপে ২–৪টি প্রার্থী, টেস্টে যেটা পাস করে সেটা নেয় (সময় বেশি লাগে)।
+  nr.out_chunk     লম্বা ডকুমেন্ট অংশে অংশে লেখে। পরীক্ষা: অনুরোধে "Write a user guide for the shop in docs/guide.md" যোগ করে দেখুন।
+  nr.git_shadow    প্রতি ধাপের আগে গোপন snapshot; ব্যর্থ হলে ফাইল হুবহু আগের মতো। (Windows-এ বাইট-হুবহু ফেরত দেওয়া CI-তে যাচাই হয়েছে।)
+  nr.contract_lock যাচাই-করা ফাংশনের signature পরের ধাপ বদলাতে পারে না।
+  nr.error_slice   build/test ব্যর্থ হলে মডেলকে শুধু প্রথম error দেখায় (+ spec_read টুল)।
+  nr.lang_spec     বাংলা/Banglish অনুচ্ছেদ ইংরেজিতে পুনর্লিখন, সংখ্যা/নাম হারালে ধরে ফেলে। পরীক্ষা: ডেমোর একটি Job বাংলায় লিখে দেখুন।
+  nr.tag_route, nr.symbol_patch, nr.tool_envelope, nr.mem_budget, nr.think_budget - চ্যাট-লুপ ও রিলের সুইচ; প্রয়োজনে।
+  nr.blueprint / nr.escalation_packet / nr.role_rotation / nr.golden_trace - ক্লাউড chain লাগে (ধাপ ১২)।
+প্রতিটির আগে ও পরে ধাপ ৮-এর ছক পূরণ করুন, একবারে একটির বেশি বদলাবেন না।
+
+------------------------------------------------------------------------------------------------
+ধাপ ১০ - bench চালান
+------------------------------------------------------------------------------------------------
+নকল মডেলে (এখনই চলে; Ollama লাগে না) [সব]:
+     sdcd bench navaratna
+     sdcd bench navaratna --out navaratna-bench.md
+   প্রতিটি সুইচ বন্ধ বনাম চালু; ২৫টির মধ্যে ২১টিতে "helps"। এটা কোডের আচরণের সংখ্যা, আসল মডেলের নয়।
+আসল মডেলে (N9-3): `sdcd bench navaratna --live` এখনো "OWNER-LATER" বার্তা দেয় - কোডে জোড়া হয়নি (ধাপ ১১.১)।
+   তার আগে পর্যন্ত ধাপ ৭–৯-এর হাতে-পরীক্ষাই আপনার লাইভ যাচাই।
+আরও সরঞ্জাম [সব]:
+     sdcd navaratna spec FILE        একটি প্রম্পট ইউনিটে কেটে coverage দেখায় (কোনটি requirement, কোনটি background)
+     sdcd navaratna skeleton FILE    কোড-ফাইলের signature-কঙ্কাল
+     sdcd navaratna slice LOGFILE    build/test লগের প্রথম error ও আশেপাশের কোড
+
+------------------------------------------------------------------------------------------------
+ধাপ ১১ - Claude Code-কে দিয়ে করাতে হবে যে কোড-কাজগুলো (এখনো করা হয়নি)
+------------------------------------------------------------------------------------------------
+কীভাবে: রিপোজিটরি খুলে (git clone https://github.com/skilleddesk/SD-Code.git) Claude Code-কে প্রতিটির জন্য নিচের বাক্য বলুন।
+ ১.১ লাইভ bench জোড়া (N9-3)
+     বলুন: "sdc/sdcd/src/navaratna/bench.rs-এ `sdcd bench navaratna --live` জোড়ো: scripted মডেলের জায়গায় Ollama-র মডেল দিয়ে
+            navaratna::steps::run চালাও (agent/steps.rs-এর ModelEngine-এর মতো একটি Ollama-ইঞ্জিন), ডেমো প্রজেক্টে, প্রতিটি সুইচ
+            বন্ধ/চালু তুলনা করে রিপোর্ট লেখো।" (Ollama চালু ও বড় RAM লাগবে, তাই টেস্টে ফেক থাকবে)
+ ১.২ "প্রোব না থাকলে কার্ডের জানালার ৫০%" নিয়ম
+     এখন প্রোব না থাকলে SDC-র ক্যাটালগের প্রসঙ্গ-সংখ্যাই ধরা হয় (সেটা আগে থেকেই রক্ষণশীল)। বলুন: "ollama show থেকে আসল context length
+     পড়ে প্রোব না থাকলে তার ৫০% নাও (window.rs-এর usable_window-এর advertised প্যারামিটার)।"
+ ১.৩ Ask ও Pro মোডে ধাপ-এক্সিকিউটর
+     এখন শুধু Auto-তে চলে, কারণ ধাপ-পিছু অনুমতি চাওয়া নেই। বলুন: "ধাপ-এক্সিকিউটরে প্রতিটি ধাপের আগে/পরে অনুমতি-কার্ড যোগ করো যাতে Ask/Pro মোডেও চলে।"
+ ১.৪ Server (SSH) ফোল্ডারে ধাপ-এক্সিকিউটর: এখন শুধু লোকাল ফোল্ডারে। বলুন: "WorkspaceProject-কে remote Workspace-এ চালাও।"
+ ১.৫ Brick "বড়-প্রম্পট কার্ড": MEGHNA-র M7 কোডে কখনো আসেনি। UI-তে বড় অনুরোধ ধরা পড়লে একটি কার্ড (ধাপ-সংখ্যা, প্রতি ধাপের মেমরি-লক্ষ্য, Q4 পরামর্শ) দেখানো।
+ ১.৬ 9B-লেবেলারের মান: মডেল ইউনিট লেবেল করে (R/B/P), কোড coverage যাচাই করে, ফাঁক নিয়ম-ভিত্তিক লেবেলার ভরে। নিয়ম-ভিত্তিক লেবেলার শুধু ইংরেজি/Banglish শব্দে কাজ করে; ধাপ ৮-এর ফল দেখে প্রয়োজনে উন্নত করতে বলুন।
+ ১.৭ মাঝে-মাঝে-ফেল-করা টেস্ট:
+       ঠিক হয়েছে (1.1.1): mcp::tests::the_code_graph_...(দুটি টেস্ট একই টেম্প ফোল্ডার নাম ব্যবহার করত),
+       আর navaratna-র ৩টি টেস্ট (exist_gate, registry, bench) - পুরো টেস্ট একসাথে চললে সময়-সীমা শেষ হয়ে যেত।
+       এখনো বাকি (আমার কোডের নয়; সময়-নির্ভর রেস বলে ধারণা, ২০+ বার চালানোতে মাত্র ১ বার):
+       tests/lifecycle.rs : a_chat_that_has_run_a_turn_can_be_deleted
+     বলুন: "lifecycle.rs-এর a_chat_that_has_run_a_turn_can_be_deleted ফ্লেকি টেস্টের আসল কারণ খুঁজে ঠিক করো।"
+ ১.৮ SD ড্রাইভের .git/objects/pack/ এ "._pack-....idx" ফাইল (macOS মেটাডেটা): git সতর্কতা দেয়, কাজ আটকায় না। মুছতে বললে Claude Code আপনার অনুমতি চেয়ে তবেই মুছবে।
+ ১.৯ ইনস্টলার সই করা নয় (Windows SmartScreen সতর্কতার কারণ)। সই করাতে কোড-সাইনিং সার্টিফিকেট কিনতে হয় (খরচ); docs/RELEASE-SIGNING-bn.md দেখুন।
+ ১.১০ NAVARATNA.md/NAVARATNA-PROMPTS.md "স্কিল" হিসেবে: প্রজেক্টের .sdc/skills/navaratna/SKILL.md-তে রাখলে বার্তায় NAVARATNA লিখলে মডেল ফাইল পড়ে। ফাইল বড় (পুরোটা মডেলের সামনে যায়), তাই শুধু দরকারে।
+
+------------------------------------------------------------------------------------------------
+ধাপ ১২ - ক্লাউড chain ও অন্যান্য ঐচ্ছিক কাজ (খরচ ও সম্মতি লাগে)
+------------------------------------------------------------------------------------------------
+১২.১ API key যোগ করা: মডেল-হাবের "API keys" ট্যাব। যে প্রদানকারীর মডেল চান তার key দিন। key কখনো চ্যাটে/ফাইলে/কমিটে পেস্ট করবেন না।
+১২.২ Settings -> Agents:
+     - ক্লাউড মডেল সারি যোগ করুন (provider:model, যেমন deepseek:deepseek-chat)।
+     - প্রতিটি সারিতে "Role": যেকোনো কাজ / নকশাকার (একবার পুরো নকশা করে) / মেরামতকারী (ব্যর্থ ধাপ ঠিক করে)।
+     - relay চালু করুন - সেটাই ক্লাউডে পাঠানোর আপনার সম্মতি। বন্ধ থাকলে একটি বাইটও ক্লাউডে যায় না।
+     - সীমা (ডিফল্ট): প্রতি টার্নে ক্লাউডে সর্বোচ্চ ৬ ধাপ ও $0.25। বদলাতে rotation.toml-এর [relay] অংশ:
+         [Windows] %APPDATA%\sdc\rotation.toml     (Get-Content $env:APPDATA\sdc\rotation.toml)
+         max_cloud_steps_per_turn = 6     max_usd_per_turn = 0.25
+     - একটি সারি 429/কোটা/key নেই/সময়-শেষ হলে সাময়িক বাদ পড়ে ও পরের সারি ডাকা হয়; ব্যবহারকারীর ক্রম বদলায় না।
+১২.৩ প্রজেক্টে নিরাপত্তা (.sdc\policy.toml, প্রজেক্ট ফোল্ডারের ভেতরে):
+         privacy = "local-only"            # এটা থাকলে কখনো ক্লাউডে যাবে না
+         secret_paths = [".env", "secrets/**"]   # এই ফাইল কোনো মডেলকে পাঠানো হবে না
+         protected_paths = ["package-lock.json"] # এই ফাইল ধাপ-এক্সিকিউটর বদলাবে না
+     (সিনট্যাক্স নিশ্চিত করতে প্রজেক্টের আসল .sdc\policy.toml-এর উদাহরণ দেখুন।)
+১২.৪ ক্লাউডে সত্যিই কী গেল দেখতে: প্রজেক্টের .sdc\audit\sent.jsonl (প্রতিটি পাঠানোর আগে লেখা হয়; সংখ্যা ও হ্যাশ থাকে, গোপন কিছু নয়)।
+১২.৫ API key rotate: যে key আগে কোথাও দেখা গেছে (চ্যাট/লগ/স্ক্রিনশট) প্রদানকারীর সাইটে গিয়ে বাতিল করে নতুন বানান। (MEGHNA-র পুরনো বাকি কাজ।)
+১২.৬ অন্য ইঞ্জিন (NAVARATNA-র অংশ নয়, Mac-এ ২০২৬-১০-২৪-এ দেখা অবস্থা; Windows-এ যাচাই করিনি):
+     - Gemini CLI: Google ২০২৬-০৬-১৮ থেকে ব্যক্তিগত অ্যাকাউন্টে বন্ধ করেছে। বিকল্প `agy` (Antigravity CLI) ইনস্টল ছিল, লগইন বাকি;
+       SDC-র gemini ইঞ্জিন এখনো `gemini` চালায়, `agy` নয় - জোড়া বাকি (Claude Code-কে বলুন: "gemini ইঞ্জিন agy-তে সরাও, আগে লগইন করে stream-json ধরো")।
+     - Codex CLI: ইনস্টল ছিল, লগইন হয়নি; ChatGPT সাবস্ক্রিপশন নেই বলে যাচাই হয়নি।
+     - Claude Code: মডেল-তালিকায় Opus 5.5 / Sonnet 5.5 / Haiku 5.5 / Fable 5.1 যোগ করা আছে।
+     - মডেল-হাবের "Environment doctor" ট্যাবে Node/CLI ইনস্টল ও সংস্করণ এক ক্লিকে মেলে।
+
+------------------------------------------------------------------------------------------------
+সমস্যা-সমাধান
+------------------------------------------------------------------------------------------------
+"Ollama is not installed, or it would not start"
+   -> ধাপ ২.২। নিজে চালান:  ollama serve   (আলাদা জানালায় খোলা রাখুন), তারপর অন্য জানালায় ollama list।
+"model not found" / SDC বলছে মডেল ডাউনলোড হয়নি
+   -> ollama pull qwen3.5:9b । SDC নিজেও নামাতে শুরু করে (Settings/Hub-এ অগ্রগতি দেখায়); শেষ হলে আবার পাঠান।
+কিছুই এগোচ্ছে না / মেশিন আটকে যাচ্ছে / অনেক ধীর
+   -> RAM/VRAM কম। অন্য অ্যাপ বন্ধ করুন; ছোট মডেল বা Q4 নিন; টাস্ক ম্যানেজারে "Memory" ১০০% হলে এটাই কারণ।
+   -> Ollama থামাতে:  ollama stop qwen3.5:9b
+"ContextOverflow: NeedsSplit ..." বা "NeedsSplit: the step's rules, goal and spec units alone are about N tokens"
+   -> একটি ধাপের নিজের লেখাই জানালায় ধরছে না। অনুরোধটি ছোট ছোট স্বাধীন কাজে ভাঙুন, বা কম ইউনিট রাখুন।
+"BLOCKED: ... holds no edit"
+   -> মডেল FILE:/SYMBOL: ফরম্যাট মানেনি (মন্তব্য লিখেছে)। আবার চালান; বারবার হলে বড়/ভালো মডেল বা nr.best_of_n।
+"BLOCKED: ... leaves something out" / "must define exactly the one symbol"
+   -> মডেল কোড বাদ দিয়েছে বা একাধিক ফাংশন একসাথে লিখেছে; SDC নিজে ফেরত পাঠায় ও আবার চেষ্টা করে।
+"BLOCKED: ... checks failed after your edit (it was undone)"
+   -> প্রজেক্টের check (pytest) ব্যর্থ হয়েছে; SDC edit উল্টে দিয়েছে। ডেমোতে pytest ইনস্টল আছে কি দেখুন।
+"... is protected by this project's policy" / "would carry a secret"
+   -> .sdc\policy.toml-এর protected_paths-এ আছে, বা কোডে key-র মতো লেখা ছিল; ইচ্ছাকৃত নিষেধ।
+"ধাপ-এক্সিকিউটর চালুই হচ্ছে না" (চ্যাটে "▸ NAVARATNA" লাইন নেই)
+   -> চারটি শর্তই লাগে: (১) মডেল Ollama-র লোকাল মডেল, (২) মোড-বোতাম Auto, (৩) nr.fresh_step on, (৪) অনুরোধ ≥১৫০০ অক্ষর। এবং ফোল্ডার লোকাল।
+"python is not recognized" / "No module named pytest"
+   -> ধাপ ২.৩; PowerShell নতুন খুলুন। ইনস্টলে "Add python.exe to PATH" টিক দিতে হয় (winget নিজে করে)।
+"git is not recognized"
+   -> ধাপ ২.৪। অথবা SDC প্রথম চালুর কিছু পরে নিজে Git এনে দেয়।
+Windows Defender/অ্যান্টিভাইরাস sdcd.exe আটকে দিলে
+   -> ইনস্টলার সই করা নয় বলে হতে পারে; ফাইলটি SHA256 মিলিয়ে নিশ্চিত হয়ে "Allow" দিন।
+পোর্ট 7811 বা 11434 দখল
+   -> অন্য কিছু ব্যবহার করছে:  netstat -ano | findstr 11434
+
+------------------------------------------------------------------------------------------------
+গোপনীয়তা ও নিরাপত্তা সংক্ষেপে
+------------------------------------------------------------------------------------------------
+- লোকাল মডেলের সব কাজ আপনার মেশিনেই থাকে। ক্লাউডে কিছু যায় শুধু relay চালু থাকলে, এবং তখনও গোপন কিছু (key, secret_paths) বাদ দিয়ে।
+- ধাপ-এক্সিকিউটর কাজ শুরুর আগে checkpoint নেয়; ভুল হলে অ্যাপ থেকে ফেরত যান। গোপন key কোডে লিখতে চাইলে আটকে দেয়।
+- সব কিছু একই মেশিনে চলে; নেটওয়ার্ক দরকার শুধু ডাউনলোড ও ক্লাউড chain-এর জন্য।
+
+------------------------------------------------------------------------------------------------
+পরের ভার্সন বানানোর নিয়ম (ডেভেলপার)
+------------------------------------------------------------------------------------------------
+  ১. Cargo.toml (sdc/sdcd ও sdc/app/src-tauri), package.json (sdc ও sdc/app), tauri.conf.json-এ ভার্সন বাড়ান; দুই Cargo.lock-এও (নিজের প্যাকেজ)।
+  ২. CHANGELOG.md-র শীর্ষে নতুন "## [x.y.z]" অংশ।
+  ৩. কমিট, `git push origin main`; GitHub -> Actions-এ CI সবুজ হওয়া পর্যন্ত অপেক্ষা (Windows জবও)।
+  ৪. `git tag -a vX.Y.Z -m "X.Y.Z"` তারপর `git push origin vX.Y.Z`।
+  ৫. release.yml Windows/macOS/Linux বানিয়ে সব ঠিক হলে রিলিজ প্রকাশ করে ও পুরনো রিলিজ মুছে দেয় (ফেরানো যায় না - তাই ভেবে করবেন)।
+যাচাইয়ের কমান্ড (sdc/sdcd থেকে):
+     cargo test --locked --no-fail-fast
+     cargo clippy --locked --all-targets -- -D warnings
+     cd .. ; node protocol/check.mjs ; cd app ; npx vitest run ; npx tsc --noEmit -p .
+মূল ফাইল:
+     sdc/sdcd/src/navaratna/            সব মডিউল (প্রতি টাস্কে একটি)
+     sdc/sdcd/src/navaratna/steps/      ধাপ-এক্সিকিউটর (plan, edits, মূল চক্র, টেস্ট)
+     sdc/sdcd/src/agent/steps.rs        এজেন্টের সাথে জোড়া (মডেল-কল, প্রজেক্ট, relay, architect)
+     sdc/sdcd/src/v3/mod.rs             সুইচের তালিকা (nr.*)
+     CHANGELOG.md                       [1.1.0] ও [1.1.1] অংশ
+     sdc/docs/navaratna/                NAVARATNA.md (ট্র্যাকার), NAVARATNA-PROMPTS.md, এই ফাইল

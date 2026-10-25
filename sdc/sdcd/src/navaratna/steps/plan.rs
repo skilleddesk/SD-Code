@@ -124,8 +124,30 @@ fn label(units: Vec<Unit>, engine: &mut dyn Engine, notes: &mut Vec<String>) -> 
     map
 }
 
+/// The text without a list marker at its start (`1.`, `2)`, `-`, `*`, `•`): the number of a list item is not a sentence.
+fn without_marker(text: &str) -> &str {
+    let trimmed = text.trim_start();
+    let digits = trimmed.chars().take_while(char::is_ascii_digit).count();
+
+    if digits > 0 && digits <= 3 {
+        let rest = &trimmed[digits..];
+
+        if let Some(after) = rest.strip_prefix('.').or_else(|| rest.strip_prefix(')')).filter(|after| after.starts_with(char::is_whitespace)) {
+            return after.trim_start();
+        }
+    }
+
+    for marker in ['-', '*', '+', '•'] {
+        if let Some(after) = trimmed.strip_prefix(marker).filter(|after| after.starts_with(char::is_whitespace)) {
+            return after.trim_start();
+        }
+    }
+
+    trimmed
+}
+
 fn first_sentence(text: &str) -> String {
-    let flat: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let flat: String = without_marker(text).split_whitespace().collect::<Vec<_>>().join(" ");
     let spans = spec::sentence_spans(&flat);
 
     spans.first().map_or_else(|| flat.chars().take(200).collect(), |(a, b)| flat[*a..*b].chars().take(240).collect())
@@ -299,6 +321,23 @@ mod tests {
 
         assert!(plan.map.unmapped().is_empty() && !plan.steps.is_empty());
         assert!(plan.notes.iter().any(|note| note.contains("failed")));
+    }
+
+    #[test]
+    fn a_list_number_is_not_the_goal_and_the_goal_is_the_items_own_first_sentence() {
+        assert_eq!(first_sentence("1. In shop.py, write the function total(prices) that returns the sum. It returns 0 for an empty list."), "In shop.py, write the function total(prices) that returns the sum.");
+        assert_eq!(first_sentence("2) Add a button to the header."), "Add a button to the header.");
+        assert_eq!(first_sentence("- Fix the login. Then test it."), "Fix the login.");
+        assert_eq!(first_sentence("• Update the README"), "Update the README");
+        assert_eq!(first_sentence("3.5 percent tax must be kept. Next."), "3.5 percent tax must be kept.", "a number that is not a list marker stays");
+        assert_eq!(first_sentence("2024 was the year. Add a test."), "2024 was the year.");
+
+        let mut engine = Scripted(vec![], vec![]);
+        let plan = build("1. In shop.py, write the function total(prices) that returns the sum.\n\n2. In cart.py, write the function count(items) that returns how many there are.\n", &mut engine, &|_| vec![]).unwrap();
+
+        assert_eq!(plan.steps[0].goal, "In shop.py, write the function total(prices) that returns the sum.");
+        assert_eq!(plan.steps[1].done_when, "In cart.py, write the function count(items) that returns how many there are.");
+        assert!(plan.steps[0].files.contains(&"shop.py".to_string()));
     }
 
     #[test]

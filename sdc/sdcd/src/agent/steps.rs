@@ -120,7 +120,8 @@ impl WorkspaceProject<'_, '_> {
         if has("Cargo.toml") {
             Some(format!("cargo test {name} --quiet"))
         } else if has("pytest.ini") || has("pyproject.toml") || has("setup.cfg") || has("tox.ini") || path.ends_with(".py") {
-            Some(format!("python3 -m pytest -q \"{path}::{name}\""))
+            /* the same interpreter name the project's own check uses: `python` on Windows (where `python3` is often only a Store stub) */
+            Some(format!("{} -m pytest -q \"{path}::{name}\"", if cfg!(windows) { "python" } else { "python3" }))
         } else if has("package.json") && self.turn.workspace.read("package.json").is_ok_and(|(text, _)| text.contains("jest")) {
             Some(format!("npx jest \"{path}\" -t \"{name}\""))
         } else {

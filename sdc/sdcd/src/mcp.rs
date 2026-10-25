@@ -578,8 +578,9 @@ mod tests {
         assert!(folder(&json!({})).is_err());
     }
 
-    fn project() -> PathBuf {
-        let root = folder_with("read-tools");
+    /* the folder name is the test's own: two tests that shared one name would delete each other's files when they ran at the same time */
+    fn project(name: &str) -> PathBuf {
+        let root = folder_with(name);
 
         std::fs::create_dir_all(root.join("src")).unwrap();
         std::fs::create_dir_all(root.join(".sdc")).unwrap();
@@ -592,7 +593,7 @@ mod tests {
 
     #[test]
     fn the_code_graph_answers_where_and_who_and_hides_what_the_policy_keeps() {
-        let root = project();
+        let root = project("read-tools-code-graph");
         let mut daemon = no_daemon;
         let named = call("sdc_code_graph", &json!({ "path": root.to_string_lossy(), "name": "compute_total" }), &mut daemon).unwrap();
 
@@ -607,7 +608,7 @@ mod tests {
 
     #[test]
     fn the_ranked_search_finds_code_and_never_returns_a_withheld_file() {
-        let root = project();
+        let root = project("read-tools-ranked-search");
         let mut daemon = no_daemon;
         let found = call("sdc_ranked_search", &json!({ "path": root.to_string_lossy(), "query": "compute total of items" }), &mut daemon).unwrap();
 
