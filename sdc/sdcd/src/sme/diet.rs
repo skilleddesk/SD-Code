@@ -48,6 +48,38 @@ pub fn at_most<T: Clone>(specs: &[T], max: usize) -> Vec<T> {
     specs.iter().take(max.max(1)).cloned().collect()
 }
 
+/// The share of a local model's window the tool schemas may take before they are cut: the hard floor under every
+/// switch.
+pub const SCHEMA_SHARE: u64 = 40;
+
+/// The fewest schemas a step is left with, however small the window: look, change, run.
+pub const MIN_SCHEMAS: usize = 4;
+
+/// **As many schemas as the window can hold** (3.2) - a floor that no switch can lower.
+///
+/// [`at_most`] is the *technique*: six schemas, because a small model given twenty picks the wrong one. This is the
+/// *physics*: a window is a hard limit, and the schemas are the largest fixed part of the prompt. Measured on a local
+/// model with an 8,192-token window and the diet switched off: 21 tool schemas fitted, and the 22nd did not - so every
+/// call of the turn was refused as ContextOverflow before it was sent, and the turn spent its whole step limit saying
+/// nothing. A prompt that cannot be sent is worse than a prompt with four tools in it.
+///
+/// `tokens_of` is handed the chosen prefix rather than one spec, because what matters is the total: the caller owns
+/// the estimator (the daemon has exactly one), and this function owns the rule.
+pub fn within<T: Clone>(specs: &[T], room: u64, tokens_of: impl Fn(&[T]) -> u64) -> Vec<T> {
+    if room == 0 || specs.len() <= MIN_SCHEMAS || tokens_of(specs) <= room {
+        return specs.to_vec();
+    }
+
+    /* Down from the whole list one schema at a time, so a window that holds nineteen keeps nineteen. */
+    let mut kept = specs.len();
+
+    while kept > MIN_SCHEMAS && tokens_of(&specs[..kept]) > room {
+        kept -= 1;
+    }
+
+    specs[..kept].to_vec()
+}
+
 /// The system prompt cut to the class's cap, at a line boundary, marked `[shortened]`. Unchanged below the cap.
 pub fn slim(system: &str, class: Class) -> String {
     let cap = system_cap(class);

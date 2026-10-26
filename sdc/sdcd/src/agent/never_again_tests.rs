@@ -386,7 +386,8 @@ fn the_think_flag_follows_the_step_kind() {
     assert_eq!(on[1]["think"], json!(false), "so is the next one, after a read that worked");
     assert_eq!(on[2]["think"], json!(true), "the step after a failed tool is a repair");
 
-    let off = turn(&[]);
+    /* 3.2: both think switches are on by default now, so the "no think flag at all" case is asked for out loud. */
+    let off = crate::v3::ablating(&["padma.think_policy", "nr.think_budget"], || turn(&[]));
 
     assert!(off.iter().all(|body| body.get("think").is_none()), "{off:?}");
 }
@@ -410,7 +411,8 @@ fn a_step_is_offered_only_its_tools_and_an_unlisted_call_still_runs() {
 
         (got.bodies[0]["tools"].as_array().map_or(0, Vec::len), got.bodies[0].to_string().len(), answer)
     };
-    let (full_tools, full_bytes, _) = turn(&[]);
+    /* 3.2: `padma.tool_subset` is on by default, so the whole-catalogue case switches it off. */
+    let (full_tools, full_bytes, _) = crate::v3::ablating(&["padma.tool_subset"], || turn(&[]));
     let (few_tools, few_bytes, answer) = turn(&["padma.tool_subset"]);
 
     assert_eq!(few_tools, 2, "only the declared tools");
@@ -884,7 +886,11 @@ fn a_recipe_step_uses_the_engines_and_shows_a_receipt_only_when_the_switch_is_on
 
     assert!(receipt.starts_with("Engines used:") && receipt.contains("fresh_step x7"), "{receipt}");
 
-    let (handled, bodies, shown) = run_review("engines-off", false);
+    /* 3.2: the engines a recipe forces are on by default now, so "off" means switching them off. */
+    let (handled, bodies, shown) = crate::v3::ablating(
+        &["nr.fresh_step", "nr.skeleton_pack", "nr.symbol_patch", "nr.test_first", "nr.registry", "nr.git_shadow"],
+        || run_review("engines-off", false),
+    );
 
     assert!(handled && bodies.len() == 7);
     assert!(!bodies[0].to_string().contains("## Goal"), "{}", bodies[0]);
@@ -1142,9 +1148,16 @@ fn a_turn_that_only_ever_reads_is_stopped_honestly_instead_of_running_forever() 
 
     let got = crate::padma::task::with_contract(|| run("gate-stall", "write the project documentation to docs.md", script, 16_384, 200, &["padma.finish_gate"]));
 
-    assert!(got.bodies.len() < 150, "the turn must stop well before the script runs out: {} requests", got.bodies.len());
+    /* 3.2: it stops within a handful of steps, not a hundred. The repeat-call block refuses the second identical read
+       and every one after it, and the repeat-stall guard ends the turn once six steps running have moved nothing - so
+       the sentence is that one rather than the hundred-step one, and the verdict is the same. */
+    assert!(got.bodies.len() < 20, "the turn must stop within a few steps: {} requests", got.bodies.len());
     assert_eq!(got.done().as_deref(), Some("Blocked: no evidence of the work"));
-    assert!(got.said().contains("steps passed with no file changed and no command run"), "{}", got.said());
+    assert!(
+        got.said().contains("asked only for things already answered") || got.said().contains("steps passed with no file changed and no command run"),
+        "{}",
+        got.said()
+    );
 }
 
 /// P1-2: the same request ends normally once the model really makes the change after the signal.
@@ -1201,10 +1214,32 @@ fn final_marker_ends_the_turn() {
 #[test]
 fn a_request_that_never_fits_is_blocked_not_failed() {
     let goal = format!("summarise this: {}", "the quick brown fox ".repeat(2_000));
-    let got = run("never-fits", &goal, (0..8).map(|_| says("ok")).collect(), 4_096, 24, &[]);
+    /* The chat loop is what the Overflow Rule guards, so this says which path it is on: since 3.2 `nr.fresh_step` is
+       on by default and a request this long goes to the step executor instead, which *splits* it - the case below. */
+    let got = crate::v3::ablating(&["nr.fresh_step"], || run("never-fits", &goal, (0..8).map(|_| says("ok")).collect(), 4_096, 24, &[]));
 
     assert!(got.failed().is_none(), "{:?}", got.failed());
     assert!(got.done().is_some_and(|summary| summary.starts_with("Blocked")), "{:?}", got.done());
     assert!(got.said().contains("too large"), "{}", got.said());
     assert!(got.bodies.is_empty(), "nothing that would not fit is ever sent");
+}
+
+/// 3.2: and the same request on the default path is **split**, not refused.
+///
+/// This is the other half of the same promise, and the reason `nr.fresh_step` is on for local models now: a request
+/// far larger than the window used to end as `Blocked: too large for the model's window`, which is honest but useless.
+/// Cut into units that each fit, a 4K window finishes it.
+#[test]
+fn a_request_too_large_for_the_window_is_cut_into_steps_that_fit() {
+    let goal = format!("summarise this: {}", "the quick brown fox ".repeat(2_000));
+    let got = run("never-fits-split", &goal, (0..24).map(|_| says("ok")).collect(), 4_096, 24, &["nr.fresh_step"]);
+
+    assert!(got.failed().is_none(), "{:?}", got.failed());
+    assert!(!got.bodies.is_empty(), "the work was sent in pieces that fit, not refused whole");
+
+    for body in &got.bodies {
+        let estimated = crate::guard::context::check(body, 1_000_000, 0).unwrap_or(u64::MAX);
+
+        assert!(estimated < 4_096, "a step of {estimated} tokens was sent to a 4,096-token window");
+    }
 }

@@ -284,11 +284,14 @@ impl nr::Project for WorkspaceProject<'_, '_> {
         hook.signals.verify_failures = 3;
 
         let handled = hook.handle(&env, &mut messages, &|_, _| None);
+        let chain_failure = hook.failure.clone();
 
         drop(slot);
 
         match handled {
             relay::Handled::Done => Some(self.checks()),
+            relay::Handled::Failed if !chain_failure.is_empty() => Some(Check { ran: true, passed: false, log: format!("{error}
+(the chain could not do it either: {chain_failure})") }),
             relay::Handled::Failed => Some(Check { ran: true, passed: false, log: error.to_string() }),
             relay::Handled::Local => None,
         }

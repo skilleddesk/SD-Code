@@ -60,6 +60,22 @@ fn a_retry_replaces_its_row_and_the_registry_survives_a_restart() {
     assert_eq!(back.entries[0].hash, "two");
 }
 
+#[test]
+fn two_requirements_built_in_the_same_file_each_keep_their_row() {
+    let mut registry = Registry::default();
+    let row = |r_id: &str, step: &str| Entry { artifact: "shop.py".into(), r_id: r_id.into(), step: step.into(), model: "local".into(), hash: "h".into(), evidence: format!("shop.py:{step}") };
+
+    registry.record(row("R-001", "step-1"));
+    registry.record(row("R-002", "step-2"));
+    registry.record(row("R-002", "step-2-retry"));
+
+    let receipt = receipt(&["R-001".to_string(), "R-002".to_string()], &registry);
+
+    assert_eq!((receipt[0].step.as_str(), receipt[0].evidence.as_str()), ("step-1", "shop.py:step-1"));
+    assert_eq!(receipt[1].step, "step-2-retry");
+    assert_eq!(registry.entries.len(), 2);
+}
+
 const FIRST: &str = "pub fn compute_tax(amount: f64, rate: f64) -> f64 {\n    let base = amount * rate;\n    let rounded = (base * 100.0).round() / 100.0;\n    rounded\n}\n";
 
 #[test]

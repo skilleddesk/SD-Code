@@ -1,5 +1,5 @@
 endpoint deepseek-chat: Endpoint { provider: "deepseek", key_ref: "sdc.provider.deepseek", url: "https://api.deepseek.com/v1/chat/completions", dialect: "openai" } | api_model deepseek-chat | adaptive_thinking false
-endpoint claude-sonnet-5-5: Endpoint { provider: "custom", key_ref: "sdc.provider.custom", url: "http://127.0.0.1:8080/v1/chat/completions", dialect: "openai" } | api_model claude-sonnet-5-5 | adaptive_thinking true
+endpoint claude-sonnet-5-5: Endpoint { provider: "anthropic-api", key_ref: "sdc.provider.anthropic-api", url: "https://api.anthropic.com/v1/messages", dialect: "anthropic" } | api_model claude-sonnet-5-5 | adaptive_thinking true
 endpoint gpt-5.1: Endpoint { provider: "custom", key_ref: "sdc.provider.custom", url: "http://127.0.0.1:8080/v1/chat/completions", dialect: "openai" } | api_model gpt-5.1 | adaptive_thinking false
 endpoint qwen3-coder-plus: Endpoint { provider: "qwen", key_ref: "sdc.provider.qwen", url: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions", dialect: "openai" } | api_model qwen3-coder-plus | adaptive_thinking false
 sse "data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}" -> [Delta("Hello")]

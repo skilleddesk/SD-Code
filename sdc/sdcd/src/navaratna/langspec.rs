@@ -208,12 +208,15 @@ mod tests {
     #[test]
     fn a_good_restatement_passes_and_a_lossy_one_is_flagged() {
         let units = parse("shop.py ফাইলে total() ফাংশনটা ঠিক করো, ৩.৫ শতাংশ কর ধরো।\n\nপ্রতি অর্ডারে ১০ টাকা ছাড় দাও।");
-        let report = restate(&units, &mut |unit: &Unit| {
-            if unit.text.contains("shop.py") {
-                "In shop.py, fix the function total(), using a tax of 3.5 percent.".to_string()
-            } else {
-                "Give a discount on every order.".to_string()
-            }
+        /* 3.2: the switch is on by default now, so the untouched case is asked for rather than assumed. */
+        let report = crate::v3::ablating(&["nr.lang_spec"], || {
+            restate(&units, &mut |unit: &Unit| {
+                if unit.text.contains("shop.py") {
+                    "In shop.py, fix the function total(), using a tax of 3.5 percent.".to_string()
+                } else {
+                    "Give a discount on every order.".to_string()
+                }
+            })
         });
 
         crate::v3::forcing(&["nr.lang_spec"], || {
@@ -225,7 +228,7 @@ mod tests {
             assert!(report.lines[0].missing.is_empty());
         });
 
-        assert!(report.lines.iter().all(|line| !line.translated), "off by default: the original stays");
+        assert!(report.lines.iter().all(|line| !line.translated), "switched off, the original stays");
     }
 
     #[test]

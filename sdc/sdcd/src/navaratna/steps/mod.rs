@@ -206,10 +206,14 @@ impl Report {
     }
 }
 
-const RULES: &str = "You are doing ONE step of a larger job. Answer ONLY with the edits for this step, no explanation. Each edit is a header and a code block:\n\
-FILE: path/relative/to/the/project\n\
-SYMBOL: Qualified::name   (to change one declaration, e.g. Cart::total or Cart.total; leave the line out to write a new file)\n\
-MODE: replace | insert_after | append | imports | create   (replace is the default with SYMBOL)\n\
+const RULES: &str = "You are doing ONE step of a larger job. Answer ONLY with the edits for this step, no explanation. Each edit is three header lines and a fenced code block. This is a whole answer, for a different job:\n\
+FILE: STEP_FILE\n\
+SYMBOL: shout\n\
+MODE: replace\n\
+```\n\
+def shout(text):\n    return text.upper()\n\
+```\n\
+FILE is the file's path from the project root, as the step names it, with no folder of your own in front. SYMBOL is the ONE function, method or class you change, e.g. Cart::total or Cart.total; the code block holds ONLY that declaration, never the other functions of the file. MODE replace changes a declaration that is already in the file - the usual case, since a file often holds a placeholder for it. MODE insert_after puts a new declaration after SYMBOL. Without a SYMBOL line, MODE create writes a new file and MODE append adds new code to the end of an existing one.\n\
 A new function or test that uses a name from another file needs its import: add it with `FILE: path` and `MODE: imports` (only the import lines in the block).\n\
 To ADD new functions or tests to a file that already exists, write `FILE: path` and `MODE: append` with no SYMBOL line, and put ONLY the new code in the block - the rest of the file stays as it is. Never write a whole existing file again, and never repeat a function that is already in it.\n\
 then the COMPLETE new code in a fenced block. Never leave code out (no `// ...`, no `rest unchanged`); a block with SYMBOL must define exactly that one declaration. Keep every name, signature and constant the contracts and glossary list.";
@@ -326,7 +330,9 @@ impl Exec<'_> {
 
         background = background.chars().take(900).collect();
 
-        let rules = if background.is_empty() { RULES.to_string() } else { format!("{RULES}\n\nBackground from the request: {background}") };
+        /* the format example names this step's own file: a small model copies the example's path word for word */
+        let rules = RULES.replace("STEP_FILE", step.files.first().map(String::as_str).unwrap_or("the file named in the step"));
+        let rules = if background.is_empty() { rules } else { format!("{rules}\n\nBackground from the request: {background}") };
         let mut handover = self.handover.clone();
 
         if let Some(feedback) = feedback {

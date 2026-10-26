@@ -28,6 +28,8 @@ impl Daemon {
             "cli.login.status" => self.cli_login_status(envelope, &*out),
             "cli.login.code" => self.cli_login_code(envelope, &*out),
             "cli.login.cancel" => self.cli_login_cancel(envelope),
+            /* 3.2: the way out of a sign-in. See `auth::cli_login::logout`. */
+            "cli.logout" => self.cli_logout(envelope, &*out),
             "cli.recipes" => Ok(json!({
                 "recipes": crate::auth::cli_login::RECIPES
                     .iter()
@@ -761,14 +763,23 @@ impl Daemon {
             .status_announcing(&envelope.require_str("loginId")?)?;
 
         if announce {
+            let detail = format!(
+                "signed in through `{}`'s own CLI",
+                answer["providerLabel"].as_str().unwrap_or("the")
+            );
+
+            /* 3.2: written down, not only announced. A finished sign-in used to live in this one event, so a restart
+               left the card with nothing but a guess from a credential file - the silent sign-in the Gemini card is
+               no longer allowed to make. The row is the consent; `cli.logout` takes it back. */
+            if let Some(id) = answer["providerId"].as_str() {
+                providers::mark_signed_in(self.store(), id, &detail);
+            }
+
             out.push(
                 event::provider_status(json!({
                     "id": answer["providerId"],
                     "status": "connected",
-                    "detail": format!(
-                        "signed in through `{}`'s own CLI",
-                        answer["providerLabel"].as_str().unwrap_or("the")
-                    ),
+                    "detail": detail,
                 })),
                 None,
                 None,
@@ -807,6 +818,30 @@ impl Daemon {
 
     pub(super) fn cli_login_cancel(&self, envelope: &Envelope) -> Result<Value, ErrorObject> {
         self.state.logins.cancel(&envelope.require_str("loginId")?)
+    }
+
+    /// `cli.logout`: sign a CLI out, and forget that SDC ever signed it in (3.2).
+    ///
+    /// Both halves matter. The CLI's credential is taken away (its own `logout` command, or - for Gemini, which has
+    /// none - the files its Google sign-in wrote), and the row that records the person's consent is set back to
+    /// `needs-auth`, so the card asks to sign in again instead of finding the old credential and going quiet.
+    pub(super) fn cli_logout(&self, envelope: &Envelope, out: &dyn Notifier) -> Result<Value, ErrorObject> {
+        let provider_id = envelope.require_str("providerId")?;
+        let done = crate::auth::cli_login::logout(&provider_id).map_err(ErrorObject::bad_request)?;
+
+        providers::mark_signed_out(self.store(), &provider_id);
+
+        out.push(
+            event::provider_status(json!({
+                "id": provider_id,
+                "status": "needs-auth",
+                "detail": "signed out · Connect starts the CLI's own sign-in again",
+            })),
+            None,
+            None,
+        );
+
+        Ok(json!({ "providerId": provider_id, "signedOut": true, "did": done }))
     }
 
     /// `models.list`: what the providers have, from the provider when it can be reached, from the cache

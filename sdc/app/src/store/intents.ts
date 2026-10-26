@@ -290,6 +290,25 @@ export async function submitCliLoginCode(loginId: string, code: string): Promise
   }
 }
 
+/**
+ * Signs a CLI out, and forgets that SDC ever signed it in (3.2).
+ *
+ * Both halves matter, and the second is the one that was missing: until now nothing could *undo* a
+ * sign-in, so a credential an earlier session had left on the disk was permanent as far as SDC was
+ * concerned - which is how the Gemini card came to say "connected" for a sign-in nobody had done here.
+ * The answer is the sentences the daemon reports, so the dialog can show what really happened.
+ */
+export async function signOutCli(providerId: string): Promise<string[] | null> {
+  try {
+    const { did } = await sdcpCall('cli.logout', { providerId });
+
+    return did;
+  } catch (error) {
+    reportFailure(error, strings.connect.loginFailed);
+    return null;
+  }
+}
+
 export async function cancelCliLogin(loginId: string): Promise<void> {
   try {
     await sdcpCall('cli.login.cancel', { loginId });

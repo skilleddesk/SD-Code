@@ -112,13 +112,14 @@ impl Registry {
         std::fs::write(path, serde_json::to_string_pretty(self).map_err(|error| error.to_string())?).map_err(|error| error.to_string())
     }
 
-    /// Records an artifact; the same artifact written again replaces its row (a retry never adds a second one).
+    /// Records an artifact for a requirement; the same artifact written again for the same requirement replaces its row (a retry never adds a second one),
+    /// while a second requirement built in the same file keeps its own row - the receipt names evidence for every requirement.
     pub fn record(&mut self, entry: Entry) {
         if !crate::v3::on("nr.registry") {
             return;
         }
 
-        self.entries.retain(|existing| existing.artifact != entry.artifact);
+        self.entries.retain(|existing| existing.artifact != entry.artifact || existing.r_id != entry.r_id);
         self.entries.push(entry);
     }
 

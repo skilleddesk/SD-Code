@@ -85,13 +85,35 @@ pub struct Cooling {
     until: HashMap<String, Instant>,
 }
 
+/// The key a row cools under.
+///
+/// In a release build it is the row's own label, because a provider's rate limit is a fact about that provider and
+/// belongs to the whole process - that is the point of [`table`].
+///
+/// In a **test** build the thread is part of it. The table is one per process and the test binary runs its tests at
+/// the same time, so a row that one test deliberately fails (`when_every_chain_model_fails...`) used to be skipped in
+/// another test running beside it: its chain looked empty, the turn fell back to a scripted local provider that had
+/// already finished, and the run hung for two minutes on a network that was never coming. That is a flake, not a
+/// finding, and it only appeared once `nr.role_rotation` was on by default (3.2).
+fn key(label: &str) -> String {
+    #[cfg(test)]
+    {
+        format!("{:?}\u{1}{label}", std::thread::current().id())
+    }
+
+    #[cfg(not(test))]
+    {
+        label.to_string()
+    }
+}
+
 impl Cooling {
     pub fn cool(&mut self, label: &str, cause: Cause, now: Instant) {
-        self.until.insert(label.to_string(), now + cause.cooldown());
+        self.until.insert(key(label), now + cause.cooldown());
     }
 
     pub fn is_cooling(&self, label: &str, now: Instant) -> bool {
-        self.until.get(label).is_some_and(|until| *until > now)
+        self.until.get(&key(label)).is_some_and(|until| *until > now)
     }
 
     pub fn clear(&mut self) {
@@ -222,7 +244,10 @@ mod tests {
 
     #[test]
     fn the_process_table_cools_a_row_on_a_failure_and_is_off_when_the_switch_is() {
-        assert_eq!(note_failure("p:zzz-off", "HTTP 429"), None, "off by default");
+        /* 3.2: on by default, so the off case is said out loud. */
+        crate::v3::ablating(&["nr.role_rotation"], || {
+            assert_eq!(note_failure("p:zzz-off", "HTTP 429"), None, "switched off, nothing cools");
+        });
 
         crate::v3::forcing(&["nr.role_rotation"], || {
             assert_eq!(note_failure("p:zzz-on", "HTTP 429"), Some(Cause::RateLimited));
@@ -237,11 +262,14 @@ mod tests {
 
     #[test]
     fn with_the_switch_off_the_chain_is_returned_whole_and_in_order() {
-        let mut cooling = Cooling::default();
+        crate::v3::ablating(&["nr.role_rotation"], || {
+            let mut cooling = Cooling::default();
 
-        cooling.cool("p:cheap", Cause::Quota, Instant::now());
+            cooling.cool("p:cheap", Cause::Quota, Instant::now());
 
-        assert_eq!(names(&candidates(&chain(), Role::Architect, &cooling, Instant::now())), ["cheap", "architect-1", "fixer-1", "fixer-2"]);
+            assert_eq!(names(&candidates(&chain(), Role::Architect, &cooling, Instant::now())), ["cheap", "architect-1", "fixer-1", "fixer-2"]);
+        });
+
         assert!(valid_role("") && valid_role("Fixer") && !valid_role("boss"));
     }
 }

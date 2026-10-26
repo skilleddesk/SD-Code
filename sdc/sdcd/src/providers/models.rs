@@ -6,6 +6,9 @@
 //! * **`live`** - the provider's own endpoint answered just now (`/v1/models` for the OpenAI-shaped
 //!   ones, `/api/tags` for Ollama). This is the only source that can know about a model released after
 //!   this build, and it is also the only one that can fail.
+//! * **`cli`** (3.2) - the installed CLI's own program files, for the three subscription cards that have no endpoint
+//!   to ask. None of the three has a `models list` command, so the ids are scanned out of the CLI itself, strictly
+//!   (`providers::clis`). The moment the person updates the CLI, its new models are in the menu.
 //! * **`cache`** - the last live answer, kept in SQLite with the time it arrived. A refresh that fails
 //!   does not throw the answer away.
 //! * **`bundled`** - `protocol/models.json`, compiled in, so a fresh install with no network still has
@@ -41,6 +44,12 @@ pub struct ProviderBlock {
     pub live: String,
     pub protocol: String,
     pub models: Vec<Value>,
+    /// Is the discovered list **authoritative**, or does it join the curated rows rather than replace them? (3.2)
+    ///
+    /// An API provider's `/v1/models` is the whole truth: a model it no longer offers must leave the menu. A CLI scan
+    /// is not - it can only see the ids inside the version that happens to be installed, which is older than the
+    /// bundle whenever the person has not updated it. So a subscription card **unions** the two and loses nothing.
+    pub union_with_bundle: bool,
 }
 
 /// The bundle, parsed once per call (it is a few kilobytes, and parsing it is cheaper than a cache
@@ -66,6 +75,7 @@ pub fn blocked() -> Vec<ProviderBlock> {
                 live,
                 protocol: entry["protocol"].as_str().unwrap_or("openai").to_string(),
                 models: entry["models"].as_array().cloned().unwrap_or_default(),
+                union_with_bundle: group == "subscriptions",
             });
         }
     }
@@ -205,6 +215,15 @@ pub fn get_json(url: &str, provider_id: &str, key: Option<&str>) -> Result<Value
 
 /// The models a provider's own endpoint lists, normalised to `{ id, tier, ctx, cost }`.
 pub fn live(provider: &ProviderBlock) -> Result<Vec<Value>, String> {
+    /* 3.2: a subscription card has no endpoint. Its models come from the installed CLI's own files, which is the only
+       place on this machine that knows which ids that version accepts. */
+    if crate::providers::clis::can_list(&provider.id) {
+        return Ok(crate::providers::clis::model_ids(&provider.id)?
+            .into_iter()
+            .map(|id| json!({ "id": id, "providerId": provider.id }))
+            .collect());
+    }
+
     if provider.live.is_empty() {
         return Err("this provider does not list its models".to_string());
     }
@@ -285,9 +304,10 @@ pub fn list_blocks(
         let curated: Vec<Value> =
             block.models.iter().map(|model| decorate(model, &block.id, "bundled", None)).collect();
         let mut provider_rows: Vec<Value> = Vec::new();
-        let mut source = "bundled";
         let mut fetched_at: Option<String> = None;
         let mut note: Option<String> = None;
+        /* 3.2: a subscription card's rows were read off the installed CLI, not fetched from an endpoint. */
+        let discovered = if crate::providers::clis::can_list(&block.id) { "cli" } else { "live" };
 
         if refresh {
             match live(&block) {
@@ -295,8 +315,7 @@ pub fn list_blocks(
                     let now = chrono::Utc::now().to_rfc3339();
 
                     store.replace_models(&block.id, &live_rows, &now).map_err(ErrorObject::internal)?;
-                    provider_rows = merge(&live_rows, &curated, "live", Some(&now));
-                    source = "live";
+                    provider_rows = merge(&live_rows, &curated, discovered, Some(&now));
                     fetched_at = Some(now);
                 }
                 Ok(_) => note = Some(format!("{} answered with an empty list", block.label)),
@@ -311,23 +330,44 @@ pub fn list_blocks(
                 let cached_at = cached[0]["fetchedAt"].as_str().map(str::to_string);
 
                 provider_rows = merge(&cached, &curated, "cache", cached_at.as_deref());
-                source = "cache";
                 fetched_at = cached_at;
             }
         }
 
         if provider_rows.is_empty() {
             provider_rows = curated;
+        } else if block.union_with_bundle {
+            /* A CLI older than this build does not name the models released since it: the curated rows join its scan
+               rather than being replaced by it, so the menu is the union and nothing a person could pick disappears. */
+            let known: Vec<String> =
+                provider_rows.iter().filter_map(|row| row["id"].as_str()).map(crate::providers::catalog::key).collect();
+
+            for row in curated {
+                let key = crate::providers::catalog::key(row["id"].as_str().unwrap_or_default());
+
+                if !known.contains(&key) {
+                    provider_rows.push(row);
+                }
+            }
         }
 
         if let Some(note) = note {
             notes.push(note);
         }
 
-        for mut row in provider_rows {
+        /* 3.2: one row per model, with the aliases kept - see `providers::catalog`. */
+        for mut row in crate::providers::catalog::collapse(provider_rows) {
             row["providerLabel"] = json!(block.label);
-            row["source"] = json!(source);
-            row["fetchedAt"] = json!(fetched_at);
+
+            if row.get("source").and_then(Value::as_str).unwrap_or_default().is_empty() {
+                row["source"] = json!("bundled");
+            }
+
+            /* A bundled row has no fetch time of its own, and must not borrow the discovered rows'. */
+            if row["source"] != json!("bundled") && row.get("fetchedAt").and_then(Value::as_str).is_none() {
+                row["fetchedAt"] = json!(fetched_at);
+            }
+
             rows.push(row);
         }
     }
@@ -357,6 +397,12 @@ pub fn refresh_connected(store: &Arc<Store>) -> Vec<String> {
     for block in blocked() {
         let askable = match block.protocol.as_str() {
             "ollama" => crate::engines::ollama::daemon_running(),
+            /* 3.2: a subscription card is asked when its CLI is on this machine - that is where its list lives, and
+               reading a file needs no key and no network. Without this the three CLI cards never refreshed at all. */
+            _ if crate::providers::clis::can_list(&block.id) => crate::auth::cli_login::RECIPES
+                .iter()
+                .find(|recipe| recipe.provider_id == block.id)
+                .is_some_and(|recipe| crate::host::doctor::has(recipe.program)),
             _ => {
                 block.id == "openrouter"
                     || crate::auth::keychain::get(&crate::providers::key_ref(&block.id))
@@ -372,7 +418,7 @@ pub fn refresh_connected(store: &Arc<Store>) -> Vec<String> {
         if let Ok(answer) = list_blocks(store, vec![block.clone()], true) {
             let live_now = answer["models"]
                 .as_array()
-                .map(|rows| rows.iter().any(|row| row["source"] == "live"))
+                .map(|rows| rows.iter().any(|row| row["source"] == "live" || row["source"] == "cli"))
                 .unwrap_or(false);
 
             if live_now {
@@ -511,53 +557,15 @@ pub fn region_twin(endpoint_url: &str, model: &str, offered: &[String]) -> Optio
         .map(|id| Twin::Near(id.clone()))
 }
 
+/// Now [`crate::providers::catalog::name`], and the reason it moved is a spelling this one got wrong.
+///
+/// The old rule put a point between two numbers from a **list** - ` 4 5`, ` 3 5`, ` 2 5` - so every version pair
+/// somebody had thought of read right and every other one did not: `claude-sonnet-5-5` came out as
+/// **"Claude Sonnet 5 5"**, which is what a person saw in the model menu the week Sonnet 5.5 shipped. The rule is now
+/// general (two numbers side by side are one version, whatever they are), so a model released after this build is
+/// spelled right without an edit here.
 pub fn friendly_name(id: &str) -> String {
-    id.split(['/', '-', '_'])
-        .filter(|part| !part.is_empty())
-        .map(|part| {
-            let known = match part {
-                "gpt" => Some("GPT"),
-                "api" => Some("API"),
-                "gguf" => Some("GGUF"),
-                "it" => Some("IT"),
-                "mini" => Some("Mini"),
-                "pro" => Some("Pro"),
-                "flash" => Some("Flash"),
-                "turbo" => Some("Turbo"),
-                "vl" => Some("VL"),
-                "r1" => Some("R1"),
-                "v3" => Some("V3"),
-                "deepseek" => Some("DeepSeek"),
-                "openai" => Some("OpenAI"),
-                "nvidia" => Some("NVIDIA"),
-                "github" => Some("GitHub"),
-                _ => None,
-            };
-
-            match known {
-                Some(word) => word.to_string(),
-                None => {
-                    let mut chars = part.chars();
-
-                    match chars.next() {
-                        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
-                        None => String::new(),
-                    }
-                }
-            }
-        })
-        .collect::<Vec<String>>()
-        .join(" ")
-        /* `GPT 5` is written `GPT-5`, and version parts read better with a point between them:
-           `4-5` is 4.5, not 4 5. */
-        .replace("GPT ", "GPT-")
-        .replace(" 4 5", " 4.5")
-        .replace(" 4 6", " 4.6")
-        .replace(" 3 5", " 3.5")
-        .replace(" 2 5", " 2.5")
-        .replace(" 3 1", " 3.1")
-        .replace(" 3 3", " 3.3")
-        .replace(" 6 7b", " 6.7B")
+    crate::providers::catalog::name(id)
 }
 
 /// Records the chosen model. A setting rather than an event, on purpose: which model is *selected* is a
@@ -692,6 +700,51 @@ mod tests {
         assert_eq!(selected(&store)["modelId"], json!("qwen3.8-max"));
     }
 
+    /// **No duplicates and no wrong naming**, over the whole catalogue the app offers (3.2).
+    ///
+    /// The promise is per provider: within one card, two rows may not be the same model. Across cards they may - the
+    /// same Sonnet is reachable through the Claude Code plan, the Anthropic API and OpenRouter, at three different
+    /// prices, and a person choosing between them needs all three.
+    #[test]
+    fn no_provider_offers_the_same_model_twice() {
+        let store = Arc::new(Store::in_memory().unwrap());
+        let listed = list(&store, None, false).unwrap();
+        let rows = listed["models"].as_array().unwrap();
+
+        assert!(rows.len() > 60, "the catalogue is not empty: {}", rows.len());
+
+        let mut seen: Vec<(String, String)> = Vec::new();
+
+        for row in rows {
+            let provider = row["providerId"].as_str().unwrap_or_default().to_string();
+            let key = crate::providers::catalog::key(row["id"].as_str().unwrap_or_default());
+            let pair = (provider, key);
+
+            assert!(!seen.contains(&pair), "{pair:?} is offered twice");
+            assert!(!row["name"].as_str().unwrap_or_default().is_empty(), "{} has no name", row["id"]);
+            assert!(row["aliases"].is_array(), "{} has no alias list", row["id"]);
+
+            seen.push(pair);
+        }
+    }
+
+    /// The report, on the card it was reported about: one Sonnet row, under the id the CLI documents.
+    #[test]
+    fn the_claude_card_offers_each_model_once_with_its_aliases() {
+        let store = Arc::new(Store::in_memory().unwrap());
+        let listed = list(&store, Some("claude"), false).unwrap();
+        let rows = listed["models"].as_array().unwrap();
+        let names: Vec<&str> = rows.iter().filter_map(|row| row["name"].as_str()).collect();
+
+        assert!(names.contains(&"Claude Sonnet 5.5 · plan"), "{names:?}");
+        assert!(!names.contains(&"Claude Sonnet · plan"), "the bare alias is not a row of its own: {names:?}");
+        assert!(!names.iter().any(|name| name.contains("5 5")), "a version is spelled with a point: {names:?}");
+
+        let sonnet = rows.iter().find(|row| row["id"] == json!("claude-sonnet-5-5")).expect("the newest Sonnet");
+
+        assert_eq!(sonnet["aliases"], json!(["sonnet"]), "and it answers to `sonnet`");
+    }
+
     #[test]
     fn a_list_without_a_refresh_is_the_bundle_and_says_so() {
         let store = Arc::new(Store::in_memory().unwrap());
@@ -747,8 +800,13 @@ mod tests {
         assert_eq!(friendly_name("deepseek-reasoner"), "DeepSeek Reasoner");
         assert_eq!(friendly_name("gemini-2.5-pro"), "Gemini 2.5 Pro");
         assert_eq!(friendly_name("anthropic/claude-sonnet-4-5"), "Anthropic Claude Sonnet 4.5");
-        assert_eq!(friendly_name("llama-3.3-70b-versatile"), "Llama 3.3 70b Versatile");
+        assert_eq!(friendly_name("llama-3.3-70b-versatile"), "Llama 3.3 70B Versatile");
         assert_eq!(friendly_name(""), "");
+
+        /* 3.2: the version pair the old list-of-replacements did not hold - "Claude Sonnet 5 5" in the menu. */
+        assert_eq!(friendly_name("claude-sonnet-5-5"), "Claude Sonnet 5.5");
+        assert_eq!(friendly_name("claude-opus-5-5"), "Claude Opus 5.5");
+        assert_eq!(friendly_name("claude-haiku-5-5"), "Claude Haiku 5.5");
     }
 
     /// A bundle row's own `name` wins over the spelling rule - that is the whole point of carrying one.

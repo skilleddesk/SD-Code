@@ -121,7 +121,7 @@ async fn run() -> Result<()> {
     {
         let all: Vec<String> = std::env::args().skip(1).collect();
 
-        if let Some(command) = all.first().filter(|command| matches!(command.as_str(), "run" | "verify" | "kill" | "audit")) {
+        if let Some(command) = all.first().filter(|command| matches!(command.as_str(), "run" | "verify" | "kill" | "audit" | "relay")) {
             let port = all
                 .iter()
                 .position(|arg| arg == "--port")

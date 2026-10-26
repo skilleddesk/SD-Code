@@ -396,14 +396,16 @@ fn residue_after_a_failed_step(on: bool) -> f64 {
 
 fn malformed_calls_reaching_tools(on: bool) -> f64 {
     crate::v3::with_switches(&[("nr.tool_envelope", on)], || {
-        let specs = vec![crate::agent::dialect::ToolSpec { name: "read_file", description: "read", schema: serde_json::json!({ "type": "object", "properties": { "path": { "type": "string" } }, "required": ["path"], "additionalProperties": false }) }];
+        /* A *search* rather than a read: 3.2 left a repeated read to `dedupe_reads`, which answers it with a pointer
+           instead of refusing it, so the repeat half of this trap would no longer be a trap. */
+        let specs = vec![crate::agent::dialect::ToolSpec { name: "grep", description: "search", schema: serde_json::json!({ "type": "object", "properties": { "pattern": { "type": "string" } }, "required": ["pattern"], "additionalProperties": false }) }];
         let mut guard = super::envelope::Guard::default();
-        let calls = [serde_json::json!({}), serde_json::json!({ "path": 5 }), serde_json::json!({ "path": "a", "x": 1 }), serde_json::json!({ "path": "ok.rs" }), serde_json::json!({ "path": "ok.rs" })];
+        let calls = [serde_json::json!({}), serde_json::json!({ "pattern": 5 }), serde_json::json!({ "pattern": "a", "x": 1 }), serde_json::json!({ "pattern": "total" }), serde_json::json!({ "pattern": "total" })];
         /* malformed: the first three; the fifth is a repeat of the fourth */
         let mut bad_through = 0;
 
         for (n, arguments) in calls.iter().enumerate() {
-            let verdict = guard.judge(&specs, "read_file", arguments);
+            let verdict = guard.judge(&specs, "grep", arguments);
 
             if verdict == super::envelope::Verdict::Run && (n < 3 || n == 4) {
                 bad_through += 1;

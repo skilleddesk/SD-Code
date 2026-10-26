@@ -17,6 +17,7 @@ import {
   chooseModel,
   connectApiKey,
   releaseModel,
+  signOutCli,
   loadCliRecipe,
   loadModels,
   pollCliLogin,
@@ -237,6 +238,23 @@ export function Connect() {
     });
   };
 
+  /* 3.2: the way out of a sign-in. The card's own status follows the `ProviderStatus` event the daemon
+     pushes, exactly as it does for a sign-in, so there is no second copy of the truth here. */
+  const signOut = (): void => {
+    setBusy(true);
+    void signOutCli(providerId ?? '').then((did) => {
+      setBusy(false);
+
+      if (did === null) {
+        return;
+      }
+
+      startedFor.current = null;
+      setLogin(null);
+      toast(strings.connect.signedOutToast(name));
+    });
+  };
+
   const submit = (): void => {
     if (login === null || code.trim() === '') {
       return;
@@ -426,8 +444,14 @@ export function Connect() {
                     >
                       <Terminal size={14} aria-hidden="true" /> {strings.connect.signIn}
                     </button>
+                    {connected ? (
+                      <button type="button" className={BTN_LG + ' ' + BTN_SECONDARY} onClick={signOut} disabled={busy} id="connectSignOut">
+                        {strings.connect.signOut}
+                      </button>
+                    ) : null}
                     <span className="text-[11.5px] text-text-muted">{name}</span>
                   </div>
+                  {connected ? <p className="mt-[8px] text-[11.5px] leading-[1.55] text-text-muted">{strings.connect.signOutNote}</p> : null}
                 </Section>
               ) : null}
 

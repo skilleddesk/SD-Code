@@ -3440,11 +3440,14 @@ mod tests {
     fn every_tool_has_a_strict_object_schema() {
         let specs = specs_for(Caps { vision: true, subagent: false, patch: true, local: true });
 
-        assert_eq!(specs.len(), 24);
-        assert_eq!(specs_for(Caps { local: true, ..Caps::default() }).len(), 21, "no image tools, no patch");
+        /* 3.2: one more than before - `nr.error_slice` is on by default for a local model now, and it brings
+           `spec_read` with it (the whole log stays in the vault and the model reads the slice it needs). */
+        assert_eq!(specs.len(), 25);
+        assert_eq!(specs_for(Caps { local: true, ..Caps::default() }).len(), 22, "no image tools, no patch");
         assert_eq!(specs_for(Caps::default()).len(), 20, "a cloud model is not offered ranked_search: it is unmeasured, so it is local-only (M0-3)");
         assert!(!specs_for(Caps::default()).iter().any(|spec| spec.name == "ranked_search"));
-        assert_eq!(specs_for(Caps { vision: false, subagent: true, patch: true, local: true }).len(), 10, "a sub-agent only reads");
+        /* 11 since 3.2: `spec_read` only reads, so a sub-agent gets it too. */
+        assert_eq!(specs_for(Caps { vision: false, subagent: true, patch: true, local: true }).len(), 11, "a sub-agent only reads");
         assert!(specs_for(Caps { vision: false, subagent: true, patch: false, local: true }).iter().all(|spec| READ_ONLY.contains(&spec.name)));
 
         for spec in specs {

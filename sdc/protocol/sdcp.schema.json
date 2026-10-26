@@ -238,6 +238,7 @@
           "cli.login.status",
           "cli.login.code",
           "cli.login.cancel",
+          "cli.logout",
           "cli.recipes",
           "models.list",
           "models.select",
@@ -1360,6 +1361,16 @@
           "result": {
             "cancelled": "boolean",
             "loginId": "string"
+          }
+        },
+        "cli.logout": {
+          "params": {
+            "providerId": "string"
+          },
+          "result": {
+            "providerId": "string",
+            "signedOut": "boolean",
+            "did": ["string"]
           }
         },
         "cli.recipes": {

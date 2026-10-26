@@ -1074,6 +1074,14 @@ const english = {
     loginBody:
       'This starts the CLI’s own sign-in. Approve the page in your browser, then paste the code it shows back here — the credential is written by the CLI, never by SDC.',
     signIn: 'Sign in',
+    /**
+     * Signing out (3.2). The report this answers: *"SDC auto-detects an existing Gemini login and signs in
+     * silently. I do NOT want that. Add a clean sign-out that clears the stored credentials."*
+     */
+    signOut: 'Sign out',
+    signOutNote:
+      'This runs the CLI’s own sign-out and forgets that SDC ever signed it in, so the card asks to sign in again. Gemini CLI has no sign-out command, so SDC deletes the credential files its Google sign-in wrote under ~/.gemini and leaves the rest of your Gemini settings alone.',
+    signedOutToast: (label: string) => `${label} is signed out · the card asks to sign in again`,
     tryAgain: 'Try again',
     signedInToast: (label: string) => `${label} is signed in · the card now says connected`,
     cancel: 'Cancel',

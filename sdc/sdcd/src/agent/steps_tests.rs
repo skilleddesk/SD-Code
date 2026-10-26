@@ -45,18 +45,27 @@ fn long_request_of(background: usize) -> String {
     text
 }
 
-fn drive_turn(name: &str, autonomy: Autonomy, text: &str, replies: Vec<String>, on: &[&str]) -> (std::path::PathBuf, Vec<Value>, Recorder) {
+/// One turn, with `on` switched on and `off` switched off.
+///
+/// `off` exists because of 3.2: `nr.fresh_step` and the rest of the NAVARATNA switches are on by default now, so a
+/// test that wants the plain chat loop has to **say** so. It used to get it by leaving `on` empty, which quietly
+/// became "run the step executor" and hung the suite against a provider scripted for one reply.
+fn drive_turn_with(name: &str, autonomy: Autonomy, text: &str, replies: Vec<String>, on: &[&str], off: &[&str]) -> (std::path::PathBuf, Vec<Value>, Recorder) {
     let root = folder(name);
     let (url, server) = raw_provider(replies);
     let recorder = Recorder::new();
     let prompt = prompt_in(&root, &format!("turn-steps-{name}"), text, "qwen3.5:9b");
     let options = Options { autonomy, max_steps: 8, auto_check: false, research: None };
 
-    crate::v3::forcing(on, || drive(Backend::Ollama, &local_target(&url, 16_384), &Workspace::new(root.to_str().unwrap(), None), options, None, &Default::default(), &prompt, &recorder.sink()));
+    crate::v3::ablating(off, || crate::v3::forcing(on, || drive(Backend::Ollama, &local_target(&url, 16_384), &Workspace::new(root.to_str().unwrap(), None), options, None, &Default::default(), &prompt, &recorder.sink())));
 
     let bodies = server.join().unwrap();
 
     (root, bodies, recorder)
+}
+
+fn drive_turn(name: &str, autonomy: Autonomy, text: &str, replies: Vec<String>, on: &[&str]) -> (std::path::PathBuf, Vec<Value>, Recorder) {
+    drive_turn_with(name, autonomy, text, replies, on, &[])
 }
 
 fn text_of(recorder: &Recorder) -> String {
@@ -121,8 +130,8 @@ fn only_auto_mode_a_long_request_and_the_switch_start_it_every_other_turn_keeps_
     assert!(!bodies[0]["tools"].as_array().unwrap().is_empty(), "the chat loop offers tools");
     let _ = std::fs::remove_dir_all(&root);
 
-    /* the switch off */
-    let (root, bodies, _) = drive_turn("off", Autonomy::Auto, &long, vec![says("Understood.")], &[]);
+    /* the switch off - said out loud since 3.2, when it became the default */
+    let (root, bodies, _) = drive_turn_with("off", Autonomy::Auto, &long, vec![says("Understood.")], &[], &["nr.fresh_step"]);
 
     assert!(!bodies[0]["tools"].as_array().unwrap().is_empty());
     let _ = std::fs::remove_dir_all(&root);

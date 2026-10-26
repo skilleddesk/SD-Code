@@ -15,7 +15,124 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
-## [Unreleased]
+## [1.3.0] — the local model does the work: its model lists, its loops, and a sign-in nobody asked for
+
+Three reports, each traced to a cause rather than a symptom: *"after adding CLIs, SDC shows old/bad model lists"*, *"the newer Gemini models
+never appear"*, *"SDC auto-detects an existing Gemini login and signs in silently - I do NOT want that"*. Underneath them, the harness that
+was supposed to make a 9B reliable was almost entirely **switched off**.
+
+### Added — the model list of a CLI comes from the CLI (`providers::clis`)
+
+The three subscription cards had **no live model list at all**: `protocol/models.json` gave Claude Code, Codex and Gemini CLI a block with no
+`live` endpoint, so `models::live` answered *"this provider does not list its models"* every single time and the menu was whatever this build
+shipped with. That is the report, exactly.
+
+None of the three CLIs has a `models list` command (checked on the installed ones; their `--help` is quoted in the module). So the list is
+read from where the CLI itself keeps it - **its own program files** - which means the moment a person updates their CLI, its new models are in
+the menu with no work from anyone. A scan invents models unless it is disciplined, so: a tight shape per provider, the id must be delimited on
+both sides (a string that runs into its neighbour in a binary is dropped, not truncated), every word after the version is at least three
+letters, and `catalog::plausible` / `catalog::chatty` throw out the CLI's own test fixtures, its documentation filenames and the models a
+coding chat cannot run. Measured on this machine: 22 Claude models, 14 Gemini (including 3.5 Flash, 3.1 Pro, 3 Pro and 3 Flash - the ones that
+*never appeared*), 13 Codex (`gpt-6`, `gpt-6-astra`, `gpt-5.6-sol/terra/luna`, `gpt-5.1-codex-max`, ...), and nothing invented. A subscription
+card **unions** the scan with the curated bundle rather than replacing it, because an older installed CLI does not know the models released
+since it.
+
+### Added — one row per model, with a name a person can read (`providers::catalog`)
+
+Every source answers with *ids*, and ids are not a menu: `claude-sonnet-5-5`, `claude-sonnet-5-5-20260918` and `sonnet` are one model, and
+until now each was its own line - the Claude card offered `Claude Sonnet 5.5 · plan` **and** `Claude Sonnet · plan` as if they were two. Now a
+canonical key strips what does not name a different model (a snapshot date, `-preview`, `-latest`, `-v1`, `-001`, a trailing `-0` minor), the
+rows are grouped, the plainest id is the one SDC sends, and the rest are kept as `aliases` so nothing is hidden and a choice stored under an
+older id still resolves. A bare line word (`sonnet`, `opus`) folds into the newest model of its line instead of standing as a model of its own.
+A size, a variant and a region never fold: `gpt-5` and `gpt-5-mini`, `kimi-k2` and `kimi-k2-turbo`, `deepseek-v4-flash` and `-flash-us` stay
+apart.
+
+The spelling rule is general now, which fixes a name a person read in the menu: `claude-sonnet-5-5` came out as **"Claude Sonnet 5 5"**,
+because the old rule put a point between two numbers from a *list* of pairs somebody had thought of (` 4 5`, ` 3 5`, ` 2 5`). Two numbers side
+by side are one version, whatever they are - so a model released after this build is spelled right without an edit.
+
+`models.list` rows carry `source: 'cli'`, `aliases` and `line`. `no_provider_offers_the_same_model_twice` holds the promise over the whole
+catalogue.
+
+### Changed — the Gemini card is not signed in by a file somebody else wrote
+
+Gemini's Google sign-in *is* a file (`~/.gemini/oauth_creds.json`), and `signed_in` treated finding one as a sign-in. So SDC marked the card
+connected for a credential an earlier session - or another program - had left behind, without the person ever pressing Sign in. Gemini is now
+**never** read off a file: the card is `needs-auth` until a sign-in **this app drove** finishes, and that sign-in is now *written down*
+(`providers::mark_signed_in`) instead of living in one event, which is what made the guess load-bearing in the first place. Verified on this
+machine, where that credential file exists: the card reads `needs-auth`.
+
+Claude Code and Codex are left as they were in kind - each is *asked* its own command (`claude auth status`, `codex login status`), which is a
+live fact about the account in use rather than a leftover - but a stored row no longer outlives that answer either.
+
+### Added — `cli.logout`: a clean sign-out
+
+There was no way to undo a sign-in at all. `claude auth logout` and `codex logout` are their own commands; Gemini has none, so SDC deletes the
+credential files its Google sign-in wrote and takes back only the one key SDC itself writes
+(`security.auth.selectedType`), leaving the person's theme, MCP servers and trusted folders alone. The Connect dialog grows a **Sign out**
+button on a connected subscription card, and reports what actually happened.
+
+### Changed — the switches that make a 9B reliable are on
+
+NAVARATNA and PADMA built the harness the local model needs - continuation when an answer is cut off, a block on the duplicate tool call, the
+goal re-injected into every step, a sliced error instead of a whole log, a plan-execute-verify state machine - and then shipped almost all of
+it **off**, each marked "unmeasured". Every failure in the report had a switch for it, written and tested and off.
+
+On now, for **local models only** (the table's own rule for an unmeasured change, so none of this can reach a model picked by hand):
+`nr.out_chunk`, `nr.tool_envelope`, `nr.error_slice`, `nr.skeleton_pack`, `nr.fresh_step`, `nr.lang_spec`, `nr.tag_route`, `nr.think_budget`,
+`nr.escalation_packet`, `nr.role_rotation`, `padma.conductor`, `padma.think_policy`, `padma.tool_subset` and `relay.learn`.
+
+Still off, and not by oversight: `relay.auto` and `relay.preroute` **spend money** (the relay is the person's consent, given in Settings);
+`nr.best_of_n` is free but very slow; `nr.git_shadow`, `nr.contract_lock`, `padma.recipes`, `padma.recipe_engines` and `padma.inner_english`
+change more than what a model is told.
+
+### Fixed — a request far larger than the window is cut into steps instead of refused
+
+With `nr.fresh_step` on, a request many times the local model's window is split into units that each fit and the turn finishes.
+`a_request_too_large_for_the_window_is_cut_into_steps_that_fit` sends a 40,000-word request to a 4,096-token window and asserts every step that
+left was under the window.
+
+### Fixed — the tool schemas are cut to what the window can hold, whatever the switches say
+
+Measured at 8,192 tokens with the prompt diet switched off: 21 tool schemas fitted and the 22nd did not, so **every call of the turn was
+refused as ContextOverflow before it was sent** and the turn spent its whole step limit saying nothing. The diet's six-schema cap is a
+technique that can be turned off; a window is physics. `sme::diet::within` is the floor under it - as many schemas as the window holds, never
+fewer than four.
+
+### Fixed — the duplicate tool call, and the loop it hides
+
+`nr.tool_envelope` blocked only a **back-to-back** repeat, which catches `read a, read a` and misses the shape a small model really gets stuck
+in: `grep foo / read a / grep foo / read a`. A search - `grep`, `glob`, `search`, `list_dir`, `code_graph`, `find_symbol` - may now not be
+repeated with the same arguments at all while nothing has changed; anything that changes the project clears that memory, because after a change
+looking again is work. Reading a *file* is left out entirely: `dedupe_reads` answers a re-read with a twenty-token pointer and notices when the
+file changed, which is strictly better than an error.
+
+Beside it, a loop detector no switch provided: a step in which **every call answered exactly what that same call had answered before**
+(`learned_nothing`, results compared, not calls) counts as a step that moved nothing, and six of those in a row end a turn that has nothing to
+show - the Finish Gate's own verdict, *Blocked: no evidence of the work*. The 100-step stall guard stays for everything else; waiting it out
+used to end such a turn with the *wrong* reason, because the repeated answers grow the context until the window gives out and the turn then
+said "too large" about a request that fitted perfectly well. A turn that has already written a file or run a command is never stopped this way:
+it has evidence, and its dawdling belongs to the step limit.
+
+### Fixed — a `LocalOnly` switch that reached a cloud model
+
+`navaratna::envelope` asked `v3::on` rather than `v3::on_in`, which ignores a switch's scope. Off by default, nothing showed; on, it began
+judging a cloud model's calls - and the first thing to break was Plan Mode, whose refusal of a write was replaced by this file's
+argument-schema error. The guard now carries the turn's model. (This is the honest half of the note the 1.2.0 entry left: the collision with
+`dedupe_reads` is resolved by leaving reads alone, and the collision with a tool's own error by honouring the scope.)
+
+### Fixed — a provider card with a blank line where its sentence should be
+
+An **empty** stored detail is not a detail: every subscription row on this machine had one, so the cards showed nothing. And "not installed" is
+now told apart from "installed but it will not start" - both `gemini.cmd` and `codex.cmd` were on PATH here and both answered
+`'"node"' is not recognized`, because Node.js was gone, and the card had been telling the owner to reinstall a CLI that was already there.
+
+### Fixed — the role-cooldown table in the test binary
+
+`nr.role_rotation`'s cooldown table is one per process, which is right for a provider's rate limit and wrong for a test binary that runs its
+tests at the same time: a row one test deliberately failed was skipped in another, whose chain then looked empty, and the run hung for two
+minutes waiting on a local provider that had already finished. In a test build the row's key carries the thread.
+
 
 ### Fixed — "Cut off: the answer reached the model's length limit" is no longer the end of a turn
 
@@ -36,11 +153,11 @@ nothing changed, the turn is stopped the same way the Finish Gate already stops 
 work*, naming the step count, with "continue" to pick it up again. `agent::never_again_tests::a_turn_that_only_ever_reads_is_stopped_honestly_instead_of_running_forever`
 covers it.
 
-**Looked at and left alone:** turning `nr.tool_envelope` on by default (it blocks an identical tool call repeated back to back, which looked
-like a direct fix for the same report) was tried and reverted - it pre-empts the cheap "unchanged since you read this earlier" pointer
-(`v3::ledger_diff`'s `dedupe_reads`) on a deliberate back-to-back same-file read, and its argument-schema check runs ahead of a tool's own
-error (and of Plan Mode's refusal), changing two already-tested messages. It stays off by default; turn it on per install (Settings ->
-Advanced, or `SDC_V3_ENABLE=nr.tool_envelope`) if the back-to-back block matters more than those two paths on your own project.
+**Looked at and left alone** *(superseded in 1.3.0 - both collisions named here were fixed and the switch is now on for local models)*:
+turning `nr.tool_envelope` on by default (it blocks an identical tool call repeated back to back, which looked like a direct fix for the same
+report) was tried and reverted - it pre-empts the cheap "unchanged since you read this earlier" pointer (`v3::ledger_diff`'s `dedupe_reads`)
+on a deliberate back-to-back same-file read, and its argument-schema check runs ahead of a tool's own error (and of Plan Mode's refusal),
+changing two already-tested messages.
 
 ## [1.2.0] — PADMA: a short prompt for a big job is finished, or stopped honestly
 

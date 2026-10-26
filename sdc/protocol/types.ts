@@ -154,6 +154,7 @@ export type SdcpMethod =
   | 'cli.login.status'
   | 'cli.login.code'
   | 'cli.login.cancel'
+  | 'cli.logout'
   | 'cli.recipes'
   /**
    * The model catalogue. `refresh` asks each provider's own endpoint and caches the answer; a row's
@@ -2413,6 +2414,19 @@ export interface SdcpMethodMap {
     params: { loginId: string };
     result: { cancelled: boolean; loginId: string };
   };
+  /**
+   * Sign a CLI out, and forget that SDC ever signed it in (3.2).
+   *
+   * Two halves: the CLI's own credential is taken away (`claude auth logout`, `codex logout`, or - for Gemini, which
+   * has no logout command - the files its Google sign-in wrote under `~/.gemini`), and the row recording the person's
+   * consent goes back to `needs-auth`. Without the second half the card would find the credential again and sign
+   * itself in silently, which is the behaviour this method exists to end. `did` is what actually happened, in
+   * sentences the card can show.
+   */
+  'cli.logout': {
+    params: { providerId: string };
+    result: { providerId: string; signedOut: boolean; did: string[] };
+  };
   'cli.recipes': {
     params: Record<string, never>;
     result: {
@@ -2435,9 +2449,20 @@ export interface SdcpMethodMap {
         tier: TierName;
         ctx: number;
         cost: string;
-        /** Where the row came from: the provider just now, the last live answer, or the bundle. */
-        source: 'live' | 'cache' | 'bundled';
+        /**
+         * Where the row came from: the provider's endpoint just now, the installed CLI's own program files (`cli`,
+         * 3.2 - the three subscription cards have no endpoint to ask), the last answer, or the bundle.
+         */
+        source: 'live' | 'cli' | 'cache' | 'bundled';
         fetchedAt?: string | null;
+        /**
+         * The other ids this same model answers to (3.2): a snapshot date, a `-preview` channel, a bare line word
+         * (`sonnet`). They are kept rather than shown, so the menu holds one row per model and a choice stored under
+         * an older id still resolves.
+         */
+        aliases?: string[];
+        /** The model's line, for grouping a menu: `claude sonnet`, `gemini pro` (3.2). */
+        line?: string;
         /** A local model that has been measured (P0-9): its class and what was measured. */
         probe?: { class: string; status: 'probed' | 'provisional'; effectiveContext: number; toolCallReliability: number };
         /** One line on how this model makes tool calls (PADMA P2-1), when `padma.model_profile` is on. */

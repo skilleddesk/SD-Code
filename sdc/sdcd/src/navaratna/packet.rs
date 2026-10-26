@@ -91,10 +91,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let policy = Policy::default();
         let packet = packet();
-        let plain = finish(&prepared(), dir.path(), &policy, &step(Some(&packet), "raw log line\n".repeat(50).as_str()), DEFAULT_BUDGET_TOKENS);
+        /* 3.2: the packet is on by default, so the plain capsule is asked for by switching it off. */
+        let plain = crate::v3::ablating(&["nr.escalation_packet"], || finish(&prepared(), dir.path(), &policy, &step(Some(&packet), "raw log line\n".repeat(50).as_str()), DEFAULT_BUDGET_TOKENS));
         let with = crate::v3::forcing(&["nr.escalation_packet"], || finish(&prepared(), dir.path(), &policy, &step(Some(&packet), "raw log line\n".repeat(50).as_str()), DEFAULT_BUDGET_TOKENS));
 
-        assert!(!plain.text.contains("R-004"), "off: a plain capsule");
+        assert!(!plain.text.contains("R-004"), "switched off: a plain capsule");
         assert!(with.text.starts_with("RULES"), "the stable prefix is first");
 
         for expected in ["R-004: total() returns the tax-inclusive sum", "pub fn total(items: &[Item]) -> u64", "items.iter().sum()", "mismatched types", "tests/total.rs", "Skeleton of src/shop.rs"] {

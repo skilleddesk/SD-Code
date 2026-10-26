@@ -94,3 +94,27 @@ fn the_cap_keeps_the_tools_that_matter_not_the_first_registered() {
     assert_eq!(prioritise(&["zzz", "read_file"], |name| name), ["read_file", "zzz"], "a tool nobody ranked comes after the ranked ones");
     assert_eq!(prioritise(&["b", "a"], |name| name), ["b", "a"], "unranked tools keep the order they came in");
 }
+
+/// **The floor no switch can lower** (3.2): as many tool schemas as the window holds, never more.
+///
+/// The numbers are the measured ones: at an 8,192-token window with the diet off, 21 schemas fitted and the 22nd did
+/// not, so every call of the turn was refused as ContextOverflow before it was sent. `within` is what stops that, and
+/// the three properties it must have are the three assertions here - it cuts only when it has to, it cuts no further
+/// than it must, and it never leaves the model without tools to work with.
+#[test]
+fn the_tool_schemas_are_cut_to_what_the_window_can_hold() {
+    let specs: Vec<&str> = (0..22).map(|_| "schema").collect();
+    /* Each schema costs 10; the room is what is being tested. */
+    let tokens = |chosen: &[&str]| chosen.len() as u64 * 10;
+
+    assert_eq!(within(&specs, 1_000, tokens).len(), 22, "they all fit: nothing is cut");
+    assert_eq!(within(&specs, 220, tokens).len(), 22, "exactly at the room: nothing is cut");
+    assert_eq!(within(&specs, 210, tokens).len(), 21, "one over: one schema goes, not six");
+    assert_eq!(within(&specs, 95, tokens).len(), 9);
+    assert_eq!(within(&specs, 1, tokens).len(), MIN_SCHEMAS, "a window too small for anything still gets look, change and run");
+    assert_eq!(within(&specs, 0, tokens).len(), 22, "no window known: the caller is not second-guessed");
+    assert_eq!(within(&specs[..3], 1, tokens).len(), 3, "fewer than the floor is left alone");
+
+    /* The share is a share of the window, not of the prompt: 40% of 8,192 is 3,276 tokens of schemas. */
+    assert_eq!(8_192u64 * SCHEMA_SHARE / 100, 3_276);
+}

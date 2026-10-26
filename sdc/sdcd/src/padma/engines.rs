@@ -437,14 +437,23 @@ mod tests {
 
     #[test]
     fn the_engines_are_forced_on_only_when_the_recipe_switch_is_on() {
-        crate::v3::with_switches(&[(SWITCH, false)], || with_engines(|| assert!(!crate::v3::on("nr.fresh_step"))));
-        crate::v3::with_switches(&[(SWITCH, true)], || {
-            with_engines(|| {
-                for name in FORCED {
-                    assert!(crate::v3::on(name), "{name}");
-                }
+        /* 3.2: the engines this forces are on by default now, so the test puts them off first - what is being proved
+           is that `with_engines` forces them for the recipe and then puts back exactly what it found, whatever that
+           was. Asserting "off afterwards" only worked while off was the default. */
+        let off: Vec<(&str, bool)> = FORCED.iter().map(|name| (*name, false)).collect();
+
+        crate::v3::with_switches(&off, || {
+            crate::v3::with_switches(&[(SWITCH, false)], || {
+                with_engines(|| assert!(!crate::v3::on("nr.fresh_step"), "nothing is forced with the recipe switch off"))
             });
-            assert!(!crate::v3::on("nr.fresh_step"), "and put back afterwards");
+            crate::v3::with_switches(&[(SWITCH, true)], || {
+                with_engines(|| {
+                    for name in FORCED {
+                        assert!(crate::v3::on(name), "{name}");
+                    }
+                });
+                assert!(!crate::v3::on("nr.fresh_step"), "and put back afterwards");
+            });
         });
     }
 }

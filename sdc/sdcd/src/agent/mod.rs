@@ -60,6 +60,15 @@ const MAX_LENGTH_CONTINUES: u8 = 8;
 /// model that never makes real progress, not a budget on reading before one big write.
 const STALL_STEPS: u32 = 100;
 
+/// Steps in a row whose every tool call was **the same call again** before the turn is stopped (3.2).
+///
+/// Far smaller than [`STALL_STEPS`] because the evidence is far stronger. A hundred steps of reading is a model
+/// working badly; six steps where SDC refused every call as an exact repeat of one already answered is a model that
+/// has stopped making progress and is being told so each time. Waiting out the hundred used to end the turn with the
+/// wrong reason too: the refusals themselves grow the context, so a 16K window overflowed first and the turn said
+/// "too large" about a request that fitted perfectly well.
+const REPEAT_STALL: u32 = 6;
+
 /// The number of model calls one turn may make when the caller names none: no limit (0.15.2).
 ///
 /// The report: *"kono rate limit to dorkar nai project a"* - a landing page built from two long specs
@@ -1220,6 +1229,45 @@ fn dedupe_reads(seen: &mut std::collections::HashMap<String, u64>, uses: &[diale
     }
 }
 
+/// Did this step learn **nothing**: did every call answer exactly what that same call had answered before? (3.2)
+///
+/// The loop detector the switches could not provide. `dedupe_reads` answers a re-read of a *large* unchanged file with
+/// a pointer, and the envelope guard refuses a repeated *search* - but a model re-reading a 20-byte file a hundred
+/// times slips through both, and that was the shape of the 25 Oct incident: a turn that read the same file over and
+/// over, announced progress, changed nothing, and still said "Done".
+///
+/// It compares the **results**, not the calls, which is what makes it safe to apply to every tool: a command run
+/// again after an edit answers differently and is work; a command run again with nothing changed answers the same
+/// bytes and is not. `answered` carries the map from one step to the next; this updates it.
+///
+/// `false` for a step with no tool call at all - the Finish Gate judges those.
+fn learned_nothing(
+    answered: &mut std::collections::HashMap<(String, String), u64>,
+    uses: &[dialect::ToolUse],
+    results: &[dialect::ToolResult],
+) -> bool {
+    use std::hash::{Hash, Hasher};
+
+    if uses.is_empty() || results.is_empty() {
+        return false;
+    }
+
+    let mut all_known = true;
+
+    for (call, result) in uses.iter().zip(results.iter()) {
+        let key = (call.name.clone(), crate::navaratna::envelope::canonical(&call.input));
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+
+        result.1.hash(&mut hasher);
+
+        let hash = hasher.finish();
+
+        all_known &= answered.insert(key, hash) == Some(hash);
+    }
+
+    all_known
+}
+
 /// v3 W1 (A-10): the step's file reads as the ledger records them - whether the path was read before in the
 /// turn (`earlier`, the paths `dedupe_reads` had seen) and whether it went back as the one-line stub.
 fn read_entries(earlier: &HashSet<String>, uses: &[dialect::ToolUse], results: &[dialect::ToolResult]) -> Vec<crate::bench::ledger::FileRead> {
@@ -1951,6 +1999,17 @@ fn drive(
         specs = crate::sme::diet::at_most(&crate::sme::diet::prioritise(&specs, |spec| spec.name), crate::sme::diet::MAX_SCHEMAS);
     }
 
+    /* 3.2: and a floor under the switch. The cap above is a technique that can be turned off; the window is physics.
+       Measured at 8,192 tokens with the diet off: 21 tool schemas fitted and the 22nd did not, so every call was
+       refused as ContextOverflow before it was sent and the turn burned its step limit saying nothing. See
+       `sme::diet::within`. */
+    if backend == Backend::Ollama && scope_model.local && window > 0 {
+        let room = window.saturating_mul(crate::sme::diet::SCHEMA_SHARE) / 100;
+        let ordered = crate::sme::diet::prioritise(&specs, |spec| spec.name);
+
+        specs = crate::sme::diet::within(&ordered, room, |chosen| fixed_tokens("", chosen));
+    }
+
     /* M1-4: a step relayed to the chain gets the short tool list of the plan, not the whole agent's. */
     if relay::in_scope() {
         specs.retain(|spec| relay::TOOLS.contains(&spec.name));
@@ -2145,7 +2204,7 @@ fn drive(
     /* P1-4: the tools the last reply called, and whether any of their results was a failure - what the next step's profile reads. */
     let mut last_calls: Vec<dialect::ToolUse> = Vec::new();
     /* N7-2 (`nr.tool_envelope`): arguments that do not fit the tool, and the same call twice in a row, never reach the tool. */
-    let mut envelope = crate::navaratna::envelope::Guard::default();
+    let mut envelope = crate::navaratna::envelope::Guard::for_model(scope_model);
     let mut last_failed = false;
 
     /* P1-13: the turn's own steps, for the caution signal. */
@@ -2335,6 +2394,8 @@ fn drive(
        ever writing one. `stall_steps` counts consecutive steps, from the start of the turn, in which nothing has been edited or run; it
        stops counting (and the check below goes dead) the moment either happens. See the stall check below the turn-budget check. */
     let mut stall_steps = 0u32;
+    /* 3.2: steps in a row in which nothing the model called was allowed to run - see `REPEAT_STALL`. */
+    let mut repeat_steps = 0u32;
     /* A research answer from one page is asked, once, to read a second (live check, 0.16.1: a 9B model
        answered from one page with the brief saying two). */
     let mut sources_nudged = false;
@@ -2345,6 +2406,9 @@ fn drive(
     let mut reviewed = false;
     /* Files this turn has read, by the hash of what they held - an unchanged re-read is one line (0.21). */
     let mut seen_reads: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+    /* 3.2: what each call has already answered, by `(tool, arguments) -> hash of the result` - the repeat-stall guard
+       reads it to tell a step that learned nothing from a step that did. */
+    let mut answered: std::collections::HashMap<(String, String), u64> = std::collections::HashMap::new();
     /* v3 I1: the turn's whole-file reads, for sending a changed re-read as a diff (switch `v3.ledger_diff`). */
     let mut prior_reads: HashMap<String, String> = HashMap::new();
     /* v3 I10: tokens each technique saved this turn (SDC's count), for the receipt. */
@@ -3318,6 +3382,9 @@ Not finished: {reason}. Tell me how to go on, or send \"continue\" to try again.
             PARALLEL_READS.contains(&call.name.as_str()) && mcp.as_ref().is_none_or(|servers| !servers.handles(&call.name))
         };
         let mut index = 0;
+        /* (calls judged, calls refused as an exact repeat) for this step - see `REPEAT_STALL`. */
+        let mut judged = 0usize;
+        let mut repeated = 0usize;
 
         while index < reply.tool_uses.len() {
             if stopped() {
@@ -3372,7 +3439,12 @@ Not finished: {reason}. Tell me how to go on, or send \"continue\" to try again.
 
             context.reply_text.clone_from(&reply.text);
 
-            let blocked = match envelope.judge(&specs, &call.name, &call.input) {
+            let verdict = envelope.judge(&specs, &call.name, &call.input);
+
+            judged += 1;
+            repeated += usize::from(matches!(verdict, crate::navaratna::envelope::Verdict::Repeat(_)));
+
+            let blocked = match verdict {
                 crate::navaratna::envelope::Verdict::Run => None,
                 crate::navaratna::envelope::Verdict::Repeat(why) | crate::navaratna::envelope::Verdict::Malformed(why) => Some(why),
             };
@@ -3496,6 +3568,49 @@ Not finished: {reason}. Tell me how to go on, or send \"continue\" to try again.
 
         dedupe_reads(&mut seen_reads, &reply.tool_uses, &mut results);
         *saved.entry("unchanged re-reads").or_default() += before_dedupe.saturating_sub(results.iter().map(|result| crate::context::tokens_of(&result.1)).sum());
+
+        /*
+         * 3.2, the repeat-stall guard: a step in which **nothing the model asked for was new** is a step that moved
+         * nothing, and six of those in a row end the turn honestly.
+         *
+         * Two shapes count, because a small model gets stuck in both:
+         *
+         *   * every call SDC judged was refused as an exact repeat of one already answered (`nr.tool_envelope`);
+         *   * every call answered exactly what it had answered before in this turn ([`learned_nothing`]) - which
+         *     catches the shape no switch sees, a model re-reading a file too small for the re-read pointer to apply
+         *     to, over and over.
+         *
+         * It is checked here, after the results are de-duplicated, because that is when what the model will actually
+         * read is known, and only for a turn that has **nothing to show** - a turn that already wrote a file or ran a
+         * command has evidence, and its dawdling belongs to the step limit. The verdict is the Finish Gate's, because
+         * the fact is the same one: no evidence of the work.
+         * Waiting out the hundred-step stall guard instead ended such a turn with the *wrong* reason - the repeated
+         * answers grow the context, so the window gave out first and the turn said "too large" about a request that
+         * fitted perfectly well.
+         */
+        let nothing_new = (judged > 0 && repeated == judged) || learned_nothing(&mut answered, &reply.tool_uses, &results);
+        /* A turn that has already changed a file or run something **has** evidence; its dawdling is the step limit's
+           business, not this guard's. The conditions are the stall guard's own, so the two never disagree. */
+        let nothing_to_show = context.edits == 0
+            && context.ran_at.is_none()
+            && crate::v3::on("padma.finish_gate")
+            && crate::padma::task::contract_active()
+            && crate::padma::gate::asks_for_work(&request_text);
+
+        if nothing_new && nothing_to_show {
+            repeat_steps += 1;
+        } else {
+            repeat_steps = 0;
+        }
+
+        if repeat_steps >= REPEAT_STALL {
+            sink.send(EngineEvent::Delta(format!(
+                "\n\nNot finished: {REPEAT_STALL} steps in a row asked only for things already answered, so nothing moved. Tell me how to go on, or send \"continue\" to try again."
+            )));
+            sink.send(EngineEvent::Done { summary: "Blocked: no evidence of the work".to_string(), meta: meta(step, input_tokens, output_tokens, target.price), pass: None });
+
+            return;
+        }
 
         if technique("ledger_diff") {
             *saved.entry("diffs").or_default() += crate::v3::ledger_diff::apply(&mut prior_reads, &reply.tool_uses, &mut results);
@@ -3963,6 +4078,41 @@ mod tests {
         assert_eq!(pick_fast(&rows, "claude-haiku-4-5"), None, "already fast");
         assert_eq!(pick_fast(&rows, "claude-unknown"), None, "a model the catalogue cannot place keeps itself");
         assert_eq!(pick_fast(&rows[..2], "claude-opus-5-5"), None, "no fast sibling");
+    }
+
+    /// 3.2, the loop detector: a step that answered exactly what it had answered before learned nothing.
+    ///
+    /// It compares results rather than calls, which is what makes it safe for every tool - the same command after an
+    /// edit answers differently and is work. Six such steps in a row end the turn (`REPEAT_STALL`), which is what
+    /// stops the shape no switch caught: a model re-reading a file too small for the re-read pointer to apply to.
+    #[test]
+    fn a_step_that_answers_what_it_answered_before_has_learned_nothing() {
+        let call = |name: &str, arguments: serde_json::Value| dialect::ToolUse { id: "c1".into(), name: name.into(), input: arguments };
+        let result = |text: &str| (String::from("c1"), text.to_string(), false, None);
+        let mut answered = std::collections::HashMap::new();
+        let read = vec![call("read_file", serde_json::json!({ "path": "hello.txt" }))];
+
+        assert!(!learned_nothing(&mut answered, &read, &[result("hi")]), "the first read is new");
+        assert!(learned_nothing(&mut answered, &read, &[result("hi")]), "the same read answering the same bytes is not");
+        assert!(!learned_nothing(&mut answered, &read, &[result("hi, changed")]), "a changed file is new again");
+        assert!(learned_nothing(&mut answered, &read, &[result("hi, changed")]));
+
+        /* A command is judged the same way, and that is the point: green twice over with nothing in between is not
+           progress, and green again after an edit is. */
+        let check = vec![call("run_command", serde_json::json!({ "command": "cargo test" }))];
+
+        assert!(!learned_nothing(&mut answered, &check, &[result("1 failed")]));
+        assert!(learned_nothing(&mut answered, &check, &[result("1 failed")]));
+        assert!(!learned_nothing(&mut answered, &check, &[result("0 failed")]), "the output changed: work happened");
+
+        /* One new answer among several is enough to make the step count. */
+        let both = vec![call("read_file", serde_json::json!({ "path": "hello.txt" })), call("read_file", serde_json::json!({ "path": "other.txt" }))];
+
+        assert!(!learned_nothing(&mut answered, &both, &[result("hi, changed"), result("new file")]));
+        assert!(learned_nothing(&mut answered, &both, &[result("hi, changed"), result("new file")]));
+
+        /* A reply with no tool call is the Finish Gate's to judge, not this one's. */
+        assert!(!learned_nothing(&mut answered, &[], &[]));
     }
 
     #[test]

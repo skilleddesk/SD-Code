@@ -664,7 +664,7 @@ Speed Gate
 [ ] Ollama ফিরলে ollama show দিয়ে 9B-র quantization আর num_ctx দেখা; সম্ভব হলে Q5_K_M বা বেশি।
 [ ] Agents ট্যাবে chain সাজানো, প্রতিটি সারিতে ভূমিকা (নকশাকার / মেরামতকারী) ঠিক করা।
 [ ] NAVARATNA.md আর NAVARATNA-PROMPTS.md SDC-র skills ফোল্ডারে রাখা (MEGHNA-র পাশে)।
-[ ] লাইভ bench (N9-3) চালানো; তারপর কোন সুইচ ডিফল্টে চালু হবে সেই সিদ্ধান্ত।
+[x] লাইভ bench (N9-3) চালানো হয়েছে (qwen3.5:9b, 2026-10-26): baseline 3/4, nr.test_first 3/4 (দ্রুত), nr.best_of_n 4/4, nr.error_slice 2/4 (এক নমুনা, ভিন্নতা স্বাভাবিক)। [ ] কোন সুইচ ডিফল্টে চালু হবে সেই সিদ্ধান্ত বাকি।
 [ ] API key rotate করা (MEGHNA-র বাকি কাজ)।
 উৎস
 নতুন (এই সংস্করণে যাচাই করা):

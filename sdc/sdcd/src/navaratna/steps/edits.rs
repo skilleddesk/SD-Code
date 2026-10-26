@@ -161,7 +161,7 @@ pub fn parse_in(answer: &str, default_file: Option<&str>) -> Result<Vec<Edit>, S
                 text.push('\n');
             }
 
-            edits.push(Edit { path, symbol: symbol_now, mode: mode_now, code: text });
+            edits.push(Edit { path: without_placeholder(&path), symbol: symbol_now, mode: mode_now, code: text });
             continue;
         }
 
@@ -188,6 +188,19 @@ pub fn parse_in(answer: &str, default_file: Option<&str>) -> Result<Vec<Edit>, S
     }
 
     Ok(edits)
+}
+
+/// A small model copies the placeholder of the format example in front of the real path (`path/to/project/shop.py`): the prefix is not a folder.
+fn without_placeholder(path: &str) -> String {
+    let mut rest = path.trim().trim_start_matches("./");
+
+    for prefix in ["path/relative/to/the/project/", "path/to/project/", "path/to/the/project/", "path/to/"] {
+        if let Some(tail) = rest.strip_prefix(prefix) {
+            rest = tail;
+        }
+    }
+
+    rest.to_string()
 }
 
 fn safe(path: &str) -> bool {
@@ -310,6 +323,17 @@ mod tests {
         assert_eq!((edits[0].path.as_str(), edits[0].symbol.as_deref(), edits[0].mode), ("src/shop.rs", Some("Cart::total"), Mode::Replace));
         assert_eq!((edits[1].path.as_str(), edits[1].symbol.as_deref(), edits[1].mode), ("tests/shop.rs", None, Mode::Create));
         assert!(edits[0].code.contains("self.items.iter().sum()") && edits[0].code.ends_with('\n'));
+    }
+
+    #[test]
+    fn a_placeholder_folder_copied_from_the_format_example_is_not_a_folder() {
+        for wrong in ["path/to/project/src/shop.rs", "path/relative/to/the/project/src/shop.rs", "./src/shop.rs"] {
+            let edits = parse(&format!("FILE: {wrong}\nSYMBOL: Cart::total\n```rust\npub fn total(&self) -> u64 {{\n    1\n}}\n```")).unwrap();
+
+            assert_eq!(edits[0].path, "src/shop.rs", "{wrong}");
+        }
+
+        assert_eq!(parse("FILE: path_utils/shop.py\n```python\nx = 1\n```").unwrap()[0].path, "path_utils/shop.py", "a real folder that starts with `path` stays");
     }
 
     #[test]

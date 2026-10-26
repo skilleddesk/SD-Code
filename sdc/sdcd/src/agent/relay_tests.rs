@@ -40,6 +40,15 @@ fn rotation(models: &[&str], auto: bool) -> Rotation {
 fn folder(name: &str) -> std::path::PathBuf {
     let root = std::env::temp_dir().join(format!("sdc-relay-{name}-{}", std::process::id()));
 
+    /* 3.2: `nr.role_rotation` is on by default now, and its cooldown table is **global** to the process. A row another
+       test in this binary put to cool down (the watchdog test times one out for two minutes) would be skipped here,
+       the chain would then look empty, and the turn would go back to a local provider that had already served its
+       script - which is a sixty-second wait for a network that is never coming, not a test result. Every test starts
+       from a healthy table. */
+    if let Ok(mut cooling) = crate::navaratna::roles::table().lock() {
+        cooling.clear();
+    }
+
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
     std::fs::write(root.join("notes.txt"), "the notes\n").unwrap();
@@ -345,7 +354,7 @@ fn slow_provider(delay: std::time::Duration, replies: Vec<String>) -> (String, s
 #[test]
 fn a_chain_model_that_takes_too_long_is_given_up_on_and_its_edits_are_put_back() {
     let root = folder("watchdog");
-    let (slow_url, slow) = slow_provider(std::time::Duration::from_millis(6_000), vec![call("c1", "write_file", json!({ "path": "late.txt", "content": "too late\n" })), chunk(json!({ "content": "done" })) + "data: [DONE]\n\n"]);
+    let (slow_url, slow) = slow_provider(std::time::Duration::from_millis(12_000), vec![call("c1", "write_file", json!({ "path": "late.txt", "content": "too late\n" })), chunk(json!({ "content": "done" })) + "data: [DONE]\n\n"]);
     let (fast_url, fast) = cloud_that_writes();
     let (local_url, _local) = raw_provider(vec![local_silent(), local_says("Carrying on.")]);
 
@@ -354,8 +363,11 @@ fn a_chain_model_that_takes_too_long_is_given_up_on_and_its_edits_are_put_back()
 
     let mut chain = rotation(&["slow:slow-model", "fast:fast-model"], true);
 
-    /* Three seconds: the fast model has to finish inside the same limit, and a loaded Windows runner took more than one. */
-    chain.relay.call_timeout_s = 3;
+    /* Five seconds against a twelve-second provider (3.2). The *fast* model has to finish inside the same limit, and
+       at three seconds it did not when the whole suite ran in parallel on this machine: the test then reported two
+       failures instead of a hand-over, which is a flake, not a finding. Five leaves the fast model room and still
+       cuts the slow one off less than half way through its reply. */
+    chain.relay.call_timeout_s = 5;
 
     let recorder = run_local(&root, "turn-relay-watchdog", &local_url, chain);
     let steps = steps_of(&recorder);
@@ -479,7 +491,9 @@ fn what_the_chain_solved_becomes_a_lesson_only_after_a_second_sighting_and_only_
         if learn {
             crate::v3::forcing(&["relay.learn"], go);
         } else {
-            go();
+            /* 3.2: `relay.learn` is on by default now - lowering what the chain is asked for is the point of it - so
+               the "nothing is proposed" half of this test has to switch it off out loud. */
+            crate::v3::ablating(&["relay.learn"], go);
         }
 
         cloud.join().unwrap();

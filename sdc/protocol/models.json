@@ -1,6 +1,6 @@
 {
   "$comment": "The model catalogue, as data (master spec section 9.10: 'the model list is always up to date'). This file is what the daemon ships with, so a fresh install can offer sensible models with no network at all. It is NOT the source of truth: `models.list { refresh: true }` asks each provider's own endpoint and caches what it answers, and a model the provider has that this file has never heard of is still shown. Editing this file is how a curated row (tier, context, price) is added or corrected - no code change, no rebuild of the daemon's logic.",
-  "snapshot": "2026-09-28",
+  "snapshot": "2026-10-26",
   "providers": [
     {
       "id": "ollama",
@@ -45,11 +45,32 @@
       "protocol": "anthropic",
       "models": [
         {
+          "id": "claude-fable-5-1",
+          "tier": "deep",
+          "ctx": 1000000,
+          "cost": "$10 / $50",
+          "name": "Claude Fable 5.1"
+        },
+        {
           "id": "claude-opus-5-5",
           "tier": "deep",
           "ctx": 1000000,
           "cost": "$4 / $20",
           "name": "Claude Opus 5.5"
+        },
+        {
+          "id": "claude-sonnet-5-5",
+          "tier": "balanced",
+          "ctx": 1000000,
+          "cost": "$2 / $10",
+          "name": "Claude Sonnet 5.5"
+        },
+        {
+          "id": "claude-haiku-5-5",
+          "tier": "fast",
+          "ctx": 1000000,
+          "cost": "$0.10 / $0.50",
+          "name": "Claude Haiku 5.5"
         },
         {
           "id": "claude-opus-5",
@@ -59,18 +80,18 @@
           "name": "Claude Opus 5"
         },
         {
-          "id": "claude-fable-5-1",
-          "tier": "deep",
-          "ctx": 1000000,
-          "cost": "$10 / $50",
-          "name": "Claude Fable 5.1"
-        },
-        {
           "id": "claude-sonnet-5",
           "tier": "balanced",
           "ctx": 1000000,
           "cost": "$2 / $10",
           "name": "Claude Sonnet 5"
+        },
+        {
+          "id": "claude-opus-4-8",
+          "tier": "deep",
+          "ctx": 1000000,
+          "cost": "",
+          "name": "Claude Opus 4.8"
         },
         {
           "id": "claude-sonnet-4-6",
@@ -86,7 +107,8 @@
           "cost": "$1 / $5",
           "name": "Claude Haiku 4.5"
         }
-      ]
+      ],
+      "$comment": "Anthropic's own /v1/models is the live source and carries a `line` field for grouping; these rows are the curated prices and windows, taken from platform.claude.com/docs/en/models/overview on 2026-10-26. Claude Fable 5.1, Opus 5.5, Sonnet 5.5 and Haiku 5.5 are the current lineup; the rest are the legacy models that are still served."
     },
     {
       "id": "openai-api",
@@ -183,11 +205,67 @@
       "protocol": "openai",
       "models": [
         {
-          "id": "gemini-3-pro-preview",
+          "id": "gemini-4-argon",
+          "tier": "deep",
+          "ctx": 1000000,
+          "cost": "",
+          "name": "Gemini 4 Argon"
+        },
+        {
+          "id": "gemini-3.8-flash",
+          "tier": "balanced",
+          "ctx": 1000000,
+          "cost": "",
+          "name": "Gemini 3.8 Flash"
+        },
+        {
+          "id": "gemini-3.6-flash",
+          "tier": "balanced",
+          "ctx": 1000000,
+          "cost": "",
+          "name": "Gemini 3.6 Flash"
+        },
+        {
+          "id": "gemini-3.5-flash",
+          "tier": "balanced",
+          "ctx": 1000000,
+          "cost": "",
+          "name": "Gemini 3.5 Flash"
+        },
+        {
+          "id": "gemini-3.5-flash-lite",
+          "tier": "fast",
+          "ctx": 1000000,
+          "cost": "$0.30 / $2.50",
+          "name": "Gemini 3.5 Flash-Lite"
+        },
+        {
+          "id": "gemini-3.1-pro",
           "tier": "deep",
           "ctx": 1000000,
           "cost": "$2 / $12",
-          "name": "Gemini 3 Pro (preview)"
+          "name": "Gemini 3.1 Pro"
+        },
+        {
+          "id": "gemini-3.1-flash-lite",
+          "tier": "fast",
+          "ctx": 1000000,
+          "cost": "$0.25 / $1.50",
+          "name": "Gemini 3.1 Flash-Lite"
+        },
+        {
+          "id": "gemini-3-pro",
+          "tier": "deep",
+          "ctx": 1000000,
+          "cost": "",
+          "name": "Gemini 3 Pro"
+        },
+        {
+          "id": "gemini-3-flash",
+          "tier": "balanced",
+          "ctx": 1000000,
+          "cost": "",
+          "name": "Gemini 3 Flash"
         },
         {
           "id": "gemini-2.5-pro",
@@ -203,7 +281,8 @@
           "cost": "$0.30 / $2.50",
           "name": "Gemini 2.5 Flash"
         }
-      ]
+      ],
+      "$comment": "Taken from ai.google.dev/gemini-api/docs/models on 2026-10-26. Google's OpenAI-compatible /v1beta/openai/models is the live source and spells every id `models/<id>`, which `providers::models::live` strips. The image, text-to-speech, live-audio, transcription, embedding and Lyria models that list also holds are left out by `providers::catalog::chatty` - a coding chat cannot run them. Prices left empty are unknown to this build and are not guessed."
     },
     {
       "id": "xai",
@@ -564,7 +643,7 @@
         {
           "id": "claude-haiku-5-5",
           "tier": "fast",
-          "ctx": 200000,
+          "ctx": 1000000,
           "cost": "subscription",
           "name": "Claude Haiku 5.5 · plan"
         },
@@ -574,6 +653,20 @@
           "ctx": 1000000,
           "cost": "subscription",
           "name": "Claude Fable 5.1 · plan"
+        },
+        {
+          "id": "claude-opus-5",
+          "tier": "deep",
+          "ctx": 1000000,
+          "cost": "subscription",
+          "name": "Claude Opus 5 · plan"
+        },
+        {
+          "id": "claude-sonnet-5",
+          "tier": "balanced",
+          "ctx": 1000000,
+          "cost": "subscription",
+          "name": "Claude Sonnet 5 · plan"
         },
         {
           "id": "sonnet",
@@ -592,16 +685,66 @@
         {
           "id": "haiku",
           "tier": "fast",
-          "ctx": 200000,
+          "ctx": 1000000,
           "cost": "subscription",
           "name": "Claude Haiku · plan"
+        },
+        {
+          "id": "fable",
+          "tier": "deep",
+          "ctx": 1000000,
+          "cost": "subscription",
+          "name": "Claude Fable · plan"
         }
-      ]
+      ],
+      "$comment": "The fallback for a computer where the `claude` CLI is not installed: when it is, `providers::clis` reads the ids that version really accepts out of the CLI itself and these rows join them. The bare line words (`sonnet`, `opus`, `haiku`, `fable`) are ids `claude --model` takes, and `providers::catalog::collapse` folds each into the newest model of its line rather than offering it as a model of its own."
     },
     {
       "id": "openai",
       "label": "Codex",
       "models": [
+        {
+          "id": "gpt-6-astra",
+          "tier": "deep",
+          "ctx": 400000,
+          "cost": "subscription",
+          "name": "GPT-6 Astra · ChatGPT plan"
+        },
+        {
+          "id": "gpt-6",
+          "tier": "deep",
+          "ctx": 400000,
+          "cost": "subscription",
+          "name": "GPT-6 · ChatGPT plan"
+        },
+        {
+          "id": "gpt-5.6-sol",
+          "tier": "balanced",
+          "ctx": 400000,
+          "cost": "subscription",
+          "name": "GPT-5.6 Sol · ChatGPT plan"
+        },
+        {
+          "id": "gpt-5.6-terra",
+          "tier": "balanced",
+          "ctx": 400000,
+          "cost": "subscription",
+          "name": "GPT-5.6 Terra · ChatGPT plan"
+        },
+        {
+          "id": "gpt-5.6-luna",
+          "tier": "fast",
+          "ctx": 400000,
+          "cost": "subscription",
+          "name": "GPT-5.6 Luna · ChatGPT plan"
+        },
+        {
+          "id": "gpt-5.1-codex-max",
+          "tier": "deep",
+          "ctx": 400000,
+          "cost": "subscription",
+          "name": "GPT-5.1 Codex Max · ChatGPT plan"
+        },
         {
           "id": "default",
           "tier": "balanced",
@@ -609,12 +752,55 @@
           "cost": "subscription",
           "name": "Codex default · ChatGPT plan"
         }
-      ]
+      ],
+      "$comment": "The fallback for a computer where the `codex` CLI is not installed. When it is, `providers::clis` scans its native binary under a strict shape (see that module for why the shape is strict) and reads `~/.codex/config.toml` as well. `default` is what Codex runs when no model is named."
     },
     {
       "id": "gemini",
       "label": "Gemini CLI",
       "models": [
+        {
+          "id": "gemini-4-argon",
+          "tier": "deep",
+          "ctx": 1000000,
+          "cost": "subscription",
+          "name": "Gemini 4 Argon · plan"
+        },
+        {
+          "id": "gemini-3.8-flash",
+          "tier": "balanced",
+          "ctx": 1000000,
+          "cost": "subscription",
+          "name": "Gemini 3.8 Flash · plan"
+        },
+        {
+          "id": "gemini-3.5-flash",
+          "tier": "balanced",
+          "ctx": 1000000,
+          "cost": "subscription",
+          "name": "Gemini 3.5 Flash · plan"
+        },
+        {
+          "id": "gemini-3.1-pro",
+          "tier": "deep",
+          "ctx": 1000000,
+          "cost": "subscription",
+          "name": "Gemini 3.1 Pro · plan"
+        },
+        {
+          "id": "gemini-3-pro",
+          "tier": "deep",
+          "ctx": 1000000,
+          "cost": "subscription",
+          "name": "Gemini 3 Pro · plan"
+        },
+        {
+          "id": "gemini-3-flash",
+          "tier": "balanced",
+          "ctx": 1000000,
+          "cost": "subscription",
+          "name": "Gemini 3 Flash · plan"
+        },
         {
           "id": "gemini-2.5-pro",
           "tier": "deep",
@@ -629,7 +815,8 @@
           "cost": "subscription",
           "name": "Gemini 2.5 Flash · plan"
         }
-      ]
+      ],
+      "$comment": "The fallback for a computer where the `gemini` CLI is not installed. When it is, `providers::clis` scans its bundle (the CLI ships as JavaScript, so the ids are plain text) and the menu holds every model that version offers - which is the fix for \"the newer Gemini models never appear\"."
     }
   ]
 }

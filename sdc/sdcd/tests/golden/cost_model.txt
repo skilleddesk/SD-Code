@@ -1,5 +1,5 @@
 price Some("deepseek") deepseek-chat -> Some((0.14, 0.28))
-price Some("anthropic-api") claude-sonnet-5-5 -> None
+price Some("anthropic-api") claude-sonnet-5-5 -> Some((2.0, 10.0))
 price Some("ollama") qwen3.5:9b -> Some((0.0, 0.0))
 price None claude-opus-5-5 -> Some((4.0, 20.0))
 price Some("deepseek") no-such-model -> None

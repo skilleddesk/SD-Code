@@ -16,6 +16,8 @@
 //! reports that a token exchange is not wired, and the real path - `auth::cli_login` - drives the CLI's
 //! own login and hands back only the code the user pasted. Nothing here ever sees a token.
 
+pub mod catalog;
+pub mod clis;
 pub mod local;
 pub mod runtimes;
 pub mod models;
@@ -306,9 +308,12 @@ pub fn list(store: &Arc<Store>) -> Vec<Value> {
         .map(|(id, name, kind, logo, initial, detail)| {
             let stored = store.provider(id).ok().flatten();
             let status = settle_status(id, kind, stored.as_ref().and_then(|row| row["status"].as_str()));
+            /* An **empty** stored detail is not a detail (3.2): every subscription row on this machine had one, so the
+               cards showed a blank line where the sentence that says what to do should be. */
             let detail_text = stored
                 .as_ref()
                 .and_then(|row| row["detail"].as_str())
+                .filter(|text| !text.trim().is_empty())
                 .map(str::to_string)
                 .unwrap_or_else(|| honest_detail(id, kind, detail));
 
@@ -361,6 +366,36 @@ pub fn mark_refused(store: &Arc<Store>, id: &str, _reason: &str) -> bool {
         .is_ok()
 }
 
+/// Records that a sign-in **this app drove** finished, so the card survives a restart (3.2).
+///
+/// Before this, a finished CLI login only pushed a `ProviderStatus` event: nothing was written, so after a restart the
+/// only thing that could make a subscription card green again was guessing from a credential file - which is exactly
+/// the silent sign-in that had to go. The row *is* the consent, and `cli.logout` is what takes it back.
+pub fn mark_signed_in(store: &Arc<Store>, id: &str, detail: &str) -> bool {
+    let Some((name, kind)) = CATALOG.iter().find(|row| row.0 == id).map(|row| (row.1, row.2)) else {
+        return false;
+    };
+
+    if kind != "subscription" {
+        return false;
+    }
+
+    store.upsert_provider(id, name, kind, "connected", Some(detail), None, None, None).is_ok()
+}
+
+/// Takes the sign-in record away: the card is `needs-auth` again until the person signs in from the app (3.2).
+pub fn mark_signed_out(store: &Arc<Store>, id: &str) -> bool {
+    let Some((name, kind)) = CATALOG.iter().find(|row| row.0 == id).map(|row| (row.1, row.2)) else {
+        return false;
+    };
+
+    if kind != "subscription" {
+        return false;
+    }
+
+    store.upsert_provider(id, name, kind, "needs-auth", None, None, None, None).is_ok()
+}
+
 /// A card's status: the stored row, checked against what this machine shows **now** (1.0).
 ///
 /// The row used to win outright, and rows go stale. Measured on the owner's machine: an `ollama` row saved as
@@ -377,8 +412,62 @@ fn settle_status(id: &str, kind: &str, stored: Option<&str>) -> String {
         ("local", _) => evidence,
         ("api-key", Some("needs-auth")) if evidence == "connected" => "needs-auth".to_string(),
         ("api-key", _) => evidence,
+        /* 3.2: a card the person signed into **from SDC** stays signed in only while the credential is still there.
+           A sign-out done in the CLI itself, or SDC's own `cli.logout`, must show on the card at once - the row alone
+           used to keep it green over a credential that had been deleted. */
+        /* 3.2: Gemini's sign-in is a *file*, so finding one is not evidence that **this person** signed in - the
+           consent is the row a sign-in SDC drove wrote. See `subscription_status`. */
+        ("subscription", _) if needs_explicit_consent(id) => subscription_status(stored, consent_still_holds(id)),
+        /* Every other subscription is *asked* its own command, now (`claude auth status`, `codex login status`), so
+           the live answer decides and a `logout` run in the terminal shows on the card. The stored row no longer
+           outlives it: a row that said connected over a CLI that had been signed out drew a green card whose every
+           turn failed. */
+        ("subscription", _) => evidence,
         (_, Some("connected")) => "connected".to_string(),
         (_, _) => evidence,
+    }
+}
+
+/// Must this provider's sign-in have been done **from the app**, or is its own command enough?
+///
+/// `true` only for Gemini, and only because its credential is a file on disk that any other program could have
+/// written. Claude Code and Codex answer "are you signed in?" themselves, which is a live fact about the account in
+/// use rather than a leftover.
+pub fn needs_explicit_consent(id: &str) -> bool {
+    id == "gemini"
+}
+
+/// A subscription card's status from the two facts that decide it (3.2), as a pure function a test can read.
+///
+/// `stored` is the consent - the row a sign-in **this app drove** wrote. `credential` is whether the credential that
+/// sign-in produced is still on this computer, as far as SDC can tell ([`consent_still_holds`]).
+///
+/// The table, and why each row is what it is:
+///
+/// | stored        | credential | status       |                                                       |
+/// | ------------- | ---------- | ------------ | ----------------------------------------------------- |
+/// | `connected`   | yes        | `connected`  | the person signed in here and it still holds          |
+/// | `connected`   | no         | `needs-auth` | signed out in the CLI itself, or by `cli.logout`      |
+/// | anything else | yes        | `needs-auth` | **a credential is not a sign-in** - the silent one    |
+/// | anything else | no         | `needs-auth` | nothing has happened yet                              |
+///
+/// The third row is the whole point. It used to read `connected`.
+pub fn subscription_status(stored: Option<&str>, credential: bool) -> String {
+    match (stored, credential) {
+        (Some("connected"), true) => "connected".to_string(),
+        _ => "needs-auth".to_string(),
+    }
+}
+
+/// Is the sign-in the stored row records still true on this computer?
+///
+/// Only Gemini can answer it from a file (its Google sign-in *is* a file). Claude Code and Codex are *asked* their own
+/// command by [`signed_in`], which is a live answer rather than a leftover file; for them the row is not overruled by a
+/// CLI that happens to be slow or busy, so `signed_in` deciding is the honest reading.
+fn consent_still_holds(id: &str) -> bool {
+    match id {
+        "gemini" => gemini_credentials().map(|path| path.exists()).unwrap_or(false),
+        _ => signed_in(id),
     }
 }
 
@@ -389,6 +478,9 @@ fn status_without_a_row(id: &str, kind: &str) -> String {
         "api-key" => "available".to_string(),
         "local" if crate::engines::ollama::daemon_running() => "connected".to_string(),
         "local" => "needs-auth".to_string(),
+        /* A provider whose sign-in must have come from the app has no evidence path at all: a credential found lying
+           about is exactly what must not turn the card green (3.2). */
+        _ if needs_explicit_consent(id) => "needs-auth".to_string(),
         _ if signed_in(id) => "connected".to_string(),
         _ => "needs-auth".to_string(),
     }
@@ -406,8 +498,17 @@ fn status_without_a_row(id: &str, kind: &str) -> String {
 /// ```text
 /// $ claude auth status      {"loggedIn": true, "authMethod": "claude.ai", …}
 /// $ codex login status      Logged in using ChatGPT
-/// $ gemini                  (Google sign-in is a file: ~/.gemini/oauth_creds.json)
 /// ```
+///
+/// **Gemini is deliberately not asked** (3.2). Its Google sign-in is a *file* (`~/.gemini/oauth_creds.json`), and
+/// treating that file as a sign-in meant SDC marked the card connected for a credential some earlier session - or
+/// another program entirely - had left behind, without the person ever pressing Sign in. That is the report: *"SDC
+/// auto-detects an existing Gemini login and signs in silently. I do NOT want that."* So the Gemini card is
+/// `needs-auth` until a sign-in **this app drove** finishes and writes the row (`cli.login.status` does), and
+/// `cli.logout` takes both the row and the credential away again.
+///
+/// Claude Code and Codex are different in kind and are left as they were: neither is read off a file - each is *asked*
+/// its own command, now, and answers for the account that is signed in at this moment.
 pub fn signed_in(provider_id: &str) -> bool {
     match provider_id {
         "claude" => prints("claude", &["auth", "status"])
@@ -416,13 +517,14 @@ pub fn signed_in(provider_id: &str) -> bool {
         "openai" => prints("codex", &["login", "status"])
             .map(|output| codex_logged_in(&output))
             .unwrap_or(false),
-        /* 1.0: signed in is not enough. Google answers a personal account's turns from this CLI with
-           `IneligibleTierError` (measured 0.11.5), and the card said "Connected" over the sentence that says so -
-           the owner's "connected dakhai kaj kore nah". It is connected when the CLI has a route that answers: a
-           Google Cloud project or a Gemini API key in its environment. */
-        "gemini" => gemini_credentials().map(|path| path.exists()).unwrap_or(false) && gemini_has_a_route(),
         _ => false,
     }
+}
+
+/// Does the Gemini CLI have a credential and a route that can answer? Read by the card's detail line, never by its
+/// status - see [`signed_in`] for why the status is not allowed to come from a file.
+pub fn gemini_route_ready() -> bool {
+    gemini_credentials().map(|path| path.exists()).unwrap_or(false) && gemini_has_a_route()
 }
 
 /// Whether the Gemini CLI has a way to be served besides a personal Google sign-in.
@@ -513,15 +615,29 @@ fn honest_detail(id: &str, kind: &str, fallback: &str) -> String {
     let recipe = crate::auth::cli_login::RECIPES.iter().find(|recipe| recipe.provider_id == id);
 
     match recipe {
-        /* Measured 2026-09-26 with a finished sign-in: Google answers every turn from this CLI with
-           `IneligibleTierError` for a personal account. A card that only said `Connected` sent people to
-           a route that cannot answer, so it names the one that does (0.11.5). */
+        /* 3.2: the Gemini card says what pressing Sign in does, because that is now the only way it turns green -
+           SDC no longer reads a credential off the disk and calls it a sign-in. The second clause is measured
+           (2026-09-26, CLI 0.60.0, a finished sign-in): Google answers a personal account's turns from this CLI with
+           `IneligibleTierError`, so the route that does work is named beside it. */
         Some(recipe) if recipe.provider_id == "gemini" && crate::host::doctor::has(recipe.program) => format!(
-            "`{}` is installed · Google no longer serves this CLI to personal accounts - use Google Gemini API (a key) for the same models",
-            recipe.program
+            "`{}` is installed · Sign in opens Google in your browser{}",
+            recipe.program,
+            if gemini_route_ready() {
+                ""
+            } else {
+                " · Google may refuse this CLI for a personal account - Google Gemini API (a key) serves the same models"
+            }
         ),
         Some(recipe) if crate::host::doctor::has(recipe.program) => format!(
             "`{}` is installed · Connect starts its own sign-in",
+            recipe.program
+        ),
+        /* 3.2: "not installed" and "installed but it cannot start" are different problems with different fixes, and
+           this machine had the second one: `gemini.cmd` and `codex.cmd` were both on PATH and both answered
+           `'"node"' is not recognized`, because Node.js was gone. The card used to say they were not installed, which
+           sends a person to reinstall a CLI that is already there. */
+        Some(recipe) if crate::host::program::resolve(recipe.program).is_some() => format!(
+            "`{}` is on this computer but will not start · it needs Node.js - Settings → Environment installs it",
             recipe.program
         ),
         Some(recipe) => format!(
@@ -861,7 +977,32 @@ mod tests {
     fn a_stale_row_does_not_outlive_the_evidence() {
         assert_eq!(settle_status("no-such-provider-for-tests", "api-key", Some("connected")), "available");
         assert_eq!(settle_status("no-such-provider-for-tests", "api-key", None), "available");
-        assert_eq!(settle_status("no-such-provider-for-tests", "subscription", Some("connected")), "connected");
+        /* 3.2: a subscription row no longer outlives its CLI either. The row used to win here; now the CLI's own
+           answer does, so a `logout` run in the terminal shows on the card instead of a green card that fails. */
+        assert_eq!(settle_status("no-such-provider-for-tests", "subscription", Some("connected")), "needs-auth");
+    }
+
+    /// **A credential is not a sign-in** (3.2) - the report "SDC auto-detects an existing Gemini login".
+    ///
+    /// The table in [`subscription_status`], as assertions, plus the two facts that make it reachable: `signed_in`
+    /// never answers for Gemini (so no file on disk can turn the card green), and the Gemini card is the only one
+    /// that needs the app's own sign-in.
+    #[test]
+    fn a_gemini_credential_found_on_the_disk_is_not_a_sign_in() {
+        assert_eq!(subscription_status(Some("connected"), true), "connected", "signed in here, and it still holds");
+        assert_eq!(subscription_status(Some("connected"), false), "needs-auth", "signed out since");
+        assert_eq!(subscription_status(None, true), "needs-auth", "a credential nobody signed in with");
+        assert_eq!(subscription_status(Some("needs-auth"), true), "needs-auth");
+        assert_eq!(subscription_status(None, false), "needs-auth");
+
+        /* Whatever is on this computer's disk, the Gemini card cannot be green without the app's own sign-in. */
+        assert!(!signed_in("gemini"), "Gemini is never read off a file");
+        assert_eq!(settle_status("gemini", "subscription", None), "needs-auth");
+        assert_eq!(status_without_a_row("gemini", "subscription"), "needs-auth");
+
+        assert!(needs_explicit_consent("gemini"));
+        assert!(!needs_explicit_consent("claude"), "Claude Code answers `auth status` itself");
+        assert!(!needs_explicit_consent("openai"), "Codex answers `login status` itself");
     }
 
     #[test]

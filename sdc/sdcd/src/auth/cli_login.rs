@@ -106,6 +106,127 @@ pub fn merge_gemini_oauth(path: &std::path::Path) -> Result<(), String> {
     merge_gemini_auth(path, "oauth-personal")
 }
 
+/// **Signing out** (3.2): the credential a CLI wrote, taken away, and the way out of a sign-in SDC never asked for.
+///
+/// The report this answers is *"SDC auto-detects an existing Gemini login and signs in silently - I do not want that"*.
+/// Two things make that true, and this is the second: there was no way to *undo* a sign-in from the app at all, so a
+/// credential some earlier session left behind was permanent as far as SDC was concerned.
+///
+/// What each CLI needs is different, and the difference is the CLI's, not SDC's:
+///
+/// * **Gemini** keeps its Google sign-in in files under `~/.gemini`, and has no logout command. The files are deleted
+///   and the auth method SDC itself wrote (`security.auth.selectedType`) is taken back out of its settings, leaving
+///   every other key of the person's configuration alone;
+/// * **Claude Code** has `claude auth logout`, and **Codex** has `codex logout`. Their own command is run, because
+///   their credential is theirs - SDC does not know where it is and must not guess.
+///
+/// Answers what it actually did, as sentences, so the app can show them.
+pub fn logout(provider_id: &str) -> Result<Vec<String>, String> {
+    let recipe = recipe(provider_id)
+        .ok_or_else(|| format!("`{provider_id}` does not sign in through a CLI, so there is nothing to sign out of"))?;
+    let mut done: Vec<String> = Vec::new();
+
+    if provider_id == "gemini" {
+        let home = gemini_home().ok_or_else(|| "no home directory to clear the Gemini sign-in from".to_string())?;
+
+        return clear_gemini(&home);
+    }
+
+    /* The CLI's own command. `None` means it is not installed, which is not a failure to sign out of. */
+    let arguments: &[&str] = match provider_id {
+        "claude" => &["auth", "logout"],
+        "openai" => &["logout"],
+        _ => return Err(format!("`{provider_id}` has no sign-out this build knows")),
+    };
+
+    match crate::host::program::command(recipe.program) {
+        None => done.push(format!("`{}` is not installed, so there was nothing to sign out of", recipe.program)),
+        Some(mut command) => {
+            let output = command
+                .args(arguments)
+                .stdin(std::process::Stdio::null())
+                .output()
+                .map_err(|error| format!("`{} {}`: {error}", recipe.program, arguments.join(" ")))?;
+            let said = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+            done.push(format!(
+                "`{} {}` {}{}",
+                recipe.program,
+                arguments.join(" "),
+                if output.status.success() { "signed out" } else { "answered an error" },
+                if said.is_empty() { String::new() } else { format!(": {said}") }
+            ));
+        }
+    }
+
+    Ok(done)
+}
+
+/// The sign-in files under a Gemini home, deleted, and SDC's auth choice taken back out of its settings.
+///
+/// Takes the folder rather than finding it, so a test can prove it clears exactly these files and leaves the rest of
+/// the person's configuration alone - without touching the real `~/.gemini`.
+pub fn clear_gemini(home: &std::path::Path) -> Result<Vec<String>, String> {
+    let mut done: Vec<String> = Vec::new();
+
+    for name in ["oauth_creds.json", "google_accounts.json"] {
+        let path = home.join(name);
+
+        if path.exists() {
+            std::fs::remove_file(&path).map_err(|error| format!("{}: {error}", path.display()))?;
+            done.push(format!("deleted {}", path.display()));
+        }
+    }
+
+    let settings = home.join("settings.json");
+
+    if forget_gemini_auth(&settings)? {
+        done.push(format!("took SDC's auth choice back out of {}", settings.display()));
+    }
+
+    if done.is_empty() {
+        done.push("there was no Gemini credential on this computer".to_string());
+    }
+
+    Ok(done)
+}
+
+/// The folder the Gemini CLI keeps its own state in.
+pub fn gemini_home() -> Option<std::path::PathBuf> {
+    let home = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME"))?;
+
+    Some(std::path::PathBuf::from(home).join(".gemini"))
+}
+
+/// Removes `security.auth.selectedType` from Gemini's settings, keeping every other key. Answers whether it was there.
+///
+/// Only the one key SDC itself writes is removed: the file also holds the person's theme, their MCP servers and their
+/// trusted folders, and a sign-out is not a reason to lose any of that.
+pub fn forget_gemini_auth(path: &std::path::Path) -> Result<bool, String> {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return Ok(false);
+    };
+    let Ok(mut settings) = serde_json::from_str::<Value>(&text) else {
+        return Ok(false);
+    };
+    let removed = settings
+        .get_mut("security")
+        .and_then(|security| security.get_mut("auth"))
+        .and_then(Value::as_object_mut)
+        .and_then(|auth| auth.remove("selectedType"))
+        .is_some();
+
+    if !removed {
+        return Ok(false);
+    }
+
+    let written = serde_json::to_string_pretty(&settings).map_err(|error| error.to_string())?;
+
+    std::fs::write(path, written).map_err(|error| format!("{}: {error}", path.display()))?;
+
+    Ok(true)
+}
+
 /// The auth method Gemini's own settings currently name, or `None` when the file or the key is absent.
 pub fn gemini_selected_type() -> Option<String> {
     let path = gemini_settings_path()?;
@@ -741,6 +862,51 @@ mod tests {
         assert_eq!(written["theme"], json!("dark"), "the person's own keys survive");
 
         let _ = std::fs::remove_file(&path);
+    }
+
+    /// **Signing out** (3.2): the sign-in files go, SDC's own auth choice goes, and nothing else is touched.
+    ///
+    /// It runs against a temporary `.gemini` rather than the real one, which is why `clear_gemini` takes the folder:
+    /// a test that deleted the owner's Google credential to prove it could would be a poor trade.
+    #[test]
+    fn signing_out_of_gemini_clears_the_credential_and_leaves_the_rest_alone() {
+        let home = std::env::temp_dir().join(format!("sdc-gemini-logout-{}", std::process::id()));
+
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::write(home.join("oauth_creds.json"), r#"{"access_token":"x"}"#).unwrap();
+        std::fs::write(home.join("google_accounts.json"), r#"{"active":"me@example.com"}"#).unwrap();
+        std::fs::write(
+            home.join("settings.json"),
+            r#"{ "theme": "dark", "mcpServers": { "a": {} }, "security": { "auth": { "selectedType": "oauth-personal" } } }"#,
+        )
+        .unwrap();
+
+        let did = clear_gemini(&home).unwrap();
+
+        assert!(!home.join("oauth_creds.json").exists(), "the credential is gone");
+        assert!(!home.join("google_accounts.json").exists(), "and so is the account it names");
+        assert_eq!(did.len(), 3, "{did:?}");
+
+        let settings: Value = serde_json::from_str(&std::fs::read_to_string(home.join("settings.json")).unwrap()).unwrap();
+
+        assert_eq!(settings["security"]["auth"]["selectedType"], Value::Null, "SDC's auth choice is taken back");
+        assert_eq!(settings["theme"], json!("dark"), "the person's own keys survive");
+        assert!(settings["mcpServers"]["a"].is_object(), "and so do their MCP servers");
+
+        /* Signing out twice is not an error, and says so. */
+        let again = clear_gemini(&home).unwrap();
+
+        assert_eq!(again, ["there was no Gemini credential on this computer"]);
+
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// A provider that does not sign in through a CLI cannot be signed out of one.
+    #[test]
+    fn signing_out_of_a_key_provider_is_refused_by_name() {
+        let error = logout("deepseek").unwrap_err();
+
+        assert!(error.contains("deepseek") && error.contains("nothing to sign out of"), "{error}");
     }
 
     #[test]

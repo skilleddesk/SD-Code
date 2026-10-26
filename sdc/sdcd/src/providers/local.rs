@@ -301,6 +301,8 @@ pub fn blocks() -> Vec<crate::providers::models::ProviderBlock> {
                         row
                     })
                     .collect(),
+                /* A local server's own list is the whole truth: a model that is no longer pulled must leave the menu. */
+                union_with_bundle: false,
             })
         })
         .collect()

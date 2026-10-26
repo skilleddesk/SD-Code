@@ -128,6 +128,8 @@ pub(super) struct Hook {
     /// Relayed steps in a row, with no local step between (`rotation.toml`'s `offload_limit`).
     streak: u32,
     offload_limit: u32,
+    /// Why the chain could not do the last relayed step (empty when it did).
+    pub failure: String,
 }
 
 impl Hook {
@@ -151,7 +153,7 @@ impl Hook {
         /* The half of the capsule that does not depend on the failure is built while the local model is still trying. */
         let prepared = capsule::spawn_prepare(root.clone(), request.to_string(), trust.clone(), session_id.to_string());
 
-        Some(Self { policy: rotation.relay.clone(), chain, used: Used::default(), ledger: TurnLedger::default(), signals: StepSignals::default(), root, prepared: Some(prepared), ready: None, relays: 0, cooldown: 0, streak: 0, offload_limit: rotation.global.offload_limit })
+        Some(Self { policy: rotation.relay.clone(), chain, used: Used::default(), ledger: TurnLedger::default(), signals: StepSignals::default(), root, prepared: Some(prepared), ready: None, relays: 0, cooldown: 0, streak: 0, offload_limit: rotation.global.offload_limit, failure: String::new() })
     }
 
     /// The loop finished a step on the local model.
@@ -340,6 +342,8 @@ impl Hook {
         self.used.cloud_steps += 1;
         self.used.usd += relayed.cost_usd();
         self.signals = StepSignals::default();
+
+        self.failure = if relayed.ok { String::new() } else { relayed.failure.clone() };
 
         if !relayed.ok {
             self.cooldown = COOLDOWN;

@@ -212,13 +212,16 @@ mod tests {
         });
     }
 
+    /// 3.2: the switch is on by default now, so "off" has to be said rather than assumed.
     #[test]
     fn nothing_is_routed_with_the_switch_off() {
-        let mode = Mode { manual_pin: false, local_only: false, relay_auto: true, architect_row: true };
+        crate::v3::ablating(&["nr.tag_route"], || {
+            let mode = Mode { manual_pin: false, local_only: false, relay_auto: true, architect_row: true };
 
-        for tag in [Tag::Simple, Tag::Code, Tag::Hard, Tag::Architecture] {
-            assert_eq!(route(tag, &mode), Route::Local);
-        }
+            for tag in [Tag::Simple, Tag::Code, Tag::Hard, Tag::Architecture] {
+                assert_eq!(route(tag, &mode), Route::Local);
+            }
+        });
     }
 
     #[test]
