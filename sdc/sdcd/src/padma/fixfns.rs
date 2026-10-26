@@ -94,11 +94,13 @@ fn pointed_at(env: &Env, failures: &[String]) -> Vec<(String, usize)> {
     let mut found: Vec<(String, usize)> = Vec::new();
 
     for raw in failures {
-        let mut line = raw.replace('\\', "/").replace(&format!("{root}/"), "");
+        let mut line = raw.replace('\\', "/");
 
         if !real.is_empty() {
             line = line.replace(&format!("{real}/"), "");
         }
+
+        line = line.replace(&format!("{root}/"), "");
 
         if let Some(at) = line.find("File \"") {
             let rest = &line[at + 6..];
