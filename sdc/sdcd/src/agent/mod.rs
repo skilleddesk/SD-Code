@@ -52,6 +52,14 @@ use gate::Autonomy;
 use tools::ToolContext;
 use workspace::Workspace;
 
+/// How many times in a row a reply cut off by the output limit is continued before the person is asked to say "continue".
+const MAX_LENGTH_CONTINUES: u8 = 8;
+
+/// How many steps in a row with no edit and no command run (the stall guard, below) before a work turn is stopped honestly instead of let
+/// run on. Kept well above the legitimate 60-step all-reading turn in the note just below `DEFAULT_STEPS` - this is a backstop against a
+/// model that never makes real progress, not a budget on reading before one big write.
+const STALL_STEPS: u32 = 100;
+
 /// The number of model calls one turn may make when the caller names none: no limit (0.15.2).
 ///
 /// The report: *"kono rate limit to dorkar nai project a"* - a landing page built from two long specs
@@ -2321,6 +2329,12 @@ fn drive(
     let mut empty_retries = 0u8;
     let mut intent_reprompts = 0u32;
     let mut gate_retries = 0u32;
+    let mut length_continues = 0u8;
+    /* The Finish Gate (`padma.finish_gate`) only looks at a reply with no tool call - a model that keeps making *some* tool call (even a
+       repeated read, or a different file each time) never reaches it, and can announce "now creating the file" for dozens of steps without
+       ever writing one. `stall_steps` counts consecutive steps, from the start of the turn, in which nothing has been edited or run; it
+       stops counting (and the check below goes dead) the moment either happens. See the stall check below the turn-budget check. */
+    let mut stall_steps = 0u32;
     /* A research answer from one page is asked, once, to read a second (live check, 0.16.1: a 9B model
        answered from one page with the brief saying two). */
     let mut sources_nudged = false;
@@ -2511,6 +2525,24 @@ fn drive(
             out_of_turn_time = true;
 
             break;
+        }
+
+        /* The stall guard (see `stall_steps` above): a work turn that has edited or run nothing for STALL_STEPS steps in a row is stopped
+           honestly - the same evidence rule the Finish Gate uses (`padma::gate`), checked here so it also catches a model that keeps making
+           *some* tool call (even a repeated or harmless one) rather than ever falling silent. */
+        if context.edits == 0 && context.ran_at.is_none() {
+            stall_steps += 1;
+
+            if stall_steps >= STALL_STEPS && crate::v3::on("padma.finish_gate") && crate::padma::task::contract_active() && crate::padma::gate::asks_for_work(&request_text) {
+                sink.send(EngineEvent::Delta(format!(
+                    "\n\nNot finished: {STALL_STEPS} steps passed with no file changed and no command run. Tell me how to go on, or send \"continue\" to try again."
+                )));
+                sink.send(EngineEvent::Done { summary: "Blocked: no evidence of the work".to_string(), meta: meta(step, input_tokens, output_tokens, target.price), pass: None });
+
+                return;
+            }
+        } else {
+            stall_steps = 0;
         }
 
         if let Some(journal) = &journal {
@@ -2853,6 +2885,29 @@ _This step was too large for the model's window even after everything was shorte
 
         if !reply.tool_uses.is_empty() {
             ladder.reset();
+            length_continues = 0;
+        }
+
+        /* A reply the output limit (or a full context) cut off is never the end of the turn: the model is asked to go on from the last word. A reply
+           that was all thinking is asked again with thinking off. After MAX_LENGTH_CONTINUES the person is told how to go on. */
+        if reply.tool_uses.is_empty() && (reply.stop == "length" || reply.stop == "max_tokens") && !stopped() {
+            if length_continues < MAX_LENGTH_CONTINUES {
+                length_continues += 1;
+
+                if reply.text.trim().is_empty() {
+                    if backend == Backend::Ollama {
+                        crate::navaratna::steps::sampling::set(None, Some(false));
+                    }
+
+                    dialect::append_user_text(target.dialect, &mut messages, "[SDC: your last reply ran out of room before it said anything. Do not think first. Answer now in plain words, or make the tool call that is needed.]");
+                } else {
+                    dialect::append_user_text(target.dialect, &mut messages, "[SDC: your last reply was cut off by the output limit. Continue from the exact word where it stopped - no repetition, no preface. If much is left, write it in short parts, or write the document to a file with write_file one section at a time.]");
+                }
+
+                continue;
+            }
+
+            sink.send(EngineEvent::Delta("\n\n_The answer is still not finished after several continuations. Send \"continue\" to go on from here._".to_string()));
         }
 
         /* v3 W9: the model wrote `‹secret:N›`; the tools get the real value - and so does the journal, whose
@@ -5188,6 +5243,93 @@ mod end_to_end {
         assert!(events.iter().any(|event| matches!(event, EngineEvent::Thinking(text) if text == "Read it.")));
         assert!(events.iter().any(|event| matches!(event, EngineEvent::Delta(text) if text.contains("It says hi."))));
         assert!(matches!(events.last(), Some(EngineEvent::Done { summary, .. }) if summary == "Done"));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    fn length_cut_target(url: String) -> Target {
+        Target {
+            url,
+            headers: vec![("content-type".to_string(), "application/json".to_string())],
+            dialect: Dialect::OpenAi,
+            model: "qwen3.5:9b".to_string(),
+            price: None,
+            thinking: false,
+            effort: None,
+            local_context: Some(8_192),
+            local_window: false,
+        }
+    }
+
+    /// The report (qwen3.5:9b, "Cut off: the answer reached the model's length limit"): a reply that ends on `done_reason: length` is continued,
+    /// not reported as the end of the turn.
+    #[test]
+    fn a_reply_cut_off_by_the_length_limit_is_continued_and_the_turn_ends_done() {
+        let root = std::env::temp_dir().join(format!("sdc-agent-length-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        let (url, server) = raw_provider(vec![
+            ndjson(&[
+                serde_json::json!({ "message": { "role": "assistant", "content": "First half of the report," }, "done": false }),
+                serde_json::json!({ "message": { "role": "assistant", "content": "" }, "done": true, "done_reason": "length", "prompt_eval_count": 900, "eval_count": 4096 }),
+            ]),
+            ndjson(&[
+                serde_json::json!({ "message": { "role": "assistant", "content": " and the second half." }, "done": false }),
+                serde_json::json!({ "message": { "role": "assistant", "content": "" }, "done": true, "done_reason": "stop", "prompt_eval_count": 5000, "eval_count": 20 }),
+            ]),
+        ]);
+        let target = length_cut_target(url);
+        let workspace = Workspace::new(root.to_str().unwrap(), None);
+        let prompt = prompt_in(&root, "turn-agent-length", "write the report", "qwen3.5:9b");
+        let recorder = crate::engines::Recorder::new();
+
+        drive(Backend::Ollama, &target, &workspace, Options { autonomy: Autonomy::Auto, max_steps: 5, auto_check: false, research: None }, None, &Default::default(), &prompt, &recorder.sink());
+
+        let bodies = server.join().unwrap();
+        let events = recorder.events();
+        let second = bodies[1]["messages"].to_string();
+
+        assert_eq!(bodies.len(), 2, "the cut-off reply is followed by a continuation request");
+        assert!(second.contains("First half of the report,"), "the partial answer goes back as the model's own words");
+        assert!(second.contains("cut off by the output limit"), "and the model is told to go on");
+        assert!(events.iter().any(|event| matches!(event, EngineEvent::Delta(text) if text.contains("second half"))));
+        assert!(matches!(events.last(), Some(EngineEvent::Done { summary, .. }) if summary == "Done"), "{events:?}");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A reply that used its whole output on thinking and said nothing is asked again, not reported as cut off.
+    #[test]
+    fn a_reply_that_ran_out_of_room_while_thinking_is_asked_again() {
+        let root = std::env::temp_dir().join(format!("sdc-agent-length-think-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        let (url, server) = raw_provider(vec![
+            ndjson(&[
+                serde_json::json!({ "message": { "role": "assistant", "content": "", "thinking": "Let me think about it at great length." }, "done": false }),
+                serde_json::json!({ "message": { "role": "assistant", "content": "" }, "done": true, "done_reason": "length", "prompt_eval_count": 900, "eval_count": 4096 }),
+            ]),
+            ndjson(&[
+                serde_json::json!({ "message": { "role": "assistant", "content": "Here is the answer." }, "done": false }),
+                serde_json::json!({ "message": { "role": "assistant", "content": "" }, "done": true, "done_reason": "stop", "prompt_eval_count": 950, "eval_count": 6 }),
+            ]),
+        ]);
+        let target = length_cut_target(url);
+        let workspace = Workspace::new(root.to_str().unwrap(), None);
+        let prompt = prompt_in(&root, "turn-agent-length-think", "answer me", "qwen3.5:9b");
+        let recorder = crate::engines::Recorder::new();
+
+        drive(Backend::Ollama, &target, &workspace, Options { autonomy: Autonomy::Auto, max_steps: 5, auto_check: false, research: None }, None, &Default::default(), &prompt, &recorder.sink());
+
+        let bodies = server.join().unwrap();
+        let events = recorder.events();
+
+        assert_eq!(bodies.len(), 2);
+        assert!(bodies[1]["messages"].to_string().contains("ran out of room before it said anything"));
+        assert!(events.iter().any(|event| matches!(event, EngineEvent::Delta(text) if text.contains("Here is the answer."))));
+        assert!(matches!(events.last(), Some(EngineEvent::Done { summary, .. }) if summary == "Done"), "{events:?}");
 
         let _ = std::fs::remove_dir_all(&root);
     }

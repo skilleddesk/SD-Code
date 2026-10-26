@@ -167,10 +167,12 @@ mod tests {
 
     #[test]
     fn with_the_switch_off_everything_runs_as_before() {
-        let mut guard = Guard::default();
+        crate::v3::ablating(&["nr.tool_envelope"], || {
+            let mut guard = Guard::default();
 
-        assert_eq!(guard.judge(&specs(), "read_file", &json!({})), Verdict::Run);
-        assert_eq!(guard.judge(&specs(), "read_file", &json!({})), Verdict::Run);
-        assert!(!guard.reask_with_tool(true, false));
+            assert_eq!(guard.judge(&specs(), "read_file", &json!({})), Verdict::Run);
+            assert_eq!(guard.judge(&specs(), "read_file", &json!({})), Verdict::Run);
+            assert!(!guard.reask_with_tool(true, false));
+        });
     }
 }

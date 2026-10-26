@@ -1132,6 +1132,21 @@ fn a_done_with_no_work_behind_it_is_sent_back_then_blocked() {
     assert!(got.said().contains("Not finished: the request asked for a change"), "{}", got.said());
 }
 
+/// P1-2 (G1), the stall guard: the Finish Gate above only looks at a reply with *no* tool call - a model that always calls something (even a
+/// harmless, repeated read) never reaches it, and the 25 Oct incident's screenshot (86 steps, "now creating the documentation file"
+/// announced three times, nothing ever written, the turn still said "Done") is exactly that. A turn stuck reading, never editing or running
+/// anything, is stopped honestly well before it reaches such a step count.
+#[test]
+fn a_turn_that_only_ever_reads_is_stopped_honestly_instead_of_running_forever() {
+    let script: Vec<String> = (0..150).map(|_| tool("read_file", json!({ "path": "hello.txt" }))).collect();
+
+    let got = crate::padma::task::with_contract(|| run("gate-stall", "write the project documentation to docs.md", script, 16_384, 200, &["padma.finish_gate"]));
+
+    assert!(got.bodies.len() < 150, "the turn must stop well before the script runs out: {} requests", got.bodies.len());
+    assert_eq!(got.done().as_deref(), Some("Blocked: no evidence of the work"));
+    assert!(got.said().contains("steps passed with no file changed and no command run"), "{}", got.said());
+}
+
 /// P1-2: the same request ends normally once the model really makes the change after the signal.
 #[test]
 fn a_done_after_a_real_edit_ends_the_turn() {

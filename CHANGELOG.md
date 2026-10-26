@@ -15,6 +15,33 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [Unreleased]
+
+### Fixed — "Cut off: the answer reached the model's length limit" is no longer the end of a turn
+
+The agent loop (`agent/mod.rs`) ended a turn with that summary whenever a reply stopped on `length` / `max_tokens` and made no tool call - and every guard
+(intent guard, finish gate, empty-reply retry) was written to skip such a reply, so nothing went on. On a local model it happens when the answer outgrows the
+room left in `num_ctx` (a long Bangla document, or all of the output spent on thinking). The loop now asks the model to continue from the last word (or, when
+the reply was only thinking, to answer with thinking off), up to 8 times in a row; after that the person is told to send "continue". Two tests in
+`agent::end_to_end` cover both cases. The sectioned writer (`nr.out_chunk`, N4-4) is still off and still lives in the step executor only.
+
+### Fixed — a turn that only ever reads can no longer announce "Done" with nothing written
+
+The report: a request to document the SDC project ran 86 steps over 13 minutes on a local model, said "now I'm creating the documentation
+file" three times, and ended "Done" with no file on disk. The Finish Gate (`padma::gate`, P1-2) only looks at a reply that calls *no* tool -
+a model that keeps calling something, even the same harmless read, never reaches it, so it can announce the same unfinished action for as
+long as it likes. The agent loop (`agent/mod.rs`) now also counts steps, from the start of the turn, in which nothing was edited or run; once
+a work request passes `STALL_STEPS` (100 - well above the legitimate ~60-step all-reading turn noted beside `DEFAULT_STEPS`) with still
+nothing changed, the turn is stopped the same way the Finish Gate already stops a "done" with no evidence: *Blocked: no evidence of the
+work*, naming the step count, with "continue" to pick it up again. `agent::never_again_tests::a_turn_that_only_ever_reads_is_stopped_honestly_instead_of_running_forever`
+covers it.
+
+**Looked at and left alone:** turning `nr.tool_envelope` on by default (it blocks an identical tool call repeated back to back, which looked
+like a direct fix for the same report) was tried and reverted - it pre-empts the cheap "unchanged since you read this earlier" pointer
+(`v3::ledger_diff`'s `dedupe_reads`) on a deliberate back-to-back same-file read, and its argument-schema check runs ahead of a tool's own
+error (and of Plan Mode's refusal), changing two already-tested messages. It stays off by default; turn it on per install (Settings ->
+Advanced, or `SDC_V3_ENABLE=nr.tool_envelope`) if the back-to-back block matters more than those two paths on your own project.
+
 ## [1.2.0] — PADMA: a short prompt for a big job is finished, or stopped honestly
 
 Twenty `padma.*` switches, one for each new behaviour of the PADMA plan (`sdc/docs/padma/PADMA.md`, 26 cards P0-P4). Thirteen are on by default and only protect, verify or
