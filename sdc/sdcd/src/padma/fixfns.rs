@@ -90,10 +90,15 @@ fn code_file(root: &Path, relative: &str) -> bool {
 /// (relative path, line) pairs a failure output points at, in order of appearance.
 fn pointed_at(env: &Env, failures: &[String]) -> Vec<(String, usize)> {
     let root = env.root.to_string_lossy().replace('\\', "/");
+    let real = std::fs::canonicalize(&env.root).map(|path| path.to_string_lossy().replace('\\', "/").trim_start_matches("//?/").to_string()).unwrap_or_default();
     let mut found: Vec<(String, usize)> = Vec::new();
 
     for raw in failures {
-        let line = raw.replace('\\', "/").replace(&format!("{root}/"), "");
+        let mut line = raw.replace('\\', "/").replace(&format!("{root}/"), "");
+
+        if !real.is_empty() {
+            line = line.replace(&format!("{real}/"), "");
+        }
 
         if let Some(at) = line.find("File \"") {
             let rest = &line[at + 6..];
