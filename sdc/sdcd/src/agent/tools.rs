@@ -3125,7 +3125,13 @@ mod tests {
         assert!(!part.is_error && part.content.contains("warning: noise 1") && !part.content.contains("noise 3"), "{}", part.content);
         assert!(execute(&mut context, &call("spec_read", json!({ "kind": "log", "id": "ffff" }))).is_error);
         assert!(!crate::v3::forcing(&["nr.error_slice"], || specs_for(Caps { vision: false, subagent: false, patch: false, local: true })).iter().all(|spec| spec.name != "spec_read"), "offered when the slicer is on");
-        assert!(specs_for(Caps { vision: false, subagent: false, patch: false, local: true }).iter().all(|spec| spec.name != "spec_read"), "and not otherwise");
+        /* 3.2: `nr.error_slice` is on by default for a local model now, so "otherwise" has to be said out loud. */
+        assert!(
+            crate::v3::ablating(&["nr.error_slice", "nr.fresh_step"], || specs_for(Caps { vision: false, subagent: false, patch: false, local: true }))
+                .iter()
+                .all(|spec| spec.name != "spec_read"),
+            "and not otherwise"
+        );
 
         let _ = std::fs::remove_dir_all(&root);
     }
