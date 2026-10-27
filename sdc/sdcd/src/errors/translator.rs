@@ -15,6 +15,8 @@
 //! | `blocked_path`                          | "The file guard refused that path"               |
 //! | `budget` / `rate limit`                 | "The provider stopped the turn"                  |
 //!
+//! | `session limit` / `usage limit`         | "the plan's limit is reached, until the time it names" |
+//!
 //! It is deliberately a *table*: this is the one place a new failure becomes a friendly sentence, and
 //! the `fixable` flag it returns is what decides whether the card offers `Fix this`.
 
@@ -42,6 +44,38 @@ impl Translation {
             "fixable": self.fixable,
         })
     }
+}
+
+/// When a plan-limit line says the window refills, phrased to follow "It refills": `at 12:50am (Asia/Dhaka)`,
+/// `after 2h`, `at Oct 27th, 2026 3:00 AM`. The card quotes whichever one arrived, because "wait a while" is not
+/// what a person needs to hear when the hour is already in the text.
+fn refills_at(output: &str) -> Option<String> {
+    /* The marker, and the preposition the sentence needs back: `resets 12:50am` -> "at 12:50am", but
+       `reset after 2h` -> "after 2h". */
+    const MARKERS: [(&str, &str); 3] = [("resets ", "at "), ("reset after ", "after "), ("try again at ", "at ")];
+
+    for line in output.lines() {
+        let lower = line.to_lowercase();
+
+        for (marker, preposition) in MARKERS {
+            let Some(at) = lower.find(marker) else { continue };
+
+            /* `get` rather than a slice: `to_lowercase` can change a byte length, and a rule that panicked on an
+               unusual character would be worse than a card without a time. */
+            let clause = line
+                .get(at + marker.len()..)
+                .unwrap_or("")
+                .trim()
+                .trim_end_matches(['.', ',', '!'])
+                .trim();
+
+            if !clause.is_empty() {
+                return Some(format!("{preposition}{clause}"));
+            }
+        }
+    }
+
+    None
 }
 
 fn rule(title: &str, explanation: String, fixable: bool, rule: &'static str) -> Translation {
@@ -247,6 +281,35 @@ pub fn translate(tool: &str, output: &str) -> Translation {
         );
     }
 
+    /* 3.3: a *plan's* window, not the API's. When the subscription's hours are spent the CLI refuses the turn with
+       one line - `You've hit your session limit, resets 12:50am (Asia/Dhaka)` - and the card said "claude_code
+       failed ... has no rule yet". Nothing is broken and nothing is lost: the window has to refill, and the line says
+       when. `gemini` and `codex` word the same fact differently, so all their shapes are matched here. */
+    if haystack.contains("session limit")
+        || haystack.contains("usage limit")
+        || haystack.contains("weekly limit")
+        || haystack.contains("capacity on this model")
+        || haystack.contains("quota will reset")
+        || haystack.contains("exhausted your capacity")
+    {
+        let when = match refills_at(output) {
+            Some(when) => format!("It refills {when}."),
+            None => "The line names no time; that provider's usage page shows when it refills.".to_string(),
+        };
+
+        return rule(
+            &format!("{tool}'s plan limit is reached"),
+            format!(
+                "`{first_line}`. The plan's window is spent, so the CLI stopped before the work began - nothing is \
+                 broken and nothing was spent twice. {when} Send the message again after that, or pick another engine \
+                 or model in the message box's model menu: the conversation stays where it is, and a `local` model \
+                 keeps working meanwhile."
+            ),
+            false,
+            "plan-limit",
+        );
+    }
+
     /* The CLI adapter's own sentence for a CLI that stopped on an interactive question (a sign-in
        prompt, mostly). The sentence already names the fix, so it is kept whole. */
     if haystack.contains("stopped to ask") {
@@ -389,6 +452,34 @@ mod tests {
 
     /// The adapter's sentence for a CLI stuck on its sign-in question (0.10.0) keeps its own words -
     /// they already name the fix - under a title that says what kind of problem this is.
+    /// 3.3: the card that was reported - `claude_code failed ... has no rule yet` - on the line the CLI prints.
+    #[test]
+    fn a_plan_limit_names_the_time_it_refills() {
+        let translated = translate("claude_code", "You've hit your session limit, resets 12:50am (Asia/Dhaka)");
+
+        assert_eq!(translated.rule, "plan-limit");
+        assert_eq!(translated.title, "claude_code's plan limit is reached");
+        assert!(translated.explanation.contains("refills at 12:50am (Asia/Dhaka)"), "{}", translated.explanation);
+        assert!(!translated.explanation.contains("no rule yet"));
+        assert!(!translated.fixable, "waiting is not something an agent can do instead of the person");
+
+        /* The same fact in the other two CLIs' words, and in a line that names no time at all. */
+        let gemini = translate("gemini", "You have exhausted your capacity on this model. Your quota will reset after 2h.");
+        assert_eq!(gemini.rule, "plan-limit");
+        assert!(gemini.explanation.contains("refills after 2h"), "{}", gemini.explanation);
+
+        let codex = translate("codex", "You've hit your usage limit. Upgrade to Pro, or try again at Oct 27th, 2026 3:00 AM.");
+        assert_eq!(codex.rule, "plan-limit");
+        assert!(codex.explanation.contains("refills at Oct 27th, 2026 3:00 AM"), "{}", codex.explanation);
+
+        let untimed = translate("claude_code", "Claude AI usage limit reached|1729");
+        assert_eq!(untimed.rule, "plan-limit");
+        assert!(untimed.explanation.contains("usage page"), "{}", untimed.explanation);
+
+        /* An API 429 is a different wait - seconds, not hours - and keeps the rule it already had. */
+        assert_eq!(translate("deepseek", "429 Too Many Requests: rate limit reached, retry later").rule, "budget");
+    }
+
     #[test]
     fn a_cli_waiting_for_a_sign_in_gets_its_own_rule() {
         let translated = translate(

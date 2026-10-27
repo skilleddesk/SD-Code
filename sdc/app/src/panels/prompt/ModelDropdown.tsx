@@ -151,8 +151,16 @@ export function ModelDropdown({ sessionId }: { sessionId: string | null }) {
   const renderModel = (group: CatalogGroup, row: CatalogModel) => {
     const EngineIcon = engineIcon(group.engine);
     const selected = row.id === model && row.providerId === providerId;
-    const pick = (): void =>
+    /* A provider nobody signed in to shows its models - the newest Gemini among them - and pressing one cannot run
+       it, so it opens the card that signs in instead, which is where the person was trying to go. */
+    const pick = (): void => {
+      if (group.needsAuth === true) {
+        manage();
+        return;
+      }
+
       choose({ engine: group.engine, providerId: group.providerId, model: row.id, tier: row.tier });
+    };
 
     return (
       <div
@@ -227,7 +235,7 @@ export function ModelDropdown({ sessionId }: { sessionId: string | null }) {
         <span className={BADGE}>
           {catalog.length === 0
             ? strings.prompt.model.catalogEmpty
-            : strings.prompt.model.connectedCount(groups.length)}
+            : strings.prompt.model.connectedCount(groups.filter((group) => group.needsAuth !== true).length)}
         </span>
       </div>
 
@@ -237,7 +245,7 @@ export function ModelDropdown({ sessionId }: { sessionId: string | null }) {
         </div>
       ) : null}
 
-      {groups.length === 0 && catalog.length > 0 ? (
+      {groups.every((group) => group.needsAuth === true) && catalog.length > 0 ? (
         <div className="mdd-none px-[10px] py-[8px] text-[12px] leading-[1.5] text-text-secondary" data-none-connected>
           {strings.prompt.model.noneConnected}
         </div>
@@ -250,7 +258,7 @@ export function ModelDropdown({ sessionId }: { sessionId: string | null }) {
           <div key={group.providerId} className="mdd-group mb-[6px]" data-provider-group={group.providerId}>
             <div className={GROUP_TITLE}>
               <span className="text-text-secondary">{group.providerLabel}</span>
-              <span className={BADGE + ' text-state-success'}>✓ {strings.prompt.model.via(viaOf(group))}</span>
+              <span className={BADGE + (group.needsAuth === true ? ' text-text-muted' : ' text-state-success')}>✓ {group.needsAuth === true ? strings.prompt.model.signInToUse : strings.prompt.model.via(viaOf(group))}</span>
             </div>
 
             {group.models.map((row) => renderModel(group, row))}

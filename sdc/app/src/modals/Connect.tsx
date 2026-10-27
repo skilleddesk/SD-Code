@@ -300,6 +300,9 @@ export function Connect() {
     });
   };
 
+  /* What was typed in the search box, as a model id: trimmed, and empty when it could not be one. */
+  const typed = filter.trim().split(/\s+/)[0] ?? '';
+
   const use = (modelId: string): void => {
     void chooseModel(modelId, providerId ?? '').then((ok) => {
       if (ok) {
@@ -709,9 +712,24 @@ export function Connect() {
                     ) : null}
 
                     {shown.length === 0 ? (
-                      <p className="text-[12px] text-text-muted" id="connectNoMatch">
-                        {strings.connect.modelNoMatch}
-                      </p>
+                      <div className="flex flex-col gap-[8px]">
+                        <p className="text-[12px] text-text-muted" id="connectNoMatch">
+                          {strings.connect.modelNoMatch}
+                        </p>
+                        {/* 1.5: a model newer than every source SDC has. See `strings.connect.useAnyway`. */}
+                        {typed !== '' ? (
+                          <button
+                            type="button"
+                            className={BTN_SM + ' ' + BTN_SECONDARY + ' self-start'}
+                            onClick={() => use(typed)}
+                            disabled={busy}
+                            id="connectUseAnyway"
+                          >
+                            {strings.connect.useAnyway(typed)}
+                          </button>
+                        ) : null}
+                        <p className="text-[11.5px] leading-[1.5] text-text-muted">{strings.connect.useAnywayNote}</p>
+                      </div>
                     ) : (
                       <ul className="flex max-h-[240px] flex-col gap-[4px] overflow-y-auto" id="connectModels">
                         {shown.map((model) => {

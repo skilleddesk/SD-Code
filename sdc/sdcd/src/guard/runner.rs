@@ -323,7 +323,11 @@ mod tests {
 
         limits.cwd = Some(dir.path().to_path_buf());
 
-        let outcome = run(&launch("cat marker.txt"), &limits).unwrap();
+        /* `cat` is the shell's own on every Unix, and `cmd.exe` - the shell SDC itself uses here - knows `type`. The
+           test is about the working directory, not about which reader exists, and it must not pass only because the
+           test process happened to inherit a Git PATH. */
+        let read_marker = if cfg!(windows) { "type marker.txt" } else { "cat marker.txt" };
+        let outcome = run(&launch(read_marker), &limits).unwrap();
 
         assert!(outcome.output.text.contains("here"), "{:?}", outcome.output.text);
     }

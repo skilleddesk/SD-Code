@@ -100,14 +100,19 @@ describe('groupCatalog', () => {
     row('llama3.2:3b', 'ollama'),
   ];
 
-  it('draws a group only for a connected provider, and counts the rest', () => {
+  it('draws a group for every provider, and marks the ones nobody signed in to', () => {
     const { groups, disconnected } = groupCatalog(catalog, [
       ...connected('claude', 'anthropic-api'),
       { id: 'openai-api', name: 'OpenAI API', status: 'available' },
       { id: 'ollama', name: 'Ollama', status: 'needs-auth' },
     ]);
 
-    expect(groups.map((group) => group.providerId)).toEqual(['claude', 'anthropic-api']);
+    /* 3.3: the menu used to hide a provider nobody had signed in to, and that is how "the newest Gemini model never
+       appears" happened - `gemini-4-argon` sat in the catalogue and the menu showed nothing for the provider that
+       holds it. It is shown now, marked, and it still sorts under the providers that can run. */
+    expect(groups.filter((group) => group.needsAuth !== true).map((group) => group.providerId).sort()).toEqual(['anthropic-api', 'claude']);
+    expect(groups.filter((group) => group.needsAuth === true).map((group) => group.providerId).sort()).toEqual(['ollama', 'openai-api']);
+    expect(groups.length).toBe(4);
     expect(disconnected).toBe(2);
   });
 
@@ -141,10 +146,20 @@ describe('groupCatalog', () => {
     expect(groups[0]?.older.map((model) => model.id)).toEqual(['qwen3.8-flash']);
   });
 
-  it('has no groups when nothing is connected', () => {
+  it('shows the newest model of a provider nobody signed in to', () => {
+    const gemini = [row('gemini-3.8-flash', 'gemini'), row('gemini-4-argon', 'gemini'), row('gemini-2.5-pro', 'gemini')];
+    const { groups } = groupCatalog(gemini, [{ id: 'gemini', name: 'Gemini', status: 'needs-auth' }]);
+
+    expect(groups).toHaveLength(1);
+    expect(groups[0]?.needsAuth).toBe(true);
+    expect(groups[0]?.models.map((model) => model.id)).toContain('gemini-4-argon');
+  });
+
+  it('with nothing connected, every provider is still shown and marked', () => {
     const { groups, disconnected } = groupCatalog(catalog, []);
 
-    expect(groups).toEqual([]);
+    expect(groups.length).toBe(4);
+    expect(groups.every((group) => group.needsAuth === true)).toBe(true);
     expect(disconnected).toBe(4);
   });
 });

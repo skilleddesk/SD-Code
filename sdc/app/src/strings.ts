@@ -713,10 +713,12 @@ const english = {
       catalogEmpty: 'the daemon has not listed any yet',
       /** Nothing connected: the menu has no rows, and says what would give it some. */
       noneConnected: 'Nothing is connected yet. Sign in to a CLI or add an API key to get models here.',
-      /** The one line that stands in for every provider the menu leaves out. */
+      /** The count of providers the menu shows but cannot run: their models are listed, marked. */
       disconnected: (count: number): string =>
         count === 1 ? '1 provider not connected' : `${count} providers not connected`,
       manage: 'Manage in Provider Hub',
+      /** The badge on a provider nobody signed in to: pressing one of its models opens this card instead. */
+      signInToUse: 'sign in to use',
       older: (count: number): string => `Older versions (${count})`,
       hideOlder: 'Hide older versions',
       connect: (mode: 'login' | 'api', label: string): string =>
@@ -1127,6 +1129,16 @@ const english = {
       shown === total ? `${total} rows · bundled ${snapshot}` : `${shown} of ${total} rows`,
     modelFilter: 'Filter models…',
     modelNoMatch: 'No model matches that filter.',
+
+    /**
+     * 1.5: a model a person typed that nothing SDC reads lists.
+     *
+     * The report this answers is "the newest Gemini model never appears". No catalogue can be ahead of every provider,
+     * so when the filter matches nothing the id that was typed can still be used: a CLI is usually able to run a model
+     * before it is written down anywhere SDC can read.
+     */
+    useAnyway: (id: string): string => `Use "${id}" anyway`,
+    useAnywayNote: 'SDC has no row for this model, so nothing is known about its window or its price. It is used exactly as typed.',
     footer: {
       login: 'The credential is written by the CLI, never by SDC.',
       api: 'Save the key, then pick a model above.',

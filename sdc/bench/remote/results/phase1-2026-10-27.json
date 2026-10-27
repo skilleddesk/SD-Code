@@ -1,0 +1,7 @@
+{
+  "when": "2026-10-27T15:22:15.490Z",
+  "node": "v24.22.1",
+  "platform": "win32 x64",
+  "topology": "relay, daemon and browser code on one machine (loopback)",
+  "results": []
+}

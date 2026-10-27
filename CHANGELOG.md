@@ -15,6 +15,41 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [1.4.1] — "You've hit your session limit": the card with no rule, and the model the menu hid
+
+Two reports, one shape: a fact SDC already had was dropped between the code that knew it and the card that shows it.
+
+### Fixed — a plan's limit is not "no rule yet"
+
+`claude` prints one line when a subscription's window is spent: `You've hit your session limit · resets 12:50am
+(Asia/Dhaka)`. `errors::translator` had a rule for an API's `rate limit` and none for a plan's window, so the card said
+"claude_code failed ... This failure has no rule yet". It has a rule now (`plan-limit`): the title names the provider,
+and the explanation quotes the refill time out of the line — `refills at 12:50am (Asia/Dhaka)` — which
+`refills_at` reads from all three shapes (`resets …`, `Your quota will reset after 2h`, `or try again at …`).
+Nothing was spent twice and no work is lost, so the card says what is actually available: send the message again after
+the reset, or pick another engine in the model menu — the conversation stays where it is, and a `local` model keeps
+working meanwhile. An API 429 keeps the `budget` rule it had: that wait is seconds, not hours.
+
+### Fixed — the newest model of a provider nobody signed in to
+
+1.3.0 stopped SDC signing itself in to Gemini by finding someone else's credentials on disk — right — and left
+the Gemini card at `needs-auth`. The model menu then dropped every provider that was not connected, so **every Gemini
+model left the menu with it**, `gemini-4-argon` among them — a row that was in the catalogue all along (and that
+OpenRouter's live list carries as `google/gemini-4-argon`). `groupCatalog` keeps those providers now, marked
+`needsAuth` and sorted under the ones that can run: the models are visible, and pressing one opens the card that signs
+in instead of pretending to start a turn. The default model is never moved onto a provider that cannot run.
+
+### Fixed — a test that passed only because Git was on the PATH
+
+`guard::runner`'s working-directory test read its marker with `cat`. SDC runs a command through `cmd.exe` on Windows,
+where `cat` does not exist, so the test was passing on an inherited Git PATH and failing in the shell SDC actually
+uses. It runs `type` there now.
+
+### Verified
+
+`cargo test --manifest-path sdcd/Cargo.toml --lib` — 1819 passed, 4 ignored. `cargo clippy --all-targets -- -D
+warnings` — clean. `pnpm test` — 351 passed. `pnpm typecheck`, `pnpm lint` — clean.
+
 ## [1.4.0] — "I ask for X and it does Y": the goal in front of the model, and a scope that was being ignored
 
 1.3.0 turned on the switches that cover every reported failure of the local model **except one** - the drift report

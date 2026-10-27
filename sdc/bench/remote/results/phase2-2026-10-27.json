@@ -1,0 +1,35 @@
+{
+  "when": "2026-10-27T15:22:15.390Z",
+  "node": "v24.22.1",
+  "platform": "win32 x64",
+  "topology": "relay, daemon, mail catcher and browser code on one machine (loopback); no push service, no mail provider",
+  "results": [
+    {
+      "scenario": "push: RFC 8291 encrypt (ECDH + 2 HKDF + AES-GCM)",
+      "samples": 200,
+      "p50": 1.033,
+      "p95": 4.585,
+      "max": 17.054,
+      "unit": "ms",
+      "note": "Node, not workerd; the message is 45 bytes"
+    },
+    {
+      "scenario": "push: VAPID JWT sign (ECDSA P-256)",
+      "samples": 200,
+      "p50": 0.417,
+      "p95": 1.119,
+      "max": 16.416,
+      "unit": "ms",
+      "note": "Node, not workerd"
+    },
+    {
+      "scenario": "push: whole send() to a stub push service",
+      "samples": 200,
+      "p50": 1.585,
+      "p95": 6.163,
+      "max": 27.549,
+      "unit": "ms",
+      "note": "Node, not workerd; includes both of the above"
+    }
+  ]
+}

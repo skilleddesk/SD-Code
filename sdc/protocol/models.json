@@ -774,6 +774,27 @@
           "name": "Gemini 3.8 Flash · plan"
         },
         {
+          "id": "gemini-3.6-flash",
+          "tier": "balanced",
+          "ctx": 1000000,
+          "cost": "subscription",
+          "name": "Gemini 3.6 Flash · plan"
+        },
+        {
+          "id": "gemini-3.5-flash-lite",
+          "tier": "fast",
+          "ctx": 1000000,
+          "cost": "subscription",
+          "name": "Gemini 3.5 Flash-Lite · plan"
+        },
+        {
+          "id": "gemini-3.1-flash-lite",
+          "tier": "fast",
+          "ctx": 1000000,
+          "cost": "subscription",
+          "name": "Gemini 3.1 Flash-Lite · plan"
+        },
+        {
           "id": "gemini-3.5-flash",
           "tier": "balanced",
           "ctx": 1000000,

@@ -173,6 +173,13 @@ export interface CatalogGroup {
   models: CatalogModel[];
   /** Every other version the provider still lists, behind `Older versions…`. */
   older: CatalogModel[];
+  /**
+   * True when this provider's card is not `connected`, so its models are listed but cannot run yet.
+   *
+   * Listed all the same: the newest model a provider offers is what tells a person whether signing in is worth
+   * it, and hiding the provider hid exactly that.
+   */
+  needsAuth?: boolean;
 }
 
 /** The menu's answer: the connected providers, and how many are not. */
@@ -427,9 +434,13 @@ export function groupCatalog(
   let disconnected = 0;
 
   for (const [providerId, entry] of rows) {
-    if (!connected.has(providerId)) {
+    /* A provider nobody signed in to keeps its rows in the menu, marked, and is counted. Skipping it was how "the
+       latest Gemini model never appears" happened: the row was in the catalogue and the menu showed nothing at all for
+       the provider that has it. Shown-but-not-runnable is the honest middle. */
+    const needsAuth = !connected.has(providerId);
+
+    if (needsAuth) {
       disconnected += 1;
-      continue;
     }
 
     /* The models a person put in use are this provider's menu; everything else it lists is one
@@ -445,6 +456,7 @@ export function groupCatalog(
       TIER_ORDER[right.tier] - TIER_ORDER[left.tier] || left.name.localeCompare(right.name);
 
     groups.push({
+      ...(needsAuth ? { needsAuth } : {}),
       providerId,
       providerLabel: entry.label,
       engine: engineForProvider(providerId),
@@ -455,6 +467,14 @@ export function groupCatalog(
 
   /* Subscriptions first - they are paid for already - then keyed and local providers by name. */
   groups.sort((left, right) => {
+    /* Signed in first: a provider that cannot run yet is shown so a person can see what it offers, never above one
+       that can. `sort` is stable, so the order inside each half is the order it already had. */
+    const bySignIn = Number(left.needsAuth === true) - Number(right.needsAuth === true);
+
+    if (bySignIn !== 0) {
+      return bySignIn;
+    }
+
     const leftCli = left.engine === 'native_api' ? 1 : 0;
     const rightCli = right.engine === 'native_api' ? 1 : 0;
 
@@ -830,7 +850,10 @@ export const useModelStore = create<ModelState & ModelActions>()((set, get) => (
     }
 
     const { groups } = groupCatalog(state.catalog, providers, state.inUse);
-    const group = groups.find((candidate) => candidate.providerId === 'ollama') ?? groups[0];
+    /* Only a provider that is signed in can run: one that is merely listed - shown in the menu so its models come
+       into view - is not somewhere the default may be moved to. */
+    const runnable = groups.filter((candidate) => candidate.needsAuth !== true);
+    const group = runnable.find((candidate) => candidate.providerId === 'ollama') ?? runnable[0];
     const first = group?.models[0];
 
     if (group === undefined || first === undefined) {
