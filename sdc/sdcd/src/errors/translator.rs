@@ -463,6 +463,11 @@ mod tests {
         assert!(!translated.explanation.contains("no rule yet"));
         assert!(!translated.fixable, "waiting is not something an agent can do instead of the person");
 
+        /* The line exactly as `claude` printed it, middle dot and all - this is the report. */
+        let reported = translate("claude_code", "You've hit your session limit · resets 12:50am (Asia/Dhaka)");
+        assert_eq!(reported.rule, "plan-limit");
+        assert!(reported.explanation.contains("refills at 12:50am (Asia/Dhaka)"), "{}", reported.explanation);
+
         /* The same fact in the other two CLIs' words, and in a line that names no time at all. */
         let gemini = translate("gemini", "You have exhausted your capacity on this model. Your quota will reset after 2h.");
         assert_eq!(gemini.rule, "plan-limit");
