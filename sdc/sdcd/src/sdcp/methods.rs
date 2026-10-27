@@ -284,8 +284,15 @@ async fn run_turn(
             let block = crate::sme::memory::render(&notes, cap);
 
             if !block.is_empty() {
-                /* M2-5: the memory is data about the project, not an instruction - with provenance on, it says so. */
-                let block = if crate::v3::on("context.provenance") { crate::sme::frame::tagged(crate::sme::frame::Source::Memory, &block) } else { block };
+                /* M2-5: the memory is data about the project, not an instruction - with provenance on, it says so.
+                   Asked for *this* turn's model (3.3): the switch is local-only, and this block is prepended to the
+                   prompt a cloud model would otherwise be sent untagged. */
+                let local = plan.engine_id == "ollama" || prompt.provider.as_deref() == Some("ollama");
+                let block = if crate::v3::on_in("context.provenance", &crate::v3::ModelCtx::new(local)) {
+                    crate::sme::frame::tagged(crate::sme::frame::Source::Memory, &block)
+                } else {
+                    block
+                };
 
                 prompt.text = format!("{block}\n\n{}", prompt.text);
             }

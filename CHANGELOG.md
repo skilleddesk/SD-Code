@@ -15,6 +15,64 @@ release - the newest - and deletes the others when it publishes (`release.yml`, 
 release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
 working build is a trap rather than a history. The entries below are kept for the record.
 
+## [1.4.0] — "I ask for X and it does Y": the goal in front of the model, and a scope that was being ignored
+
+1.3.0 turned on the switches that cover every reported failure of the local model **except one** - the drift report
+itself. Two switches answer it, both were off, and neither costs a model call.
+
+### Changed — the goal is put back in front of the model every eighth step (`sme.rule_capsule`)
+
+A small model does not lose the *edges* of a prompt, it loses the middle - which is why `sme.prompt_diet` already
+bookends the goal. Over a long **turn** the same thing happens step by step: by step nine the goal is twenty messages
+back. `sme.rule_capsule` is 120 tokens every eighth step - the goal, what done means, what is never allowed, and the
+language to answer in - and it was written, tested and off. On for local models now.
+
+### Changed — only the person and the project may instruct (`context.provenance`)
+
+Every part of the context is tagged `[user]`, `[policy]`, `[tool-output]`, `[web]`, `[file]` or `[memory]`, and the
+system prompt says that only the first two can instruct. This is the other half of "I ask for X and it does Y": a 9B
+follows a sentence it read in a file or a web page as readily as one from the person. On for local models now.
+
+### Fixed — a `LocalOnly` switch was reaching cloud models through every `technique(..)` call site
+
+`v3::turn_on` falls through to `v3::on`, which knows nothing about a switch's scope - so **every** technique the agent
+loop asks about was asked without a model. Nothing showed while those switches were off. The moment this release
+turned two of them on, a *cloud* turn started getting the provenance tags and the rule capsule, and a frame test that
+had asserted the opposite for a long time caught it. `v3::turn_on_in` is the fix, and it is the function a turn now
+asks: the rule lives where the question is asked rather than in a promise test that only held `on_in` to it. The
+memory block prepended by `engine.start` got the same treatment - it is the one other place that tags what a model
+will read.
+
+(1.3.0 fixed the same class of bug in `navaratna::envelope`, one call site at a time. This is the general one.)
+
+### Looked at and left off — `turn.contract`'s closing ask
+
+It was the obvious candidate for the *"did I do what the user asked?"* check, and turning it on was tried. Its closing
+ask is **one more model call at the end of every turn that touched a file** - fifteen seconds on a local 9B - to have
+the model *narrate* what it did. The check that matters is already on: `padma.finish_gate` ends a turn only when every
+done-when has evidence and lists done / blocked / remaining, and the Trust pack's `completion` is built from the
+record rather than from the model's account of itself. A model's own summary of its work is the weakest evidence in
+the room, and it is the one thing this project keeps removing. Switch it on per project if you want it as well.
+
+### Verified
+
+Node.js was installed **through SDC's own installer** (`tool.install { id: "node" }`) to finish what the 1.3.0 report
+had to leave untested, and that unlocked the rest:
+
+- `pnpm typecheck`, `pnpm lint`, `pnpm test` (350 tests) and `node protocol/check.mjs` (206 methods agree) now run
+  **on this machine**, not only in CI;
+- `gemini --version` → `0.60.0` and `codex --version` → `codex-cli 0.155.1`: both CLIs start, so the Gemini card now
+  reads *"`gemini` is installed · Sign in opens Google in your browser"* - and its status is still `needs-auth` with
+  the old credential file sitting on the disk, which is the whole point of 1.3.0's change;
+- `cli.logout` on all three paths: Gemini (deleted both credential files, took only `security.auth.selectedType` out
+  of its settings, left `history`, `projects.json`, `installation_id` and `tmp` alone), Codex (`codex logout` ran),
+  and a key provider refused by name. The owner's own Gemini credential was backed up first and restored after;
+- **the manual rotation cycle, in one chat, with `relay.auto` off the whole time**: `turn-53548` three steps on
+  `ollama:qwen3.5:9b`, then `rotation.escalate` - which first answers `sent: false` with the exact capsule, row 1 of 2
+  of the owner's own chain, 185 tokens and the redactions, before anything leaves - then `confirm: true` →
+  `turn-53588` on `deepseek:deepseek-flash` (`mode=pinned`), then `turn-53621` back on `ollama:qwen3.5:9b` at
+  `$0.0000 (local)`. Claude, row 2, was never asked.
+
 ## [1.3.0] — the local model does the work: its model lists, its loops, and a sign-in nobody asked for
 
 Three reports, each traced to a cause rather than a symptom: *"after adding CLIs, SDC shows old/bad model lists"*, *"the newer Gemini models

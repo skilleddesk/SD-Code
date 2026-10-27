@@ -147,6 +147,18 @@ pub fn on_in(feature: &str, model: &ModelCtx) -> bool {
 /// `nr.fresh_step`, `nr.lang_spec`, `nr.tag_route`, `nr.think_budget`, `nr.escalation_packet`, `nr.role_rotation`,
 /// `padma.conductor`, `padma.think_policy`, `padma.tool_subset` and `relay.learn`.
 ///
+/// 3.3 finished the one failure that still had no default behind it - **"I ask for X and it does Y"**. Two switches
+/// answer it and both were off: `sme.rule_capsule` puts the goal, the done-when and the answer's language back in
+/// front of the model every eighth step (a small model loses the middle of a long turn, never the edges), and
+/// `context.provenance` tags every part of the context so the system prompt can say that only the person and the
+/// project's policy may instruct - which is what stops a model obeying a sentence it read in a tool result or a web
+/// page. Neither costs a model call.
+///
+/// The third, `turn.contract`, was tried and left off, and the reason is in its row: the "did I do what was asked?"
+/// check it offers is the model *narrating* its own work for one extra call per turn, and the check that matters is
+/// already on - `padma.finish_gate` ends a turn only when every done-when has evidence, and the Trust pack's
+/// `completion` is built from the record rather than from what the model said.
+///
 /// What stayed off, and why it is not an oversight:
 ///
 /// * `relay.auto` and `relay.preroute` - these **spend money**. The relay is the person's consent, given in Settings,
@@ -220,9 +232,9 @@ pub const FEATURES: &[Feature] = &[
     Feature { name: "tools.catalog", default_on: false, token_technique: true, scope: Scope::LocalOnly, evidence: Evidence::None, what: "M2-1: a local model gets the six core tool schemas, one line for every other tool, and tool_search to fetch one - instead of never learning the others exist. Unmeasured, local models only" },
     Feature { name: "tools.describe_when_not", default_on: false, token_technique: true, scope: Scope::LocalOnly, evidence: Evidence::None, what: "M2-2: tool descriptions in two lengths - a class-L local model gets what the tool does, when to use it, when not to and an example; a class-S one a single line. Unmeasured, local models only" },
     Feature { name: "skills.must_read", default_on: false, token_technique: false, scope: Scope::All, evidence: Evidence::None, what: "M2-3: if the request matches a skill and the model makes its first edit without reading that skill's file, the edit's answer carries one reminder to read it. It never blocks the edit" },
-    Feature { name: "sme.rule_capsule", default_on: false, token_technique: true, scope: Scope::All, evidence: Evidence::None, what: "M2-4: every eighth step a reminder of at most 120 tokens - the goal, what done means, what is never allowed and the language to answer in" },
-    Feature { name: "context.provenance", default_on: false, token_technique: true, scope: Scope::All, evidence: Evidence::None, what: "M2-5: every part of the context is tagged [user], [policy], [tool-output], [web], [file] or [memory], and the system prompt says only the first two can instruct" },
-    Feature { name: "turn.contract", default_on: false, token_technique: false, scope: Scope::All, evidence: Evidence::None, what: "M2-6: a soft limit of tool calls by the job's size (3 / 10 / 25) that informs and carries on, and a final answer of three parts (what changed, what was verified, what was not done) after a turn that changed files" },
+    Feature { name: "sme.rule_capsule", default_on: true, token_technique: true, scope: Scope::LocalOnly, evidence: Evidence::None, what: "unmeasured; M2-4 (task anchoring): every eighth step a reminder of at most 120 tokens - the goal, what done means, what is never allowed and the language to answer in. On for local models since 3.3: a small model loses the goal in the middle of a long turn, which is the \"I asked for X and it did Y\" report" },
+    Feature { name: "context.provenance", default_on: true, token_technique: true, scope: Scope::LocalOnly, evidence: Evidence::None, what: "unmeasured; M2-5: every part of the context is tagged [user], [policy], [tool-output], [web], [file] or [memory], and the system prompt says only the first two can instruct. On for local models since 3.3: a small model follows an instruction it finds in a tool result or a web page as readily as one from the person" },
+    Feature { name: "turn.contract", default_on: false, token_technique: false, scope: Scope::All, evidence: Evidence::None, what: "M2-6: a soft limit of tool calls by the job's size (3 / 10 / 25) that informs and carries on, and a final answer of three parts (what changed, what was verified, what was not done) after a turn that changed files. Tried on by default in 3.3 and left off: its closing ask is **one more model call at the end of every turn that touched a file** - fifteen seconds on a local 9B - to have the model *narrate* what it did, while `padma.finish_gate` (on) already ends a turn only when each done-when has evidence and lists done / blocked / remaining, and the Trust pack's `completion` is built from the record rather than from the model's account of itself. Switch it on per project if you want the model's own three-part summary as well" },
     Feature { name: "memory.v2", default_on: false, token_technique: true, scope: Scope::All, evidence: Evidence::None, what: "M3: memory facts carry [stated] / [observed] / [inferred] (an inferred one is never a rule); a code-only pass after the turn adds, corrects and merges; the model is sent an index of the memory files instead of their text; temporary facts are not kept and a file has a size limit. Unmeasured" },
     Feature { name: "verify.api_exists", default_on: true, token_technique: false, scope: Scope::All, evidence: Evidence::Safety, what: "M4-1: after an edit, the names it imports are looked up in the dependencies actually installed (node_modules, a virtual environment, a crate's source) with no model and no network; a name that does not exist is a warning with the nearest real names, and dependencies that are not installed are said to be unchecked. It reads files and blocks nothing" },
     Feature { name: "research.sentence_cite", default_on: false, token_technique: true, scope: Scope::All, evidence: Evidence::None, what: "M4-2: /research shows a page as numbered sentences, the answer cites [n:i] or [n:i-j], and after the answer each pointer is checked in code - the claim's words must be in the sentences it cites - and the ones that do not hold are flagged. Unmeasured" },
@@ -503,6 +515,17 @@ pub fn turn_on(turn_id: &str, feature: &str) -> bool {
         Some(on) => on.contains(&feature),
         None => on(feature),
     }
+}
+
+/// [`turn_on`], **narrowed by the switch's scope** - what a turn should ask (3.3).
+///
+/// `turn_on` falls through to `on`, which knows nothing about scope, so a `LocalOnly` switch that is on by default
+/// reached a cloud model through every `technique(..)` call site. Nothing showed while those switches were off; the
+/// moment 3.3 turned three of them on, a cloud turn started getting the provenance tags and the rule capsule, and a
+/// test that had asserted the opposite for years caught it. The promise test only held `on_in` to the rule, which is
+/// why it never saw this - so the rule now lives in the function a turn actually calls.
+pub fn turn_on_in(turn_id: &str, feature: &str, model: &ModelCtx) -> bool {
+    turn_on(turn_id, feature) && scope_of(feature).allows(model)
 }
 
 /// The tools whose answers come from outside the machine and the person (W9): the web, the browser, MCP servers.

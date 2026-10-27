@@ -1905,7 +1905,10 @@ fn drive(
     let target = &tuned;
     /* v3 Q2: this turn's token techniques, settled once for its model (profile, setting, default). */
     let _switches = crate::v3::TurnSwitches::begin(&turn_id, prompt.provider.as_deref().unwrap_or_default(), &target.model);
-    let technique = |feature: &str| crate::v3::turn_on(&turn_id, feature);
+    /* 3.3: every technique is asked **for this turn's model**, so a `LocalOnly` one cannot reach a model the person
+       picked by hand - see `v3::turn_on_in`. The explicit `scope_model.local` checks below it predate this and are
+       left where they are: they say the same thing at the place a reader looks for it. */
+    let technique = |feature: &str| crate::v3::turn_on_in(&turn_id, feature, &scope_model);
     let vision = browser::vision(target.dialect == Dialect::Anthropic, &target.model);
     /* The project's skills (0.13): their names and when to use them; the agent reads one when it applies. */
     let language = person_language(prompt);
@@ -4566,10 +4569,16 @@ mod end_to_end {
             sent
         };
 
-        let with = ask("on");
+        /* The bookend is what is under test, so the provenance tag - on for a local model since 3.3, and a prefix on
+           the person's own words - is switched off here rather than written into the assertion. */
+        let with = crate::v3::ablating(&["context.provenance"], || ask("on"));
 
         assert!(with.starts_with("Goal: why does the header flicker?") && with.ends_with("The goal, again: why does the header flicker?"), "{with}");
-        assert_eq!(crate::v3::ablating(&["sme.prompt_diet", "effort"], || ask("off")), "why does the header flicker?", "with the diet off it is sent exactly as it was typed");
+        assert_eq!(
+            crate::v3::ablating(&["sme.prompt_diet", "effort", "context.provenance"], || ask("off")),
+            "why does the header flicker?",
+            "with the diet off it is sent exactly as it was typed"
+        );
     }
 
     #[test]
