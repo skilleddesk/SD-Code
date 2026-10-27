@@ -23,6 +23,7 @@
 
 pub mod background;
 pub mod browser;
+pub mod closing;
 pub mod describe;
 pub mod dialect;
 pub mod gate;
@@ -3361,9 +3362,21 @@ Not finished: {reason}. Tell me how to go on, or send \"continue\" to try again.
                 hook.local_step();
             }
 
+            /* Goal 1's last check, read off the turn instead of asked of the model - see `closing`. */
+            let closed = if crate::v3::on("turn.closing") {
+                closing::line(closing::Ended {
+                    files: context.changed.len(),
+                    passed: &passed_checks,
+                    open: &closing::open_steps(context.plan.as_ref()),
+                })
+                .unwrap_or_default()
+            } else {
+                String::new()
+            };
+
             sink.send(EngineEvent::Done {
                 summary: summary.to_string(),
-                meta: format!("{}{}{}{}", meta(step, input_tokens, output_tokens, target.price) + &cached(cached_tokens), timing(model_time, tool_time), estimate.unwrap_or_default(), if receipt_on { crate::v3::receipt(&receipt_parts, &saved) } else { String::new() }),
+                meta: format!("{}{}{}{}{}", meta(step, input_tokens, output_tokens, target.price) + &cached(cached_tokens), timing(model_time, tool_time), estimate.unwrap_or_default(), if receipt_on { crate::v3::receipt(&receipt_parts, &saved) } else { String::new() }, closed),
                 pass: None,
             });
 
@@ -4668,6 +4681,11 @@ mod end_to_end {
         assert_eq!(cards, ["Create", "Run"]);
         assert!(events.contains(&EngineEvent::Delta("Created hello.txt and checked it.".into())));
         assert!(matches!(events.last(), Some(EngineEvent::Done { meta, .. }) if meta.starts_with("3 steps · 200 in · 40 out")));
+
+        /* 1.4.2: the same footer ends with what the turn closed - one file written, read off the turn
+           itself rather than asked of the model (`closing`). */
+        let Some(EngineEvent::Done { meta, .. }) = events.last() else { panic!("no Done event") };
+        assert!(meta.contains(" · closed: 1 file"), "{meta}");
 
         let _ = std::fs::remove_dir_all(&root);
     }

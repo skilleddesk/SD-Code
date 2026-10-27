@@ -10,10 +10,63 @@ This file describes what changed, not what is planned. Anything still open is na
 
 ---
 
-**Earlier versions (0.4.1 to 0.4.4) are no longer published.** The release pipeline keeps exactly one
-release - the newest - and deletes the others when it publishes (`release.yml`, "Keep only this
-release"). 0.4.1 to 0.4.3 never rendered a window at all, and keeping them downloadable next to a
-working build is a trap rather than a history. The entries below are kept for the record.
+## [1.4.2] — the last check of a turn, and six switches measured on the real 9B
+
+### Added — a turn accounts for itself at the end, without a second model call
+
+Goal 1 asks for one last check after the model stops: "did I do what you asked?". `turn.contract`
+answers it by asking the model for three parts, which on a 9B model is a whole extra call - about
+fifteen seconds - at the end of every turn that touched a file, spent describing work the harness
+watched happen.
+
+`agent::closing` reads the answer off the turn instead: how many files it wrote, which checks passed
+afterwards, and which steps of the model's own checklist were left open. The line sits in the footer
+beside the token count: ` · closed: 2 files, 1 check passed, still open: Run the tests (+1)`. It
+cannot be flattered and it cannot be forgotten, because no model is asked anything. `turn.closing`
+switches it; `turn.contract` stays off, since the same question asked of the model is what this
+replaces.
+
+### Changed — the six switches that said "unmeasured" now carry a measurement
+
+`sdcd bench navaratna --live` was run against `qwen3.5:9b` on this machine on 2026-10-26: the same
+four-step demo, once per row, against a baseline of **3/4 steps, 5 calls, 7,865 tokens, 316s**.
+
+| row | outcome | calls | tokens | time |
+|---|---|---|---|---|
+| `nr.best_of_n` | **4/4** | 6 | 2,178 | 91s |
+| `nr.contract_lock` | **4/4** | 6 | 4,117 | 153s |
+| `nr.test_first` | 3/4 | 3 | 3,805 | 152s |
+| `nr.think_budget` | 3/4 | 4 | 4,218 | 156s |
+| `nr.out_chunk` | 3/4 | 6 | 7,698 | 282s |
+| `nr.error_slice` | 3/4 | 6 | 15,098 | 556s |
+
+All six now carry `Evidence::Bench` with those numbers instead of `Evidence::None`, so the promise
+test no longer has to call them unmeasured. **No default moved**, and that is deliberate:
+
+- `best_of_n` and `contract_lock` finished the demo the baseline could not, in a third of the time,
+  and both still stay off. `best_of_n` multiplies the calls a step makes and only runs after a hard
+  step has already failed a check (`navaratna::bestofn`); `contract_lock` makes a later write to a
+  locked signature fail, which is a decision a person makes. Five tests assert both are off by
+  default, and a four-step demo is not a reason to overrule them - the rows can be switched on per
+  project.
+- `test_first` reached the same 3/4 for half the tokens and does not become a default either: with it
+  on, the seven `agent::steps_tests` do not finish - 8s with it off, still running after three
+  minutes with it on - so it waits for a failing test the model may never write. That wait needs a
+  bound first, and the reason is written next to the row.
+- `out_chunk` and `error_slice` keep their defaults too. `out_chunk` is the continuation for a long
+  document and `error_slice` cuts a compiler log down to its first error; the demo writes no long
+  document and prints no long log, so all the run measured was the cost of the extra step, and one
+  run on a 9B is a noisy measurement.
+
+### Verified
+
+- `cargo test --lib` — **1,825 passed, 0 failed**, 4 ignored, 324s
+- `cargo clippy --all-targets -- -D warnings` — clean
+- `sdc/cloud` (the relay) — typecheck and 114 tests, run three times, all passed
+- `models.list` with `refresh` on a live daemon — Gemini 14 rows (10 from its own CLI), Claude 22 (19
+  from its own CLI), Codex 13 (12 from its own binary), and no duplicate id inside any provider
+- the footer grows a ` · closed: …` line on a real turn (`agent::the_footer_…`, which drives
+  `write_file` and then a final answer through the loop)
 
 ## [1.4.1] — "You've hit your session limit": the card with no rule, and the model the menu hid
 
