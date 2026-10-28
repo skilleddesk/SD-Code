@@ -1419,7 +1419,7 @@ describe('sendPrompt in agent mode', () => {
     expect(sdcpCall.mock.calls[0]?.[1]).toMatchObject({ agent: true, autonomy: 'auto' });
   });
 
-  it('sends the effort chosen in the model menu, and none on Auto (0.14)', async () => {
+  it('sends no effort - the model menu no longer offers one, so a level stored by an earlier version is ignored (v5)', async () => {
     const { storeSetting } = await import('../lib/settings');
     const memory = new Map<string, string>();
 
@@ -1430,7 +1430,7 @@ describe('sendPrompt in agent mode', () => {
 
     storeSetting('agent-effort', 'high');
     await sendPrompt('make it faster', 's7');
-    expect(sdcpCall.mock.calls.at(-1)?.[1]).toMatchObject({ effort: 'high' });
+    expect(sdcpCall.mock.calls.at(-1)?.[1]).not.toHaveProperty('effort');
 
     storeSetting('agent-effort', 'auto');
     await sendPrompt('make it faster', 's7');

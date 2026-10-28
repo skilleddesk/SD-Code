@@ -1,6 +1,7 @@
 import { LoaderCircle, Mic, Square } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
+import { heldLanguage, MIN_PHRASE_MS, PhraseCutter, tidyDictation, type HeardPhrase, type Phrase } from '../lib/dictation';
 import { micProblem } from '../lib/mic';
 import { waveLevel } from '../lib/voiceWave';
 import { storedSettings } from '../lib/settings';
@@ -17,12 +18,15 @@ import { toast } from '../store/toast';
  * box a dakha jabe ki lakha hosse". No streaming recogniser is offered in every region (Model Studio's realtime
  * ASR is Beijing and Singapore only), so the live caption is built from the transcriber SDC already uses:
  *
- *   - the microphone is read as raw samples, cut into **phrases** at the pauses (700 ms of quiet after
- *     speech, or 20 s at most);
+ *   - the microphone is read as raw samples, cut into **phrases** at natural pauses (`lib/dictation`: 1 s of
+ *     quiet after speech; a long breathless stretch is cut at its quietest moment, never inside a word);
  *   - while a phrase is being spoken it is transcribed again every ~1.2 s, so its words grow on screen
  *     (an interim caption: shown, never recorded - the daemon sends it live only);
- *   - when the phrase ends it is transcribed once more and its text is kept; the next phrase starts empty,
- *     so a long dictation never re-sends what was already written.
+ *   - when the phrase ends it is transcribed once more and its text is kept - with a time limit and one retry, so
+ *     one lost answer can never hold back everything said after it; the next phrase starts empty, so a long
+ *     dictation never re-sends what was already written;
+ *   - when listening stops the phrases are put together by `tidyDictation`: stutters, filler sounds and words a
+ *     cut left on both sides are taken out, and nothing else is changed.
  *
  * Every request is 16 kHz mono WAV, which whisper.cpp reads without `ffmpeg`; the daemon transcribes locally
  * when a whisper is installed and only otherwise with a connected provider, and says which one heard it.
@@ -31,12 +35,8 @@ import { toast } from '../store/toast';
 const RATE = 16000;
 /** How often a phrase still being spoken is shown again. */
 const INTERIM_MS = 1200;
-/** The pause that ends a phrase. */
-const PAUSE_MS = 700;
-/** The longest phrase: past this it is cut even without a pause, so no request grows without a bound. */
-const MAX_PHRASE_MS = 20_000;
-/** A phrase shorter than this is not worth a request. */
-const MIN_PHRASE_MS = 400;
+/** How long one transcription may take before it counts as lost. */
+const HEAR_TIMEOUT_MS = 45_000;
 /** The bars of the live wave, and how often it is redrawn. */
 const WAVE_BARS = 7;
 const WAVE_MS = 60;
@@ -108,15 +108,23 @@ function join(chunks: readonly Float32Array[]): Float32Array {
   return all;
 }
 
-/** One transcription, answered by the daemon's `VoiceTranscribed` event. */
-async function hear(samples: Float32Array, rate: number, sessionId: string | undefined, interim: boolean): Promise<{ text: string; engine: string | null; local: boolean; error: string | null } | null> {
-  const id = await transcribe(base64(toWav(samples, rate)), 'audio/wav', chosenLanguage(), sessionId, interim, chosenEngine());
+type Heard = { text: string; engine: string | null; local: boolean; error: string | null };
+
+/** One transcription, answered by the daemon's `VoiceTranscribed` event - or `null` when no answer came in time. */
+async function hear(samples: Float32Array, rate: number, sessionId: string | undefined, interim: boolean, language: string | undefined): Promise<Heard | null> {
+  const id = await transcribe(base64(toWav(samples, rate)), 'audio/wav', language, sessionId, interim, chosenEngine());
 
   if (id === null) {
     return null;
   }
 
   return new Promise((resolve) => {
+    let stop = (): void => undefined;
+    /* An answer that never arrives (a dropped event, a transcriber that hung) is a failure, not a wait forever. */
+    const timer = window.setTimeout(() => {
+      stop();
+      resolve(null);
+    }, HEAR_TIMEOUT_MS);
     const found = (): boolean => {
       const result = useAppStore.getState().kernel.voice[id];
 
@@ -124,6 +132,7 @@ async function hear(samples: Float32Array, rate: number, sessionId: string | und
         return false;
       }
 
+      window.clearTimeout(timer);
       resolve({ text: result.text, engine: result.engine, local: result.local, error: result.error });
 
       return true;
@@ -133,7 +142,7 @@ async function hear(samples: Float32Array, rate: number, sessionId: string | und
       return;
     }
 
-    const stop = useAppStore.subscribe(() => {
+    stop = useAppStore.subscribe(() => {
       if (found()) {
         stop();
       }
@@ -155,16 +164,6 @@ function chosenEngine(): string | undefined {
   return typeof value === 'string' && value !== '' && value !== 'auto' ? value : undefined;
 }
 
-/** A phrase being recorded: its samples, whether anyone spoke in it, and when they last did. */
-interface Phrase {
-  chunks: Float32Array[];
-  samples: number;
-  spoke: boolean;
-  quietSince: number | null;
-}
-
-const fresh = (): Phrase => ({ chunks: [], samples: 0, spoke: false, quietSince: null });
-
 /**
  * `onLive(text)` is the whole dictation so far (kept phrases plus the one being spoken) every time it changes;
  * `onText(text)` is the final dictation once listening stops. A caller that shows `onLive` should replace,
@@ -182,7 +181,7 @@ export function VoiceButton({ onText, onLive, onStart, sessionId }: { onText: (t
     let stream: MediaStream;
 
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } });
+      stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
     } catch (error) {
       /* The reason, not a shrug: a blocked permission and a missing microphone need different fixes (Phase 1.1). */
       toast(micProblem(error));
@@ -201,8 +200,8 @@ export function VoiceButton({ onText, onLive, onStart, sessionId }: { onText: (t
        webview SDC runs in (WebView2, WKWebView, WebKitGTK). */
     const processor = context.createScriptProcessor(4096, 1, 1);
     const rate = context.sampleRate;
-    const kept: string[] = [];
-    let phrase = fresh();
+    const cutter = new PhraseCutter(rate);
+    const kept: HeardPhrase[] = [];
     let interim = '';
     /* The phrase the caption on screen belongs to. */
     let interimOf: Phrase | null = null;
@@ -211,27 +210,23 @@ export function VoiceButton({ onText, onLive, onStart, sessionId }: { onText: (t
     let lastHeard: { engine: string | null; local: boolean } | null = null;
     /* Final transcriptions run in order, so the kept phrases stay in the order they were spoken. */
     let finals: Promise<void> = Promise.resolve();
-    /* A noise floor learnt from the quietest chunks: speech is well above it. */
-    let floor = 0.004;
+    /* The person's language - or, left on automatic, the one the first phrase was heard in, held for the rest. */
+    let language = chosenLanguage();
+    let warned = false;
     let listening = true;
     let waveAt = 0;
 
     const show = (): void => {
-      onLive?.([...kept, interim].filter((part) => part.trim() !== '').join(' '));
+      onLive?.(tidyDictation([...kept, { text: interim, speechMs: Infinity }]));
     };
 
     const finish = (ending: Phrase): void => {
-      if (!ending.spoke || (ending.samples / rate) * 1000 < MIN_PHRASE_MS) {
-        return;
-      }
-
       const samples = join(ending.chunks);
       const slot = kept.length;
 
       /* Until its final text arrives, the phrase keeps its last caption - so the words never blink out while the
-         next phrase is already being captioned (seen live: half a second with a sentence missing). A final that
-         fails keeps the caption too. */
-      kept.push(interimOf === ending ? interim : '');
+         next phrase is already being captioned. A final that fails twice keeps the caption too. */
+      kept.push({ text: interimOf === ending ? interim : '', speechMs: ending.speechMs });
 
       if (interimOf === ending) {
         interim = '';
@@ -239,13 +234,21 @@ export function VoiceButton({ onText, onLive, onStart, sessionId }: { onText: (t
       }
 
       finals = finals.then(async () => {
-        const heard = await hear(samples, rate, sessionId, false);
+        let heard = await hear(samples, rate, sessionId, false, language);
+
+        /* One more try: a phrase is never given up on after a single lost answer. */
+        if (heard === null || heard.error !== null) {
+          heard = (await hear(samples, rate, sessionId, false, language)) ?? heard;
+        }
 
         if (heard !== null && heard.error === null) {
-          kept[slot] = heard.text.trim();
+          kept[slot] = { text: heard.text.trim(), speechMs: ending.speechMs };
           lastHeard = { engine: heard.engine, local: heard.local };
-        } else if (heard?.error) {
-          toast(heard.error);
+          language ??= heldLanguage(heard.text);
+        } else if (!warned) {
+          /* Said once per dictation: the caption stays, and everything after it is still heard. */
+          warned = true;
+          toast(heard?.error ?? strings.kernel.voice.failed);
         }
 
         show();
@@ -257,69 +260,35 @@ export function VoiceButton({ onText, onLive, onStart, sessionId }: { onText: (t
         return;
       }
 
-      const input = event.inputBuffer.getChannelData(0);
-      const chunk = new Float32Array(input);
-      let energy = 0;
-
-      for (const sample of chunk) {
-        energy += sample * sample;
-      }
-
-      const rms = Math.sqrt(energy / chunk.length);
       const now = performance.now();
-
-      floor = rms < floor ? rms * 0.5 + floor * 0.5 : floor * 0.999 + rms * 0.001;
+      const { ended, rms } = cutter.push(new Float32Array(event.inputBuffer.getChannelData(0)), now);
 
       if (now - waveAt >= WAVE_MS) {
         waveAt = now;
 
-        const level = waveLevel(rms, floor);
+        const level = waveLevel(rms, cutter.floor);
 
         setWave((bars) => [...bars.slice(1), level]);
       }
 
-      const speaking = rms > Math.max(0.012, floor * 3);
-
-      phrase.chunks.push(chunk);
-      phrase.samples += chunk.length;
-
-      if (speaking) {
-        phrase.spoke = true;
-        phrase.quietSince = null;
-      } else if (phrase.quietSince === null) {
-        phrase.quietSince = now;
-      }
-
-      const lengthMs = (phrase.samples / rate) * 1000;
-      const paused = phrase.spoke && phrase.quietSince !== null && now - phrase.quietSince >= PAUSE_MS;
-
-      if (paused || lengthMs >= MAX_PHRASE_MS) {
-        const ending = phrase;
-
-        phrase = fresh();
-        finish(ending);
-
+      if (ended !== null) {
+        finish(ended);
         return;
       }
 
-      /* Nobody spoke yet: keep only the last half second, the start of the first word. */
-      if (!phrase.spoke && lengthMs > 500) {
-        const drop = phrase.chunks.shift();
+      const current = cutter.phrase;
+      const lengthMs = (current.samples / rate) * 1000;
 
-        phrase.samples -= drop?.length ?? 0;
-      }
-
-      if (phrase.spoke && !interimBusy && now - interimAt >= INTERIM_MS && lengthMs >= MIN_PHRASE_MS) {
-        const current = phrase;
+      if (current.speechMs > 0 && !interimBusy && now - interimAt >= INTERIM_MS && lengthMs >= MIN_PHRASE_MS) {
         const samples = join(current.chunks);
 
         interimBusy = true;
         interimAt = now;
-        void hear(samples, rate, sessionId, true).then((heard) => {
+        void hear(samples, rate, sessionId, true, language).then((heard) => {
           interimBusy = false;
 
           /* Only while that phrase is still the one being spoken: its final text replaces a late caption. */
-          if (heard !== null && heard.error === null && current === phrase) {
+          if (heard !== null && heard.error === null && current === cutter.phrase) {
             interim = heard.text.trim();
             interimOf = current;
             show();
@@ -342,18 +311,20 @@ export function VoiceButton({ onText, onLive, onStart, sessionId }: { onText: (t
       stream.getTracks().forEach((track) => track.stop());
       void context.close();
 
-      const ending = phrase;
-
-      phrase = fresh();
       /* The last phrase counts without a pause after it - but only if someone spoke in it: silence sent to a
          transcriber comes back as an invented "Thank you." */
-      finish(ending);
+      const ending = cutter.flush();
+
+      if (ending !== null) {
+        finish(ending);
+      }
+
       setState('working');
 
       void finals.then(() => {
         setState('idle');
 
-        const text = kept.filter((part) => part !== '').join(' ').trim();
+        const text = tidyDictation(kept);
 
         if (text === '') {
           toast(strings.kernel.voice.nothing);

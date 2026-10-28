@@ -44,7 +44,20 @@ impl Daemon {
             })),
 
             /* The model catalogue: live, cached or bundled, and never needing a code change. */
-            "models.list" => self.models_list(envelope, &*out),
+            "models.list" => {
+                /* A read of the catalogue is also the moment to check it is fresh: when the last ask is older than a
+                   few minutes the providers are asked again in the background, and `ModelsUpdated` brings any new
+                   version to the open menu. This answer never waits for it. */
+                if !envelope.opt_bool("refresh") {
+                    crate::providers::models::refresh_if_stale(
+                        self.store().clone(),
+                        out.clone(),
+                        crate::providers::models::STALE_AFTER_SECS,
+                    );
+                }
+
+                self.models_list(envelope, &*out)
+            }
             "models.select" => self.models_select(envelope, &*out),
             /* P0-12: the Step Trace - the newest model calls with their tokens, times, mode and verify result. */
             /* P0-15: a turn's receipt - every model it used, local or chain, with its time, tokens and cost. */

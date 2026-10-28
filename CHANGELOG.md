@@ -10,6 +10,39 @@ This file describes what changed, not what is planned. Anything still open is na
 
 ---
 
+## [1.0.2] — 2026-10-28: a short model menu that keeps itself current, and voice that hears a long dictation
+
+### Changed — the model menu: one line per model, its versions as chips
+
+The menu above the message box was long: a Tier block (Fast / Balanced / Deep), an Effort row (Auto / Low / Medium /
+High / Max) and every connected provider's models stacked one under another. Now it holds only the model and its
+version: a search line, one tab per connected provider, and **one line per model family with its recent versions as
+chips** (`Claude Opus  5.5  5  4.8`) - pressing the line picks the newest, pressing a chip picks that version, and the
+menu closes. Its height is one provider's families, however many providers are connected (278 px with five, where
+it used to reach its 520 px limit). Gone: the Tier and Effort rows, the `Pinned` badge on the model button, the
+id/tier line under each model and the footer note. The model button names the model as it reads (`Claude Opus 5.5`).
+A stored effort from an earlier version is no longer sent, since nothing is left to change it.
+
+### Changed — new model versions arrive by themselves, within minutes
+
+The daemon asked the connected providers for their model lists at start and then **every 12 hours**. It now asks
+every 30 minutes, and **opening the model menu asks again when the list is more than 5 minutes old** - in the
+background, so the menu never waits; a new version reaches the open menu through `ModelsUpdated`. (A CLI-connected
+provider's list still comes from the installed CLI, so its new models need that CLI updated.)
+
+### Fixed — voice no longer drops parts of a long dictation
+
+- The noise floor was learnt from every sound, speech included, so after about a minute of talking it reached the
+  voice and whole phrases were judged silent and dropped. It now learns from quiet only (`lib/dictation.ts`).
+- Phrases end at a natural 1 s pause; a long breathless stretch is cut at its quietest moment instead of at 20 s
+  in the middle of a word.
+- Each transcription has a time limit and one retry, so one lost answer can no longer hold back everything after it.
+- The heard text is tidied: stutters, filler sounds (`um`, `উম`, `হুম`), words repeated across a cut and a "Thank you."
+  invented for a near-silent phrase are removed; doubled words that are grammar (`ধীরে ধীরে`) stay. Left on automatic,
+  the language of the first phrase (Bengali, Hindi) is held for the rest, so a phrase does not switch script.
+- Measured on the same recording (three minutes of talk, then a soft voice): 1.0.1 heard 92.4% of the speech and cut
+  nine times inside a word; 1.0.2 hears 100%.
+
 ## [1.0.0] — 2026-10-28: a fresh 1.0.0 - one-click updates, GitHub, a clean model menu, no prices
 
 The release line starts again at 1.0.0: every earlier release was removed from GitHub. Everything 1.4.2 had is in

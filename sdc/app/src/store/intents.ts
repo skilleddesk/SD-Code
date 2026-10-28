@@ -2437,13 +2437,6 @@ export interface SendExtras {
   research?: boolean;
 }
 
-/** The effort chosen in the model menu (0.14), when it is not Auto. */
-function effortSetting(): { effort?: 'low' | 'medium' | 'high' | 'max' } {
-  const chosen = storedSettings()['agent-effort'];
-
-  return chosen === 'low' || chosen === 'medium' || chosen === 'high' || chosen === 'max' ? { effort: chosen } : {};
-}
-
 /** The app's mode as the agent's autonomy: Simple asks for everything, Pro for commands, Auto for danger. */
 export function autonomyFor(mode: 'simple' | 'pro' | 'auto'): 'ask' | 'pro' | 'auto' {
   return mode === 'simple' ? 'ask' : mode;
@@ -2574,7 +2567,8 @@ export async function sendPrompt(prompt: string, target?: string, extras: SendEx
     understand: setting('understand-messages', true),
     ...(extras.compact === true ? { compact: true } : {}),
     ...(extras.research === true ? { research: true } : {}),
-    ...effortSetting(),
+    /* No effort is sent: the model menu no longer offers one (v5), so each model runs at its own default - a
+       level picked in an earlier version must not keep applying with no control left to change it. */
     ...(extras.images !== undefined && extras.images.length > 0 ? { images: extras.images } : {}),
   };
 

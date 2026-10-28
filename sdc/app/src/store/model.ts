@@ -459,13 +459,24 @@ export function groupCatalog(
     const current = chosen.length > 0 ? chosen : local ? entry.models : newestOnly(offered);
     const byTier = (left: CatalogModel, right: CatalogModel): number =>
       TIER_ORDER[right.tier] - TIER_ORDER[left.tier] || left.name.localeCompare(right.name);
+    /* The menu shows a family's recent versions as chips beside its name, so they cost no height: the versions just
+       before the newest one of each family shown - never a family the newest-only rule dropped. */
+    const shownFamilies = new Set(current.map((row) => parseModelId(row.id).family));
+    const older =
+      chosen.length > 0 || local
+        ? []
+        : latestVersions(offered, VERSIONS_PER_FAMILY + 1).current.filter(
+            (row) =>
+              shownFamilies.has(parseModelId(row.id).family) &&
+              !current.some((shown) => shown.id === row.id || parseModelId(shown.id).family === parseModelId(row.id).family && compareVersions(parseModelId(shown.id).version, parseModelId(row.id).version) === 0),
+          );
 
     groups.push({
       providerId,
       providerLabel: entry.label,
       engine: engineForProvider(providerId),
       models: [...current].sort(byTier),
-      older: [],
+      older,
     });
   }
 
@@ -478,6 +489,49 @@ export function groupCatalog(
   });
 
   return { groups, disconnected: disconnectedIds.size };
+}
+
+/** One line of the model menu: a family's name, and its versions newest first. */
+export interface ModelFamily {
+  key: string;
+  /** `Claude Opus` - the name without its version. */
+  label: string;
+  versions: { label: string; row: CatalogModel }[];
+}
+
+/**
+ * A provider's rows as the menu draws them: **one line per model family**, its versions as chips (`Claude Opus`
+ * · `5.5` `5` `4.8`). A family with no version number (a CLI's `sonnet` alias) is a line of its own with no chips.
+ */
+export function familiesOf(rows: readonly CatalogModel[]): ModelFamily[] {
+  const families = new Map<string, { row: CatalogModel; parsed: ModelVersion }[]>();
+
+  for (const row of rows) {
+    const parsed = parseModelId(row.id);
+    const key = `${row.providerId}:${parsed.family || row.id}`;
+
+    families.set(key, [...(families.get(key) ?? []), { row, parsed }]);
+  }
+
+  return [...families.entries()].map(([key, members]) => {
+    members.sort((left, right) => compareVersions(left.parsed.version, right.parsed.version));
+
+    const newest = members[0] as { row: CatalogModel; parsed: ModelVersion };
+    const name = newest.row.name === '' ? newest.row.id : newest.row.name;
+    const version = newest.parsed.version.join('.');
+    /* The family is its newest member's name with the version taken out - when the name spells it out. */
+    const pattern = version === '' ? null : new RegExp(`(^|[\\s-])v?${version.replace(/\./g, '\\.')}(?=$|[\\s-])`, 'i');
+    const stripped = pattern?.test(name) ? name.replace(pattern, ' ').replace(/\s+/g, ' ').trim() : '';
+    /* A name that does not split stays whole; then a lone member needs no chip to repeat it. */
+    const label = stripped === '' ? name : stripped;
+    const lone = members.length === 1 && (stripped === '' || version === '');
+
+    return {
+      key,
+      label,
+      versions: members.map(({ row, parsed }) => ({ label: lone ? '' : parsed.version.join('.') || row.id, row })),
+    };
+  });
 }
 
 /** Providers that resell every maker's models under one key. */

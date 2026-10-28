@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  familiesOf,
   filterGroups,
   MAX_QUEUED_PROMPTS,
   choiceOf,
@@ -152,6 +153,14 @@ describe('groupCatalog', () => {
     expect(ids('gemini')).toEqual(['gemini-3.8-flash', 'gemini-4-argon']);
   });
 
+  it('keeps the two versions before the newest of each shown family, and nothing of a dropped family', () => {
+    const claude = ['claude-opus-5-5', 'claude-opus-5', 'claude-opus-4-8', 'claude-opus-4-6', 'claude-opus-5-20260101', 'claude-haiku-3-5', 'claude-sonnet-5-5'].map((id) => row(id, 'claude'));
+    const { groups } = groupCatalog(claude, connected('claude'));
+
+    expect(groups[0]?.models.map((model) => model.id).sort()).toEqual(['claude-opus-5-5', 'claude-sonnet-5-5']);
+    expect(groups[0]?.older.map((model) => model.id)).toEqual(['claude-opus-5', 'claude-opus-4-8']);
+  });
+
   it('folds a model served in two regions into its -us build, and drops batch twins and aliases', () => {
     const rows = ['qwen3.7-max', 'qwen3.7-max-us', 'qwen3.8-flash', 'x/model-a:batch', '~x/model-latest'].map((id) => row(id, 'qwen'));
     const { groups } = groupCatalog(rows, connected('qwen'));
@@ -201,12 +210,12 @@ describe('filterGroups', () => {
     expect(filterGroups(groups, '  ')).toEqual(groups);
   });
 
-  it('narrows to matching rows, newest versions only', () => {
+  it('narrows to matching rows, the family’s recent versions included', () => {
     const found = filterGroups(groups, 'sonnet');
 
     expect(found).toHaveLength(1);
-    expect(found[0].models.map((model) => model.id)).toEqual(['claude-sonnet-5']);
-    expect(filterGroups(groups, 'sonnet-4-5')).toHaveLength(0);
+    expect(found[0].models.map((model) => model.id)).toEqual(['claude-sonnet-5', 'claude-sonnet-4-6', 'claude-sonnet-4-5']);
+    expect(filterGroups(groups, 'sonnet-4-5')[0]?.models.map((model) => model.id)).toEqual(['claude-sonnet-4-5']);
   });
 
   it('matches a whole provider by its label, and drops groups with nothing', () => {
@@ -338,5 +347,37 @@ describe('a fresh install runs on what the computer has', () => {
     useModelStore.setState({ ...fresh, model: 'gone', catalog: [] });
     useModelStore.getState().setCatalog([local]);
     expect(useModelStore.getState().model).toBe('gone');
+  });
+});
+
+describe('familiesOf', () => {
+  const named = (id: string, name: string, providerId = 'claude'): CatalogModel => ({ ...row(id, providerId), name });
+
+  it('puts a family on one line, its versions newest first', () => {
+    const families = familiesOf([
+      named('claude-opus-4-8', 'Claude Opus 4.8'),
+      named('claude-opus-5-5', 'Claude Opus 5.5'),
+      named('claude-sonnet-5-5', 'Claude Sonnet 5.5'),
+      named('claude-opus-5', 'Claude Opus 5'),
+    ]);
+
+    expect(families.map((family) => family.label)).toEqual(['Claude Opus', 'Claude Sonnet']);
+    expect(families[0]?.versions.map((version) => version.label)).toEqual(['5.5', '5', '4.8']);
+    expect(families[0]?.versions[0]?.row.id).toBe('claude-opus-5-5');
+    expect(families[1]?.versions.map((version) => version.label)).toEqual(['5.5']);
+  });
+
+  it('keeps a name that does not spell its version whole, without a chip', () => {
+    const families = familiesOf([named('o4-mini', 'o4 Mini', 'openai-api'), named('sonnet', 'Sonnet')]);
+
+    expect(families.map((family) => family.label)).toEqual(['o4 Mini', 'Sonnet']);
+    expect(families.every((family) => family.versions.length === 1 && family.versions[0]?.label === '')).toBe(true);
+  });
+
+  it('splits a hyphenated vendor version', () => {
+    const families = familiesOf([named('gpt-5-5', 'GPT-5.5', 'openai-api'), named('gpt-5', 'GPT-5', 'openai-api')]);
+
+    expect(families[0]?.label).toBe('GPT');
+    expect(families[0]?.versions.map((version) => version.label)).toEqual(['5.5', '5']);
   });
 });

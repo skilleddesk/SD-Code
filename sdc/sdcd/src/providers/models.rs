@@ -430,10 +430,69 @@ pub fn refresh_connected(store: &Arc<Store>) -> Vec<String> {
     refreshed
 }
 
+/// How often the background clock in `main` asks every connected provider again.
+pub const REFRESH_EVERY_SECS: u64 = 30 * 60;
+
+/// The youngest a list may be before opening the model menu asks again: a version a provider shipped a few minutes ago
+/// is in the menu the next time it is opened, without the menu itself ever waiting on the network.
+pub const STALE_AFTER_SECS: i64 = 5 * 60;
+
+/// When the last refresh started (Unix seconds; 0 = never), and whether one is running now.
+static LAST_REFRESH: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+static REFRESHING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Is a list fetched at `last` old enough at `now` to be asked for again?
+pub fn refresh_due(last: i64, now: i64, max_age: i64) -> bool {
+    last == 0 || now - last >= max_age
+}
+
+/// [`refresh_and_tell`] when the last one is older than `max_age` seconds and none is running - the cheap check
+/// `models.list` makes every time a window reads the catalogue. Answers whether a refresh was started.
+pub fn refresh_if_stale(
+    store: Arc<Store>,
+    notifier: std::sync::Arc<dyn crate::sdcp::notifications::Notifier>,
+    max_age: i64,
+) -> bool {
+    use std::sync::atomic::Ordering;
+
+    let now = chrono::Utc::now().timestamp();
+
+    if !refresh_due(LAST_REFRESH.load(Ordering::Relaxed), now, max_age) || REFRESHING.load(Ordering::Relaxed) {
+        return false;
+    }
+
+    refresh_and_tell(store, notifier);
+    true
+}
+
 /// [`refresh_connected`], then the event that tells every window - on its own blocking thread, because
-/// each ask is a synchronous HTTP call.
+/// each ask is a synchronous HTTP call. A second call while one is running is a no-op.
 pub fn refresh_and_tell(store: Arc<Store>, notifier: std::sync::Arc<dyn crate::sdcp::notifications::Notifier>) {
-    tokio::task::spawn_blocking(move || {
+    use std::sync::atomic::Ordering;
+
+    /* Outside the daemon's runtime (a test that dispatches `models.list` directly) there is no thread to ask on. */
+    let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+        return;
+    };
+
+    if REFRESHING.swap(true, Ordering::AcqRel) {
+        return;
+    }
+
+    LAST_REFRESH.store(chrono::Utc::now().timestamp(), Ordering::Relaxed);
+
+    runtime.spawn_blocking(move || {
+        /* Cleared however the refresh ends, so a panic in one provider's answer cannot stop every later one. */
+        struct Done;
+
+        impl Drop for Done {
+            fn drop(&mut self) {
+                REFRESHING.store(false, std::sync::atomic::Ordering::Release);
+            }
+        }
+
+        let _done = Done;
+
         /* A Coding Plan key saved on the Model Studio card before 0.14.4 moves to its own card first. */
         if let Some(home) = crate::providers::repair_alibaba(&store) {
             for id in ["qwen", home.as_str()] {
@@ -626,6 +685,15 @@ pub fn selected(store: &Store) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A list never fetched is due at once; a fresh one is not asked again until it is `max_age` old.
+    #[test]
+    fn a_stale_list_is_asked_again_and_a_fresh_one_is_not() {
+        assert!(refresh_due(0, 1_000, STALE_AFTER_SECS), "never fetched");
+        assert!(!refresh_due(1_000, 1_000 + STALE_AFTER_SECS - 1, STALE_AFTER_SECS), "fetched a moment ago");
+        assert!(refresh_due(1_000, 1_000 + STALE_AFTER_SECS, STALE_AFTER_SECS), "five minutes old");
+        assert!(REFRESH_EVERY_SECS <= 60 * 60, "the background clock asks at least hourly");
+    }
 
     /// 1.0: on a US endpoint the same model's `-us` copy is used; a model with none gets the nearest one of its
     /// family and size suggested; nothing changes anywhere else.

@@ -717,6 +717,8 @@ const english = {
       disconnected: (count: number): string =>
         count === 1 ? '1 provider not connected' : `${count} providers not connected`,
       manage: 'Manage in Provider Hub',
+      /** The model menu's last line (v5): beside it, how many providers are not connected (`+2`). */
+      manageProviders: 'Manage providers',
       /** The badge on a provider nobody signed in to: pressing one of its models opens this card instead. */
       signInToUse: 'sign in to use',
       older: (count: number): string => `Older versions (${count})`,

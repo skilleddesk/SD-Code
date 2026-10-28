@@ -34,6 +34,7 @@ export const bn: StringsPack = {
     steerSend: 'চলমান কাজে যোগ করুন',
     steerPlaceholder: 'কাজ চলার মাঝেই কিছু যোগ করুন - পরের ধাপে সেটা মাথায় নেবে…',
     model: {
+      manageProviders: 'প্রোভাইডার ম্যানেজ করুন',
       mode: {
         pinned: 'পিন করা',
         localRotation: (rows: number): string => `লোকাল রোটেশন (${rows})`,

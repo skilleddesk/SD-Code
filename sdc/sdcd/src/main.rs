@@ -267,8 +267,9 @@ async fn run() -> Result<()> {
     }
 
     /* The catalogue keeps itself fresh (0.9.0): the connected providers are asked at start and every
-       twelve hours, and every window hears `ModelsUpdated` when a list moved. A model a provider ships
-       tomorrow is in the dropdown tomorrow, with no button pressed and no build. */
+       half hour, and every window hears `ModelsUpdated` when a list moved. Opening the model menu asks too
+       when the list is more than five minutes old (`models.list`), so a version a provider ships is in the
+       dropdown the next time it is opened, with no button pressed and no build. */
     {
         let store = state.store.clone();
         let notifier: Arc<dyn Notifier> =
@@ -280,7 +281,7 @@ async fn run() -> Result<()> {
 
             loop {
                 sdcd::providers::models::refresh_and_tell(store.clone(), notifier.clone());
-                tokio::time::sleep(std::time::Duration::from_secs(12 * 60 * 60)).await;
+                tokio::time::sleep(std::time::Duration::from_secs(sdcd::providers::models::REFRESH_EVERY_SECS)).await;
             }
         });
     }
