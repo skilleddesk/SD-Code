@@ -339,10 +339,15 @@ jobs:
           ID: ${{ needs.prepare.outputs.release_id }}
           ARCH: ${{ matrix.target == 'x86_64-apple-darwin' && 'x64' || 'aarch64' }}
         run: |
-          dir=$(dirname "$(find sdc/app/src-tauri/target -maxdepth 6 -type d -path '*/bundle/macos/SDC.app' | head -n 1)")
+          # The bundler removes SDC.app once the .dmg is made, so the app is taken from inside the .dmg itself.
+          dmg=$(find sdc/app/src-tauri/target -maxdepth 6 -type f -name 'SDC_*.dmg' | head -n 1)
           version=$(node -p "require('./sdc/app/src-tauri/tauri.conf.json').version")
           name="SDC_${version}_${ARCH}.app.tar.gz"
-          tar -czf "$RUNNER_TEMP/$name" -C "$dir" SDC.app
+          mount="$RUNNER_TEMP/sdc-dmg"
+          mkdir -p "$mount"
+          hdiutil attach "$dmg" -nobrowse -readonly -mountpoint "$mount"
+          tar -czf "$RUNNER_TEMP/$name" -C "$mount" SDC.app
+          hdiutil detach "$mount"
           curl --fail -sS -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Content-Type: application/gzip" --data-binary @"$RUNNER_TEMP/$name" "https://uploads.github.com/repos/$REPO/releases/$ID/assets?name=$name" -o /dev/null
           echo "uploaded $name"
 
