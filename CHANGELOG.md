@@ -44,9 +44,10 @@ segmented set. A model name without a version (`deepseek-flash`, `sonnet`) says 
 
 A connected card has **Disconnect** next to **Manage**, confirmed in place (`Disconnect?` · `Keep`).
 
-- A subscription (Claude Code, Codex, Gemini) is signed out by its own CLI and **its saved sign-in deleted** (Claude
-  Code's `.credentials.json`, Codex's `auth.json`, Gemini's `oauth_creds.json`), and an unfinished sign-in is ended -
-  so **Connect opens the browser to approve it again**.
+- A subscription is signed out by **its own CLI's logout** (`claude auth logout`, `codex logout`; Gemini's sign-in
+  files are removed as before) and an unfinished sign-in is ended - so **Connect opens the browser to approve it
+  again**. SDC never reads or deletes Claude Code's or Codex's token files itself (the credential guard); if a CLI
+  still reports a sign-in afterwards, SDC says so with the command that finishes it.
 - An API key leaves the keychain **with its cached model list**.
 - **A card no longer connects by itself.** Claude Code and Codex were green whenever their CLI was signed in on the
   computer (from a terminal, or left by an earlier install); now every subscription is connected only after a sign-in

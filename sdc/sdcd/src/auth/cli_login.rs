@@ -159,32 +159,14 @@ pub fn logout(provider_id: &str) -> Result<Vec<String>, String> {
         }
     }
 
-    /* 1.0.3, the report "Disconnect must remove the sign-in completely, so the next Connect opens the browser again":
-       a CLI whose own logout failed, or an older one without it, left its credential file behind - and the next
-       sign-in found it and never asked. Whatever file is still there after the command is deleted. */
-    for path in credential_files(provider_id) {
-        if path.exists() {
-            std::fs::remove_file(&path).map_err(|error| format!("{}: {error}", path.display()))?;
-            done.push(format!("deleted {}", path.display()));
-        }
+    /* 1.0.3, the report "Disconnect must remove the sign-in completely, so Connect opens the browser again": the CLI's
+       own logout is the only way SDC signs it out - its credential files are never read or deleted by SDC (the
+       credential guard, P0-2). When the CLI still says it is signed in afterwards, that is said, not hidden. */
+    if crate::providers::signed_in(provider_id) {
+        done.push(format!("`{}` still reports a sign-in - run `{} {}` in a terminal to finish signing out", recipe.program, recipe.program, arguments.join(" ")));
     }
 
     Ok(done)
-}
-
-/// The files a CLI keeps its sign-in in (1.0.3): Claude Code's `.credentials.json` (on macOS it uses the Keychain,
-/// which its own `auth logout` clears) and Codex's `auth.json`. Only the credential - never settings or history.
-pub fn credential_files(provider_id: &str) -> Vec<std::path::PathBuf> {
-    let home = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")).map(std::path::PathBuf::from);
-    let folder = |variable: &str, default: &str| -> Option<std::path::PathBuf> {
-        std::env::var_os(variable).map(std::path::PathBuf::from).filter(|path| !path.as_os_str().is_empty()).or_else(|| home.as_ref().map(|home| home.join(default)))
-    };
-
-    match provider_id {
-        "claude" => folder("CLAUDE_CONFIG_DIR", ".claude").map(|dir| vec![dir.join(".credentials.json")]).unwrap_or_default(),
-        "openai" => folder("CODEX_HOME", ".codex").map(|dir| vec![dir.join("auth.json")]).unwrap_or_default(),
-        _ => Vec::new(),
-    }
 }
 
 /// The sign-in files under a Gemini home, deleted, and SDC's auth choice taken back out of its settings.

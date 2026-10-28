@@ -2232,13 +2232,19 @@ export async function connectApiKey(id: string, key: string, label?: string, bas
  * Disconnect (1.0.3): the way out of any connection, from the card itself. The report: "once signed in it cannot be
  * disconnected - and Disconnect must remove the sign-in completely, so Connect opens the browser to approve again".
  *
- * A subscription is signed out by its own CLI and its credential file deleted (`cli.logout`); an API key leaves the
+ * A subscription is signed out by its own CLI's logout (`cli.logout`; SDC never touches a CLI's token files); an API key leaves the
  * keychain with its model list (`provider.remove`). The card follows the `ProviderStatus` event either pushes.
  */
 export async function disconnectProvider(id: string, kind: ProviderView['kind']): Promise<boolean> {
   try {
     if (kind === 'subscription') {
-      await sdcpCall('cli.logout', { providerId: id });
+      const { did } = await sdcpCall('cli.logout', { providerId: id });
+      /* The CLI's own logout did not take: said, with the command that finishes it. */
+      const left = did.find((line) => line.includes('still reports a sign-in'));
+
+      if (left !== undefined) {
+        toast(left);
+      }
     } else {
       await sdcpCall('provider.remove', { id });
     }
