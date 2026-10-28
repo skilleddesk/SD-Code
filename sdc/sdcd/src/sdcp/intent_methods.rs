@@ -263,6 +263,7 @@ impl Daemon {
             .map_err(|error| ErrorObject::bad_request(format!("the recording is not base64: {error}")))?;
         let mime = envelope.opt_str("mime").unwrap_or_else(|| "audio/wav".into());
         let language = envelope.opt_str("language").filter(|language| !language.is_empty());
+        let engine = envelope.opt_str("engine").filter(|engine| !engine.is_empty());
         let request = format!("voice-{}", uuid::Uuid::new_v4().simple());
         let id = request.clone();
         let session = envelope.opt_str("sessionId");
@@ -270,7 +271,7 @@ impl Daemon {
         let interim = envelope.params.get("interim").and_then(Value::as_bool).unwrap_or(false);
 
         tokio::task::spawn_blocking(move || {
-            let result = intent::voice::transcribe(&audio, &mime, language.as_deref());
+            let result = intent::voice::transcribe(&audio, &mime, language.as_deref(), engine.as_deref());
             let payload = match result {
                 Ok(value) => json!({
                     "type": "VoiceTranscribed",

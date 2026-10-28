@@ -61,6 +61,7 @@ function Row({ label, help, children }: { label: string; help?: string; children
 function VoiceDetails({ voice, onChange }: { voice: Awaited<ReturnType<typeof voiceStatus>>; onChange: (next: Awaited<ReturnType<typeof voiceStatus>>) => void }) {
   const v = strings.kernel.voice;
   const [language, setLanguage] = useState<string>(() => String(storedSettings()['voice-language'] ?? 'auto'));
+  const [engine, setEngine] = useState<string>(() => String(storedSettings()['voice-engine'] ?? 'auto'));
   const [asking, setAsking] = useState<string | null>(null);
   const downloading = voice?.download.state === 'downloading';
 
@@ -89,6 +90,30 @@ function VoiceDetails({ voice, onChange }: { voice: Awaited<ReturnType<typeof vo
         {voice.programMissing && voice.installHint !== null ? ` ${voice.installHint}` : ''}
       </p>
       <p className="m-0 mt-[4px]">{voice.online.length === 0 ? v.onlineNone : v.onlineList(voice.online.join(', '))}</p>
+
+      <div className="mt-[8px] flex items-center gap-[8px]">
+        <label className="text-text-primary" htmlFor="voice-engine">
+          {v.engine}
+        </label>
+        <select
+          id="voice-engine"
+          className={inputClass}
+          value={engine}
+          onChange={(event) => {
+            setEngine(event.target.value);
+            storeSetting('voice-engine', event.target.value);
+          }}
+        >
+          <option value="auto">{v.engineAuto}</option>
+          <option value="local">{v.engineLocal}</option>
+          {Object.entries(v.engineNames).map(([id, name]) => (
+            <option key={id} value={id}>
+              {voice.online.includes(id) ? name : `${name} ${v.engineNoKey}`}
+            </option>
+          ))}
+        </select>
+      </div>
+      <p className="m-0 mt-[4px]">{v.engineHelp}</p>
 
       <div className="mt-[8px] flex items-center gap-[8px]">
         <label className="text-text-primary" htmlFor="voice-language">

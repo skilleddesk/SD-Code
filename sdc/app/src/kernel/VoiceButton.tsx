@@ -106,7 +106,7 @@ function join(chunks: readonly Float32Array[]): Float32Array {
 
 /** One transcription, answered by the daemon's `VoiceTranscribed` event. */
 async function hear(samples: Float32Array, rate: number, sessionId: string | undefined, interim: boolean): Promise<{ text: string; engine: string | null; local: boolean; error: string | null } | null> {
-  const id = await transcribe(base64(toWav(samples, rate)), 'audio/wav', chosenLanguage(), sessionId, interim);
+  const id = await transcribe(base64(toWav(samples, rate)), 'audio/wav', chosenLanguage(), sessionId, interim, chosenEngine());
 
   if (id === null) {
     return null;
@@ -140,6 +140,13 @@ async function hear(samples: Float32Array, rate: number, sessionId: string | und
 /** The spoken language the person chose in Settings (`auto` = let the transcriber detect it). */
 function chosenLanguage(): string | undefined {
   const value = storedSettings()['voice-language'];
+
+  return typeof value === 'string' && value !== '' && value !== 'auto' ? value : undefined;
+}
+
+/** The transcriber the person chose in Settings (`auto` = the whole chain, so nothing is sent). */
+function chosenEngine(): string | undefined {
+  const value = storedSettings()['voice-engine'];
 
   return typeof value === 'string' && value !== '' && value !== 'auto' ? value : undefined;
 }

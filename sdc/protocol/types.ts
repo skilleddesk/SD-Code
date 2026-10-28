@@ -2724,7 +2724,7 @@ export interface SdcpMethodMap {
   'glossary.list': { params: { sessionId?: string; scope?: string }; result: { scope: string; terms: GlossaryTerm[] } };
   'glossary.set': { params: { sessionId?: string; scope?: string; term: string; meaning?: string }; result: { scope: string; terms: GlossaryTerm[] } };
   'voice.status': { params: Record<string, never>; result: VoiceStatus };
-  'voice.transcribe': { params: { audio: string; mime?: string; language?: string; sessionId?: string; interim?: boolean }; result: { requestId: string } };
+  'voice.transcribe': { params: { audio: string; mime?: string; language?: string; sessionId?: string; interim?: boolean; engine?: string }; result: { requestId: string } };
   'site.list': { params: Record<string, never>; result: { sites: SiteRecord[] } };
   'site.detect': { params: { hostId?: string; root: string }; result: { config: Record<string, unknown> } };
   'site.save': { params: { siteId?: string; name: string; hostId?: string; root: string; url?: string; config?: Record<string, unknown> }; result: { siteId: string; site: SiteRecord } };

@@ -235,10 +235,10 @@ export async function downloadVoiceModel(id: string): Promise<boolean> {
   }
 }
 
-export async function transcribe(audio: string, mime: string, language: string | undefined, sessionId?: string, interim = false): Promise<string | null> {
+export async function transcribe(audio: string, mime: string, language: string | undefined, sessionId?: string, interim = false, engine?: string): Promise<string | null> {
   return (
     await call(
-      () => sdcpCall('voice.transcribe', { audio, mime, ...(language === undefined ? {} : { language }), ...(sessionId === undefined ? {} : { sessionId }), ...(interim ? { interim } : {}) }),
+      () => sdcpCall('voice.transcribe', { audio, mime, ...(language === undefined ? {} : { language }), ...(sessionId === undefined ? {} : { sessionId }), ...(interim ? { interim } : {}), ...(engine === undefined ? {} : { engine }) }),
       strings.kernel.voice.failed,
     )
   )?.requestId ?? null;

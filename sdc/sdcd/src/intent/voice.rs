@@ -132,14 +132,48 @@ pub struct Attempt {
     pub error: Option<String>,
 }
 
-/// Transcribes one recording. `language` is a hint (`bn`, `ar`, …) or `None` for automatic.
-pub fn transcribe(audio: &[u8], mime: &str, language: Option<&str>) -> Result<Value, String> {
+/// Transcribes one recording. `language` is a hint (`bn`, `ar`, …) or `None` for automatic. `engine` is the person's
+/// choice in Settings: `None` or `auto` runs the whole chain; `local` or a provider id (`groq`, `google`, `qwen`,
+/// `openai-api`) uses only that one.
+pub fn transcribe(audio: &[u8], mime: &str, language: Option<&str>, engine: Option<&str>) -> Result<Value, String> {
     let keys: Vec<(&str, String)> = CLOUD_ORDER
         .iter()
         .filter_map(|id| crate::auth::keychain::get(&crate::providers::key_ref(id)).map(|key| (*id, key)))
         .collect();
 
-    transcribe_with(&Endpoints::default(), &keys, true, audio, mime, language)
+    transcribe_choosing(&Endpoints::default(), &keys, engine, audio, mime, language)
+}
+
+/// The chain narrowed to the engine the person chose. A chosen engine is the only one tried: picking Gemini must
+/// mean Gemini heard it, and a failure says so instead of quietly being answered by another service.
+pub fn transcribe_choosing(endpoints: &Endpoints, keys: &[(&str, String)], engine: Option<&str>, audio: &[u8], mime: &str, language: Option<&str>) -> Result<Value, String> {
+    match engine.map(str::trim).filter(|engine| !engine.is_empty() && *engine != "auto") {
+        None => transcribe_with(endpoints, keys, true, audio, mime, language),
+        Some("local") => {
+            if audio.len() < 1000 {
+                return Err("The recording is too short to hear anything in it.".to_string());
+            }
+
+            match local(audio, mime, language) {
+                Some(Ok(heard)) if !heard["text"].as_str().unwrap_or_default().trim().is_empty() => Ok(heard),
+                Some(Ok(_)) => Err("You chose the local transcriber (whisper.cpp), and it heard no words in the recording.".to_string()),
+                Some(Err(error)) => Err(format!("You chose the local transcriber (whisper.cpp), and it failed: {error}")),
+                None => Err("You chose the local transcriber, but whisper.cpp is not installed or has no model file. Pick another engine in Settings → Language, or install it.".to_string()),
+            }
+        }
+        Some(chosen) => {
+            let Some(id) = CLOUD_ORDER.iter().find(|id| **id == chosen) else {
+                return Err(format!("`{chosen}` is not a transcriber SDC knows. Pick one in Settings → Language."));
+            };
+            let only: Vec<(&str, String)> = keys.iter().filter(|(provider, _)| provider == id).cloned().collect();
+
+            if only.is_empty() {
+                return Err(format!("You chose {chosen} for voice, but it has no key. Add it in the Provider Hub, or pick another engine in Settings → Language."));
+            }
+
+            transcribe_with(endpoints, &only, false, audio, mime, language)
+        }
+    }
 }
 
 /// The provider chain (Phase 1.3): local whisper.cpp first, then every cloud transcriber the person has a key for, **each
@@ -475,7 +509,13 @@ pub fn main(args: &[String]) -> i32 {
     let keys: Vec<(&str, String)> = CLOUD_ORDER.iter().filter_map(|id| crate::auth::keychain::get(&crate::providers::key_ref(id)).map(|key| (*id, key))).collect();
     let started = std::time::Instant::now();
 
-    match transcribe_with(&Endpoints::default(), &keys, try_local, &audio, "audio/wav", language) {
+    let engine = args.iter().position(|arg| arg == "--engine").and_then(|at| args.get(at + 1)).map(String::as_str);
+    let result = match engine {
+        Some(_) => transcribe_choosing(&Endpoints::default(), &keys, engine, &audio, "audio/wav", language),
+        None => transcribe_with(&Endpoints::default(), &keys, try_local, &audio, "audio/wav", language),
+    };
+
+    match result {
         Ok(heard) => {
             println!("engine: {} (local: {})", heard["engine"].as_str().unwrap_or("?"), heard["local"]);
 
@@ -502,7 +542,7 @@ mod tests {
 
     #[test]
     fn a_recording_that_is_too_short_is_refused_with_a_sentence() {
-        assert!(transcribe(&[0u8; 10], "audio/wav", None).unwrap_err().contains("too short"));
+        assert!(transcribe(&[0u8; 10], "audio/wav", None, None).unwrap_err().contains("too short"));
     }
 
     #[test]
@@ -614,6 +654,30 @@ mod tests {
         let error = transcribe_with(&endpoints, &[], false, &audio(), "audio/wav", None).unwrap_err();
 
         assert!(error.contains("Voice needs a transcriber") || error.contains("whisper"), "{error}");
+    }
+
+    #[test]
+    fn a_chosen_engine_is_the_only_one_asked() {
+        /* Groq would answer 200 first in the chain; choosing Google must skip it, and Google's refusal is not hidden by Groq. */
+        let (base, server) = mock(vec![(403, r#"{"error":"no"}"#)]);
+        let endpoints = Endpoints { groq: format!("{base}/groq"), gemini: base.clone(), openai: format!("{base}/openai") };
+        let keys = vec![("groq", "k1".to_string()), ("google", "k2".to_string())];
+        let error = transcribe_choosing(&endpoints, &keys, Some("google"), &audio(), "audio/wav", None).unwrap_err();
+
+        assert!(error.contains("google (") && !error.contains("groq"), "{error}");
+
+        let seen = server.join().unwrap();
+
+        assert!(seen.iter().all(|request| !request.contains("/groq")), "{seen:?}");
+    }
+
+    #[test]
+    fn a_chosen_engine_without_a_key_or_unknown_says_so() {
+        let endpoints = Endpoints::default();
+        let keys = vec![("groq", "k1".to_string())];
+
+        assert!(transcribe_choosing(&endpoints, &keys, Some("qwen"), &audio(), "audio/wav", None).unwrap_err().contains("has no key"));
+        assert!(transcribe_choosing(&endpoints, &keys, Some("nope"), &audio(), "audio/wav", None).unwrap_err().contains("not a transcriber"));
     }
 
     #[test]
