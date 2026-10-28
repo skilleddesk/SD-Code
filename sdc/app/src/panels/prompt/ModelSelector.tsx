@@ -68,10 +68,10 @@ export function ModelSelector({ sessionId }: { sessionId: string | null }) {
     <div className="model-selector relative" ref={rootRef}>
       <div
         className={
-          'model-trigger flex h-[26px] min-w-0 max-w-[220px] cursor-pointer items-center gap-[6px] rounded-full border px-[9px] pl-[6px] text-[11.5px] transition-all duration-fast ease-ease ' +
+          'model-trigger group flex h-[34px] min-w-0 max-w-[240px] cursor-pointer items-center gap-[8px] rounded-full border py-[3px] pl-[3px] pr-[10px] text-[12px] outline-none transition-all duration-fast ease-ease focus-visible:ring-2 focus-visible:ring-accent/50 max-600:max-w-[170px] ' +
           (dropdownOpen
-            ? 'open border-border-strong bg-bg-overlay text-text-primary'
-            : 'border-transparent text-text-secondary hover:border-border-subtle hover:bg-bg-hover hover:text-text-primary')
+            ? 'open border-border-strong bg-bg-active text-text-primary'
+            : 'border-border-subtle bg-bg-raised text-text-secondary hover:border-border-default hover:bg-bg-hover hover:text-text-primary')
         }
         role="button"
         tabIndex={0}
@@ -87,7 +87,9 @@ export function ModelSelector({ sessionId }: { sessionId: string | null }) {
           }
         }}
       >
-        <Icon size={12} aria-hidden="true" className="shrink-0 text-accent" />
+        <span className="brand-fill grid h-[26px] w-[26px] shrink-0 place-items-center rounded-full" aria-hidden="true">
+          <Icon size={13} />
+        </span>
         <span className="mmodel min-w-0 truncate font-medium text-text-primary">{label}</span>
         <ChevronDown
           size={12}

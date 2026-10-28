@@ -80,6 +80,65 @@ fn main() -> Result<()> {
             std::process::exit(sdcd::navaratna::cli::main(&all[1..]));
         }
 
+        /* 1.0.3: `sdcd models live PROVIDER` prints the ids the provider's own endpoint lists right now (with the
+           stored key, never printed) - how to tell "the provider does not list it" from "SDC does not show it". */
+        if all.first().map(String::as_str) == Some("models") && all.get(1).map(String::as_str) == Some("live") {
+            let wanted = all.get(2).cloned().unwrap_or_default();
+            let Some(block) = sdcd::providers::models::blocked().into_iter().find(|block| block.id == wanted) else {
+                eprintln!("no provider `{wanted}` in this build's catalogue");
+                std::process::exit(2);
+            };
+
+            match sdcd::providers::models::live(&block) {
+                Ok(rows) => {
+                    for row in rows {
+                        println!("{}", row["id"].as_str().unwrap_or_default());
+                    }
+
+                    std::process::exit(0);
+                }
+                Err(error) => {
+                    eprintln!("{}: {error}", block.label);
+                    std::process::exit(1);
+                }
+            }
+        }
+
+        /* 1.0.3: `sdcd models resolve PROVIDER MODEL` asks for one token and prints the model the provider says
+           answered - what an alias like `deepseek-flash` really is today. */
+        if all.first().map(String::as_str) == Some("models") && all.get(1).map(String::as_str) == Some("resolve") {
+            let provider = all.get(2).cloned().unwrap_or_default();
+            let model = all.get(3).cloned().unwrap_or_default();
+            let endpoint = sdcd::engines::native_api::endpoint_for(&model, Some(&provider));
+            let Some(key) = sdcd::auth::keychain::get(&endpoint.key_ref) else {
+                eprintln!("no key for `{provider}`");
+                std::process::exit(2);
+            };
+            let body = serde_json::json!({ "model": model, "max_tokens": 1, "messages": [{ "role": "user", "content": "hi" }] });
+            let answer = ureq::post(&endpoint.url)
+                .set("authorization", &format!("Bearer {key}"))
+                .set("content-type", "application/json")
+                .send_string(&body.to_string());
+
+            match answer {
+                Ok(response) => {
+                    let value: serde_json::Value = serde_json::from_str(&response.into_string().unwrap_or_default()).unwrap_or_default();
+
+                    println!("asked: {model}
+answered by: {}", value["model"].as_str().unwrap_or("(not said)"));
+                    std::process::exit(0);
+                }
+                Err(ureq::Error::Status(code, response)) => {
+                    eprintln!("HTTP {code}: {}", response.into_string().unwrap_or_default().chars().take(300).collect::<String>());
+                    std::process::exit(1);
+                }
+                Err(error) => {
+                    eprintln!("{error}");
+                    std::process::exit(1);
+                }
+            }
+        }
+
         /* PADMA P2-1: `sdcd models probe|show MODEL` measures or prints a model's profile. */
         if all.first().map(String::as_str) == Some("models") {
             std::process::exit(sdcd::padma::model::main(&all[1..]));

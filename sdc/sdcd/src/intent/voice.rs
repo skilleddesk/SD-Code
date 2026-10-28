@@ -135,13 +135,84 @@ pub struct Attempt {
 /// Transcribes one recording. `language` is a hint (`bn`, `ar`, …) or `None` for automatic. `engine` is the person's
 /// choice in Settings: `None` or `auto` runs the whole chain; `local` or a provider id (`groq`, `google`, `qwen`,
 /// `openai-api`) uses only that one.
-pub fn transcribe(audio: &[u8], mime: &str, language: Option<&str>, engine: Option<&str>) -> Result<Value, String> {
+///
+/// 1.0.3, the report "it hears me for a short while and then stops": a live caption asked again every second or two
+/// used up a free key's requests per minute (Groq, Gemini) within the first minute, and from then on every request -
+/// the phrases that are kept included - came back `429`. Now a provider that says "too many requests" **rests** for
+/// as long as it asked (`Retry-After`, else 20 s) and is not asked meanwhile; a live caption (`interim`) asks one
+/// rested service only, never the whole chain; and a refusal because everything is resting says how long to wait
+/// (`retry_after`), so the window waits and asks again instead of losing what was said.
+pub fn transcribe(audio: &[u8], mime: &str, language: Option<&str>, engine: Option<&str>, interim: bool) -> Result<Value, String> {
     let keys: Vec<(&str, String)> = CLOUD_ORDER
         .iter()
         .filter_map(|id| crate::auth::keychain::get(&crate::providers::key_ref(id)).map(|key| (*id, key)))
         .collect();
+    let ready: Vec<(&str, String)> = keys.iter().filter(|(id, _)| resting_for(id).is_none()).cloned().collect();
+    let chosen = engine.map(str::trim).filter(|engine| !engine.is_empty() && *engine != "auto" && *engine != "local");
 
-    transcribe_choosing(&Endpoints::default(), &keys, engine, audio, mime, language)
+    /* The one service the person chose is resting: say so, with the wait, rather than "it has no key". */
+    if let Some(chosen) = chosen {
+        if let Some(left) = resting_for(chosen) {
+            return Err(resting_sentence(&[chosen], left));
+        }
+    }
+
+    /* Nothing local, and every cloud service with a key is resting. */
+    if chosen.is_none() && ready.is_empty() && !keys.is_empty() && !has_local() {
+        let names: Vec<&str> = keys.iter().map(|(id, _)| *id).collect();
+
+        return Err(resting_sentence(&names, retry_after().unwrap_or(Duration::from_secs(5))));
+    }
+
+    let asked: Vec<(&str, String)> = if interim && chosen.is_none() { ready.into_iter().take(1).collect() } else { ready };
+
+    transcribe_choosing(&Endpoints::default(), &asked, engine, audio, mime, language)
+}
+
+type RestMap = std::sync::Mutex<std::collections::HashMap<String, std::time::Instant>>;
+
+/// The services that asked to be left alone, and until when (1.0.3).
+fn resting() -> &'static RestMap {
+    static RESTING: std::sync::OnceLock<RestMap> = std::sync::OnceLock::new();
+
+    RESTING.get_or_init(Default::default)
+}
+
+/// A `429` from `provider`: it rests for `retry_after` (its `Retry-After` header, in seconds), else 20 s.
+pub fn note_too_many(provider: &str, retry_after: Option<&str>) {
+    let seconds = retry_after.and_then(|value| value.trim().parse::<f64>().ok()).filter(|seconds| seconds.is_finite() && *seconds > 0.0).unwrap_or(20.0).min(300.0);
+
+    if let Ok(mut map) = resting().lock() {
+        map.insert(provider.to_string(), std::time::Instant::now() + Duration::from_secs_f64(seconds));
+    }
+}
+
+/// How long `provider` still rests, if it does.
+pub fn resting_for(provider: &str) -> Option<Duration> {
+    let map = resting().lock().ok()?;
+    let until = *map.get(provider)?;
+
+    until.checked_duration_since(std::time::Instant::now()).filter(|left| !left.is_zero())
+}
+
+/// The shortest rest left among the services that are resting: when the window may ask again.
+pub fn retry_after() -> Option<Duration> {
+    let now = std::time::Instant::now();
+
+    resting().lock().ok()?.values().filter_map(|until| until.checked_duration_since(now)).filter(|left| !left.is_zero()).min()
+}
+
+fn resting_sentence(names: &[&str], left: Duration) -> String {
+    format!("{} asked SDC to slow down (too many requests); SDC asks again in {} s.", names.join(", "), left.as_secs().max(1))
+}
+
+/// A local transcriber is installed and has what it needs (the same test as `status().local`).
+fn has_local() -> bool {
+    match ["whisper-cli", "whisper-cpp", "whisper"].into_iter().find(|program| crate::host::program::resolve(program).is_some()) {
+        Some("whisper") => true,
+        Some(_) => whisper_model().is_some(),
+        None => false,
+    }
 }
 
 /// The chain narrowed to the engine the person chose. A chosen engine is the only one tried: picking Gemini must
@@ -201,8 +272,8 @@ pub fn transcribe_with(endpoints: &Endpoints, keys: &[(&str, String)], try_local
         let heard = match *provider {
             "qwen" => qwen_online(key, audio, mime, language),
             "google" => gemini_online(&endpoints.gemini, key, audio, mime, language),
-            "groq" => online(&endpoints.groq, key, "whisper-large-v3-turbo", audio, mime, language),
-            "openai-api" => online(&endpoints.openai, key, "whisper-1", audio, mime, language),
+            "groq" => online("groq", &endpoints.groq, key, "whisper-large-v3-turbo", audio, mime, language),
+            "openai-api" => online("openai-api", &endpoints.openai, key, "whisper-1", audio, mime, language),
             _ => continue,
         };
 
@@ -272,6 +343,10 @@ fn gemini_online(base: &str, key: &str, audio: &[u8], mime: &str, language: Opti
             }
             Err(ureq::Error::Status(404, response)) => last = format!("{model} is not available to this key (HTTP 404): {}", response.into_string().unwrap_or_default().chars().take(160).collect::<String>()),
             Err(ureq::Error::Status(code, response)) => {
+                if code == 429 {
+                    note_too_many("google", response.header("retry-after"));
+                }
+
                 return Err(format!("Gemini refused the recording (HTTP {code}): {}", response.into_string().unwrap_or_default().chars().take(300).collect::<String>()));
             }
             Err(error) => return Err(format!("Gemini could not be reached: {error}")),
@@ -363,7 +438,13 @@ fn qwen_online(key: &str, audio: &[u8], mime: &str, language: Option<&str>) -> R
 
                 serde_json::from_str(&text).map_err(|_| (0, format!("the transcriber answered something that is not JSON: {}", text.chars().take(200).collect::<String>())))
             }
-            Err(ureq::Error::Status(code, response)) => Err((code, response.into_string().unwrap_or_default().chars().take(300).collect())),
+            Err(ureq::Error::Status(code, response)) => {
+                if code == 429 {
+                    note_too_many("qwen", response.header("retry-after"));
+                }
+
+                Err((code, response.into_string().unwrap_or_default().chars().take(300).collect()))
+            }
             Err(error) => Err((0, format!("The transcriber could not be reached: {error}"))),
         }
     };
@@ -451,7 +532,7 @@ pub fn qwen_text(answer: &Value) -> String {
 }
 
 /// An OpenAI-compatible `audio/transcriptions` call, multipart by hand (the one form upload SDC makes).
-fn online(url: &str, key: &str, model: &str, audio: &[u8], mime: &str, language: Option<&str>) -> Result<String, String> {
+fn online(provider: &str, url: &str, key: &str, model: &str, audio: &[u8], mime: &str, language: Option<&str>) -> Result<String, String> {
     let boundary = format!("sdc{}", uuid::Uuid::new_v4().simple());
     let extension = if mime.contains("wav") { "wav" } else if mime.contains("webm") { "webm" } else { "ogg" };
     let mut body = Vec::new();
@@ -490,6 +571,10 @@ fn online(url: &str, key: &str, model: &str, audio: &[u8], mime: &str, language:
             Ok(value["text"].as_str().unwrap_or_default().trim().to_string())
         }
         Err(ureq::Error::Status(code, response)) => {
+            if code == 429 {
+                note_too_many(provider, response.header("retry-after"));
+            }
+
             let body = response.into_string().unwrap_or_default();
 
             Err(format!("The transcriber refused the recording (HTTP {code}): {}", body.chars().take(300).collect::<String>()))
@@ -551,8 +636,23 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_service_that_said_too_many_requests_rests_for_as_long_as_it_asked() {
+        note_too_many("test-rest-a", Some("12"));
+        note_too_many("test-rest-b", None);
+
+        let a = resting_for("test-rest-a").unwrap().as_secs();
+        let b = resting_for("test-rest-b").unwrap().as_secs();
+
+        assert!((10..=12).contains(&a), "{a}");
+        assert!((18..=20).contains(&b), "{b}");
+        assert!(resting_for("test-rest-none").is_none());
+        assert!(retry_after().is_some());
+        assert!(resting_sentence(&["groq"], Duration::from_secs(7)).contains("7 s"));
+    }
+
+    #[test]
     fn a_recording_that_is_too_short_is_refused_with_a_sentence() {
-        assert!(transcribe(&[0u8; 10], "audio/wav", None, None).unwrap_err().contains("too short"));
+        assert!(transcribe(&[0u8; 10], "audio/wav", None, None, false).unwrap_err().contains("too short"));
     }
 
     #[test]

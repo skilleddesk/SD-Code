@@ -271,7 +271,7 @@ impl Daemon {
         let interim = envelope.params.get("interim").and_then(Value::as_bool).unwrap_or(false);
 
         tokio::task::spawn_blocking(move || {
-            let result = intent::voice::transcribe(&audio, &mime, language.as_deref(), engine.as_deref());
+            let result = intent::voice::transcribe(&audio, &mime, language.as_deref(), engine.as_deref(), interim);
             let payload = match result {
                 Ok(value) => json!({
                     "type": "VoiceTranscribed",
@@ -283,7 +283,18 @@ impl Daemon {
                     "error": Value::Null,
                     "interim": interim,
                 }),
-                Err(error) => json!({ "type": "VoiceTranscribed", "requestId": id, "text": "", "engine": Value::Null, "local": false, "error": error, "interim": interim }),
+                /* 1.0.3: when a service asked to slow down, how long until it may be asked again - the window waits that
+                   long and asks again, so a long dictation loses nothing to a rate limit. */
+                Err(error) => json!({
+                    "type": "VoiceTranscribed",
+                    "requestId": id,
+                    "text": "",
+                    "engine": Value::Null,
+                    "local": false,
+                    "error": error,
+                    "interim": interim,
+                    "retryAfterMs": intent::voice::retry_after().map(|left| left.as_millis() as u64),
+                }),
             };
 
             if interim {

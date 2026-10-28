@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { heldLanguage, MAX_PHRASE_MS, PhraseCutter, tidyDictation, type Phrase } from './dictation';
+import { CAPTIONS_UNDER_PER_MINUTE, heldLanguage, MAX_PHRASE_MS, mergeAudio, MERGE_GAP_MS, PhraseCutter, tidyDictation, TranscriberPacer, type Phrase } from './dictation';
 
 /**
  * A recorded-like signal: words of a voice (a tone whose loudness rises and falls like syllables) separated by
@@ -242,5 +242,70 @@ describe('heldLanguage', () => {
     expect(heldLanguage('मैं ठीक करना चाहता हूँ')).toBe('hi');
     expect(heldLanguage('fix the dropdown')).toBeUndefined();
     expect(heldLanguage('ok')).toBeUndefined();
+  });
+});
+
+describe('TranscriberPacer (1.0.3: a long dictation stays inside a free key\'s limits)', () => {
+  it('spaces cloud captions and stops them once the minute\'s budget is spent', () => {
+    const pacer = new TranscriberPacer();
+    let asked = 0;
+
+    for (let now = 0; now < 60_000; now += 100) {
+      if (pacer.mayCaption(now)) {
+        asked += 1;
+      }
+    }
+
+    expect(asked).toBeLessThanOrEqual(CAPTIONS_UNDER_PER_MINUTE);
+    expect(asked).toBeGreaterThan(3);
+  });
+
+  it('counts kept phrases against the same budget, so they always find room', () => {
+    const pacer = new TranscriberPacer();
+
+    for (let index = 0; index < CAPTIONS_UNDER_PER_MINUTE; index += 1) {
+      pacer.note(index * 1000);
+    }
+
+    expect(pacer.mayCaption(20_000)).toBe(false);
+    expect(pacer.mayCaption(70_000)).toBe(true);
+  });
+
+  it('asks nothing while the transcriber rests, and says how long is left', () => {
+    const pacer = new TranscriberPacer();
+
+    pacer.rest(1000, 20_000);
+
+    expect(pacer.waitFor(1000)).toBe(20_000);
+    expect(pacer.mayCaption(10_000)).toBe(false);
+    expect(pacer.waitFor(30_000)).toBe(0);
+    expect(pacer.mayCaption(30_000)).toBe(true);
+  });
+
+  it('captions often when the transcriber is on this computer', () => {
+    const pacer = new TranscriberPacer();
+    let asked = 0;
+
+    pacer.local = true;
+
+    for (let now = 0; now < 60_000; now += 100) {
+      if (pacer.mayCaption(now)) {
+        asked += 1;
+      }
+    }
+
+    expect(asked).toBeGreaterThan(40);
+  });
+});
+
+describe('mergeAudio', () => {
+  it('puts phrases one after another with a short silence between', () => {
+    const merged = mergeAudio([new Float32Array([1, 1]), new Float32Array([2])], 1000);
+    const gap = Math.round((MERGE_GAP_MS / 1000) * 1000);
+
+    expect(merged.length).toBe(3 + gap);
+    expect(merged[0]).toBe(1);
+    expect(merged[2]).toBe(0);
+    expect(merged[merged.length - 1]).toBe(2);
   });
 });

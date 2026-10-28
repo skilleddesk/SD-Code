@@ -22,7 +22,7 @@ import { setting, storedSettings } from '../lib/settings';
 import type { TaskSpec } from '../../../protocol/types';
 import { cancelIntent, confirmIntent, parseIntent } from './kernelIntents';
 import { useKernelUi } from './kernelUi';
-import type { AppState, HostView, TurnView } from './types';
+import type { AppState, HostView, ProviderView, TurnView } from './types';
 import { openOutside } from '../lib/external';
 
 /**
@@ -2225,6 +2225,30 @@ export async function connectApiKey(id: string, key: string, label?: string, bas
   } catch (error) {
     reportFailure(error, 'Could not save that key');
     return null;
+  }
+}
+
+/**
+ * Disconnect (1.0.3): the way out of any connection, from the card itself. The report: "once signed in it cannot be
+ * disconnected - and Disconnect must remove the sign-in completely, so Connect opens the browser to approve again".
+ *
+ * A subscription is signed out by its own CLI and its credential file deleted (`cli.logout`); an API key leaves the
+ * keychain with its model list (`provider.remove`). The card follows the `ProviderStatus` event either pushes.
+ */
+export async function disconnectProvider(id: string, kind: ProviderView['kind']): Promise<boolean> {
+  try {
+    if (kind === 'subscription') {
+      await sdcpCall('cli.logout', { providerId: id });
+    } else {
+      await sdcpCall('provider.remove', { id });
+    }
+
+    void refreshCatalog();
+
+    return true;
+  } catch (error) {
+    reportFailure(error, strings.hub.disconnect);
+    return false;
   }
 }
 

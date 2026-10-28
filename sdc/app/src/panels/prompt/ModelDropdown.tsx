@@ -1,4 +1,4 @@
-import { Check, Plug, Search } from 'lucide-react';
+import { Check, ChevronRight, Plug, Search } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 
 import { strings } from '../../strings';
@@ -15,6 +15,7 @@ import {
 import { chooseForChat, useChatModel } from '../../store/chatModel';
 import { useOverlayStore } from '../../store/overlays';
 import { useProviderStore } from '../../store/providers';
+import { tierIcon } from './modelIcons';
 
 /**
  * `.model-dropdown` - the model picker above the prompt box (v5).
@@ -37,22 +38,41 @@ import { useProviderStore } from '../../store/providers';
  * through `ModelsUpdated`.
  */
 
+/*
+ * 1.0.3 look - the report: "the menu does not match SDC's design; make it modern". The same glass as every SDC
+ * popover, a search field that is part of the sheet rather than a box inside it, provider tabs as one segmented
+ * strip, and each family as a line with its tier badge, its name and context underneath, and its versions as a
+ * compact segmented set on the right.
+ */
 const ROW =
-  'mdd-item group flex min-h-[34px] cursor-pointer items-center gap-[8px] rounded-md px-[10px] py-[6px] text-[12.5px] transition-colors duration-fast ease-ease';
+  'mdd-item group relative flex min-h-[46px] cursor-pointer items-center gap-[10px] rounded-[10px] px-[8px] py-[6px] text-[12.5px] outline-none transition-colors duration-fast ease-ease focus-visible:bg-bg-hover';
 const ROW_IDLE = ROW + ' text-text-secondary hover:bg-bg-hover hover:text-text-primary';
-const ROW_ON = ROW + ' selected bg-accent-subtle text-text-primary';
+const ROW_ON = ROW + ' selected bg-accent-subtle text-text-primary shadow-[inset_0_0_0_1px_var(--accent-glow)]';
+
+const BADGE = 'grid h-[30px] w-[30px] shrink-0 place-items-center rounded-[9px] border transition-colors duration-fast';
+const BADGE_IDLE = BADGE + ' border-border-subtle bg-bg-raised text-text-muted group-hover:text-accent';
+const BADGE_ON = BADGE + ' brand-fill border-transparent';
 
 const CHIP =
-  'mdd-version shrink-0 rounded-full border px-[7px] font-mono text-[10.5px] leading-[18px] transition-colors duration-fast ease-ease';
-const CHIP_IDLE = CHIP + ' border-border-subtle text-text-muted hover:border-border-strong hover:text-text-primary';
-const CHIP_ON = CHIP + ' border-accent-fill bg-accent-fill text-text-on-accent';
+  'mdd-version shrink-0 cursor-pointer rounded-full px-[8px] font-mono text-[10.5px] leading-[20px] outline-none transition-colors duration-fast ease-ease focus-visible:ring-1 focus-visible:ring-accent';
+const CHIP_IDLE = CHIP + ' text-text-muted hover:bg-bg-active hover:text-text-primary';
+const CHIP_ON = CHIP + ' bg-accent-fill font-semibold text-text-on-accent shadow-sm';
 
 const TAB =
-  'mdd-tab shrink-0 cursor-pointer whitespace-nowrap rounded-full px-[10px] py-[3px] text-[11.5px] transition-colors duration-fast ease-ease';
+  'mdd-tab inline-flex shrink-0 cursor-pointer items-center gap-[6px] whitespace-nowrap rounded-full px-[10px] py-[4px] text-[11.5px] outline-none transition-colors duration-fast ease-ease focus-visible:ring-1 focus-visible:ring-accent';
 const TAB_IDLE = TAB + ' text-text-muted hover:bg-bg-hover hover:text-text-primary';
-const TAB_ON = TAB + ' bg-bg-raised font-medium text-text-primary shadow-[inset_0_0_0_1px_var(--border-subtle)]';
+const TAB_ON = TAB + ' bg-bg-active font-medium text-text-primary shadow-[inset_0_0_0_1px_var(--border-default)]';
 
-const PROVIDER_TITLE = 'mdd-title px-[10px] pb-[2px] pt-[8px] text-[10px] font-semibold uppercase tracking-[.08em] text-text-muted';
+const PROVIDER_TITLE = 'mdd-title px-[10px] pb-[4px] pt-[10px] text-[10px] font-semibold uppercase tracking-[.09em] text-text-muted';
+
+/** `200000` -> `200K context`; nothing when the size is not known. */
+function contextLine(ctx: number): string {
+  if (!(ctx > 0)) {
+    return '';
+  }
+
+  return ctx >= 1_000_000 ? `${Math.round(ctx / 100_000) / 10}M context` : `${Math.round(ctx / 1000)}K context`;
+}
 
 /** A clickable element that answers Enter and Space the way a button does. */
 function pressable(action: () => void) {
@@ -120,6 +140,11 @@ export function ModelDropdown({ sessionId }: { sessionId: string | null }) {
     const isOn = (row: CatalogModel): boolean => row.id === model && row.providerId === providerId;
     const selected = family.versions.some(({ row }) => isOn(row));
     const chips = family.versions.filter((version) => version.label !== '');
+    const TierIcon = tierIcon(newest.row.tier);
+    /* A name without a version (`deepseek-flash`) is the provider's own alias for whatever it serves newest - DeepSeek's
+       API offers V4.1 Flash only as `deepseek-flash` (it refuses `deepseek-v4.1-flash`, measured 2026-10-28). Said so,
+       rather than leaving the row looking older than it is. */
+    const detail = chips.length === 0 ? strings.prompt.model.current(newest.row.id) : contextLine(newest.row.ctx);
 
     return (
       <div
@@ -130,36 +155,45 @@ export function ModelDropdown({ sessionId }: { sessionId: string | null }) {
         title={newest.row.id}
         {...pressable(() => pick(group, newest.row))}
       >
-        <span className="mdd-name min-w-0 flex-1 truncate font-medium text-text-primary">{family.label}</span>
-        {chips.map(({ label, row }) => (
-          <span
-            key={row.id}
-            className={isOn(row) ? CHIP_ON : CHIP_IDLE}
-            aria-pressed={isOn(row)}
-            aria-label={`${family.label} ${label}`}
-            title={row.id}
-            data-model-version={row.id}
-            {...pressable(() => pick(group, row))}
-          >
-            {label}
+        <span className={selected ? BADGE_ON : BADGE_IDLE} aria-hidden="true">
+          {selected && chips.length === 0 ? <Check size={14} strokeWidth={2.6} /> : <TierIcon size={14} />}
+        </span>
+        <span className="flex min-w-0 flex-1 flex-col">
+          <span className="mdd-name truncate font-medium leading-[1.3] text-text-primary">{family.label}</span>
+          <span className="truncate font-mono text-[10px] leading-[1.4] text-text-muted">{detail === '' ? newest.row.id : detail}</span>
+        </span>
+        {chips.length === 0 ? null : (
+          <span className="flex shrink-0 items-center gap-[1px] rounded-full border border-border-subtle bg-bg-input p-[2px]">
+            {chips.slice(0, 4).map(({ label, row }) => (
+              <span
+                key={row.id}
+                className={isOn(row) ? CHIP_ON : CHIP_IDLE}
+                aria-pressed={isOn(row)}
+                aria-label={`${family.label} ${label}`}
+                title={row.id}
+                data-model-version={row.id}
+                {...pressable(() => pick(group, row))}
+              >
+                {label}
+              </span>
+            ))}
           </span>
-        ))}
-        {selected && chips.length === 0 ? <Check size={14} className="shrink-0 text-accent" aria-hidden="true" /> : null}
+        )}
       </div>
     );
   };
 
   return (
     <div
-      className="model-dropdown absolute bottom-[calc(100%+8px)] left-0 z-[300] flex max-h-[min(380px,70vh)] w-[320px] max-w-[calc(100vw-24px)] flex-col rounded-lg border border-border-default bg-bg-overlay p-[6px] shadow-xl animate-drop-up"
+      className="model-dropdown absolute bottom-[calc(100%+10px)] left-0 z-[300] flex max-h-[min(440px,72vh)] w-[360px] max-w-[calc(100vw-24px)] flex-col overflow-hidden rounded-[16px] border border-border-default bg-bg-overlay shadow-xl animate-drop-up"
       role="dialog"
       aria-label={strings.prompt.model.groupTitles.model}
     >
-      <label className="mdd-search flex items-center gap-[6px] rounded-md border border-border-subtle bg-bg-input px-[8px] focus-within:border-border-strong">
-        <Search size={12} className="shrink-0 text-text-muted" aria-hidden="true" />
+      <label className="mdd-search flex shrink-0 items-center gap-[8px] border-b border-border-subtle px-[14px]">
+        <Search size={14} className="shrink-0 text-text-muted" aria-hidden="true" />
         <input
           type="text"
-          className="min-w-0 flex-1 bg-transparent py-[6px] text-[12px] text-text-primary outline-none placeholder:text-text-muted focus-visible:outline-none"
+          className="min-w-0 flex-1 bg-transparent py-[12px] text-[12.5px] text-text-primary outline-none placeholder:text-text-muted focus-visible:outline-none"
           placeholder={strings.prompt.model.search}
           aria-label={strings.prompt.model.search}
           value={query}
@@ -169,7 +203,7 @@ export function ModelDropdown({ sessionId }: { sessionId: string | null }) {
       </label>
 
       {!searching && groups.length > 1 ? (
-        <div className="mdd-tabs mt-[6px] flex flex-wrap gap-[2px]" role="tablist">
+        <div className="mdd-tabs flex shrink-0 gap-[4px] overflow-x-auto border-b border-border-subtle px-[10px] py-[8px] [scrollbar-width:none]" role="tablist">
           {groups.map((group) => (
             <span
               key={group.providerId}
@@ -186,51 +220,53 @@ export function ModelDropdown({ sessionId }: { sessionId: string | null }) {
                 }
               }}
             >
+              <span className={'h-[6px] w-[6px] rounded-full ' + (group.needsAuth === true ? 'bg-state-waiting' : 'bg-state-success')} aria-hidden="true" />
               {group.providerLabel}
             </span>
           ))}
         </div>
       ) : null}
 
-      <div className="mdd-list mt-[4px] min-h-0 flex-1 overflow-y-auto">
+      <div className="mdd-list min-h-0 flex-1 overflow-y-auto p-[6px]">
         {catalog.length === 0 ? (
-          <div className="mdd-none px-[10px] py-[8px] text-[12px] text-text-secondary">{strings.prompt.model.catalogEmpty}</div>
+          <div className="mdd-none px-[10px] py-[14px] text-center text-[12px] text-text-secondary">{strings.prompt.model.catalogEmpty}</div>
         ) : groups.length === 0 ? (
-          <div className="mdd-none px-[10px] py-[8px] text-[12px] leading-[1.5] text-text-secondary" data-none-connected>
+          <div className="mdd-none px-[10px] py-[14px] text-center text-[12px] leading-[1.5] text-text-secondary" data-none-connected>
             {strings.prompt.model.noneConnected}
           </div>
         ) : searching ? (
           shown.length === 0 ? (
-            <div className="mdd-none px-[10px] py-[8px] text-[12px] text-text-secondary" data-no-matches>
+            <div className="mdd-none px-[10px] py-[14px] text-center text-[12px] text-text-secondary" data-no-matches>
               {strings.prompt.model.noMatches(query.trim())}
             </div>
           ) : (
             shown.map((group) => (
-              <div key={group.providerId} className="mdd-group" data-provider-group={group.providerId}>
+              <div key={group.providerId} className="mdd-group flex flex-col gap-[2px]" data-provider-group={group.providerId}>
                 {shown.length > 1 ? <div className={PROVIDER_TITLE}>{group.providerLabel}</div> : null}
                 {familiesOf(rowsOf(group)).map((family) => renderFamily(group, family))}
               </div>
             ))
           )
         ) : active === undefined ? null : (
-          <div className="mdd-group" data-provider-group={active.providerId}>
+          <div className="mdd-group flex flex-col gap-[2px]" data-provider-group={active.providerId}>
             {familiesOf(rowsOf(active)).map((family) => renderFamily(active, family))}
           </div>
         )}
       </div>
 
       <div
-        className="mdd-action mt-[4px] flex cursor-pointer items-center gap-[6px] rounded-md border-t border-border-subtle px-[10px] py-[7px] text-[11.5px] text-text-muted hover:bg-bg-hover hover:text-text-primary"
+        className="mdd-action group flex shrink-0 cursor-pointer items-center gap-[8px] border-t border-border-subtle bg-bg-raised px-[14px] py-[10px] text-[11.5px] text-text-muted outline-none transition-colors duration-fast hover:bg-bg-hover hover:text-text-primary focus-visible:bg-bg-hover"
         data-manage-providers
         {...pressable(manage)}
       >
-        <Plug size={12} aria-hidden="true" />
+        <Plug size={13} aria-hidden="true" className="text-accent" />
         <span className="min-w-0 flex-1 truncate">{strings.prompt.model.manageProviders}</span>
         {disconnected > 0 ? (
-          <span className="shrink-0 rounded-full border border-border-subtle px-[6px] font-mono text-[10px] leading-[16px]" title={strings.prompt.model.disconnected(disconnected)}>
+          <span className="shrink-0 rounded-full bg-bg-active px-[7px] font-mono text-[10px] leading-[18px]" title={strings.prompt.model.disconnected(disconnected)}>
             +{disconnected}
           </span>
         ) : null}
+        <ChevronRight size={13} aria-hidden="true" className="shrink-0 transition-transform duration-fast group-hover:translate-x-[2px]" />
       </div>
     </div>
   );

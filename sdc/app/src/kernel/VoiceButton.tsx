@@ -1,7 +1,7 @@
 import { LoaderCircle, Mic, Square } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
-import { heldLanguage, MIN_PHRASE_MS, PhraseCutter, tidyDictation, type HeardPhrase, type Phrase } from '../lib/dictation';
+import { heldLanguage, mergeAudio, MERGE_MAX_MS, MIN_PHRASE_MS, PhraseCutter, tidyDictation, TranscriberPacer, type HeardPhrase, type Phrase } from '../lib/dictation';
 import { micProblem } from '../lib/mic';
 import { waveLevel } from '../lib/voiceWave';
 import { storedSettings } from '../lib/settings';
@@ -20,11 +20,12 @@ import { toast } from '../store/toast';
  *
  *   - the microphone is read as raw samples, cut into **phrases** at natural pauses (`lib/dictation`: 1 s of
  *     quiet after speech; a long breathless stretch is cut at its quietest moment, never inside a word);
- *   - while a phrase is being spoken it is transcribed again every ~1.2 s, so its words grow on screen
- *     (an interim caption: shown, never recorded - the daemon sends it live only);
- *   - when the phrase ends it is transcribed once more and its text is kept - with a time limit and one retry, so
- *     one lost answer can never hold back everything said after it; the next phrase starts empty, so a long
- *     dictation never re-sends what was already written;
+ *   - while a phrase is being spoken it is transcribed again every 1.2 s (on this computer) or 2.5 s (a cloud
+ *     service, inside a budget per minute), so its words grow on screen (an interim caption: shown, never recorded);
+ *   - when the phrase ends it is transcribed once more and its text is kept. 1.0.3: a transcriber that says "too many
+ *     requests" is waited for as long as it asked and asked again - the phrases that piled up meanwhile go as one
+ *     recording - so a dictation of many minutes loses nothing to a free key's rate limit; the next phrase starts
+ *     empty, so a long dictation never re-sends what was already written;
  *   - when listening stops the phrases are put together by `tidyDictation`: stutters, filler sounds and words a
  *     cut left on both sides are taken out, and nothing else is changed.
  *
@@ -33,10 +34,10 @@ import { toast } from '../store/toast';
  */
 
 const RATE = 16000;
-/** How often a phrase still being spoken is shown again. */
-const INTERIM_MS = 1200;
 /** How long one transcription may take before it counts as lost. */
 const HEAR_TIMEOUT_MS = 45_000;
+/** How long a kept phrase is tried for - waits the transcriber asked for included - before its caption stands in. */
+const GIVE_UP_MS = 180_000;
 /** The bars of the live wave, and how often it is redrawn. */
 const WAVE_BARS = 7;
 const WAVE_MS = 60;
@@ -108,7 +109,7 @@ function join(chunks: readonly Float32Array[]): Float32Array {
   return all;
 }
 
-type Heard = { text: string; engine: string | null; local: boolean; error: string | null };
+type Heard = { text: string; engine: string | null; local: boolean; error: string | null; retryAfterMs: number | null };
 
 /** One transcription, answered by the daemon's `VoiceTranscribed` event - or `null` when no answer came in time. */
 async function hear(samples: Float32Array, rate: number, sessionId: string | undefined, interim: boolean, language: string | undefined): Promise<Heard | null> {
@@ -133,7 +134,7 @@ async function hear(samples: Float32Array, rate: number, sessionId: string | und
       }
 
       window.clearTimeout(timer);
-      resolve({ text: result.text, engine: result.engine, local: result.local, error: result.error });
+      resolve({ text: result.text, engine: result.engine, local: result.local, error: result.error, retryAfterMs: result.retryAfterMs ?? null });
 
       return true;
     };
@@ -201,15 +202,16 @@ export function VoiceButton({ onText, onLive, onStart, sessionId }: { onText: (t
     const processor = context.createScriptProcessor(4096, 1, 1);
     const rate = context.sampleRate;
     const cutter = new PhraseCutter(rate);
+    const pacer = new TranscriberPacer();
     const kept: HeardPhrase[] = [];
     let interim = '';
     /* The phrase the caption on screen belongs to. */
     let interimOf: Phrase | null = null;
     let interimBusy = false;
-    let interimAt = 0;
     let lastHeard: { engine: string | null; local: boolean } | null = null;
-    /* Final transcriptions run in order, so the kept phrases stay in the order they were spoken. */
-    let finals: Promise<void> = Promise.resolve();
+    /* Phrases waiting for their final text, oldest first. One worker sends them, in order. */
+    const waiting: { slot: number; samples: Float32Array; speechMs: number }[] = [];
+    let working: Promise<void> | null = null;
     /* The person's language - or, left on automatic, the one the first phrase was heard in, held for the rest. */
     let language = chosenLanguage();
     let warned = false;
@@ -220,12 +222,98 @@ export function VoiceButton({ onText, onLive, onStart, sessionId }: { onText: (t
       onLive?.(tidyDictation([...kept, { text: interim, speechMs: Infinity }]));
     };
 
-    const finish = (ending: Phrase): void => {
-      const samples = join(ending.chunks);
-      const slot = kept.length;
+    const warnOnce = (message: string): void => {
+      if (!warned) {
+        warned = true;
+        toast(message);
+      }
+    };
 
+    /*
+     * 1.0.3: the kept phrases' worker. The report was "it hears me for a short while and then stops" - a free key's
+     * requests per minute ran out, every request after that was refused, and a phrase was given up after two tries.
+     * Now a phrase is never given up because the transcriber is busy: when it asks to wait, the worker waits as long
+     * as it asked, and the phrases that piled up meanwhile go together as one recording - one request, not ten.
+     */
+    const work = async (): Promise<void> => {
+      while (waiting.length > 0) {
+        const wait = pacer.waitFor(performance.now());
+
+        if (wait > 0) {
+          await new Promise((resolve) => window.setTimeout(resolve, wait));
+        }
+
+        /* Everything waiting, up to a minute of speech, as one request. */
+        const batch: typeof waiting = [];
+        let length = 0;
+
+        while (waiting.length > 0 && (batch.length === 0 || length + (waiting[0]?.samples.length ?? 0) <= (MERGE_MAX_MS / 1000) * rate)) {
+          const next = waiting.shift();
+
+          if (next !== undefined) {
+            batch.push(next);
+            length += next.samples.length;
+          }
+        }
+
+        const samples = batch.length === 1 ? (batch[0]?.samples ?? new Float32Array()) : mergeAudio(batch.map((part) => part.samples), rate);
+        let heard: Heard | null = null;
+        let failures = 0;
+        const started = performance.now();
+
+        for (;;) {
+          pacer.note(performance.now());
+          heard = await hear(samples, rate, sessionId, false, language);
+
+          if (heard !== null && heard.error === null) {
+            break;
+          }
+
+          const asked = heard?.retryAfterMs ?? null;
+
+          if (asked !== null && asked > 0 && performance.now() - started < GIVE_UP_MS) {
+            /* Too many requests: rest as asked, then the same phrases again. */
+            pacer.rest(performance.now(), asked + 250);
+            await new Promise((resolve) => window.setTimeout(resolve, pacer.waitFor(performance.now())));
+            continue;
+          }
+
+          failures += 1;
+
+          if (failures >= 3 || performance.now() - started >= GIVE_UP_MS) {
+            break;
+          }
+
+          await new Promise((resolve) => window.setTimeout(resolve, failures * 1500));
+        }
+
+        const first = batch[0];
+
+        if (heard !== null && heard.error === null && first !== undefined) {
+          kept[first.slot] = { text: heard.text.trim(), speechMs: batch.reduce((sum, part) => sum + part.speechMs, 0) };
+
+          for (const part of batch.slice(1)) {
+            kept[part.slot] = { text: '', speechMs: part.speechMs };
+          }
+
+          lastHeard = { engine: heard.engine, local: heard.local };
+          pacer.local = heard.local;
+          language ??= heldLanguage(heard.text);
+        } else {
+          /* The captions stay, and everything said after it is still heard. */
+          warnOnce(heard?.error ?? strings.kernel.voice.failed);
+        }
+
+        show();
+      }
+
+      working = null;
+    };
+
+    const finish = (ending: Phrase): void => {
       /* Until its final text arrives, the phrase keeps its last caption - so the words never blink out while the
-         next phrase is already being captioned. A final that fails twice keeps the caption too. */
+         next phrase is already being captioned. A phrase that could not be heard keeps its caption too. */
+      waiting.push({ slot: kept.length, samples: join(ending.chunks), speechMs: ending.speechMs });
       kept.push({ text: interimOf === ending ? interim : '', speechMs: ending.speechMs });
 
       if (interimOf === ending) {
@@ -233,26 +321,7 @@ export function VoiceButton({ onText, onLive, onStart, sessionId }: { onText: (t
         interimOf = null;
       }
 
-      finals = finals.then(async () => {
-        let heard = await hear(samples, rate, sessionId, false, language);
-
-        /* One more try: a phrase is never given up on after a single lost answer. */
-        if (heard === null || heard.error !== null) {
-          heard = (await hear(samples, rate, sessionId, false, language)) ?? heard;
-        }
-
-        if (heard !== null && heard.error === null) {
-          kept[slot] = { text: heard.text.trim(), speechMs: ending.speechMs };
-          lastHeard = { engine: heard.engine, local: heard.local };
-          language ??= heldLanguage(heard.text);
-        } else if (!warned) {
-          /* Said once per dictation: the caption stays, and everything after it is still heard. */
-          warned = true;
-          toast(heard?.error ?? strings.kernel.voice.failed);
-        }
-
-        show();
-      });
+      working ??= work();
     };
 
     processor.onaudioprocess = (event) => {
@@ -279,13 +348,21 @@ export function VoiceButton({ onText, onLive, onStart, sessionId }: { onText: (t
       const current = cutter.phrase;
       const lengthMs = (current.samples / rate) * 1000;
 
-      if (current.speechMs > 0 && !interimBusy && now - interimAt >= INTERIM_MS && lengthMs >= MIN_PHRASE_MS) {
+      /* A caption only while no kept phrase is waiting: the words that stay always go first. */
+      if (current.speechMs > 0 && !interimBusy && waiting.length === 0 && lengthMs >= MIN_PHRASE_MS && pacer.mayCaption(now)) {
         const samples = join(current.chunks);
 
         interimBusy = true;
-        interimAt = now;
         void hear(samples, rate, sessionId, true, language).then((heard) => {
           interimBusy = false;
+
+          if (heard?.retryAfterMs != null && heard.retryAfterMs > 0) {
+            pacer.rest(performance.now(), heard.retryAfterMs);
+          }
+
+          if (heard !== null && heard.error === null) {
+            pacer.local = heard.local;
+          }
 
           /* Only while that phrase is still the one being spoken: its final text replaces a late caption. */
           if (heard !== null && heard.error === null && current === cutter.phrase) {
@@ -306,6 +383,7 @@ export function VoiceButton({ onText, onLive, onStart, sessionId }: { onText: (t
       stopRef.current = null;
       listening = false;
       setWave(new Array<number>(WAVE_BARS).fill(0));
+      processor.onaudioprocess = null;
       processor.disconnect();
       source.disconnect();
       stream.getTracks().forEach((track) => track.stop());
@@ -321,7 +399,13 @@ export function VoiceButton({ onText, onLive, onStart, sessionId }: { onText: (t
 
       setState('working');
 
-      void finals.then(() => {
+      const done = async (): Promise<void> => {
+        while (working !== null) {
+          await working;
+        }
+      };
+
+      void done().then(() => {
         setState('idle');
 
         const text = tidyDictation(kept);
@@ -338,12 +422,18 @@ export function VoiceButton({ onText, onLive, onStart, sessionId }: { onText: (t
         }
       });
     };
+
+    /* A microphone that goes away (unplugged, taken by another app) ends the dictation the way Stop does, with
+       everything heard so far kept - not a recording that silently hears nothing. */
+    stream.getAudioTracks().forEach((track) => {
+      track.addEventListener('ended', () => stopRef.current?.());
+    });
   };
 
   const Icon = state === 'recording' ? Square : state === 'working' ? LoaderCircle : Mic;
 
   return (
-    <span className="inline-flex items-center gap-1">
+    <span className={'inline-flex items-center gap-[4px] rounded-full transition-colors duration-fast ' + (state === 'recording' ? 'bg-red-subtle pl-[10px]' : '')}>
       {state === 'recording' ? (
         <span className="flex h-[18px] items-center gap-[2px]" role="img" aria-label={strings.kernel.voice.listening} data-voice-wave>
           {wave.map((level, index) => (
@@ -354,8 +444,8 @@ export function VoiceButton({ onText, onLive, onStart, sessionId }: { onText: (t
     <button
       type="button"
       className={
-        'grid h-[26px] w-[26px] place-items-center rounded-md transition-colors duration-fast ease-ease ' +
-        (state === 'recording' ? 'bg-red-subtle text-state-error' : 'text-text-muted hover:bg-bg-hover hover:text-text-primary')
+        'grid h-[30px] w-[30px] place-items-center rounded-full transition-all duration-fast ease-ease active:scale-[.94] ' +
+        (state === 'recording' ? 'text-state-error hover:bg-state-error/15' : 'text-text-secondary hover:bg-bg-hover hover:text-text-primary')
       }
       title={state === 'recording' ? `${strings.kernel.voice.listening} ${strings.kernel.voice.stop}` : strings.kernel.voice.start}
       aria-label={state === 'recording' ? strings.kernel.voice.stop : strings.kernel.voice.start}
@@ -370,7 +460,7 @@ export function VoiceButton({ onText, onLive, onStart, sessionId }: { onText: (t
         }
       }}
     >
-      <Icon size={14} aria-hidden="true" className={state === 'working' || state === 'recording' ? (state === 'working' ? 'animate-spin motion-reduce:animate-none' : 'animate-pulse motion-reduce:animate-none') : ''} />
+      <Icon size={state === 'recording' ? 12 : 15} fill={state === 'recording' ? 'currentColor' : 'none'} aria-hidden="true" className={state === 'working' || state === 'recording' ? (state === 'working' ? 'animate-spin motion-reduce:animate-none' : 'animate-pulse motion-reduce:animate-none') : ''} />
     </button>
     </span>
   );

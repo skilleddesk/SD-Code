@@ -1834,6 +1834,8 @@ export interface VoiceTranscribedEvent {
   error: string | null;
   /** 1.0: a live caption while the person is still speaking - shown, never recorded. */
   interim?: boolean;
+  /** 1.0.3: the transcriber asked to slow down; it may be asked again after this many milliseconds. */
+  retryAfterMs?: number | null;
 }
 
 export interface DeployUpdatedEvent {

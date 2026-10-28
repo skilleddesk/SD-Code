@@ -844,6 +844,9 @@ impl Daemon {
 
         providers::mark_signed_out(self.store(), &provider_id);
 
+        /* 1.0.3: a sign-in SDC started and never finished is ended too, so the next Connect starts afresh. */
+        self.state.logins.cancel_for(&provider_id);
+
         out.push(
             event::provider_status(json!({
                 "id": provider_id,
@@ -913,6 +916,10 @@ impl Daemon {
     pub(super) fn provider_remove(&self, envelope: &Envelope, out: &dyn Notifier) -> Result<Value, ErrorObject> {
         let id = envelope.require_str("id")?;
         let removed = providers::remove(self.store(), &id)?;
+
+        /* 1.0.3: nothing of the key stays behind - its model list goes with it, so the menu does not offer models
+           that can no longer run. */
+        let _ = self.store().replace_models(&id, &[], &chrono::Utc::now().to_rfc3339());
 
         out.push(
             event::provider_status(json!({ "id": id, "status": "available", "account": Value::Null })),

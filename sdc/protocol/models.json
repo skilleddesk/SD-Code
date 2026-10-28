@@ -1,6 +1,6 @@
 {
   "$comment": "The model catalogue, as data (master spec section 9.10: 'the model list is always up to date'). This file is what the daemon ships with, so a fresh install can offer sensible models with no network at all. It is NOT the source of truth: `models.list { refresh: true }` asks each provider's own endpoint and caches what it answers, and a model the provider has that this file has never heard of is still shown. Editing this file is how a curated row (tier, context, price) is added or corrected - no code change, no rebuild of the daemon's logic.",
-  "snapshot": "2026-10-26",
+  "snapshot": "2026-10-28",
   "providers": [
     {
       "id": "ollama",
@@ -139,18 +139,32 @@
       "protocol": "openai",
       "models": [
         {
+          "id": "deepseek-flash",
+          "tier": "balanced",
+          "ctx": 128000,
+          "cost": "$0.14 / $0.28",
+          "name": "DeepSeek Flash"
+        },
+        {
+          "id": "deepseek-v4-pro",
+          "tier": "deep",
+          "ctx": 128000,
+          "cost": "$0.55 / $2.19",
+          "name": "DeepSeek V4 Pro"
+        },
+        {
           "id": "deepseek-chat",
           "tier": "balanced",
-          "ctx": 64000,
+          "ctx": 128000,
           "cost": "$0.14 / $0.28",
-          "name": "DeepSeek Chat (V3)"
+          "name": "DeepSeek Chat (old name of Flash)"
         },
         {
           "id": "deepseek-reasoner",
           "tier": "deep",
-          "ctx": 64000,
+          "ctx": 128000,
           "cost": "$0.55 / $2.19",
-          "name": "DeepSeek Reasoner (R1)"
+          "name": "DeepSeek Reasoner (old name)"
         }
       ]
     },

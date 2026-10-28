@@ -10,6 +10,70 @@ This file describes what changed, not what is planned. Anything still open is na
 
 ---
 
+## [1.0.3] — 2026-10-28: voice that keeps listening, a new message box, Disconnect, and update notices
+
+### Fixed — voice stopped hearing after a minute or so
+
+The cause, found in the code: while a phrase was spoken, a live caption was asked for **every 1.2 s**, each time with
+the whole phrase so far. A free transcription key (Groq: 20 requests a minute; Gemini's free tier fewer) was used up
+within the first minute, and from then on **every** request came back `429 Too Many Requests` - the phrases that are
+kept included. A kept phrase was tried twice and then given up, so nothing new appeared however long one talked.
+
+- **The daemon rests a service that says "too many requests"** for as long as it asked (`Retry-After`, else 20 s) and
+  does not ask it meanwhile; a live caption asks one rested service only, never the whole chain; a refusal because
+  everything is resting says how long to wait (`retryAfterMs` on `VoiceTranscribed`).
+- **Kept phrases are never lost to a rate limit.** The window waits as long as it was asked and asks again (for up to
+  three minutes); phrases that piled up meanwhile go as **one** recording - one request instead of ten.
+- **Captions are budgeted**: every 2.5 s for a cloud transcriber and only while fewer than 10 requests went out in the
+  last minute (every 1.2 s, unbudgeted, when the transcriber is on this computer). Kept phrases always go first.
+- A microphone that goes away ends the dictation the way Stop does, keeping everything heard.
+
+### Changed — the message box
+
+One action row in three places: **the model on the left**, **attach / image / microphone in the middle** (one rounded
+tool dock, kept in the true centre), **the folder, then Send on the right**. The `↵ send · ⇧↵ new line` text is gone
+from the box - it is the Send button's tooltip. The model button is a pill with the brand mark; the folder chip matches.
+
+### Changed — the model menu
+
+Redesigned to match SDC: the search is part of the sheet, provider tabs are one strip with a status dot each, every
+model family is a line with its tier badge, its name, its context size underneath and its versions as a compact
+segmented set. A model name without a version (`deepseek-flash`, `sonnet`) says it is the provider's current version.
+
+### Added — Disconnect on every provider card
+
+A connected card has **Disconnect** next to **Manage**, confirmed in place (`Disconnect?` · `Keep`).
+
+- A subscription (Claude Code, Codex, Gemini) is signed out by its own CLI and **its saved sign-in deleted** (Claude
+  Code's `.credentials.json`, Codex's `auth.json`, Gemini's `oauth_creds.json`), and an unfinished sign-in is ended -
+  so **Connect opens the browser to approve it again**.
+- An API key leaves the keychain **with its cached model list**.
+- **A card no longer connects by itself.** Claude Code and Codex were green whenever their CLI was signed in on the
+  computer (from a terminal, or left by an earlier install); now every subscription is connected only after a sign-in
+  SDC drove, and only while the CLI still holds it. A CLI signed in elsewhere shows **Needs setup** until Connect.
+
+### Added — update notice in the sidebar
+
+When a newer release is on GitHub, a card at the foot of the sidebar says so (`SDC 1.0.4 is available · You have
+1.0.3`): **Update now** downloads, verifies and installs in place with its progress (or opens the release page where
+there is no installer), **Not now** and the **×** hide it until SDC is opened again, **Skip this version** hides that
+version for good. SDC checks at start and every six hours; a failed check shows nothing.
+
+### Fixed — DeepSeek's newest model
+
+Checked against DeepSeek's API with the stored key (2026-10-28): it serves exactly two models, `deepseek-flash` and
+`deepseek-v4-pro`, and refuses `deepseek-v4.1-flash` (*"The supported API model names are deepseek-flash,
+deepseek-v4-pro"*); `deepseek-chat` now answers as `deepseek-flash`. So DeepSeek's newest Flash is offered under the
+unversioned name `deepseek-flash`, which SDC already listed. The menu now says it is the provider's current version, and
+the bundled list (used offline) no longer calls the old names "V3" and "R1". Model lists stay current by themselves:
+API providers are asked every 30 minutes and when the menu opens on a list older than 5 minutes; CLI providers' lists
+come from the installed CLI, which SDC keeps updated.
+
+### Added — `sdcd models live PROVIDER` and `sdcd models resolve PROVIDER MODEL`
+
+What a provider's own endpoint lists right now, and which model really answers a name - with the stored key, never
+printed. How "the provider does not offer it" is told apart from "SDC does not show it".
+
 ## [1.0.2] — 2026-10-28: a short model menu that keeps itself current, and voice that hears a long dictation
 
 ### Changed — the model menu: one line per model, its versions as chips

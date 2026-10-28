@@ -563,10 +563,29 @@ export function PromptArea({ sessionId }: PromptAreaProps = {}) {
             </div>
           )}
 
-          <div className="prompt-footer flex min-w-0 flex-nowrap items-center gap-[4px] px-[8px] pb-[8px] pt-[2px]">
-            <div className="toolbar flex shrink-0 items-center">
-              <IconButton icon={Paperclip} label={strings.prompt.toolbar.attach} iconSize={15} onClick={() => attach('file')} />
-              <IconButton icon={ImageIcon} label={strings.prompt.toolbar.image} iconSize={15} onClick={() => attach('image')} />
+          {/*
+            The action row (1.0.3), in three places a hand finds without looking:
+
+              [ ✦ Claude Opus 5.5 ▾ ]        [ 📎  🖼  🎤 ]        [ 📁 my-site ]  ( ↑ )
+               the model, left               the tools, centre      the folder, then Send
+
+            The report: "the send / new line text on the right looks odd" - the keys are the Send button's
+            tooltip now - and "model on the left, attachment, image and microphone in the middle, the file
+            on the right, and only the send icon at the end". A three-column grid, so the tools stay in
+            the true centre however long the model's name or the folder's is.
+          */}
+          <div className="prompt-footer grid min-w-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-[8px] px-[10px] pb-[10px] pt-[4px] max-600:gap-[6px] max-600:px-[8px]">
+            <div className="flex min-w-0 items-center justify-start">
+              <ModelSelector sessionId={cardSession} />
+            </div>
+
+            <div
+              className="composer-tools flex shrink-0 items-center gap-[2px] rounded-full border border-border-subtle bg-bg-raised p-[3px] shadow-[inset_0_1px_0_var(--edge-light)]"
+              role="toolbar"
+              aria-label={strings.prompt.toolbar.label}
+            >
+              <IconButton icon={Paperclip} label={strings.prompt.toolbar.attach} size={30} iconSize={15} className="!rounded-full" onClick={() => attach('file')} />
+              <IconButton icon={ImageIcon} label={strings.prompt.toolbar.image} size={30} iconSize={15} className="!rounded-full" onClick={() => attach('image')} />
               <VoiceButton
                 {...(sessionId === undefined ? {} : { sessionId })}
                 /* 1.0: the words are written into the box while the person speaks - after what was typed before. */
@@ -598,54 +617,42 @@ export function PromptArea({ sessionId }: PromptAreaProps = {}) {
               />
             </div>
 
-            <span className="mx-[3px] h-[16px] w-px shrink-0 bg-border-subtle" aria-hidden="true" />
+            <div className="flex min-w-0 items-center justify-end gap-[6px]">
+              {/* Real counts only: an attachment the box does not have is not shown (0.7.x). */}
+              {context.files > 0 ? (
+                <span className={CHIP + ' max-900:hidden'}>
+                  <Hash size={11} aria-hidden="true" />
+                  <span>{strings.prompt.filesChip(context.files)}</span>
+                </span>
+              ) : null}
 
-            {/* One mode (0.13): every turn is an agent turn that uses tools only when the request needs them -
-                a question is simply answered - the way Claude Code works. The Chat | Agent switch meant
-                nothing for the three CLIs and only confused the choice for an API model. */}
-            <div className="flex min-w-0 shrink items-center">
-              <ModelSelector sessionId={cardSession} />
-            </div>
-            {/* Which folder this chat works in (0.7.6) - and the way to change it. The pane's own chat, so
-                split view's second box never shows the first box's folder (0.10.0). */}
-            <div className="flex min-w-0 shrink items-center max-600:hidden">
-              <FolderChip sessionId={sessionId} />
-            </div>
+              <ContextChip
+                sessionId={sessionId}
+                running={running !== null}
+                onCompact={() => {
+                  const textarea = textareaRef.current;
 
-            {/* Real counts only: an attachment the box does not have is not shown (0.7.x). */}
-            {context.files > 0 ? (
-              <span className={CHIP}>
-                <Hash size={11} aria-hidden="true" />
-                <span>{strings.prompt.filesChip(context.files)}</span>
-              </span>
-            ) : null}
+                  if (textarea !== null) {
+                    textarea.value = '/compact';
+                    textarea.focus();
+                  }
+                }}
+              />
+              <NoticeChip sessionId={sessionId} />
+              <ProcessesChip sessionId={sessionId} />
 
-            <ContextChip
-              sessionId={sessionId}
-              running={running !== null}
-              onCompact={() => {
-                const textarea = textareaRef.current;
-
-                if (textarea !== null) {
-                  textarea.value = '/compact';
-                  textarea.focus();
-                }
-              }}
-            />
-            <NoticeChip sessionId={sessionId} />
-            <ProcessesChip sessionId={sessionId} />
-
-            <div className="ml-auto flex shrink-0 items-center gap-[6px] pl-[4px]">
-              <span className="send-hint hidden font-mono text-[10px] text-text-muted 2xl:inline">
-                {typing ? strings.prompt.steerHint : strings.prompt.sendHint}
-              </span>
+              {/* Which folder this chat works in (0.7.6) - and the way to change it. The pane's own chat, so
+                  split view's second box never shows the first box's folder (0.10.0). */}
+              <div className="flex min-w-0 items-center max-600:hidden">
+                <FolderChip sessionId={sessionId} />
+              </div>
 
               {typing ? (
                 <>
                   <button
                     type="button"
-                    className="send-btn brand-fill grid h-[34px] w-[34px] place-items-center rounded-full bg-accent-fill text-text-on-accent active:scale-[.94]"
-                    title={strings.prompt.steerSend}
+                    className="send-btn brand-fill grid h-[34px] w-[34px] shrink-0 place-items-center rounded-full bg-accent-fill text-text-on-accent active:scale-[.94]"
+                    title={`${strings.prompt.steerSend} · ${strings.prompt.steerHint}`}
                     aria-label={strings.prompt.steerSend}
                     onClick={send}
                   >
@@ -653,7 +660,7 @@ export function PromptArea({ sessionId }: PromptAreaProps = {}) {
                   </button>
                   <button
                     type="button"
-                    className="stop-btn grid h-[34px] w-[34px] place-items-center rounded-full border border-state-error/60 bg-red-subtle text-state-error transition-all duration-fast ease-ease hover:bg-state-error hover:text-text-on-accent active:scale-[.94]"
+                    className="stop-btn grid h-[34px] w-[34px] shrink-0 place-items-center rounded-full border border-state-error/60 bg-red-subtle text-state-error transition-all duration-fast ease-ease hover:bg-state-error hover:text-text-on-accent active:scale-[.94]"
                     title={strings.prompt.stopHint}
                     aria-label={strings.prompt.stop}
                     onClick={() => void interruptTurn(running)}
@@ -664,12 +671,12 @@ export function PromptArea({ sessionId }: PromptAreaProps = {}) {
               ) : (
                 <button
                   type="button"
-                  className="send-btn brand-fill grid h-[34px] w-[34px] place-items-center rounded-full bg-accent-fill text-text-on-accent active:scale-[.94]"
-                  title={strings.prompt.send}
+                  className="send-btn brand-fill grid h-[34px] w-[34px] shrink-0 place-items-center rounded-full bg-accent-fill text-text-on-accent active:scale-[.94]"
+                  title={`${strings.prompt.send} · ${strings.prompt.sendHint}`}
                   aria-label={strings.prompt.send}
                   onClick={send}
                 >
-                  <ArrowUp size={16} aria-hidden="true" />
+                  <ArrowUp size={16} strokeWidth={2.4} aria-hidden="true" />
                 </button>
               )}
             </div>

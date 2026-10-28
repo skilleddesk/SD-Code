@@ -9,6 +9,7 @@ import {
   HardDrive,
   Key,
   List,
+  LogOut,
   Plug,
   ShieldCheck,
   Stethoscope,
@@ -23,6 +24,7 @@ import {
   connectApiKey,
   openTerminalForHost,
   connectLocal,
+  disconnectProvider,
   runDoctor,
   saveCustomEndpoint,
   testProvider,
@@ -213,83 +215,25 @@ function ProviderCards({ providers, onConnect }: ProviderCardsProps) {
   const connected = providers.filter((provider) => provider.status === 'connected');
   const rest = providers.filter((provider) => provider.status !== 'connected');
 
-  const card = (provider: ProviderView) => (
-    <button
-      key={provider.id}
-      type="button"
-      data-provider={provider.id}
-      data-status={provider.status}
-      className={
-        'prov-card flex flex-col gap-[8px] rounded-lg border bg-bg-raised p-[12px] text-left transition-all duration-fast ease-ease hover:border-border-strong ' +
-        (provider.status === 'connected' ? 'border-border-subtle' : 'border-border-default')
-      }
-      onClick={() => {
-        /* A subscription signs in through its CLI, an API provider needs a key and a model: both are
-           the Connect modal's job (spec section 9.10). A local provider is the two doctor rows, which
-           stay in the card's own inline flow. */
-        /* A local server that is not Ollama (0.22) is managed in the Local tab's own list. */
-        if (provider.id.startsWith('local-')) {
-          useOverlayStore.getState().openHub('local');
-          return;
-        }
+  const open = (provider: ProviderView): void => {
+    /* A subscription signs in through its CLI, an API provider needs a key and a model: both are
+       the Connect modal's job (spec section 9.10). A local provider is the two doctor rows, which
+       stay in the card's own inline flow. */
+    /* A local server that is not Ollama (0.22) is managed in the Local tab's own list. */
+    if (provider.id.startsWith('local-')) {
+      useOverlayStore.getState().openHub('local');
+      return;
+    }
 
-        if (provider.kind === 'local') {
-          onConnect(provider.id, 'local');
-          return;
-        }
+    if (provider.kind === 'local') {
+      onConnect(provider.id, 'local');
+      return;
+    }
 
-        useOverlayStore.getState().openConnect(provider.id, provider.kind === 'subscription' ? 'login' : 'api');
-      }}
-    >
-      <span className="flex items-center gap-[10px]">
-        <span
-          className={
-            'prov-logo grid h-[34px] w-[34px] shrink-0 place-items-center rounded-full text-[13px] font-bold text-text-on-accent ' +
-            provider.logo
-          }
-          aria-hidden="true"
-        >
-          {provider.initial}
-        </span>
-        <span className="min-w-0 flex-1">
-          <span className="block truncate text-[13px] font-semibold text-text-primary">
-            {provider.name}
-          </span>
-          <span className="block text-[10.5px] text-text-muted">
-            {strings.hub.kind[provider.kind]}
-          </span>
-        </span>
-      </span>
+    useOverlayStore.getState().openConnect(provider.id, provider.kind === 'subscription' ? 'login' : 'api');
+  };
 
-      <span className="text-[11.5px] leading-[1.5] text-text-secondary">{provider.detail}</span>
-
-      <span className="flex items-center gap-[8px]">
-        <span
-          className={
-            'rounded-full px-[7px] py-[1px] text-[10px] font-semibold ' +
-            (provider.status === 'connected'
-              ? 'bg-green-subtle text-state-success'
-              : provider.status === 'needs-auth'
-                ? 'bg-orange-subtle text-state-warning'
-                : 'bg-bg-base text-text-muted')
-          }
-        >
-          {strings.hub.status[provider.status]}
-        </span>
-        <span className="flex-1" />
-        <span
-          className={
-            'inline-flex h-[24px] items-center rounded-md border px-[9px] text-[10.5px] font-medium ' +
-            (provider.status === 'connected'
-              ? 'border-border-default bg-bg-raised text-text-primary'
-              : 'border-accent-fill bg-accent-fill text-text-on-accent')
-          }
-        >
-          {provider.status === 'connected' ? strings.hub.manage : strings.hub.connect}
-        </span>
-      </span>
-    </button>
-  );
+  const card = (provider: ProviderView) => <ProviderCard key={provider.id} provider={provider} onOpen={() => open(provider)} />;
 
   return (
     <div className="flex flex-col gap-[16px]">
@@ -315,6 +259,133 @@ function ProviderCards({ providers, onConnect }: ProviderCardsProps) {
           <div className="grid grid-cols-2 gap-[10px] max-700:grid-cols-1">{rest.map(card)}</div>
         </section>
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * One provider's card. A container rather than one big button (1.0.3), because a connected card now carries two
+ * actions: **Manage** (the Connect dialog, as before) and **Disconnect** - the report was "once signed in it cannot be
+ * disconnected, and there is no option for it". Disconnect asks once, in place (`Disconnect?` · `Keep`), then signs
+ * the CLI out and deletes its saved sign-in, or takes the API key out of the keychain - so the next Connect starts
+ * from nothing: the browser opens and the person approves it again.
+ */
+export function ProviderCard({ provider, onOpen }: { provider: ProviderView; onOpen: () => void }) {
+  const [step, setStep] = useState<'idle' | 'confirm' | 'busy'>('idle');
+  const connected = provider.status === 'connected';
+  const canDisconnect = connected && (provider.kind === 'subscription' || provider.kind === 'api-key') && !provider.id.startsWith('local-');
+
+  const disconnect = (): void => {
+    setStep('busy');
+    void disconnectProvider(provider.id, provider.kind).then((done) => {
+      setStep('idle');
+
+      if (done) {
+        toast(strings.hub.disconnectedToast(provider.name));
+      }
+    });
+  };
+
+  return (
+    <div
+      data-provider={provider.id}
+      data-status={provider.status}
+      className={
+        'prov-card group/card relative flex flex-col gap-[8px] rounded-lg border bg-bg-raised p-[12px] text-left transition-all duration-fast ease-ease hover:border-border-strong ' +
+        (step === 'confirm' ? 'border-state-error/40' : connected ? 'border-border-subtle' : 'border-border-default')
+      }
+    >
+      <button type="button" className="flex flex-col gap-[8px] rounded-md text-left outline-none focus-visible:ring-2 focus-visible:ring-accent/50" onClick={onOpen}>
+        <span className="flex w-full items-center gap-[10px]">
+          <span
+            className={
+              'prov-logo grid h-[34px] w-[34px] shrink-0 place-items-center rounded-full text-[13px] font-bold text-text-on-accent ' +
+              provider.logo
+            }
+            aria-hidden="true"
+          >
+            {provider.initial}
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-[13px] font-semibold text-text-primary">
+              {provider.name}
+            </span>
+            <span className="block text-[10.5px] text-text-muted">
+              {strings.hub.kind[provider.kind]}
+            </span>
+          </span>
+        </span>
+
+        <span className="text-[11.5px] leading-[1.5] text-text-secondary">{provider.detail}</span>
+      </button>
+
+      <span className="flex items-center gap-[6px]">
+        <span
+          className={
+            'rounded-full px-[7px] py-[1px] text-[10px] font-semibold ' +
+            (connected
+              ? 'bg-green-subtle text-state-success'
+              : provider.status === 'needs-auth'
+                ? 'bg-orange-subtle text-state-warning'
+                : 'bg-bg-base text-text-muted')
+          }
+        >
+          {strings.hub.status[provider.status]}
+        </span>
+        <span className="flex-1" />
+
+        {step === 'confirm' ? (
+          <>
+            <button
+              type="button"
+              className="inline-flex h-[24px] items-center rounded-md px-[8px] text-[10.5px] font-medium text-text-muted transition-colors duration-fast hover:bg-bg-hover hover:text-text-primary"
+              onClick={() => setStep('idle')}
+            >
+              {strings.hub.disconnectCancel}
+            </button>
+            <button
+              type="button"
+              className="inline-flex h-[24px] items-center gap-[5px] rounded-md border border-state-error/60 bg-red-subtle px-[9px] text-[10.5px] font-semibold text-state-error transition-colors duration-fast hover:bg-state-error hover:text-text-on-accent"
+              data-disconnect-confirm={provider.id}
+              title={strings.hub.disconnectHelp(provider.name, provider.kind === 'subscription')}
+              autoFocus
+              onClick={disconnect}
+            >
+              <LogOut size={11} aria-hidden="true" />
+              {strings.hub.disconnectConfirm}
+            </button>
+          </>
+        ) : (
+          <>
+            {canDisconnect ? (
+              <button
+                type="button"
+                className="inline-flex h-[24px] items-center gap-[5px] rounded-md border border-transparent px-[8px] text-[10.5px] font-medium text-text-muted transition-colors duration-fast hover:border-state-error/40 hover:bg-red-subtle hover:text-state-error disabled:opacity-50"
+                data-disconnect={provider.id}
+                title={strings.hub.disconnectHelp(provider.name, provider.kind === 'subscription')}
+                aria-label={`${strings.hub.disconnect} ${provider.name}`}
+                disabled={step === 'busy'}
+                onClick={() => setStep('confirm')}
+              >
+                <LogOut size={11} aria-hidden="true" />
+                {step === 'busy' ? strings.hub.disconnecting : strings.hub.disconnect}
+              </button>
+            ) : null}
+            <button
+              type="button"
+              className={
+                'inline-flex h-[24px] items-center rounded-md border px-[9px] text-[10.5px] font-medium transition-colors duration-fast ' +
+                (connected
+                  ? 'border-border-default bg-bg-raised text-text-primary hover:bg-bg-hover'
+                  : 'border-accent-fill bg-accent-fill text-text-on-accent hover:bg-accent-fill-hover')
+              }
+              onClick={onOpen}
+            >
+              {connected ? strings.hub.manage : strings.hub.connect}
+            </button>
+          </>
+        )}
+      </span>
     </div>
   );
 }

@@ -159,7 +159,32 @@ pub fn logout(provider_id: &str) -> Result<Vec<String>, String> {
         }
     }
 
+    /* 1.0.3, the report "Disconnect must remove the sign-in completely, so the next Connect opens the browser again":
+       a CLI whose own logout failed, or an older one without it, left its credential file behind - and the next
+       sign-in found it and never asked. Whatever file is still there after the command is deleted. */
+    for path in credential_files(provider_id) {
+        if path.exists() {
+            std::fs::remove_file(&path).map_err(|error| format!("{}: {error}", path.display()))?;
+            done.push(format!("deleted {}", path.display()));
+        }
+    }
+
     Ok(done)
+}
+
+/// The files a CLI keeps its sign-in in (1.0.3): Claude Code's `.credentials.json` (on macOS it uses the Keychain,
+/// which its own `auth logout` clears) and Codex's `auth.json`. Only the credential - never settings or history.
+pub fn credential_files(provider_id: &str) -> Vec<std::path::PathBuf> {
+    let home = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")).map(std::path::PathBuf::from);
+    let folder = |variable: &str, default: &str| -> Option<std::path::PathBuf> {
+        std::env::var_os(variable).map(std::path::PathBuf::from).filter(|path| !path.as_os_str().is_empty()).or_else(|| home.as_ref().map(|home| home.join(default)))
+    };
+
+    match provider_id {
+        "claude" => folder("CLAUDE_CONFIG_DIR", ".claude").map(|dir| vec![dir.join(".credentials.json")]).unwrap_or_default(),
+        "openai" => folder("CODEX_HOME", ".codex").map(|dir| vec![dir.join("auth.json")]).unwrap_or_default(),
+        _ => Vec::new(),
+    }
 }
 
 /// The sign-in files under a Gemini home, deleted, and SDC's auth choice taken back out of its settings.
@@ -676,6 +701,22 @@ impl LoginManager {
         };
 
         Ok(json!({ "cancelled": self.pty.close(&pty_id), "loginId": id }))
+    }
+
+    /// Ends every sign-in of `provider_id` this daemon started and that has not finished (1.0.3, Disconnect).
+    pub fn cancel_for(&self, provider_id: &str) {
+        let open: Vec<String> = match self.sessions.lock() {
+            Ok(sessions) => sessions
+                .iter()
+                .filter(|(_, session)| session.provider_id == provider_id && !matches!(session.state.as_str(), "cancelled" | "authenticated"))
+                .map(|(id, _)| id.clone())
+                .collect(),
+            Err(_) => return,
+        };
+
+        for id in open {
+            let _ = self.cancel(&id);
+        }
     }
 }
 

@@ -103,6 +103,20 @@ const english = {
     brief: 'Morning brief - sites, servers, the agent, cost',
   },
   sidebar: {
+    /** 1.0.3: the update notice at the foot of the sidebar. */
+    update: {
+      title: (version: string): string => `SDC ${version} is available`,
+      youHave: (current: string): string => `You have ${current}. The update takes a minute.`,
+      updateNow: 'Update now',
+      download: 'Download',
+      notNow: 'Not now',
+      close: 'Close - ask again next time SDC opens',
+      skip: 'Skip this version',
+      skipHelp: 'Do not offer this version again. A newer one is offered as usual.',
+      downloading: (percent: number | null): string => (percent === null ? 'Downloading…' : `Downloading… ${percent}%`),
+      installing: 'Installing - SDC restarts by itself.',
+      failed: 'It could not be installed here. Settings → Updates has the installer.',
+    },
     newChat: 'New chat',
     newChatShortcut: '⌘N',
     filterPlaceholder: 'Filter chats…',
@@ -633,6 +647,7 @@ const english = {
       full: 'Three prompts are already waiting; remove one or wait for the turn to end',
     },
     toolbar: {
+      label: 'Attach, add an image, or speak',
       attach: 'Attach a file',
       /** It opens a dialog now (`lib/picker.ts`), so it says so: a button that promises a paste and
           opens a file browser is the kind of small lie this build keeps removing. */
@@ -678,6 +693,8 @@ const english = {
     model: {
       /** The dropdown's search field (0.9.0). */
       search: 'Search models…',
+      /** 1.0.3: a name with no version in it (`deepseek-flash`, `sonnet`) is the provider's alias for its newest. */
+      current: (id: string): string => `Provider's current version · ${id}`,
       noMatches: (query: string): string => `Nothing matches “${query}”`,
       /** The contract the chosen model runs under (P0-10): the badge beside the model button. */
       mode: {
@@ -1301,6 +1318,16 @@ const english = {
     },
     manage: 'Manage',
     connect: 'Connect',
+    /** 1.0.3: the way out of a connection, on the card itself. */
+    disconnect: 'Disconnect',
+    disconnectConfirm: 'Disconnect?',
+    disconnectCancel: 'Keep',
+    disconnecting: 'Disconnecting…',
+    disconnectHelp: (name: string, subscription: boolean): string =>
+      subscription
+        ? `Signs ${name} out and deletes its saved sign-in on this computer. Connect opens the browser to approve it again.`
+        : `Deletes the ${name} key from this computer's keychain, and its model list. Connect asks for a key again.`,
+    disconnectedToast: (name: string): string => `${name} is disconnected - its sign-in is removed from this computer`,
     back: 'Back',
     save: 'Save',
     test: 'Test connection',

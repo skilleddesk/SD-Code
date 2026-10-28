@@ -25,7 +25,7 @@ export const bn: StringsPack = {
   },
   prompt: {
     placeholder: 'যেকোনো ভাষায় লিখুন বা বলুন কী বানাতে বা ঠিক করতে চান…',
-    toolbar: { attach: 'ফাইল যোগ করুন', image: 'ছবি বেছে নিন' },
+    toolbar: { label: 'ফাইল, ছবি বা ভয়েস', attach: 'ফাইল যোগ করুন', image: 'ছবি বেছে নিন' },
     send: 'পাঠান',
     stop: 'থামান',
     stopHint: 'এই টার্ন থামান (Esc)',
@@ -34,6 +34,7 @@ export const bn: StringsPack = {
     steerSend: 'চলমান কাজে যোগ করুন',
     steerPlaceholder: 'কাজ চলার মাঝেই কিছু যোগ করুন - পরের ধাপে সেটা মাথায় নেবে…',
     model: {
+      current: (id: string): string => `প্রোভাইডারের বর্তমান ভার্সন · ${id}`,
       manageProviders: 'প্রোভাইডার ম্যানেজ করুন',
       mode: {
         pinned: 'পিন করা',
@@ -158,6 +159,19 @@ export const bn: StringsPack = {
   },
   rail: { label: 'নেভিগেশন', timeMachine: 'টাইম মেশিন - প্রতিটি পরিবর্তন, এক ক্লিকে ফেরা', shipSafe: 'শিপ সেফ - লাইভে যাওয়ার আগে পরীক্ষা', brief: 'সকালের রিপোর্ট - সাইট, সার্ভার, এজেন্ট, খরচ' },
   sidebar: {
+    update: {
+      title: (version: string): string => `SDC ${version} এসেছে`,
+      youHave: (current: string): string => `আপনার আছে ${current}। আপডেট হতে এক মিনিট লাগে।`,
+      updateNow: 'এখনই আপডেট',
+      download: 'ডাউনলোড',
+      notNow: 'এখন না',
+      close: 'বন্ধ করুন - পরের বার SDC খুললে আবার দেখাবে',
+      skip: 'এই ভার্সন বাদ',
+      skipHelp: 'এই ভার্সনটা আর দেখাবে না। নতুন ভার্সন এলে আবার জানাবে।',
+      downloading: (percent: number | null): string => (percent === null ? 'ডাউনলোড হচ্ছে…' : `ডাউনলোড হচ্ছে… ${percent}%`),
+      installing: 'ইনস্টল হচ্ছে - SDC নিজেই আবার চালু হবে।',
+      failed: 'এখানে ইনস্টল করা গেল না। Settings → Updates-এ ইনস্টলার আছে।',
+    },
     noProject: 'কোনো ফোল্ডার নেই',
     machines: 'মেশিন',
     thisComputer: 'এই কম্পিউটার',
@@ -233,6 +247,17 @@ export const bn: StringsPack = {
     },
   },
   hub: {
+    manage: 'ম্যানেজ',
+    connect: 'কানেক্ট',
+    disconnect: 'ডিসকানেক্ট',
+    disconnectConfirm: 'ডিসকানেক্ট করবেন?',
+    disconnectCancel: 'থাক',
+    disconnecting: 'ডিসকানেক্ট হচ্ছে…',
+    disconnectHelp: (name: string, subscription: boolean): string =>
+      subscription
+        ? `${name} থেকে সাইন আউট করে এই কম্পিউটারে রাখা সাইন-ইন মুছে দেয়। আবার Connect করলে ব্রাউজারে অনুমোদন দিতে হবে।`
+        : `এই কম্পিউটারের কীচেইন থেকে ${name}-এর API key আর তার মডেল লিস্ট মুছে দেয়। আবার Connect করলে নতুন key চাইবে।`,
+    disconnectedToast: (name: string): string => `${name} ডিসকানেক্ট হয়েছে - এই কম্পিউটার থেকে সাইন-ইন মুছে ফেলা হয়েছে`,
     tuning: {
       title: 'এই কম্পিউটারের জন্য টিউনিং',
       proposalOnly: 'শুধু প্রস্তাব। SDC আপনার Ollama server নিজে বদলায় না; এগুলো নিজে সেট করে Ollama restart করুন।',

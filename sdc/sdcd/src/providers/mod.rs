@@ -477,11 +477,13 @@ fn settle_status(id: &str, kind: &str, stored: Option<&str>) -> String {
 
 /// Must this provider's sign-in have been done **from the app**, or is its own command enough?
 ///
-/// `true` only for Gemini, and only because its credential is a file on disk that any other program could have
-/// written. Claude Code and Codex answer "are you signed in?" themselves, which is a live fact about the account in
-/// use rather than a leftover.
+/// Every subscription, since 1.0.3. It was Gemini only, because Claude Code and Codex answer "are you signed in?"
+/// themselves - but that answer is about the computer, not about SDC: a CLI signed in from a terminal, or left signed
+/// in by an earlier install, turned its card green on its own. The report: "it must not connect by itself; after
+/// Disconnect, Connect opens the browser and I approve it". So a card is connected only after a sign-in SDC drove
+/// (the stored row), and only while the CLI still says it holds.
 pub fn needs_explicit_consent(id: &str) -> bool {
-    id == "gemini"
+    matches!(id, "gemini" | "claude" | "openai")
 }
 
 /// A subscription card's status from the two facts that decide it (3.2), as a pure function a test can read.
@@ -1042,8 +1044,8 @@ mod tests {
         assert_eq!(status_without_a_row("gemini", "subscription"), "needs-auth");
 
         assert!(needs_explicit_consent("gemini"));
-        assert!(!needs_explicit_consent("claude"), "Claude Code answers `auth status` itself");
-        assert!(!needs_explicit_consent("openai"), "Codex answers `login status` itself");
+        assert!(needs_explicit_consent("claude"), "1.0.3: a terminal sign-in does not connect the card by itself");
+        assert!(needs_explicit_consent("openai"), "1.0.3: a terminal sign-in does not connect the card by itself");
     }
 
     #[test]
@@ -1112,13 +1114,25 @@ mod tests {
         let mut rows = list(&store);
         let card = |rows: &[Value], id: &str| rows.iter().find(|row| row["id"] == json!(id)).cloned().unwrap();
 
+        /* 1.0.3: a CLI signed in from a terminal is not a sign-in to SDC - without one SDC drove, every card asks. */
+        for id in ["claude", "openai", "gemini"] {
+            assert_eq!(card(&rows, id)["status"], json!("needs-auth"), "{id} connected itself without a sign-in from SDC");
+        }
+
+        /* After a sign-in SDC drove, the card agrees with the CLI's own answer. */
+        for id in ["claude", "openai", "gemini"] {
+            mark_signed_in(&store, id, "test");
+        }
+
+        rows = list(&store);
+
         for id in ["claude", "openai", "gemini"] {
             /* Each answer is a live, time-bounded CLI call: on a loaded machine one of the two can time out, so a disagreement is asked again before it is a failure. */
             let mut attempts = 0;
 
             let (status, expected) = loop {
                 let status = card(&rows, id)["status"].as_str().unwrap_or_default().to_string();
-                let expected = if signed_in(id) { "connected" } else { "needs-auth" };
+                let expected = if consent_still_holds(id) { "connected" } else { "needs-auth" };
 
                 attempts += 1;
 

@@ -367,3 +367,87 @@ export function heldLanguage(text: string): string | undefined {
 
   return undefined;
 }
+
+/* ---- Pacing the transcriber (1.0.3) ------------------------------------------------------------------------- */
+
+/** How often a phrase still being spoken may be captioned again by a transcriber on this computer. */
+export const LOCAL_CAPTION_MS = 1200;
+/** ...and by a cloud one, whose free tier counts requests per minute. */
+export const CLOUD_CAPTION_MS = 2500;
+/**
+ * Every request of the last minute counted together (captions and kept phrases): past this many, no more captions
+ * until the minute moves on. Groq's free Whisper allows 20 a minute and Gemini's free tier fewer, and a kept phrase
+ * must always find room.
+ */
+export const CAPTIONS_UNDER_PER_MINUTE = 10;
+/** The silence put between two phrases sent as one request. */
+export const MERGE_GAP_MS = 250;
+/** The most speech one merged request carries. */
+export const MERGE_MAX_MS = 60_000;
+
+/**
+ * Keeps a long dictation inside the transcriber's limits.
+ *
+ * The report it answers: "it hears me for a short while and then stops". A live caption was asked for every 1.2 s, so
+ * a free key's requests per minute were spent within the first minute, and from then on every request - the kept
+ * phrases included - was refused. Now: captions are spaced and budgeted, kept phrases always go first, and when the
+ * transcriber says "too many requests" everything waits as long as it asked, then asks again.
+ */
+export class TranscriberPacer {
+  private sent: number[] = [];
+  private restUntil = 0;
+  private lastCaption = -Infinity;
+  /** The last answer came from a transcriber on this computer: no limit to keep to. */
+  local = false;
+
+  /** A request went out. */
+  note(now: number): void {
+    this.sent.push(now);
+    this.sent = this.sent.filter((at) => now - at < 60_000);
+  }
+
+  /** The transcriber asked to wait `ms`. */
+  rest(now: number, ms: number): void {
+    this.restUntil = Math.max(this.restUntil, now + Math.max(0, ms));
+  }
+
+  /** How long until anything may be asked again (0: now). */
+  waitFor(now: number): number {
+    return Math.max(0, this.restUntil - now);
+  }
+
+  /** May a live caption be asked for now? Answering yes counts it as asked. */
+  mayCaption(now: number): boolean {
+    if (now < this.restUntil || now - this.lastCaption < (this.local ? LOCAL_CAPTION_MS : CLOUD_CAPTION_MS)) {
+      return false;
+    }
+
+    if (!this.local && this.sent.filter((at) => now - at < 60_000).length >= CAPTIONS_UNDER_PER_MINUTE) {
+      return false;
+    }
+
+    this.lastCaption = now;
+    this.note(now);
+
+    return true;
+  }
+}
+
+/** Phrases waiting for their text, sent as one recording: fewer requests when the transcriber is slow or resting. */
+export function mergeAudio(parts: readonly Float32Array[], rate: number): Float32Array {
+  const gap = Math.round((MERGE_GAP_MS / 1000) * rate);
+  const total = parts.reduce((sum, part) => sum + part.length, 0) + gap * Math.max(0, parts.length - 1);
+  const all = new Float32Array(total);
+  let offset = 0;
+
+  parts.forEach((part, index) => {
+    if (index > 0) {
+      offset += gap;
+    }
+
+    all.set(part, offset);
+    offset += part.length;
+  });
+
+  return all;
+}
