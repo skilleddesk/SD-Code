@@ -2,6 +2,7 @@ import { LoaderCircle, Mic, Square } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
 import { micProblem } from '../lib/mic';
+import { waveLevel } from '../lib/voiceWave';
 import { storedSettings } from '../lib/settings';
 import { strings } from '../strings';
 import { transcribe } from '../store/kernelIntents';
@@ -272,8 +273,7 @@ export function VoiceButton({ onText, onLive, onStart, sessionId }: { onText: (t
       if (now - waveAt >= WAVE_MS) {
         waveAt = now;
 
-        /* Above the noise floor it grows; at the floor it is zero, so a quiet room shows a flat line. */
-        const level = Math.min(1, Math.max(0, (rms - floor * 1.5) * 18));
+        const level = waveLevel(rms, floor);
 
         setWave((bars) => [...bars.slice(1), level]);
       }
