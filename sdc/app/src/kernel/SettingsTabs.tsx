@@ -5,6 +5,7 @@ import { chooseLocale, currentLocale, LOCALES, type Locale } from '../i18n';
 import { checkAppUpdate, inShell, installAppUpdate, type AppUpdate } from '../lib/appUpdate';
 import { openOutside } from '../lib/external';
 import { storedSettings, storeSetting } from '../lib/settings';
+import { connectApiKey } from '../store/intents';
 import { strings } from '../strings';
 import {
   checkUpdates,
@@ -63,6 +64,10 @@ function VoiceDetails({ voice, onChange }: { voice: Awaited<ReturnType<typeof vo
   const [language, setLanguage] = useState<string>(() => String(storedSettings()['voice-language'] ?? 'auto'));
   const [engine, setEngine] = useState<string>(() => String(storedSettings()['voice-engine'] ?? 'auto'));
   const [asking, setAsking] = useState<string | null>(null);
+  /* The key typed for the transcriber being set up (Groq, Google, Qwen, OpenAI), and whether it is being saved. */
+  const [keyFor, setKeyFor] = useState<string>('google');
+  const [keyText, setKeyText] = useState('');
+  const [keyBusy, setKeyBusy] = useState(false);
   const downloading = voice?.download.state === 'downloading';
 
   useEffect(() => {
@@ -114,6 +119,50 @@ function VoiceDetails({ voice, onChange }: { voice: Awaited<ReturnType<typeof vo
         </select>
       </div>
       <p className="m-0 mt-[4px]">{v.engineHelp}</p>
+
+      <div className="mt-[8px] flex flex-wrap items-center gap-[8px]" data-voice-key="">
+        <label className="text-text-primary" htmlFor="voice-key-for">
+          {v.keyFor}
+        </label>
+        <select id="voice-key-for" className={inputClass} value={keyFor} onChange={(event) => setKeyFor(event.target.value)}>
+          {Object.entries(v.engineNames).map(([id, name]) => (
+            <option key={id} value={id}>
+              {voice.online.includes(id) ? `${name} ✓` : name}
+            </option>
+          ))}
+        </select>
+        <input
+          type="password"
+          autoComplete="off"
+          spellCheck={false}
+          className={inputClass + ' min-w-[200px] flex-1'}
+          placeholder={v.keyPlaceholder}
+          aria-label={v.keyPlaceholder}
+          value={keyText}
+          onChange={(event) => setKeyText(event.target.value)}
+        />
+        <button
+          type="button"
+          className={BTN + ' ' + BTN_SECONDARY + ' ' + BTN_SM}
+          disabled={keyBusy || keyText.trim() === ''}
+          onClick={() => {
+            setKeyBusy(true);
+            void connectApiKey(keyFor, keyText.trim()).then((home) => {
+              setKeyBusy(false);
+
+              if (home !== null) {
+                setKeyText('');
+                setEngine(keyFor);
+                storeSetting('voice-engine', keyFor);
+                void voiceStatus().then(onChange);
+              }
+            });
+          }}
+        >
+          {v.keySave}
+        </button>
+      </div>
+      <p className="m-0 mt-[4px]">{v.keyHelp}</p>
 
       <div className="mt-[8px] flex items-center gap-[8px]">
         <label className="text-text-primary" htmlFor="voice-language">

@@ -249,7 +249,7 @@ fn gemini_online(base: &str, key: &str, audio: &[u8], mime: &str, language: Opti
     });
     let mut last = String::new();
 
-    for model in ["gemini-3.5-transcribe", "gemini-2.5-flash"] {
+    for model in ["gemini-3.5-transcribe", "gemini-3.8-flash", "gemini-2.5-flash"] {
         let url = format!("{}/v1beta/models/{model}:generateContent", base.trim_end_matches('/'));
 
         match shared_agent().post(&url).set("x-goog-api-key", key).set("content-type", "application/json").send_string(&body.to_string()) {
@@ -260,7 +260,15 @@ fn gemini_online(base: &str, key: &str, audio: &[u8], mime: &str, language: Opti
 
                 let answer: Value = serde_json::from_str(&text).map_err(|_| format!("Gemini answered something that is not JSON: {}", text.chars().take(200).collect::<String>()))?;
 
-                return Ok(gemini_text(&answer));
+                let heard = gemini_text(&answer);
+
+                /* A model that answers with nothing is not an answer: the next one is asked. */
+                if heard.is_empty() {
+                    last = format!("{model} heard nothing in the recording");
+                    continue;
+                }
+
+                return Ok(heard);
             }
             Err(ureq::Error::Status(404, response)) => last = format!("{model} is not available to this key (HTTP 404): {}", response.into_string().unwrap_or_default().chars().take(160).collect::<String>()),
             Err(ureq::Error::Status(code, response)) => {
@@ -273,11 +281,13 @@ fn gemini_online(base: &str, key: &str, audio: &[u8], mime: &str, language: Opti
     Err(last)
 }
 
-/// The transcript in a `generateContent` answer: every text part of the first candidate.
+/// The transcript in a `generateContent` answer: every part of the first candidate. `gemini-3.5-transcribe` puts it in
+/// `audioTranscription.text` (seen live, 2026-10-28: an empty transcript for every recording until this was read); a chat model
+/// puts it in `text`.
 pub fn gemini_text(answer: &Value) -> String {
     answer["candidates"][0]["content"]["parts"]
         .as_array()
-        .map(|parts| parts.iter().filter_map(|part| part["text"].as_str()).map(str::trim).filter(|text| !text.is_empty()).collect::<Vec<_>>().join(" "))
+        .map(|parts| parts.iter().filter_map(|part| part["audioTranscription"]["text"].as_str().or_else(|| part["text"].as_str())).map(str::trim).filter(|text| !text.is_empty()).collect::<Vec<_>>().join(" "))
         .unwrap_or_default()
 }
 
@@ -636,7 +646,7 @@ mod tests {
 
     #[test]
     fn when_every_transcriber_fails_the_error_lists_each_attempt() {
-        let (base, server) = mock(vec![(401, "{}"), (404, "{}"), (404, "{}")]);
+        let (base, server) = mock(vec![(401, "{}"), (404, "{}"), (404, "{}"), (404, "{}")]);
         let endpoints = Endpoints { groq: format!("{base}/groq"), gemini: base.clone(), openai: String::new() };
         let keys = vec![("groq", "k1".to_string()), ("google", "k2".to_string())];
         let error = transcribe_with(&endpoints, &keys, false, &audio(), "audio/wav", None).unwrap_err();
@@ -645,7 +655,7 @@ mod tests {
 
         let seen = server.join().unwrap();
 
-        assert!(seen[2].contains("gemini-2.5-flash"), "an unavailable model falls back to the next: {seen:?}");
+        assert!(seen[3].contains("gemini-2.5-flash"), "an unavailable model falls back to the next: {seen:?}");
     }
 
     #[test]
@@ -680,10 +690,27 @@ mod tests {
         assert!(transcribe_choosing(&endpoints, &keys, Some("nope"), &audio(), "audio/wav", None).unwrap_err().contains("not a transcriber"));
     }
 
+    /// The real Gemini API, with a real key in `SDC_LIVE_GEMINI_KEY`: `cargo test --lib live_gemini -- --ignored`.
+    #[test]
+    #[ignore]
+    fn live_gemini_hears_the_fixtures() {
+        let key = std::env::var("SDC_LIVE_GEMINI_KEY").expect("SDC_LIVE_GEMINI_KEY");
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/voice");
+
+        for (file, word) in [("en.wav", "login"), ("bn-neural.wav", "লগইন")] {
+            let audio = std::fs::read(dir.join(file)).unwrap();
+            let heard = transcribe_choosing(&Endpoints::default(), &[("google", key.clone())], Some("google"), &audio, "audio/wav", None).unwrap();
+
+            assert!(heard["text"].as_str().unwrap_or_default().contains(word), "{file}: {heard}");
+        }
+    }
+
     #[test]
     fn a_gemini_answer_is_read_from_its_text_parts() {
         assert_eq!(gemini_text(&json!({ "candidates": [{ "content": { "parts": [{ "text": "a" }, { "text": " b " }] } }] })), "a b");
         assert_eq!(gemini_text(&json!({})), "");
+        /* gemini-3.5-transcribe: the transcript is in `audioTranscription.text`, not `text`. */
+        assert_eq!(gemini_text(&json!({ "candidates": [{ "content": { "parts": [{ "audioTranscription": { "text": " hello " } }] } }] })), "hello");
     }
 
     #[test]

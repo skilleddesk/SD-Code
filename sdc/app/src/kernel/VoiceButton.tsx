@@ -36,6 +36,9 @@ const PAUSE_MS = 700;
 const MAX_PHRASE_MS = 20_000;
 /** A phrase shorter than this is not worth a request. */
 const MIN_PHRASE_MS = 400;
+/** The bars of the live wave, and how often it is redrawn. */
+const WAVE_BARS = 7;
+const WAVE_MS = 60;
 
 /** Samples, resampled to 16 kHz mono 16-bit WAV. */
 function toWav(samples: Float32Array, rate: number): ArrayBuffer {
@@ -169,6 +172,8 @@ const fresh = (): Phrase => ({ chunks: [], samples: 0, spoke: false, quietSince:
 export function VoiceButton({ onText, onLive, onStart, sessionId }: { onText: (text: string) => void; onLive?: (text: string) => void; onStart?: () => void; sessionId?: string }) {
   const [state, setState] = useState<'idle' | 'recording' | 'working'>('idle');
   const stopRef = useRef<(() => void) | null>(null);
+  /* The last few loudness readings (0..1), newest last: the wave. Flat while nobody speaks. */
+  const [wave, setWave] = useState<number[]>(() => new Array<number>(WAVE_BARS).fill(0));
 
   useEffect(() => () => stopRef.current?.(), []);
 
@@ -184,6 +189,12 @@ export function VoiceButton({ onText, onLive, onStart, sessionId }: { onText: (t
     }
 
     const context = new AudioContext();
+
+    /* A context made outside a gesture handler can start suspended (WebView2, WKWebView): no audio would flow. */
+    if (context.state === 'suspended') {
+      await context.resume().catch(() => undefined);
+    }
+
     const source = context.createMediaStreamSource(stream);
     /* ScriptProcessor rather than an AudioWorklet: it needs no separate module file, and it is in every
        webview SDC runs in (WebView2, WKWebView, WebKitGTK). */
@@ -202,6 +213,7 @@ export function VoiceButton({ onText, onLive, onStart, sessionId }: { onText: (t
     /* A noise floor learnt from the quietest chunks: speech is well above it. */
     let floor = 0.004;
     let listening = true;
+    let waveAt = 0;
 
     const show = (): void => {
       onLive?.([...kept, interim].filter((part) => part.trim() !== '').join(' '));
@@ -256,6 +268,15 @@ export function VoiceButton({ onText, onLive, onStart, sessionId }: { onText: (t
       const now = performance.now();
 
       floor = rms < floor ? rms * 0.5 + floor * 0.5 : floor * 0.999 + rms * 0.001;
+
+      if (now - waveAt >= WAVE_MS) {
+        waveAt = now;
+
+        /* Above the noise floor it grows; at the floor it is zero, so a quiet room shows a flat line. */
+        const level = Math.min(1, Math.max(0, (rms - floor * 1.5) * 18));
+
+        setWave((bars) => [...bars.slice(1), level]);
+      }
 
       const speaking = rms > Math.max(0.012, floor * 3);
 
@@ -315,6 +336,7 @@ export function VoiceButton({ onText, onLive, onStart, sessionId }: { onText: (t
     stopRef.current = () => {
       stopRef.current = null;
       listening = false;
+      setWave(new Array<number>(WAVE_BARS).fill(0));
       processor.disconnect();
       source.disconnect();
       stream.getTracks().forEach((track) => track.stop());
@@ -350,6 +372,14 @@ export function VoiceButton({ onText, onLive, onStart, sessionId }: { onText: (t
   const Icon = state === 'recording' ? Square : state === 'working' ? LoaderCircle : Mic;
 
   return (
+    <span className="inline-flex items-center gap-1">
+      {state === 'recording' ? (
+        <span className="flex h-[18px] items-center gap-[2px]" role="img" aria-label={strings.kernel.voice.listening} data-voice-wave>
+          {wave.map((level, index) => (
+            <span key={index} className="w-[3px] rounded-full bg-state-error transition-[height] duration-fast" style={{ height: `${Math.round(3 + level * 15)}px`, opacity: level > 0.05 ? 1 : 0.4 }} />
+          ))}
+        </span>
+      ) : null}
     <button
       type="button"
       className={
@@ -371,5 +401,6 @@ export function VoiceButton({ onText, onLive, onStart, sessionId }: { onText: (t
     >
       <Icon size={14} aria-hidden="true" className={state === 'working' || state === 'recording' ? (state === 'working' ? 'animate-spin motion-reduce:animate-none' : 'animate-pulse motion-reduce:animate-none') : ''} />
     </button>
+    </span>
   );
 }
