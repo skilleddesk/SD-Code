@@ -39,8 +39,8 @@ describe('the Proof-of-Work badge (P0-15)', () => {
     expect(html).toContain('data-receipt-row="ollama:qwen3.5:9b"');
     expect(html).toContain('data-receipt-row="deepseek:deepseek-chat"');
     expect(html).toContain('2 local · 1 chain');
-    expect(html).toContain('no price');
-    expect(html).toContain('$0.0012');
+    /* 1.0.0: no price anywhere on screen. */
+    expect(html).not.toContain('$');
     expect(html).toContain('aria-expanded="true"');
     expect(rows.reduce((sum, row) => sum + row.steps, 0)).toBe(totals.steps);
     expect(rows.reduce((sum, row) => sum + row.tokensIn, 0)).toBe(totals.tokensIn);

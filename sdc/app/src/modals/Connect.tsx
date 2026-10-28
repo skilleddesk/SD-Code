@@ -760,7 +760,6 @@ export function Connect() {
                               <div className="flex shrink-0 items-center gap-[5px]">
                                 <Badge tone="muted">{tier}</Badge>
                                 <Badge tone="muted">{strings.connect.context(model.ctx)}</Badge>
-                                <Badge tone="muted">{model.cost === '' ? '—' : model.cost}</Badge>
                                 <Badge
                                   tone={SOURCE_TONE[model.source] ?? 'neutral'}
                                   icon={Zap}

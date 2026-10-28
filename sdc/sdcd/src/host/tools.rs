@@ -1401,3 +1401,135 @@ Active Connections
         assert_eq!(finished.step, "done");
     }
 }
+
+/* ------------------------------------------------------------------------------------------------
+ * 1.0.0: the CLIs kept current.
+ *
+ * A new model needs a new CLI: measured 2026-10-28, Claude Code 2.1.278 refused `claude-opus-5-5` with
+ * "version 2.1.280 or newer is required", so the newest model in the menu failed on every turn. The daemon now
+ * compares each installed CLI with npm's newest at start and every six hours, and updates it where it lives.
+ * ---------------------------------------------------------------------------------------------- */
+
+/// The CLI behind an engine, by its tool id.
+pub fn cli_for_engine(engine: &str) -> Option<&'static str> {
+    match engine {
+        "claude_code" => Some("claude"),
+        "codex" => Some("codex"),
+        "gemini" => Some("gemini"),
+        _ => None,
+    }
+}
+
+/// `2.1.278` out of `2.1.278 (Claude Code)` or `codex-cli 0.155.1`.
+pub fn semver_in(text: &str) -> Option<Vec<u64>> {
+    text.split(|c: char| !(c.is_ascii_digit() || c == '.'))
+        .find(|part| part.matches('.').count() >= 1 && part.split('.').all(|piece| !piece.is_empty()))
+        .map(|part| part.split('.').filter_map(|piece| piece.parse().ok()).collect())
+}
+
+/// npm's newest version of a package.
+fn npm_latest(package: &str) -> Option<String> {
+    let text = get_text(&format!("https://registry.npmjs.org/{}/latest", package.replace('/', "%2f"))).ok()?;
+
+    serde_json::from_str::<Value>(&text).ok()?["version"].as_str().map(str::to_string)
+}
+
+/// Whether the installed CLI is older than npm's newest. `None` when either side is unknown.
+pub fn cli_outdated(id: &str) -> Option<bool> {
+    let tool = tool(id)?;
+    let installed = semver_in(&crate::host::doctor::version_of(tool.program)?)?;
+    let latest = semver_in(&npm_latest(npm_package(id)?)?)?;
+
+    Some(installed < latest)
+}
+
+/// Updates one CLI, as a job: SDC's own copy is reinstalled, a copy the person installed with npm is updated in its
+/// own folder, and Claude Code (which may be the native build) updates itself.
+pub fn update_cli(id: &'static str) -> Result<Job, String> {
+    let tool = tool(id).ok_or_else(|| format!("SDC cannot update `{id}`"))?;
+
+    if let Some(running) = jobs().lock().unwrap_or_else(|poison| poison.into_inner()).values().find(|job| job.tool == id && job.state == "running") {
+        return Ok(running.clone());
+    }
+
+    Ok(spawn_job(tool.id, tool.label, move |progress| update_now(tool, progress)))
+}
+
+fn update_now(tool: &'static Tool, progress: &Progress) -> Result<String, String> {
+    let program = crate::host::program::resolve(tool.program).ok_or_else(|| format!("`{}` is not installed", tool.program))?;
+
+    if managed(&program) {
+        return install_cli(&root(), tool, progress);
+    }
+
+    progress.step(&format!("Updating {}", tool.label));
+
+    if tool.id == "claude" {
+        let mut command = crate::host::program::command_for(&program);
+
+        command.arg("update");
+        run_logged(command, progress)?;
+    } else {
+        let package = npm_package(tool.id).ok_or("no npm package for this tool")?;
+        let prefix = npm_prefix_of(&program, package).ok_or_else(|| format!("{} was not installed with npm, so it is left as it is", tool.label))?;
+        let npm = crate::host::program::resolve("npm").ok_or("npm is missing")?;
+        let mut command = crate::host::program::command_for(&npm);
+
+        command
+            .args(["install", "--global", "--no-fund", "--no-audit", "--loglevel=error", "--prefix"])
+            .arg(&prefix)
+            .arg(format!("{package}@latest"));
+        run_logged(command, progress)?;
+    }
+
+    let version = crate::host::doctor::version_of(tool.program).unwrap_or_default();
+
+    Ok(format!("{} updated · {version}", tool.label))
+}
+
+/// The npm prefix a CLI was installed into, when it was installed with npm at all.
+fn npm_prefix_of(program: &Path, package: &str) -> Option<PathBuf> {
+    let dir = program.parent()?;
+    let candidates = if cfg!(windows) { vec![dir.to_path_buf()] } else { vec![dir.parent()?.to_path_buf()] };
+
+    candidates.into_iter().find(|prefix| {
+        let modules = if cfg!(windows) { prefix.join("node_modules") } else { prefix.join("lib").join("node_modules") };
+
+        modules.join(package).is_dir()
+    })
+}
+
+/// Checks every installed CLI against npm now and every six hours, on a thread of its own.
+pub fn keep_clis_current() {
+    std::thread::spawn(|| loop {
+        for id in ["claude", "codex", "gemini"] {
+            if cli_outdated(id) == Some(true) {
+                if let Ok(job) = update_cli(id) {
+                    eprintln!("sdcd: updating {id} ({})", job.id);
+                }
+            }
+        }
+
+        std::thread::sleep(Duration::from_secs(6 * 60 * 60));
+    });
+}
+
+#[cfg(test)]
+mod cli_update_tests {
+    use super::*;
+
+    #[test]
+    fn a_version_is_read_out_of_what_a_cli_prints() {
+        assert_eq!(semver_in("2.1.278 (Claude Code)"), Some(vec![2, 1, 278]));
+        assert_eq!(semver_in("codex-cli 0.155.1"), Some(vec![0, 155, 1]));
+        assert_eq!(semver_in("0.66.0"), Some(vec![0, 66, 0]));
+        assert!(semver_in("2.1.278").unwrap() < semver_in("2.1.280").unwrap());
+        assert_eq!(semver_in("no version here"), None);
+    }
+
+    #[test]
+    fn engines_name_their_cli() {
+        assert_eq!(cli_for_engine("claude_code"), Some("claude"));
+        assert_eq!(cli_for_engine("native_api"), None);
+    }
+}

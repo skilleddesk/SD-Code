@@ -307,7 +307,14 @@ pub fn list(store: &Arc<Store>) -> Vec<Value> {
         .iter()
         .map(|(id, name, kind, logo, initial, detail)| {
             let stored = store.provider(id).ok().flatten();
-            let status = settle_status(id, kind, stored.as_ref().and_then(|row| row["status"].as_str()));
+            let mut status = settle_status(id, kind, stored.as_ref().and_then(|row| row["status"].as_str()));
+            /* 1.0.0: Google refused this machine's Gemini sign-in (`IneligibleTierError`) - the card is not connected,
+               whatever the row and the credential file say, until the person signs in again. */
+            let refused = *id == "gemini" && gemini_refused(store);
+
+            if refused {
+                status = "needs-auth".to_string();
+            }
             /* An **empty** stored detail is not a detail (3.2): every subscription row on this machine had one, so the
                cards showed a blank line where the sentence that says what to do should be. */
             let detail_text = stored
@@ -316,6 +323,7 @@ pub fn list(store: &Arc<Store>) -> Vec<Value> {
                 .filter(|text| !text.trim().is_empty())
                 .map(str::to_string)
                 .unwrap_or_else(|| honest_detail(id, kind, detail));
+            let detail_text = if refused { GEMINI_REFUSED.to_string() } else { detail_text };
 
             json!({
                 "id": id,
@@ -366,6 +374,41 @@ pub fn mark_refused(store: &Arc<Store>, id: &str, _reason: &str) -> bool {
         .is_ok()
 }
 
+/// What the Gemini card says once Google refused its sign-in (1.0.0).
+pub const GEMINI_REFUSED: &str = "Google no longer serves Gemini CLI to personal Google accounts (Google AI Pro included) · use the Google Gemini API card with a free key from aistudio.google.com/apikey - same models, gemini-4-argon too";
+
+/// Whether Google refused this machine's Gemini CLI sign-in, as last seen.
+pub fn gemini_refused(store: &Arc<Store>) -> bool {
+    store.setting("gemini.refused").ok().flatten().as_deref() == Some("1")
+}
+
+/// Records Google's refusal: the Gemini card is `needs-auth` and its models leave the menu. Answers whether it changed.
+pub fn mark_gemini_refused(store: &Arc<Store>) -> bool {
+    if gemini_refused(store) {
+        return false;
+    }
+
+    let _ = mark_signed_out(store, "gemini");
+
+    store.set_setting("gemini.refused", "1").is_ok()
+}
+
+/// Does Google refuse this Gemini CLI sign-in? Checked once in the background at start when the card says connected:
+/// the refusal comes from the account setup, before any model is asked, so it costs no quota.
+pub fn probe_gemini(store: &Arc<Store>) {
+    let connected = store.provider("gemini").ok().flatten().is_some_and(|row| row["status"].as_str() == Some("connected"));
+
+    if !connected || gemini_has_a_route() || gemini_refused(store) || !crate::host::doctor::has("gemini") {
+        return;
+    }
+
+    if let Some(output) = prints_within("gemini", &["--skip-trust", "-p", "Reply with OK"], 90) {
+        if crate::errors::translator::translate("gemini", &output).rule == "gemini-refused" {
+            mark_gemini_refused(store);
+        }
+    }
+}
+
 /// Records that a sign-in **this app drove** finished, so the card survives a restart (3.2).
 ///
 /// Before this, a finished CLI login only pushed a `ProviderStatus` event: nothing was written, so after a restart the
@@ -378,6 +421,10 @@ pub fn mark_signed_in(store: &Arc<Store>, id: &str, detail: &str) -> bool {
 
     if kind != "subscription" {
         return false;
+    }
+
+    if id == "gemini" {
+        let _ = store.set_setting("gemini.refused", "0");
     }
 
     store.upsert_provider(id, name, kind, "connected", Some(detail), None, None, None).is_ok()
@@ -521,12 +568,6 @@ pub fn signed_in(provider_id: &str) -> bool {
     }
 }
 
-/// Does the Gemini CLI have a credential and a route that can answer? Read by the card's detail line, never by its
-/// status - see [`signed_in`] for why the status is not allowed to come from a file.
-pub fn gemini_route_ready() -> bool {
-    gemini_credentials().map(|path| path.exists()).unwrap_or(false) && gemini_has_a_route()
-}
-
 /// Whether the Gemini CLI has a way to be served besides a personal Google sign-in.
 fn gemini_has_a_route() -> bool {
     ["GOOGLE_CLOUD_PROJECT", "GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_GENAI_USE_VERTEXAI"]
@@ -544,6 +585,11 @@ pub fn codex_logged_in(output: &str) -> bool {
 }
 /// What a program prints, stdout and stderr together, or `None` when it cannot be started.
 fn prints(program: &str, args: &[&str]) -> Option<String> {
+    prints_within(program, args, 15)
+}
+
+/// [`prints`] with its own bound in seconds.
+fn prints_within(program: &str, args: &[&str], seconds: u64) -> Option<String> {
     use std::io::Read;
     use std::process::Stdio;
 
@@ -575,7 +621,7 @@ fn prints(program: &str, args: &[&str]) -> Option<String> {
     loop {
         match child.try_wait() {
             Ok(Some(_)) => break,
-            Ok(None) if started.elapsed() < std::time::Duration::from_secs(15) => {
+            Ok(None) if started.elapsed() < std::time::Duration::from_secs(seconds) => {
                 std::thread::sleep(std::time::Duration::from_millis(50));
             }
             _ => {
@@ -620,13 +666,8 @@ fn honest_detail(id: &str, kind: &str, fallback: &str) -> String {
            (2026-09-26, CLI 0.60.0, a finished sign-in): Google answers a personal account's turns from this CLI with
            `IneligibleTierError`, so the route that does work is named beside it. */
         Some(recipe) if recipe.provider_id == "gemini" && crate::host::doctor::has(recipe.program) => format!(
-            "`{}` is installed · Sign in opens Google in your browser{}",
+            "`{}` is installed · Sign in opens Google in your browser",
             recipe.program,
-            if gemini_route_ready() {
-                ""
-            } else {
-                " · Google may refuse this CLI for a personal account - Google Gemini API (a key) serves the same models"
-            }
         ),
         Some(recipe) if crate::host::doctor::has(recipe.program) => format!(
             "`{}` is installed · Connect starts its own sign-in",

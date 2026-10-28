@@ -56,6 +56,7 @@ pub mod engines;
 pub mod errors;
 pub mod fs;
 pub mod git;
+pub mod github;
 pub mod graph;
 pub mod guard;
 pub mod host;

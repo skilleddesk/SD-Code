@@ -249,7 +249,11 @@ export function parseModelId(id: string): ModelVersion {
   let inDate = false;
 
   for (const token of tokens) {
-    if (/^\d{8}$/.test(token) || /^20\d{2}$/.test(token) || /^0\d{2}$/.test(token)) {
+    /* `-0731`, `-0813`: a month and day after the version (Alibaba's snapshots) - read as `[4, 731]` it outranked
+       `v4.1`. Only once a version is known, so a leading `1206` stays a number. */
+    const monthDay = version.length > 0 && /^(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])$/.test(token);
+
+    if (monthDay || /^\d{8}$/.test(token) || /^20\d{2}$/.test(token) || /^0\d{2}$/.test(token)) {
       dated = true;
       inDate = true;
       continue;
@@ -415,9 +419,17 @@ export function groupCatalog(
     providers.filter((provider) => provider.status === 'connected').map((provider) => provider.id),
   );
   const rows = new Map<string, { label: string; models: CatalogModel[] }>();
+  const disconnectedIds = new Set<string>();
 
   for (const row of catalog) {
-    if (NOT_A_CHAT_MODEL.test(row.id)) {
+    if (NOT_A_CHAT_MODEL.test(row.id) || NOT_A_MENU_ROW.test(row.id)) {
+      continue;
+    }
+
+    /* 1.0.0, the owner's rule: "only the models of the providers we selected". A provider that is not connected
+       has no group - its rows cannot run, and 1.4.1 showing them anyway filled the menu with hundreds of models. */
+    if (!connected.has(row.providerId)) {
+      disconnectedIds.add(row.providerId);
       continue;
     }
 
@@ -431,57 +443,119 @@ export function groupCatalog(
   }
 
   const groups: CatalogGroup[] = [];
-  let disconnected = 0;
 
   for (const [providerId, entry] of rows) {
-    /* A provider nobody signed in to keeps its rows in the menu, marked, and is counted. Skipping it was how "the
-       latest Gemini model never appears" happened: the row was in the catalogue and the menu showed nothing at all for
-       the provider that has it. Shown-but-not-runnable is the honest middle. */
-    const needsAuth = !connected.has(providerId);
-
-    if (needsAuth) {
-      disconnected += 1;
-    }
-
-    /* The models a person put in use are this provider's menu; everything else it lists is one
-       click away. With none in use, the newest versions of each family, as before. */
+    /* The models a person put in use in the Provider Hub are this provider's menu. With none in use: the newest
+       version of each family only - "old versions are of no use, we will not work with them". A local server's
+       models were each installed on purpose, so they are all shown. */
     const chosen = entry.models.filter((row) =>
       inUse.some((use) => use.modelId === row.id && use.providerId === providerId),
     );
-    const { current, older } =
-      chosen.length > 0
-        ? { current: chosen, older: entry.models.filter((row) => !chosen.includes(row)) }
-        : latestVersions(entry.models);
+    const local = providerId === 'ollama' || providerId.startsWith('local-');
+    /* An aggregator lists hundreds of makers; without a pick in the Hub only the major labs' newest are offered. */
+    const offered = AGGREGATORS.has(providerId)
+      ? entry.models.filter((row) => MAJOR_LABS.test(row.id) && !row.id.endsWith(':free'))
+      : entry.models;
+    const current = chosen.length > 0 ? chosen : local ? entry.models : newestOnly(offered);
     const byTier = (left: CatalogModel, right: CatalogModel): number =>
       TIER_ORDER[right.tier] - TIER_ORDER[left.tier] || left.name.localeCompare(right.name);
 
     groups.push({
-      ...(needsAuth ? { needsAuth } : {}),
       providerId,
       providerLabel: entry.label,
       engine: engineForProvider(providerId),
-      models: current.sort(byTier),
-      older: older.sort(byTier),
+      models: [...current].sort(byTier),
+      older: [],
     });
   }
 
   /* Subscriptions first - they are paid for already - then keyed and local providers by name. */
   groups.sort((left, right) => {
-    /* Signed in first: a provider that cannot run yet is shown so a person can see what it offers, never above one
-       that can. `sort` is stable, so the order inside each half is the order it already had. */
-    const bySignIn = Number(left.needsAuth === true) - Number(right.needsAuth === true);
-
-    if (bySignIn !== 0) {
-      return bySignIn;
-    }
-
     const leftCli = left.engine === 'native_api' ? 1 : 0;
     const rightCli = right.engine === 'native_api' ? 1 : 0;
 
     return leftCli - rightCli || left.providerLabel.localeCompare(right.providerLabel);
   });
 
-  return { groups, disconnected };
+  return { groups, disconnected: disconnectedIds.size };
+}
+
+/** Providers that resell every maker's models under one key. */
+const AGGREGATORS = new Set(['openrouter']);
+
+/** The makers an aggregator's menu keeps when nothing was picked in the Hub. */
+const MAJOR_LABS = /^(anthropic|openai|google|deepseek|qwen|moonshotai|z-ai|x-ai|mistralai|meta-llama)\//;
+
+/**
+ * Rows a provider lists that are never a choice in the menu: OpenRouter's `:batch` twins and `~…-latest` aliases,
+ * tool-only variants, and vision/omni/OCR builds of a model whose plain build is listed next to them.
+ */
+const NOT_A_MENU_ROW = /(:batch$|^~|customtools|-vl-|-vl$|vl-plus|omni|-ocr)/i;
+
+/**
+ * The newest version of each family, and only families of the current generation (1.0.0).
+ *
+ * One per family: `claude-opus-5-5`, never `claude-opus-4-8` beside it. A family whose newest version is two
+ * generations behind its maker's newest (`gemini-2.5-pro` next to `gemini-4-argon`, `claude-haiku-3-5` next to
+ * `claude-*-5`) is dropped too. A model served in two regions (`qwen3.7-max` and `qwen3.7-max-us`) is one row: the
+ * `-us` build, which answers in about 1.5 s where the other waits 12-20 s for its first token on the US endpoint.
+ */
+export function newestOnly(models: readonly CatalogModel[]): CatalogModel[] {
+  const regionless = (id: string): string => id.replace(/-us$/i, '');
+  const byId = new Map<string, CatalogModel>();
+
+  for (const model of models) {
+    const key = regionless(model.id);
+
+    if (!byId.has(key) || /-us$/i.test(model.id)) {
+      byId.set(key, model);
+    }
+  }
+
+  const { current } = latestVersions(
+    [...byId.values()].map((model) => ({ ...model, id: regionless(model.id), realId: model.id }) as CatalogModel & { realId: string }),
+    1,
+  );
+  const maker = (model: CatalogModel): string => parseModelId(model.id).family.split('-')[0] ?? '';
+  const newest = new Map<string, number>();
+  const newestVersion = new Map<string, number[]>();
+
+  for (const model of current) {
+    const major = parseModelId(model.id).version[0];
+    const version = parseModelId(model.id).version;
+    const held = newestVersion.get(maker(model));
+
+    if (version.length > 0 && (held === undefined || compareVersions(version, held) < 0)) {
+      newestVersion.set(maker(model), version);
+    }
+
+    if (major !== undefined) {
+      newest.set(maker(model), Math.max(newest.get(maker(model)) ?? major, major));
+    }
+  }
+
+  return current
+    .filter((model) => {
+      const major = parseModelId(model.id).version[0];
+      const top = newest.get(maker(model));
+
+      if (major === undefined || top === undefined) {
+        return true;
+      }
+
+      /* An open-weight size (`qwen3.5-122b-a10b`) is a family of its own by name, but a hosted provider lists them
+         long after its maker moved on: shown only while it is the maker's newest version. */
+      if (/(^|-)\d+(\.\d+)?[bm](-|$)/.test(parseModelId(model.id).family)) {
+        return compareVersions(parseModelId(model.id).version, newestVersion.get(maker(model)) ?? []) <= 0;
+      }
+
+      return major >= top - 1;
+    })
+    .map((model) => {
+      const { realId, ...rest } = model as CatalogModel & { realId: string };
+
+      return { ...rest, id: realId };
+    });
 }
 
 /** Whether an engine has at least one connected provider behind it - the Alt+E cycle skips the rest. */

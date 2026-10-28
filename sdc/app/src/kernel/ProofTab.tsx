@@ -6,7 +6,6 @@ import { currentLocale } from '../i18n';
 import { openOutside } from '../lib/external';
 import { strings } from '../strings';
 import { rewindTo, runVerifyChosen } from '../store/intents';
-import { measured, usd } from '../store/kernel';
 import { exportProof, loadAudit } from '../store/kernelIntents';
 import { useSessionsStore } from '../store/sessions';
 import { useAppStore } from '../store/store';
@@ -165,15 +164,11 @@ export function ProofTab() {
           </div>
         )}
 
-        <Title>{k.cost}</Title>
-        {cost === undefined ? (
-          <p className="text-text-muted">{turn.estimate?.usd === undefined || turn.estimate.usd === null ? k.noCost : k.estimateOnly(usd(turn.estimate.usd))}</p>
-        ) : (
-          <p className="text-text-secondary">
-            {usd(cost.costUsd)} · {strings.kernel.cost.source[cost.costSource]} · {k.tokens(cost.inputTokens, cost.outputTokens)}
-            {turn.estimate?.usd === undefined || turn.estimate.usd === null ? '' : ` · ${k.estimateWas(usd(turn.estimate.usd))}`}
-            {measured(cost.costSource) ? '' : ` · ${k.notMeasured}`}
-          </p>
+        {cost === undefined ? null : (
+          <>
+            <Title>{k.tokensTitle}</Title>
+            <p className="text-text-secondary">{k.tokens(cost.inputTokens, cost.outputTokens)}</p>
+          </>
         )}
 
         <Title>{k.rollback}</Title>

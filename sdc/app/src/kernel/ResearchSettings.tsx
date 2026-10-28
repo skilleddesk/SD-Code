@@ -201,7 +201,6 @@ export function ResearchSettings() {
           {apiModels.map((model) => (
             <option key={`${model.providerId}|${model.id}`} value={`${model.providerId}|${model.id}`}>
               {model.providerLabel} · {model.name === '' ? model.id : model.name}
-              {model.cost === '' ? '' : ` · ${model.cost}`}
             </option>
           ))}
         </select>

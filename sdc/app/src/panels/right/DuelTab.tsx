@@ -83,7 +83,6 @@ export function DuelTab() {
               </div>
               <div className="duel-meta mt-[4px] flex flex-wrap gap-[8px]">
                 <span>{pane.time}</span>
-                <span>{pane.cost}</span>
                 <span className={pane.pass ? 'pass text-state-success' : 'fail text-state-error'}>
                   {pane.pass ? 'PASS' : 'FAIL'}
                 </span>

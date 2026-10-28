@@ -280,25 +280,25 @@ jobs:
         shell: bash
         env:
           UPDATER_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          UPDATER_PUBKEY: ${{ secrets.TAURI_UPDATER_PUBKEY }}
+          UPDATER_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           WIN_CERT: ${{ secrets.WINDOWS_CERTIFICATE }}
           WIN_CERT_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
           REPO: ${{ github.repository }}
         run: |
           args=""
 
-          if [ -n "$UPDATER_KEY" ] && [ -n "$UPDATER_PUBKEY" ]; then
-            cat > sdc/app/src-tauri/tauri.updater.conf.json <<JSON
-          {"bundle":{"createUpdaterArtifacts":true},"plugins":{"updater":{"pubkey":"$UPDATER_PUBKEY","endpoints":["https://github.com/$REPO/releases/latest/download/latest.json"]}}}
-          JSON
-            cat > sdc/app/src-tauri/capabilities/updater.json <<'JSON'
-          {"identifier":"updater","description":"Check for and install signed updates.","windows":["main"],"permissions":["updater:default"]}
-          JSON
-            args="$args --config src-tauri/tauri.updater.conf.json --features updater"
+          # 1.0.0: the updater is always in the app (public key and endpoint in tauri.conf.json). With the private key
+          # in the secrets this build signs its own update files; without it they are signed afterwards on the
+          # maintainer's machine by `sdc/scripts/sign-release.mjs`, which uploads the signed latest.json.
+          if [ -n "$UPDATER_KEY" ]; then
+            echo '{"bundle":{"createUpdaterArtifacts":true}}' > sdc/app/src-tauri/tauri.updater.conf.json
+            args="$args --config src-tauri/tauri.updater.conf.json"
             echo "TAURI_SIGNING_PRIVATE_KEY=$UPDATER_KEY" >> "$GITHUB_ENV"
-            echo "signed updates are on for this build"
+            echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=$UPDATER_KEY_PASSWORD" >> "$GITHUB_ENV"
+            echo "signed=yes" >> "$GITHUB_OUTPUT"
+            echo "signed updates are made by this build"
           else
-            echo "no updater key in the secrets - this build has no auto-update"
+            echo "no updater key in the secrets - the update files are signed after the build (scripts/sign-release.mjs)"
           fi
 
           if [ "$RUNNER_OS" = "Windows" ] && [ -n "$WIN_CERT" ]; then
@@ -327,6 +327,24 @@ jobs:
           projectPath: sdc/app
           releaseId: ${{ needs.prepare.outputs.release_id }}
           args: ${{ matrix.target != '' && format('--target {0}', matrix.target) || '' }} ${{ steps.extra.outputs.args }}
+
+      # 1.0.0: the macOS in-app update is the app bundle itself, packed. When the build had no updater key it did not
+      # pack it, so it is packed here and added to the draft; `scripts/sign-release.mjs` signs it with the rest.
+      - name: macOS update bundle
+        if: matrix.platform == 'macos-latest' && steps.extra.outputs.signed != 'yes'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          ID: ${{ needs.prepare.outputs.release_id }}
+          ARCH: ${{ matrix.target == 'x86_64-apple-darwin' && 'x64' || 'aarch64' }}
+        run: |
+          dir=$(dirname "$(find sdc/app/src-tauri/target -maxdepth 6 -type d -path '*/bundle/macos/SDC.app' | head -n 1)")
+          version=$(node -p "require('./sdc/app/src-tauri/tauri.conf.json').version")
+          name="SDC_${version}_${ARCH}.app.tar.gz"
+          tar -czf "$RUNNER_TEMP/$name" -C "$dir" SDC.app
+          curl --fail -sS -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Content-Type: application/gzip" --data-binary @"$RUNNER_TEMP/$name" "https://uploads.github.com/repos/$REPO/releases/$ID/assets?name=$name" -o /dev/null
+          echo "uploaded $name"
 
       # 0.22: signed provenance for every installer this runner built - who built it, from which commit, with
       # which workflow - recorded in GitHub's attestation store and Sigstore's public log. It does not replace

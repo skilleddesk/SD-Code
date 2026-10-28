@@ -360,6 +360,10 @@
           "secrets.move",
           "secrets.sweep",
           "update.check",
+          "github.status",
+          "github.connect",
+          "github.disconnect",
+          "github.push",
           "tool.list",
           "tool.install",
           "tool.status",
@@ -2616,6 +2620,46 @@
           "result": {
             "current": "string",
             "updateAvailable": "boolean"
+          }
+        },
+        "github.status": {
+          "params": {},
+          "result": {
+            "connected": "boolean",
+            "login": "string?",
+            "deviceFlow": "boolean",
+            "credentialManager": "boolean"
+          }
+        },
+        "github.connect": {
+          "params": {},
+          "result": {
+            "method": "string",
+            "userCode": "string?",
+            "verificationUri": "string?"
+          }
+        },
+        "github.disconnect": {
+          "params": {},
+          "result": {
+            "connected": "boolean",
+            "revokeUrl": "string"
+          }
+        },
+        "github.push": {
+          "params": {
+            "sessionId": "string?",
+            "root": "string?",
+            "hostId": "string?",
+            "repo": "string?",
+            "private": "boolean?",
+            "message": "string?"
+          },
+          "result": {
+            "url": "string",
+            "branch": "string",
+            "created": "boolean",
+            "committed": "boolean"
           }
         },
         "tool.list": {

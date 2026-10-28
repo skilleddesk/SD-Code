@@ -1,4 +1,5 @@
 import type { FsEntry, LocalTuning, PermissionDecision, PermissionRisk, SecretFinding, TierName } from '../../../protocol/types';
+import { isPushRequest, pushToGitHub } from './github';
 import { nameOf, pickFolder } from '../lib/picker';
 import { sdcpCall } from '../lib/sdcp';
 import { isSdcpError } from '../lib/transport';
@@ -2471,6 +2472,16 @@ export async function sendPrompt(prompt: string, target?: string, extras: SendEx
   /* The model this box shows - its own chat's (0.16.1). A prompt routed to another chat below still runs
      the model the person saw when they pressed Send. */
   const { tier, engine, model, providerId } = chatChoice(sessionId);
+
+  /* 1.0.0: "push koro" / `/push` in the box pushes this chat's folder (here or on its VPS) to GitHub at once - no
+     model turn, no tokens. Anything longer than the request itself still goes to the model. */
+  if (sessionId !== null && isPushRequest(prompt)) {
+    const pushed = await pushToGitHub({ sessionId });
+
+    toast('url' in pushed ? strings.kernel.github.pushed(pushed.url) : strings.kernel.github.pushFailed(pushed.error), undefined, 8000);
+
+    return sessionId;
+  }
 
   /* "ami skilleddesk.com er file e kaj korte chai" - a prompt that names a saved **project** or
      **host** runs where it points (0.10.0, widened in 0.11.0). The project is matched first, because

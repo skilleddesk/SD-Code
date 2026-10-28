@@ -100,19 +100,15 @@ describe('groupCatalog', () => {
     row('llama3.2:3b', 'ollama'),
   ];
 
-  it('draws a group for every provider, and marks the ones nobody signed in to', () => {
+  it('draws a group only for a connected provider, and counts the rest', () => {
     const { groups, disconnected } = groupCatalog(catalog, [
       ...connected('claude', 'anthropic-api'),
       { id: 'openai-api', name: 'OpenAI API', status: 'available' },
       { id: 'ollama', name: 'Ollama', status: 'needs-auth' },
     ]);
 
-    /* 3.3: the menu used to hide a provider nobody had signed in to, and that is how "the newest Gemini model never
-       appears" happened - `gemini-4-argon` sat in the catalogue and the menu showed nothing for the provider that
-       holds it. It is shown now, marked, and it still sorts under the providers that can run. */
-    expect(groups.filter((group) => group.needsAuth !== true).map((group) => group.providerId).sort()).toEqual(['anthropic-api', 'claude']);
-    expect(groups.filter((group) => group.needsAuth === true).map((group) => group.providerId).sort()).toEqual(['ollama', 'openai-api']);
-    expect(groups.length).toBe(4);
+    /* 1.0.0, the owner's rule: only the providers that were selected. */
+    expect(groups.map((group) => group.providerId).sort()).toEqual(['anthropic-api', 'claude']);
     expect(disconnected).toBe(2);
   });
 
@@ -130,7 +126,7 @@ describe('groupCatalog', () => {
   });
 
   /* 0.12.4: "multiple use ar option rakba" - the models put in use are the provider's menu. */
-  it('shows every model in use for a provider, and the rest behind older', () => {
+  it('shows only the models in use for a provider', () => {
     const alibaba = [
       row('qwen3.8-max', 'qwen'),
       row('qwen3.8-flash', 'qwen'),
@@ -143,23 +139,36 @@ describe('groupCatalog', () => {
     ]);
 
     expect(groups[0]?.models.map((model) => model.id).sort()).toEqual(['deepseek-v4.1-flash', 'qwen3.8-max']);
-    expect(groups[0]?.older.map((model) => model.id)).toEqual(['qwen3.8-flash']);
+    expect(groups[0]?.older).toEqual([]);
   });
 
-  it('shows the newest model of a provider nobody signed in to', () => {
-    const gemini = [row('gemini-3.8-flash', 'gemini'), row('gemini-4-argon', 'gemini'), row('gemini-2.5-pro', 'gemini')];
-    const { groups } = groupCatalog(gemini, [{ id: 'gemini', name: 'Gemini', status: 'needs-auth' }]);
+  it('shows only the newest version of each family, of the current generation', () => {
+    const claude = ['claude-opus-5-5', 'claude-opus-4-8', 'claude-sonnet-5-5', 'claude-sonnet-4-6', 'claude-haiku-3-5', 'claude-haiku-5-5', 'claude-fable-5-1', 'claude-fable-5'].map((id) => row(id, 'claude'));
+    const gemini = ['gemini-4-argon', 'gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-2.5-pro', 'gemini-2.0-flash'].map((id) => row(id, 'gemini'));
+    const { groups } = groupCatalog([...claude, ...gemini], connected('claude', 'gemini'));
+    const ids = (provider: string): string[] => groups.find((group) => group.providerId === provider)?.models.map((model) => model.id).sort() ?? [];
 
-    expect(groups).toHaveLength(1);
-    expect(groups[0]?.needsAuth).toBe(true);
-    expect(groups[0]?.models.map((model) => model.id)).toContain('gemini-4-argon');
+    expect(ids('claude')).toEqual(['claude-fable-5-1', 'claude-haiku-5-5', 'claude-opus-5-5', 'claude-sonnet-5-5']);
+    expect(ids('gemini')).toEqual(['gemini-3.8-flash', 'gemini-4-argon']);
   });
 
-  it('with nothing connected, every provider is still shown and marked', () => {
+  it('folds a model served in two regions into its -us build, and drops batch twins and aliases', () => {
+    const rows = ['qwen3.7-max', 'qwen3.7-max-us', 'qwen3.8-flash', 'x/model-a:batch', '~x/model-latest'].map((id) => row(id, 'qwen'));
+    const { groups } = groupCatalog(rows, connected('qwen'));
+
+    expect(groups[0]?.models.map((model) => model.id).sort()).toEqual(['qwen3.7-max-us', 'qwen3.8-flash']);
+  });
+
+  it('keeps every model of a local server', () => {
+    const { groups } = groupCatalog([row('qwen3.5:9b', 'ollama'), row('qwen3.5-high-ctx:latest', 'ollama')], connected('ollama'));
+
+    expect(groups[0]?.models).toHaveLength(2);
+  });
+
+  it('with nothing connected, the menu is empty and counts every provider', () => {
     const { groups, disconnected } = groupCatalog(catalog, []);
 
-    expect(groups.length).toBe(4);
-    expect(groups.every((group) => group.needsAuth === true)).toBe(true);
+    expect(groups).toHaveLength(0);
     expect(disconnected).toBe(4);
   });
 });
@@ -192,20 +201,18 @@ describe('filterGroups', () => {
     expect(filterGroups(groups, '  ')).toEqual(groups);
   });
 
-  it('narrows to matching rows and unfolds the older versions', () => {
-    /* `claude-sonnet-4-5` sits behind the Older toggle; a person searching for it must see it. */
-    const found = filterGroups(groups, 'sonnet-4-5');
+  it('narrows to matching rows, newest versions only', () => {
+    const found = filterGroups(groups, 'sonnet');
 
     expect(found).toHaveLength(1);
-    expect(found[0].models.map((model) => model.id)).toEqual(['claude-sonnet-4-5']);
-    expect(found[0].older).toHaveLength(0);
+    expect(found[0].models.map((model) => model.id)).toEqual(['claude-sonnet-5']);
+    expect(filterGroups(groups, 'sonnet-4-5')).toHaveLength(0);
   });
 
   it('matches a whole provider by its label, and drops groups with nothing', () => {
     const anthropic = filterGroups(groups, 'anthropic');
 
     expect(anthropic).toHaveLength(1);
-    expect(anthropic[0].models.length).toBeGreaterThanOrEqual(2);
     expect(filterGroups(groups, 'no-such-model')).toHaveLength(0);
   });
 });

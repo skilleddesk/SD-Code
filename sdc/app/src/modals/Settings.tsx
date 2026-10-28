@@ -17,6 +17,7 @@ import {
   SlidersHorizontal,
   Stethoscope,
   type LucideIcon,
+  GitBranch,
 } from 'lucide-react';
 
 import { commandsByGroup } from '../commands/registry';
@@ -34,6 +35,7 @@ import { ProfileCard } from './ProfileCard';
 import { useFeatures } from '../store/features';
 import { storedSettings, storeSetting } from '../lib/settings';
 import { Modal } from './Modal';
+import { GitHubTab } from '../kernel/GitHubTab';
 import { LanguageTab, TeamTab, UpdatesTab } from '../kernel/SettingsTabs';
 import { useKernelUi } from '../store/kernelUi';
 import { AgentSettings } from '../kernel/AgentSettings';
@@ -77,6 +79,7 @@ const TAB_ICON: Record<string, LucideIcon> = {
   globe: Globe,
   smartphone: Smartphone,
   bot: Bot,
+  git: GitBranch,
 };
 
 type RowValue = boolean | string;
@@ -216,19 +219,8 @@ export function Settings() {
               toast((await copyText(bundle)) ? strings.settings.about.bundleToast : strings.settings.about.bundleEmpty);
             }}
             onUpdates={async () => {
-              const answer = await sdcpCall('update.check', {}).catch(() => null);
-
-              if (answer === null) {
-                toast(strings.settings.about.updatesUnknown);
-
-                return;
-              }
-
-              toast(
-                answer.updateAvailable
-                  ? strings.settings.about.updatesNewer(answer.latest?.tag ?? '')
-                  : strings.settings.about.updatesCurrent(answer.current),
-              );
+              /* 1.0.0: the Updates tab checks and installs in place - About sends the person there. */
+              setTab('updates');
             }}
           />
         ) : null}
@@ -237,6 +229,7 @@ export function Settings() {
         {tab === 'language' ? <LanguageTab /> : null}
         {tab === 'team' ? <TeamTab /> : null}
         {tab === 'updates' ? <UpdatesTab /> : null}
+        {tab === 'github' ? <GitHubTab /> : null}
 
         {tab === 'safety' ? <ProfileCard /> : null}
         {tab === 'safety' ? <AgentSettings /> : null}
@@ -258,7 +251,7 @@ export function Settings() {
           </button>
         ) : null}
 
-        {tab !== 'keymap' && tab !== 'about' && tab !== 'backup' && tab !== 'language' && tab !== 'team' && tab !== 'updates' && tab !== 'research' && tab !== 'anywhere' && tab !== 'agents' && tab !== 'advanced' ? (
+        {tab !== 'keymap' && tab !== 'about' && tab !== 'backup' && tab !== 'language' && tab !== 'team' && tab !== 'updates' && tab !== 'github' && tab !== 'research' && tab !== 'anywhere' && tab !== 'agents' && tab !== 'advanced' ? (
           <GroupTable
             table={tableFor(tab)}
             values={values}

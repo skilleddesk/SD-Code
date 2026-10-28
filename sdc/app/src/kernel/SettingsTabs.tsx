@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 
 import type { CliSelfCheck, CrashReport, GlossaryTerm, TeamMember, TeamState, UpdateInfo } from '../../../protocol/types';
 import { chooseLocale, currentLocale, LOCALES, type Locale } from '../i18n';
+import { checkAppUpdate, inShell, installAppUpdate, type AppUpdate } from '../lib/appUpdate';
 import { openOutside } from '../lib/external';
 import { storedSettings, storeSetting } from '../lib/settings';
 import { strings } from '../strings';
@@ -405,6 +406,46 @@ export function UpdatesTab() {
   const k = strings.kernel.updates;
   const [channel, setChannel] = useState<'stable' | 'beta'>(() => (storedSettings()['update-channel'] === 'beta' ? 'beta' : 'stable'));
   const [info, setInfo] = useState<UpdateInfo | null>(null);
+  const [app, setApp] = useState<AppUpdate | null>(null);
+  /** `null` idle; a number (or `'unknown'`) while downloading; `'installing'` once the files are in. */
+  const [progress, setProgress] = useState<number | 'unknown' | 'installing' | null>(null);
+  const [installError, setInstallError] = useState<string | null>(null);
+  const [checking, setChecking] = useState(false);
+
+  /* The shell's signed updater first; the daemon's GitHub check is the answer in a browser or when it fails. */
+  const check = async (): Promise<void> => {
+    setChecking(true);
+    setInstallError(null);
+    setApp(null);
+    setInfo(null);
+
+    try {
+      if (inShell()) {
+        try {
+          setApp(await checkAppUpdate());
+          return;
+        } catch {
+          /* No signed manifest for this release yet: the daemon's check still says what exists. */
+        }
+      }
+
+      setInfo(await checkUpdates(channel));
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  const install = (): void => {
+    setInstallError(null);
+    setProgress('unknown');
+    void installAppUpdate((percent) => setProgress(percent === null ? 'unknown' : percent >= 100 ? 'installing' : percent))
+      .then(() => setProgress('installing'))
+      .catch((reason: unknown) => {
+        setProgress(null);
+        setInstallError(String(reason));
+        void checkUpdates(channel).then(setInfo);
+      });
+  };
   const [clis, setClis] = useState<CliSelfCheck[]>([]);
   const [crashes, setCrashes] = useState<CrashReport[]>([]);
   const [share, setShare] = useState<{ enabled: boolean; url?: string; error?: string } | null>(null);
@@ -435,9 +476,33 @@ export function UpdatesTab() {
         </select>
       </Row>
       <div className="py-[12px]">
-        <button type="button" className={BTN + ' ' + BTN_SECONDARY} onClick={() => void checkUpdates(channel).then(setInfo)}>
+        <p className="mb-[8px] text-[11.5px] text-text-muted">{k.autoNote}</p>
+        <button type="button" className={BTN + ' ' + BTN_SECONDARY} disabled={checking || progress !== null} onClick={() => void check()}>
           {k.check}
         </button>
+        {app === null ? null : (
+          <div className="mt-[10px] flex flex-col gap-[8px] text-[12px]" data-app-update="">
+            <p className={app.available ? 'text-state-waiting' : 'text-state-success'}>
+              {app.available && app.version !== undefined ? k.available(app.version, app.current) : k.upToDate(app.current)}
+            </p>
+            {!app.available || app.version === undefined || progress !== null ? null : (
+              <button type="button" className={BTN_SM + ' ' + BTN_PRIMARY + ' self-start'} onClick={install}>
+                {k.updateNow(app.version)}
+              </button>
+            )}
+            {progress === null ? null : progress === 'installing' ? (
+              <p className="text-state-success" role="status">{k.installing}</p>
+            ) : (
+              <div role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={typeof progress === 'number' ? progress : undefined}>
+                <div className="h-[6px] w-full overflow-hidden rounded-full bg-bg-input">
+                  <div className="h-full bg-accent transition-[width] duration-fast" style={{ width: `${typeof progress === 'number' ? progress : 8}%` }} />
+                </div>
+                <span className="text-text-muted">{k.downloading(typeof progress === 'number' ? progress : null)}</span>
+              </div>
+            )}
+            {installError === null ? null : <p className="text-state-error">{k.installFailed(installError)}</p>}
+          </div>
+        )}
         {info === null ? null : (
           <div className="mt-[10px] flex flex-col gap-[6px] text-[12px]">
             <p className={info.updateAvailable ? 'text-state-waiting' : 'text-state-success'}>

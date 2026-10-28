@@ -243,7 +243,6 @@ export const COMMANDS: readonly Command[] = [
   /* The kill switch (0.12, P7): every running turn, check, deploy and command, one key. */
   { id: 'kernel.kill', label: strings.kernel.kill.label, hint: 'Ctrl Shift .', icon: 'ban', group: 'global', keys: ['ctrl+shift+.', 'meta+shift+.', 'ctrl+shift+>', 'meta+shift+>'], inInput: true, run: () => void killAll() },
   { id: 'kernel.agency', label: strings.kernel.agency.title, hint: 'Ctrl Shift G', icon: 'serverPlus', group: 'global', keys: ['ctrl+shift+g', 'meta+shift+g'], run: () => useKernelUi.getState().openAgency() },
-  { id: 'kernel.cost', label: strings.kernel.cost.title, icon: 'zap', group: 'actions', run: () => useKernelUi.getState().openCost() },
   { id: 'kernel.policy', label: strings.kernel.policy.title, icon: 'shield', group: 'actions', run: () => useKernelUi.getState().openPolicy() },
   { id: 'kernel.proof', label: strings.kernel.proof.open, icon: 'check', group: 'session', keys: ['ctrl+shift+p', 'meta+shift+p'], run: () => { useLayoutStore.getState().showRight(); useRightPanelStore.getState().setActiveTab('proof', usePrefsStore.getState().activeTab); } },
   { id: 'kernel.onboarding', label: strings.kernel.onboarding.title, icon: 'plus', group: 'actions', run: () => useKernelUi.getState().openOnboarding() },

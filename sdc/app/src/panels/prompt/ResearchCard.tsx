@@ -18,25 +18,12 @@ export function ResearchCard({ sessionId, onCancel }: { sessionId: string | null
 
   const words = strings.research.card;
   const plan = pending.plan;
-  const money = (usd: number | null | undefined): string | null => (usd === null || usd === undefined ? null : usd < 0.01 ? usd.toFixed(4) : usd.toFixed(2));
-  const cost =
-    plan === null
-      ? null
-      : plan.place === 'local'
-        ? words.free
-        : plan.place === 'cli'
-          ? words.subscription
-          : money(plan.estimate.usd) === null
-            ? words.unknown
-            : words.estimate(money(plan.estimate.usd) ?? '');
-
   const rows: [string, string][] =
     plan === null
       ? []
       : [
           [words.model, `${plan.model === '' ? plan.engine : plan.model} · ${words.place[plan.place]}${plan.localContext === null ? '' : ` · ${words.context(plan.localContext)}`}`],
           [words.search, `${plan.search} · ${words.limits(plan.limits.maxSearches, plan.limits.maxPages, plan.limits.maxMinutes)}`],
-          [words.cost, plan.synthesis === null ? (cost ?? '') : `${cost ?? ''} · ${words.synthesis(plan.synthesis.model, money(plan.estimate.synthesisUsd))}`],
         ];
 
   return (

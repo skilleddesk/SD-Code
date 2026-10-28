@@ -1,4 +1,4 @@
-import { Check, ChevronDown, ChevronRight, Plug, ShieldCheck } from 'lucide-react';
+import { Check, Plug, ShieldCheck } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 
 import { strings } from '../../strings';
@@ -29,8 +29,8 @@ import { storedSettings, storeSetting } from '../../lib/settings';
  *
  *   TIER    Fast / Balanced / Deep, with what each one is for
  *   MODEL   one group per **connected** provider, with its connection badge (`CLI · signed in`,
- *           `API key · verified`), the newest two versions of each family, and the rest behind
- *           `Older versions (n)`
+ *           `API key · verified`): the models picked in the Provider Hub, or else the newest version of
+ *           each family - never an older one (1.0.0)
  *
  * What v4 removed, and why (docs/ROADMAP-v4.md, decision 6): a provider that is not connected no
  * longer has a group. Its models could not run, so offering them was the menu lying (P4). The menu
@@ -106,8 +106,6 @@ export function ModelDropdown({ sessionId }: { sessionId: string | null }) {
   const choose = (choice: Parameters<typeof chooseForChat>[1]): void => chooseForChat(sessionId, choice);
   const providers = useProviderStore((state) => state.providers);
   const openHub = useOverlayStore((state) => state.openHub);
-  /* Which groups have their older versions open. Local: it is a view choice, not a fact. */
-  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
   /** The search line (0.9.0). Local: a filter is a view choice, and it resets when the menu closes. */
   const [query, setQuery] = useState('');
 
@@ -134,31 +132,10 @@ export function ModelDropdown({ sessionId }: { sessionId: string | null }) {
     openHub();
   };
 
-  const toggleOlder = (id: string): void => {
-    setExpanded((current) => {
-      const next = new Set(current);
-
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
-      }
-
-      return next;
-    });
-  };
-
   const renderModel = (group: CatalogGroup, row: CatalogModel) => {
     const EngineIcon = engineIcon(group.engine);
     const selected = row.id === model && row.providerId === providerId;
-    /* A provider nobody signed in to shows its models - the newest Gemini among them - and pressing one cannot run
-       it, so it opens the card that signs in instead, which is where the person was trying to go. */
     const pick = (): void => {
-      if (group.needsAuth === true) {
-        manage();
-        return;
-      }
-
       choose({ engine: group.engine, providerId: group.providerId, model: row.id, tier: row.tier });
     };
 
@@ -175,7 +152,7 @@ export function ModelDropdown({ sessionId }: { sessionId: string | null }) {
         </div>
         <Row
           name={row.name === '' ? row.id : row.name}
-          description={`${row.id} · ${tierLabel(row.tier)}${row.cost === '' ? ` · ${row.source}` : ` · ${row.cost}`}${row.probe === undefined ? '' : ` · ${strings.prompt.model.probeClass(row.probe.class, row.probe.effectiveContext)}`}${row.probe?.advice ? ` · ${strings.prompt.model.quantAdvice(row.probe.advice)}` : ''}${row.profileLine ? ` · ${row.profileLine}` : ''}`}
+          description={`${row.id} · ${tierLabel(row.tier)}${row.probe === undefined ? '' : ` · ${strings.prompt.model.probeClass(row.probe.class, row.probe.effectiveContext)}`}${row.probe?.advice ? ` · ${strings.prompt.model.quantAdvice(row.probe.advice)}` : ''}${row.profileLine ? ` · ${row.profileLine}` : ''}`}
         />
         {selected ? <Check size={14} className="shrink-0 text-accent" aria-hidden="true" /> : null}
       </div>
@@ -235,7 +212,7 @@ export function ModelDropdown({ sessionId }: { sessionId: string | null }) {
         <span className={BADGE}>
           {catalog.length === 0
             ? strings.prompt.model.catalogEmpty
-            : strings.prompt.model.connectedCount(groups.filter((group) => group.needsAuth !== true).length)}
+            : strings.prompt.model.connectedCount(groups.length)}
         </span>
       </div>
 
@@ -245,38 +222,22 @@ export function ModelDropdown({ sessionId }: { sessionId: string | null }) {
         </div>
       ) : null}
 
-      {groups.every((group) => group.needsAuth === true) && catalog.length > 0 ? (
+      {groups.length === 0 && catalog.length > 0 ? (
         <div className="mdd-none px-[10px] py-[8px] text-[12px] leading-[1.5] text-text-secondary" data-none-connected>
           {strings.prompt.model.noneConnected}
         </div>
       ) : null}
 
       {shown.map((group) => {
-        const open = expanded.has(group.providerId);
-
         return (
           <div key={group.providerId} className="mdd-group mb-[6px]" data-provider-group={group.providerId}>
             <div className={GROUP_TITLE}>
               <span className="text-text-secondary">{group.providerLabel}</span>
-              <span className={BADGE + (group.needsAuth === true ? ' text-text-muted' : ' text-state-success')}>✓ {group.needsAuth === true ? strings.prompt.model.signInToUse : strings.prompt.model.via(viaOf(group))}</span>
+              <span className={BADGE + ' text-state-success'}>✓ {strings.prompt.model.via(viaOf(group))}</span>
             </div>
 
             {group.models.map((row) => renderModel(group, row))}
 
-            {group.older.length === 0 ? null : (
-              <>
-                <div
-                  className={LINK + ' text-text-muted'}
-                  aria-expanded={open}
-                  data-older-toggle={group.providerId}
-                  {...pressable(() => toggleOlder(group.providerId))}
-                >
-                  {open ? <ChevronDown size={12} aria-hidden="true" /> : <ChevronRight size={12} aria-hidden="true" />}
-                  {open ? strings.prompt.model.hideOlder : strings.prompt.model.older(group.older.length)}
-                </div>
-                {open ? group.older.map((row) => renderModel(group, row)) : null}
-              </>
-            )}
           </div>
         );
       })}

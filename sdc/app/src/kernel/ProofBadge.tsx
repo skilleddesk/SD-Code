@@ -20,10 +20,6 @@ import { badgeParts, type ProofFacts } from './proofFacts';
  */
 const t = strings.turns.proof;
 
-function money(value: number | null): string {
-  return value === null ? t.free : value >= 1 ? `$${value.toFixed(2)}` : `$${value.toFixed(4)}`;
-}
-
 function duration(ms: number): string {
   return ms >= 60_000 ? `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s` : ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms`;
 }
@@ -45,7 +41,6 @@ export function ReceiptTable({ rows, totals }: { rows: readonly ReceiptRow[]; to
             <td className="pr-[8px]">
               {row.tokensIn} → {row.tokensOut}
             </td>
-            <td className="text-right">{money(row.costUsd)}</td>
           </tr>
         ))}
         <tr className="border-t border-border-default font-semibold text-text-primary" data-receipt-total="">
@@ -56,7 +51,6 @@ export function ReceiptTable({ rows, totals }: { rows: readonly ReceiptRow[]; to
           <td className="pr-[8px]">
             {totals.tokensIn} → {totals.tokensOut}
           </td>
-          <td className="text-right">{money(totals.costUsd)}</td>
         </tr>
       </tbody>
     </table>

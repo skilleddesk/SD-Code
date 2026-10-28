@@ -129,7 +129,8 @@ export function AnalyticsTab() {
   const turns = useAppStore((state) => state.turns);
   const analytics = useMemo(() => analyticsOf(turns), [turns]);
   const copy = strings.rightPanel.analytics;
-  const byCost = analytics.priced > 0;
+  /* 1.0.0: turns, never dollars - no cost is shown anywhere. */
+  const byCost = false;
 
   if (analytics.turns === 0) {
     return (
@@ -143,7 +144,6 @@ export function AnalyticsTab() {
     <div className="analytics-wrap flex flex-col gap-[12px] p-[12px]">
       <div className="flex gap-[8px]">
         <Tile label={copy.turnsTitle} value={String(analytics.turns)} note={copy.failedNote(analytics.failed)} />
-        <Tile label={copy.costTitle} value={byCost ? money(analytics.cost) : '—'} note={copy.costNote(analytics.priced, analytics.turns)} />
         <Tile label={copy.tokensTitle} value={tokens(analytics.input + analytics.output)} note={copy.tokensNote(tokens(analytics.input), tokens(analytics.output))} />
       </div>
 
@@ -158,7 +158,6 @@ export function AnalyticsTab() {
             <tr>
               <th>{copy.day}</th>
               <th>{copy.turnsTitle}</th>
-              <th>{copy.costTitle}</th>
             </tr>
           </thead>
           <tbody>
@@ -166,7 +165,6 @@ export function AnalyticsTab() {
               <tr key={day.day}>
                 <td>{day.day}</td>
                 <td>{day.turns}</td>
-                <td>{money(day.cost)}</td>
               </tr>
             ))}
           </tbody>

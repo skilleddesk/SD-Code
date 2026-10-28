@@ -22,8 +22,8 @@ use tauri::{Manager, State};
 pub fn run() {
     let builder = tauri::Builder::default();
 
-    /* Phase 4.1: signed updates, only in a build made with the updater key (`--features updater`). */
-    #[cfg(feature = "updater")]
+    /* 1.0.0: signed in-app updates on every platform - Settings → Updates checks, downloads and installs the new
+       release and starts it again (`app_update_check`, `app_update_install`). */
     let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
 
     let app = builder
@@ -39,6 +39,8 @@ pub fn run() {
             sdcp_call,
             sdcp_subscribe,
             sdcp_stop_daemon,
+            app_update_check,
+            app_update_install,
             selftest::selftest_dom
         ])
         .setup(|handle| {
@@ -110,3 +112,58 @@ fn sdcp_stop_daemon(bridge: State<'_, Arc<sdcp::SdcpBridge>>) -> Value {
     sdcp::stop_daemon(&bridge)
 }
 
+
+/// Is a newer SDC published? Read from the release's signed `latest.json`, for this platform and this kind of install
+/// (setup.exe, .msi, .dmg, .AppImage, .deb or .rpm).
+#[tauri::command]
+async fn app_update_check(app: tauri::AppHandle) -> Result<Value, String> {
+    use tauri_plugin_updater::UpdaterExt;
+
+    let current = app.package_info().version.to_string();
+    let update = app.updater().map_err(|error| error.to_string())?.check().await.map_err(|error| error.to_string())?;
+
+    Ok(match update {
+        Some(update) => serde_json::json!({
+            "available": true,
+            "current": current,
+            "version": update.version,
+            "notes": update.body,
+            "date": update.date.map(|date| date.to_string()),
+        }),
+        None => serde_json::json!({ "available": false, "current": current }),
+    })
+}
+
+/// Downloads the new release, checks its signature, installs it and starts SDC again. Progress goes out as
+/// `app-update://progress` (`{ downloaded, total }`). The daemon is stopped first so the installer can replace it.
+#[tauri::command]
+async fn app_update_install(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri::Emitter;
+    use tauri_plugin_updater::UpdaterExt;
+
+    let bridge = app.state::<Arc<sdcp::SdcpBridge>>().inner().clone();
+    let before_exit = bridge.clone();
+    let updater = app
+        .updater_builder()
+        .on_before_exit(move || sdcp::shutdown(&before_exit))
+        .build()
+        .map_err(|error| error.to_string())?;
+    let update = updater.check().await.map_err(|error| error.to_string())?.ok_or("SDC is already up to date")?;
+    let progress = app.clone();
+    let mut downloaded: u64 = 0;
+
+    update
+        .download_and_install(
+            move |chunk, total| {
+                downloaded += chunk as u64;
+                let _ = progress.emit("app-update://progress", serde_json::json!({ "downloaded": downloaded, "total": total }));
+            },
+            || {},
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+
+    /* macOS and Linux land here with the new files in place; Windows' installer has already closed the app. */
+    sdcp::shutdown(&bridge);
+    app.restart();
+}

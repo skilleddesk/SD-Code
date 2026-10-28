@@ -305,8 +305,6 @@ pub fn receipt_lines(summary: &Value, bengali: bool) -> Vec<String> {
     }
 
     let models: Vec<String> = summary["byModel"].as_array().into_iter().flatten().filter_map(|row| row["model"].as_str()).map(str::to_string).collect();
-    let cost = summary["costUsd"].as_f64().unwrap_or(0.0);
-    let label = summary["costLabel"].as_str().unwrap_or("estimate");
     let reasons: Vec<String> = summary["reasons"]
         .as_array()
         .into_iter()
@@ -322,13 +320,13 @@ pub fn receipt_lines(summary: &Value, bengali: bool) -> Vec<String> {
     if bengali {
         vec![
             digits(format!("এই কাজ: {total}টি ধাপ — লোকালে {local}টি ({}%), ক্লাউডে {cloud}টি ({})", percent(local), models.join(", "))),
-            digits(format!("ক্লাউডে গেছে: {} token পাঠানো, {} এসেছে · খরচ ${cost:.4} ({label})", short(number("tokensIn")), short(number("tokensOut")))),
+            digits(format!("ক্লাউডে গেছে: {} token পাঠানো, {} এসেছে", short(number("tokensIn")), short(number("tokensOut")))),
             digits(format!("কারণ: {} · বিস্তারিত: Trace", reasons.join(", "))),
         ]
     } else {
         vec![
             format!("This work: {total} steps - {local} on the local model ({}%), {cloud} on the cloud ({})", percent(local), models.join(", ")),
-            format!("Sent to the cloud: {} tokens out, {} back · cost ${cost:.4} ({label})", short(number("tokensIn")), short(number("tokensOut"))),
+            format!("Sent to the cloud: {} tokens out, {} back", short(number("tokensIn")), short(number("tokensOut"))),
             format!("Why: {} · details: Trace", reasons.join(", ")),
         ]
     }
@@ -472,7 +470,7 @@ mod tests {
 
         assert_eq!(lines.len(), 3);
         assert!(lines[0].starts_with("এই কাজ: ১২টি ধাপ — লোকালে ১০টি (৮৩%), ক্লাউডে ২টি (deepseek:deepseek-chat)"), "{}", lines[0]);
-        assert!(lines[1].contains("৮.৪k token পাঠানো") && lines[1].contains("১.১k এসেছে") && lines[1].contains("(priced)"), "{}", lines[1]);
+        assert!(lines[1].contains("৮.৪k token পাঠানো") && lines[1].contains("১.১k এসেছে") && !lines[1].contains('$'), "{}", lines[1]);
         assert!(lines[2].contains("১ verify fail") && lines[2].contains("১ loop"), "{}", lines[2]);
     }
 

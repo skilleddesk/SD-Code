@@ -28,9 +28,6 @@ export function EscalateDialog() {
               {t.title(preview.model)}
             </div>
             <p className="m-0 text-[12px] text-text-muted">{t.position(preview.position, preview.of)}</p>
-            <p className="m-0 text-[12.5px] text-text-primary">
-              {preview.costKnown && preview.estimateUsd !== null && preview.estimateUsd !== undefined ? t.cost(preview.estimateUsd.toFixed(4)) : t.costUnknown}
-            </p>
             <p className="m-0 text-[12px] text-text-secondary">{t.what}</p>
             <pre className="m-0 max-h-[34vh] overflow-auto rounded-md border border-border-subtle bg-bg-input p-[10px] font-mono text-[11px] leading-[1.5] text-text-secondary" data-escalate-capsule="">
               {preview.capsule}

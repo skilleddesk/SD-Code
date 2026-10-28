@@ -706,6 +706,24 @@ async fn run_turn(
                    `event::error_raised` constructor supplies the catalogue's `type` field. */
                 let translated = translator::translate(&plan.engine_id, &reason);
 
+                /* 1.0.0: an outdated CLI is updated at once; a Gemini sign-in Google refuses is no longer drawn as
+                   connected, so its models leave the message box's menu. */
+                match translated.rule {
+                    "cli-outdated" => {
+                        if let Some(cli) = crate::host::tools::cli_for_engine(&plan.engine_id) {
+                            let _ = crate::host::tools::update_cli(cli);
+                        }
+                    }
+                    "gemini-refused" if crate::providers::mark_gemini_refused(&state.store) => {
+                        out.push(
+                            event::provider_status(json!({ "id": "gemini", "status": "needs-auth", "detail": crate::providers::GEMINI_REFUSED })),
+                            None,
+                            None,
+                        );
+                    }
+                    _ => {}
+                }
+
                 out.push(
                     event::error_raised(
                         &plan.session_id,

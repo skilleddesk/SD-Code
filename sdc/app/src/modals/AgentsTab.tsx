@@ -99,20 +99,6 @@ export function AgentsTab() {
     );
   };
 
-  const hintOf = (model: string): string => {
-    const row = view?.rows.find((candidate) => candidate.model === model);
-
-    if (row === undefined) {
-      return '';
-    }
-
-    if (!row.cost.known) {
-      return t.costUnknown;
-    }
-
-    return row.cost.perStep === 0 ? t.costFree : t.costPerStep((row.cost.perStep ?? 0).toFixed(4));
-  };
-
   const badge = mode === 'pinned' ? t.modePinned : mode === 'silent-relay' ? t.modeSilentRelay : mode === 'local-rotation' ? t.modeLocalRotation : t.modeLocalOnly;
 
   return (
@@ -201,9 +187,6 @@ export function AgentsTab() {
                   <Trash2 size={11} aria-hidden="true" />
                 </button>
               </div>
-              <p className="mb-0 mt-[4px] text-[11.5px] text-text-muted" data-agents-cost>
-                {hintOf(row.model)}
-              </p>
             </li>
           );
         })}

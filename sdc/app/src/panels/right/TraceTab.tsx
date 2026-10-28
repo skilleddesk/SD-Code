@@ -57,7 +57,6 @@ function Row({ step, slowest }: { step: TraceStep; slowest: number }) {
         <span>{t.tokens(step.tokensIn, step.tokensOut)}</span>
         {step.tokPerS > 0 ? <span>{t.rate(step.tokPerS)}</span> : null}
         {step.thinkingTokens > 0 ? <span>{t.thinking(step.thinkingTokens)}</span> : null}
-        {step.costUsd === null ? null : <span>${step.costUsd.toFixed(4)}</span>}
         {step.escalationReason === null ? null : <span>{step.escalationReason}</span>}
       </div>
     </li>

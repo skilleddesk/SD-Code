@@ -182,6 +182,14 @@ async fn run() -> Result<()> {
     state.anywhere.attach(tokio::runtime::Handle::current());
     state.anywhere.resume(&state);
 
+    /* 1.0.0: Gemini's sign-in checked against Google once, and the CLIs kept current - both off the start-up path. */
+    if default_database {
+        let store = state.store.clone();
+
+        std::thread::spawn(move || sdcd::providers::probe_gemini(&store));
+        sdcd::host::tools::keep_clis_current();
+    }
+
     /* The day's copy of the real database (0.15.5), off the start-up path. A scratch `--database` is
        nobody's history and is not copied. */
     if default_database {

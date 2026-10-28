@@ -10,6 +10,72 @@ This file describes what changed, not what is planned. Anything still open is na
 
 ---
 
+## [1.0.0] — 2026-10-28: a fresh 1.0.0 - one-click updates, GitHub, a clean model menu, no prices
+
+The release line starts again at 1.0.0: every earlier release was removed from GitHub. Everything 1.4.2 had is in
+this release; what follows is what changed on top of it.
+
+### Added — updates install themselves, on every platform
+
+Settings → Updates → **Check for updates** now shows the newest release and **Update to X now** downloads it, checks
+its signature, installs it and starts SDC again - Windows (setup.exe or .msi), macOS (Intel and Apple Silicon) and
+Linux (.AppImage, .deb, .rpm; the last two ask for the system password once). It used to open the GitHub page and
+leave the download and the installer to the person. The update files are signed with SDC's updater key: in CI when
+the repository holds `TAURI_SIGNING_PRIVATE_KEY`, otherwise by `sdc/scripts/sign-release.mjs` on the maintainer's
+machine, which uploads the signed `latest.json`.
+
+### Added — GitHub: connect once, push from anywhere
+
+Settings → **GitHub**: **Connect** opens GitHub's own approval page (device flow - the person signs in and presses
+Authorize, nobody makes or pastes a token); on Windows without SDC's app ID it uses Git Credential Manager's browser
+sign-in. **Disconnect** removes the token from the OS keychain. **Push** commits the chat's folder and pushes it - on
+this computer or **on the VPS the chat runs on** (the token reaches the server on the SSH session's stdin, never a
+command line) - and a folder with no GitHub repository gets a new private one named after it. A turn that changed
+files ends with a **Push to GitHub** chip, and typing `push` / `push koro` / `পুশ করো` in the chat pushes at once,
+without a model turn.
+
+### Changed — the model menu shows only what was chosen, and only the newest
+
+The message box's menu lists **connected providers only** (1.4.1 listed every provider's models - 447 from OpenRouter
+alone), the models picked in the Provider Hub when there are any, and otherwise **the newest version of each family**:
+`claude-opus-5-5`, never `claude-opus-4-8` beside it. Families two generations behind their maker, `:batch` twins,
+`~…-latest` aliases and vision/omni builds are gone; a model served in two regions is one row (the faster `-us`
+build); `-0731`-style dates are no longer read as version numbers. The "Older versions" drawer is removed.
+
+### Changed — no prices anywhere
+
+The status bar's "today $…" meter, the Cost Center, the footer's `≈$0.16`, the receipt's cost column, the Proof tab's
+cost, the Trace and Duel prices, the model rows' prices and the research card's estimate are all gone. The numbers were
+catalogue prices times token counts, not what a provider bills. Budget limits in Safety and Agents still work.
+
+### Changed — the end of a turn
+
+The footer is a status pill (`✓ Done`, or amber when the turn stopped) with the turn's numbers as small chips, and the
+agent ends its work with a scannable summary: a bold ✅/⚠️ result line, `What changed`, `Verified`, and `Next` only
+when something is left for the person.
+
+### Fixed — Gemini and Claude
+
+- **Gemini**: Google now refuses Gemini CLI's "Login with Google" for every personal account, Google AI Pro included
+  (`IneligibleTierError: This client is no longer supported for Gemini Code Assist for individuals`, measured
+  2026-10-28 with CLI 0.60 and 0.66). SDC checks this once at start; the Gemini card then says so and leaves the menu,
+  instead of showing "connected" over models that all fail. The same models - `gemini-4-argon` too - work through the
+  **Google Gemini API** card with a free key from aistudio.google.com/apikey.
+- **Claude**: Claude Code 2.1.278 refused `claude-opus-5-5` ("version 2.1.280 or newer is required"). SDC now checks
+  the Claude Code, Codex and Gemini CLIs against npm at start and every six hours and updates them where they are
+  installed; a "too old for this model" failure starts the update at once.
+
+### বাংলায় সংক্ষেপে
+
+- সেটিংস → আপডেট থেকেই নতুন ভার্সন ডাউনলোড, যাচাই ও ইনস্টল হয়, SDC নিজে আবার চালু হয় — Windows, macOS, Linux সবখানে।
+- সেটিংস → GitHub: ব্রাউজারে Approve করলেই কানেক্ট; লোকাল বা VPS-এর প্রজেক্ট এক ক্লিকে পুশ; চ্যাটে "push" লিখলেও পুশ হয়।
+- মডেল মেনুতে শুধু কানেক্ট করা প্রোভাইডারের সর্বশেষ মডেল; পুরনো ভার্সন আর দেখায় না।
+- কোথাও কোনো খরচ ($) দেখানো হয় না।
+- Gemini: Google ব্যক্তিগত অ্যাকাউন্টে Gemini CLI বন্ধ করেছে — SDC এখন সেটা স্পষ্ট বলে; Gemini API key দিয়ে gemini-4-argon চলে।
+- Claude: CLI পুরনো হলে SDC নিজেই আপডেট করে।
+
+---
+
 ## [1.4.2] — the last check of a turn, and six switches measured on the real 9B
 
 ### Added — a turn accounts for itself at the end, without a second model call

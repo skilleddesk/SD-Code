@@ -35,6 +35,7 @@ export type SettingsTab =
   | 'language'
   | 'team'
   | 'updates'
+  | 'github'
   | 'about';
 
 /** The Provider Hub's seven nav items, in order (spec section 9.10). */

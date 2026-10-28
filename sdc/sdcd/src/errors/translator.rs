@@ -281,6 +281,37 @@ pub fn translate(tool: &str, output: &str) -> Translation {
         );
     }
 
+    /* 1.0.0: a CLI too old for the model that was picked. Measured 2026-10-28: Claude Code 2.1.278 answered
+       `claude-opus-5-5` with "version 2.1.280 or newer is required". SDC updates the CLI itself (see
+       `host::tools::refresh_clis`), so the sentence says it is already doing so. */
+    if haystack.contains("or newer is required")
+        || haystack.contains("does not support this model")
+        || haystack.contains("isn't described by this version")
+        || haystack.contains("please update the cli")
+    {
+        return rule(
+            &format!("{tool} is too old for this model"),
+            format!("`{first_line}`. SDC is updating the CLI now; send the message again in a minute."),
+            true,
+            "cli-outdated",
+        );
+    }
+
+    /* 1.0.0: Google closed Gemini CLI's "Login with Google" for personal accounts (Google AI Pro included) -
+       `IneligibleTierError: This client is no longer supported for Gemini Code Assist for individuals`. */
+    if haystack.contains("ineligibletier") || haystack.contains("no longer supported for gemini code assist") {
+        return rule(
+            "Google no longer serves Gemini CLI to personal accounts",
+            format!(
+                "`{first_line}`. Google refuses this sign-in for every personal Google account, Google AI Pro included. \
+                 The same models (gemini-4-argon too) work through the Google Gemini API card with a free key from \
+                 aistudio.google.com/apikey."
+            ),
+            false,
+            "gemini-refused",
+        );
+    }
+
     /* 3.3: a *plan's* window, not the API's. When the subscription's hours are spent the CLI refuses the turn with
        one line - `You've hit your session limit, resets 12:50am (Asia/Dhaka)` - and the card said "claude_code
        failed ... has no rule yet". Nothing is broken and nothing is lost: the window has to refill, and the line says
@@ -332,6 +363,18 @@ pub fn translate(tool: &str, output: &str) -> Translation {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_outdated_cli_and_googles_gemini_refusal_have_rules() {
+        let old = translate("claude_code", "API Error: 400 Claude Code 2.1.278 does not support this model; version 2.1.280 or newer is required. Run 'claude update'");
+
+        assert_eq!(old.rule, "cli-outdated");
+
+        let refused = translate("gemini", "Error authenticating: IneligibleTierError: This client is no longer supported for Gemini Code Assist for individuals.");
+
+        assert_eq!(refused.rule, "gemini-refused");
+        assert!(refused.explanation.contains("aistudio.google.com"));
+    }
 
     #[test]
     fn a_context_overflow_always_has_a_rule() {

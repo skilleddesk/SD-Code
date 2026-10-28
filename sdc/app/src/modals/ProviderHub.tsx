@@ -637,7 +637,7 @@ function RegistryList() {
           <span className="min-w-0 flex-1">
             <span className="block truncate font-mono text-[12px] text-text-primary">{model.id}</span>
             <span className="mt-[2px] block font-mono text-[10.5px] text-text-muted">
-              {strings.hub.registryCtx(Math.round(model.ctx / 1000))} · {model.cost}
+              {strings.hub.registryCtx(Math.round(model.ctx / 1000))}
             </span>
           </span>
 

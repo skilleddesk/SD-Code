@@ -26,7 +26,6 @@ import { SearchOverlay } from './overlays/SearchOverlay';
 import { Toast } from './overlays/Toast';
 import { Agency } from './kernel/Agency';
 import { Ops } from './kernel/Ops';
-import { CostCenter } from './kernel/CostCenter';
 import { Onboarding } from './kernel/Onboarding';
 import { PolicyEditor } from './kernel/PolicyEditor';
 import { MemoryDialog } from './kernel/MemoryDialog';
@@ -159,7 +158,6 @@ export function App() {
       <Connect />
       <Agency />
       <Ops />
-      <CostCenter />
       <PolicyEditor />
       <MemoryDialog />
       <Onboarding />

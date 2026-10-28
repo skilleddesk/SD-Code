@@ -1,6 +1,6 @@
 [package]
 name = "sdc"
-version = "1.4.2"
+version = "1.0.0"
 description = "SDC (Skilleddesk Code) - Tauri 2 desktop shell"
 authors = ["Skilleddesk"]
 edition = "2021"
@@ -25,9 +25,9 @@ tauri-plugin-dialog = "2"
 tauri-plugin-shell = "2"
 tauri-plugin-notification = "2"
 tauri-plugin-clipboard-manager = "2"
-# Signed auto-update (Phase 4.1). Compiled only with `--features updater`, which the release workflow turns on when the
-# project holds an updater signing key: without a key the app has no update endpoint and must not carry the plugin.
-tauri-plugin-updater = { version = "2", optional = true }
+# Signed in-app updates on every platform (1.0.0). The public key and the endpoint are in tauri.conf.json; the
+# release workflow signs the update files with the private key held in the repository's secrets.
+tauri-plugin-updater = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # The SDCP bridge (src/sdcp.rs) holds two loopback sockets to the daemon and forwards what the
@@ -35,7 +35,8 @@ serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "sync", "time", "macros", "process"] }
 
 [features]
-updater = ["dep:tauri-plugin-updater"]
+# Kept so `--features updater` in an older script still builds; the updater is always on since 1.0.0.
+updater = []
 
 # Release profile tuned for a smaller installer, per the Tauri size guidance.
 # If release build time becomes a problem, relax `lto` first.

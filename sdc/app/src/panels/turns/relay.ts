@@ -40,11 +40,10 @@ export function receiptOf(summary: RelaySummaryEvent): string[] {
 
   const percent = Math.floor((summary.stepsLocal * 100) / summary.stepsTotal);
   const models = summary.byModel.filter((row) => row.steps > 0).map((row) => row.model).join(', ') || summary.byModel.map((row) => row.model).join(', ');
-  const cost = `$${summary.costUsd.toFixed(4)}`;
   const reasons = summary.reasons.map((row) => `${row.count} ${(t.reasons[row.reason] ?? row.reason)}`).join(', ');
   const lines = [
     t.split(summary.stepsTotal, summary.stepsLocal, percent, summary.stepsCloud, models),
-    t.sent(shortTokens(summary.tokensIn), shortTokens(summary.tokensOut), cost, t.labels[summary.costLabel] ?? summary.costLabel),
+    t.sent(shortTokens(summary.tokensIn), shortTokens(summary.tokensOut)),
     t.why(reasons),
   ];
 

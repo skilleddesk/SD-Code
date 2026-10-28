@@ -337,7 +337,7 @@ fn meta(steps: usize, input: u64, output: u64, price: Option<(f64, f64)>) -> Str
     let tokens = |count: u64| {
         if count >= 1000 { format!("{:.1}k", count as f64 / 1000.0) } else { count.to_string() }
     };
-    let mut meta = format!(
+    let meta = format!(
         "{} step{} · {} in · {} out",
         steps,
         if steps == 1 { "" } else { "s" },
@@ -345,16 +345,9 @@ fn meta(steps: usize, input: u64, output: u64, price: Option<(f64, f64)>) -> Str
         tokens(output)
     );
 
-    if let Some((per_in, per_out)) = price {
-        let cost = input as f64 / 1_000_000.0 * per_in + output as f64 / 1_000_000.0 * per_out;
-
-        /* Two decimals said "≈$0.00" for a real, small bill; below a cent the digits that matter are shown. */
-        if cost >= 0.01 {
-            meta.push_str(&format!(" · ≈${cost:.2}"));
-        } else {
-            meta.push_str(&format!(" · ≈${cost:.4}"));
-        }
-    }
+    /* 1.0.0: no price on the footer. The owner's call - a catalogue price times a token count is not what the
+       provider bills, so it is not shown anywhere; the price still feeds routing, never the screen. */
+    let _ = price;
 
     meta
 }
@@ -426,7 +419,7 @@ fn system_prompt(workspace: &Workspace, vision: bool, language: &crate::understa
          - When the person states a lasting preference or a project convention, keep it with remember.\n\
          - Stay inside the project folder. Secrets (.env, keys) are hidden from you on purpose; do not try to read them.\n\
          - If the person declines an action, do not try it another way; explain what you wanted to do.\n\
-         - Keep going until the task is completely done; do not stop half-way to ask whether to continue. When you are done, stop calling tools and answer. A question gets its answer, directly. After work, a short Markdown summary: the result in one line, then what changed (with paths), the root cause for a fix, how you verified it (commands and outcome), and anything the person must do. No filler, and do not repeat the question.\n\
+         - Keep going until the task is completely done; do not stop half-way to ask whether to continue. When you are done, stop calling tools and answer. A question gets its answer, directly. After work, end with a short, scannable Markdown summary in this shape: first line **bold**, starting with ✅ when it is done or ⚠️ when something is left, saying the result in one sentence; then `### What changed` with one bullet per file (`path` - what and why, the root cause for a fix); then `### Verified` with the commands you ran and what they showed; then `### Next` only when the person must do something. Leave out a section that would be empty; a one-line answer needs no headings. No filler, no closing pleasantries, and do not repeat the question.\n\
          - Language: the person writes in {label}. Write every answer, summary and question to them in {reply} - never switch to another language (not Chinese, not German, not English unless that is theirs). Keep code, commands, paths and error messages exactly as they are.",
         label = language.label,
         reply = if language.code == "en" { "English" } else { language.reply_in },
@@ -3355,7 +3348,6 @@ Not finished: {reason}. Tell me how to go on, or send \"continue\" to try again.
                 record.save(std::path::Path::new(workspace.root()));
             }
 
-            let estimate = crate::v3::on("router").then(|| crate::v3::router::estimate(&request_text, target.price, fixed + crate::context::tokens_of(&text))).flatten().map(|cost| format!(" · estimated ${cost:.3}"));
 
             /* M1-7: the step that wrote the answer was the local model's too. */
             if let Some(hook) = relay_hook.borrow_mut().as_mut() {
@@ -3376,7 +3368,7 @@ Not finished: {reason}. Tell me how to go on, or send \"continue\" to try again.
 
             sink.send(EngineEvent::Done {
                 summary: summary.to_string(),
-                meta: format!("{}{}{}{}{}", meta(step, input_tokens, output_tokens, target.price) + &cached(cached_tokens), timing(model_time, tool_time), estimate.unwrap_or_default(), if receipt_on { crate::v3::receipt(&receipt_parts, &saved) } else { String::new() }, closed),
+                meta: format!("{}{}{}{}", meta(step, input_tokens, output_tokens, target.price) + &cached(cached_tokens), timing(model_time, tool_time), if receipt_on { crate::v3::receipt(&receipt_parts, &saved) } else { String::new() }, closed),
                 pass: None,
             });
 
@@ -4052,10 +4044,10 @@ mod tests {
     }
 
     #[test]
-    fn the_footer_says_what_the_turn_used_and_what_it_cost() {
+    fn the_footer_says_what_the_turn_used_and_never_a_price() {
         assert_eq!(meta(1, 900, 40, None), "1 step · 900 in · 40 out");
-        assert_eq!(meta(7, 12_400, 3_100, Some((4.0, 20.0))), "7 steps · 12.4k in · 3.1k out · ≈$0.11");
-        assert_eq!(meta(8, 17_500, 886, Some((0.14, 0.28))), "8 steps · 17.5k in · 886 out · ≈$0.0027");
+        assert_eq!(meta(7, 12_400, 3_100, Some((4.0, 20.0))), "7 steps · 12.4k in · 3.1k out");
+        assert_eq!(meta(8, 17_500, 886, Some((0.14, 0.28))), "8 steps · 17.5k in · 886 out");
     }
 
     #[test]

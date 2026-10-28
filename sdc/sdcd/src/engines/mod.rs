@@ -957,10 +957,7 @@ fn usage_meta(value: &Value) -> String {
 
     let mut parts = Vec::new();
 
-    if let Some(cost) = value.get("total_cost_usd").and_then(Value::as_f64) {
-        parts.push(format!("${cost:.4}"));
-    }
-
+    /* 1.0.0: no price on the screen (`total_cost_usd` is still recorded as usage, never shown). */
     if let Some(ms) = value.get("duration_ms").and_then(Value::as_u64) {
         parts.push(format!("{:.1}s", ms as f64 / 1000.0));
     }
@@ -1254,7 +1251,7 @@ mod tests {
                 EngineEvent::Delta("K".into()),
                 /* Claude's own figure for the turn - the cost governor's "measured". */
                 EngineEvent::Usage { input_tokens: 0, output_tokens: 0, cost_usd: Some(0.029004) },
-                EngineEvent::Done { summary: "Done".into(), meta: "$0.0290 · 3.3s".into(), pass: Some(true) },
+                EngineEvent::Done { summary: "Done".into(), meta: "3.3s".into(), pass: Some(true) },
             ]
         );
     }

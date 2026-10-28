@@ -65,6 +65,12 @@ impl Daemon {
             "settings.set" => self.settings_set(envelope),
             "update.check" => self.update_check(envelope),
 
+            /* 1.0.0: GitHub - connect by approving in the browser, disconnect, and push a folder here or on a host. */
+            "github.status" => Ok(crate::github::status(self.store())),
+            "github.connect" => crate::github::connect(self.store()),
+            "github.disconnect" => crate::github::disconnect(),
+            "github.push" => self.github_push(envelope),
+
             /* 0.21: SDC installs and runs what it needs itself - no terminal on any platform. */
             "tool.list" => Ok(crate::host::tools::list()),
             "tool.install" => {
@@ -735,6 +741,23 @@ impl Daemon {
         Ok(self.features_list())
     }
 
+    /// `github.push`: commits the folder's work and pushes it - on the folder's own machine, so a chat on a VPS pushes
+    /// from the VPS. A folder with no `origin` gets a new repository (private unless `private: false`).
+    fn github_push(&self, envelope: &Envelope) -> Result<Value, ErrorObject> {
+        let options = crate::github::PushOptions {
+            repo: envelope.opt_str("repo"),
+            private: envelope.params.get("private").and_then(Value::as_bool).unwrap_or(true),
+            message: envelope.opt_str("message"),
+        };
+        let remote = self.remote_for(envelope)?;
+        let root = self.root_required(envelope)?;
+
+        match remote {
+            Some(ssh) => crate::github::push_remote(&ssh, &root.to_string_lossy(), &options),
+            None => crate::github::push_local(&root, &options),
+        }
+    }
+
     fn settings_set(&self, envelope: &Envelope) -> Result<Value, ErrorObject> {
         let key = envelope.require_str("key")?;
         let allowed = [
@@ -743,6 +766,8 @@ impl Daemon {
                setting - it goes to the keychain through `research.key.set`. */
             "ollama.contextTokens", crate::guard::reviewer::SETTING, "brief.daily", "research.searchProvider", "research.searxngUrl", "research.maxSearches", "research.maxPages",
             "research.maxMinutes", "research.localWebOnly", "research.synthesisModel", "research.synthesisProvider",
+            /* 1.0.0: SDC's GitHub OAuth App client ID - public, not a secret - for the browser approval. */
+            "github.clientId",
         ];
 
         if !allowed.contains(&key.as_str()) && !crate::v3::is_setting(&key) {

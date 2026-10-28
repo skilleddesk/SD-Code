@@ -1,21 +1,19 @@
 import { ShieldAlert, ShieldCheck, ShieldQuestion } from 'lucide-react';
 
 import { strings } from '../strings';
-import { measured, usd } from '../store/kernel';
 import { useAppStore } from '../store/store';
 import { useRightPanelStore } from '../store/rightPanel';
 import { useLayoutStore } from '../store/layout';
 
 /**
- * A turn's Trust score and cost, on its footer (0.12). The score never stands on colour alone: an icon and
+ * A turn's Trust score on its footer (0.12; no cost since 1.0.0). The score never stands on colour alone: an icon and
  * a word go with it (spec section 8.6), and a click opens the Proof tab with the reasons.
  */
 export function TrustChip({ turnId, sessionId }: { turnId: string; sessionId: string }) {
   const score = useAppStore((state) => state.kernel.scores[turnId]);
-  const cost = useAppStore((state) => state.kernel.costs[turnId]);
   const stop = useAppStore((state) => state.kernel.stops[turnId]);
 
-  if (score === undefined && cost === undefined && stop === undefined) {
+  if (score === undefined && stop === undefined) {
     return null;
   }
 
@@ -38,11 +36,6 @@ export function TrustChip({ turnId, sessionId }: { turnId: string; sessionId: st
           <Icon size={11} aria-hidden="true" />
           {strings.kernel.trust.chip(score.score, strings.kernel.trust.level[score.level])}
         </button>
-      )}
-      {cost === undefined ? null : (
-        <span className="font-mono text-[10.5px] text-text-muted" title={strings.kernel.cost.source[cost.costSource]}>
-          {measured(cost.costSource) ? usd(cost.costUsd) : `${usd(cost.costUsd)} · ${strings.kernel.cost.sourceShort[cost.costSource]}`}
-        </span>
       )}
       {/* The sentence itself is the turn's own ending, just above (0.14.1); printed here too, every stop
           said the same thing twice. The chip only names the kind. */}

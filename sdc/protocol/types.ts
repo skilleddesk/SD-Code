@@ -289,6 +289,10 @@ export type SdcpMethod =
   | 'secrets.move'
   | 'secrets.sweep'
   | 'update.check'
+  | 'github.status'
+  | 'github.connect'
+  | 'github.disconnect'
+  | 'github.push'
   /** 0.21: SDC installs and runs what it needs itself - Node, the coding CLIs, Ollama, ripgrep, Git - so no platform needs a terminal. */
   | 'tool.list'
   | 'tool.install'
@@ -1558,6 +1562,20 @@ export interface ReleaseInfo {
   assets: { name: string; url: string }[] | null;
 }
 
+/** `github.status` (1.0.0): the connected account, the ways this machine can connect, and a sign-in in progress. */
+export interface GitHubStatus {
+  connected: boolean;
+  tokenStored: boolean;
+  login: string | null;
+  name: string | null;
+  avatarUrl: string | null;
+  /** SDC has its GitHub app ID, so Connect is GitHub's own browser approval. */
+  deviceFlow: boolean;
+  /** Git Credential Manager is here (Windows), so Connect can use its browser sign-in instead. */
+  credentialManager: boolean;
+  pending: null | { state: 'waiting' | 'done' | 'failed'; method?: string; userCode?: string; verificationUri?: string; login?: string; error?: string };
+}
+
 export interface UpdateInfo {
   channel: string;
   current: string;
@@ -2758,6 +2776,17 @@ export interface SdcpMethodMap {
   'secrets.move': { params: { path: string; file: string; line: number }; result: { name: string; file: string; line: number; note: string } };
   'secrets.sweep': { params: { path: string; firstOnly?: boolean }; result: { findings: SecretFinding[]; files: number; truncated: boolean; skipped: boolean } };
   'update.check': { params: { channel?: 'stable' | 'beta' }; result: UpdateInfo };
+  /* 1.0.0: GitHub - connect by approving in the browser, then push a folder (here or on a host) in one click. */
+  'github.status': { params: Record<string, never>; result: GitHubStatus };
+  'github.connect': {
+    params: Record<string, never>;
+    result: { method: 'device' | 'credential-manager'; userCode?: string; verificationUri?: string; expiresIn?: number };
+  };
+  'github.disconnect': { params: Record<string, never>; result: { connected: false; revokeUrl: string } };
+  'github.push': {
+    params: { sessionId?: string; root?: string; hostId?: string; repo?: string; private?: boolean; message?: string };
+    result: { url: string; branch: string; created: boolean; committed: boolean; login: string };
+  };
   'tool.list': { params: Record<string, never>; result: { tools: ToolRow[]; root: string } };
   'tool.install': { params: { id: string; hostId?: string }; result: ToolJob };
   'tool.status': { params: { jobId: string }; result: ToolJob };

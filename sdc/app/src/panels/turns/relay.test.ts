@@ -63,18 +63,18 @@ describe('the relay receipt', () => {
     expect(receiptOf(summary({ attempts: 0, stepsCloud: 0, stepsLocal: 12, byModel: [], reasons: [] }))).toEqual(['This work: 12 steps - every step on the local model']);
   });
 
-  it('is the plan example: the split, what was sent and what it cost, and why', () => {
+  it('is the plan example: the split, what was sent, and why - never a price', () => {
     const lines = receiptOf(summary());
 
     expect(lines[0]).toBe('This work: 12 steps - 10 on the local model (83%), 2 on the chain (deepseek:deepseek-chat)');
-    expect(lines[1]).toBe('Sent to the chain: 8.4k tokens out, 1.1k back · cost $0.0031 (priced)');
+    expect(lines[1]).toBe('Sent to the chain: 8.4k tokens out, 1.1k back');
     expect(lines[2]).toBe('Why: 1 a check kept failing, 1 the steps went round in a circle · details: Trace');
   });
 
-  it('never words an estimate as measured, and says what could not be checked', () => {
+  it('says what could not be checked', () => {
     const lines = receiptOf(summary({ costLabel: 'estimate', unverified: 1, failed: 1 }));
 
-    expect(lines[1]).toContain('(estimate)');
+    expect(lines.join('\n')).not.toContain('$');
     expect(lines.join('\n')).not.toContain('(measured)');
     expect(lines).toContain('1 relayed step could not be checked (this folder has no checks).');
     expect(lines).toContain('1 step nobody could do.');
