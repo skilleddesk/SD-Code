@@ -1489,6 +1489,11 @@ const english = {
       stayKept: 'On. SDC signs in again by itself when the connection drops. Press Sign in with nothing typed to reconnect now.',
       stayKeyPlaceholder: 'Setup key (optional)',
     },
+    /* 1.0.4: the one question asked before SDC writes /etc/sudoers.d/sdc - unticked unless a person ticks it. */
+    sudo: {
+      question: 'Give SDC sudo permission on this server?',
+      help: 'Only if you tick this: once connected, SDC uses this password one time to add /etc/sudoers.d/sdc (sudo without a password for this user, checked with visudo before it is live). After that SDC does not need the password for sudo.',
+    },
     keyInstall: {
       title: (label: string): string => `SDC cannot sign in to ${label} yet`,
       sub: 'Its host key is pinned. The one thing left is copying SDC’s key over, which needs your password once.',

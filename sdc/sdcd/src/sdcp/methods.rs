@@ -1032,6 +1032,10 @@ struct Secrets {
     keep: Option<String>,
     /// "Stay signed in" (0.16.0).
     stay: Stay,
+    /// The person answered yes to "Give SDC sudo permission on this server?" (1.0.4): once connected, the
+    /// password is spent one more time on `/etc/sudoers.d/sdc` ([`crate::ssh::ops::grant_sudo`]). Never
+    /// without that answer.
+    grant_sudo: bool,
 }
 
 /// "Stay signed in" on the Sign in card (0.16.0): keep the password and the authenticator's key in the
@@ -1071,7 +1075,7 @@ async fn finish_connection(
     secrets: Secrets,
     key_note: Option<String>,
 ) {
-    let Secrets { password, code, keep, stay } = secrets;
+    let Secrets { password, code, keep, stay, grant_sudo } = secrets;
     let target = ssh.target.user_host.clone();
 
     if let Some(note) = &key_note {
@@ -1191,9 +1195,10 @@ async fn finish_connection(
 
         let pty = state.pty.clone();
         let install_target = ssh.target.clone();
+        let secret = password.clone();
 
         let installed = tokio::task::spawn_blocking(move || {
-            crate::auth::remote::install_key(&pty, &install_target, &password)
+            crate::auth::remote::install_key(&pty, &install_target, &secret)
         })
         .await
         .unwrap_or_else(|_| Err(ErrorObject::internal("the key install could not be run")));
@@ -1233,6 +1238,26 @@ async fn finish_connection(
         .unwrap_or_else(|_| {
             ("offline".to_string(), format!("{target} could not be measured; check the daemon's log"))
         });
+
+    /* The sudo grant (1.0.4): only on a yes, only on a host that is reachable now, and the password's last
+       use - it is dropped right after, whatever the answer. */
+    let detail = if grant_sudo && !password.is_empty() && status == "connected" {
+        notifier.push(
+            event::host_status(&host_id, &name, "vps", "connecting", None, Some("setting up sudo for SDC…"), None),
+            None,
+            None,
+        );
+
+        let granting = ssh.clone();
+        let note = tokio::task::spawn_blocking(move || crate::ssh::ops::grant_sudo(&granting, &password))
+            .await
+            .unwrap_or_else(|_| "sudo was NOT set up: the setup could not be run".to_string());
+
+        format!("{detail} · {note}")
+    } else {
+        drop(password);
+        detail
+    };
 
     let _ = state.store.upsert_host(&host_id, &name, "ssh", Some(&target), &status, None);
 

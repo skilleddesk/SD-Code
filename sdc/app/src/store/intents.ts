@@ -784,7 +784,14 @@ export interface StaySignedIn {
   secret: string;
 }
 
-export async function installHostKey(hostId: string, password: string, code = '', remember = false, stay?: StaySignedIn): Promise<boolean> {
+export async function installHostKey(
+  hostId: string,
+  password: string,
+  code = '',
+  remember = false,
+  stay?: StaySignedIn,
+  grantSudo = false,
+): Promise<boolean> {
   const host = useAppStore.getState().hosts.find((candidate) => candidate.id === hostId);
 
   /* The id goes too (0.15.2): the window's copy of the address can be empty, and this used to return
@@ -798,6 +805,7 @@ export async function installHostKey(hostId: string, password: string, code = ''
     ...(code.trim() === '' ? {} : { code: code.trim() }),
     ...(remember ? { remember } : {}),
     ...(stay === undefined ? {} : { staySignedIn: stay.on, ...(stay.on && stay.secret.trim() !== '' ? { totpSecret: stay.secret.trim() } : {}) }),
+    ...(grantSudo ? { grantSudo: true } : {}),
   });
 
   return answer !== null && answer.hostId === hostId;
@@ -853,6 +861,8 @@ export async function addHost(input: {
   /** "Stay signed in" (0.16.0). */
   staySignedIn?: boolean;
   totpSecret?: string;
+  /** The person said yes to "Give SDC sudo permission on this server?" (1.0.4). Never sent otherwise. */
+  grantSudo?: boolean;
 }): Promise<{ hostId: string; reused: boolean } | null> {
   if (input.type === 'local') {
     toast(strings.addHost.localAlready);
@@ -926,6 +936,7 @@ export async function trustHost(
   code?: string,
   remember = false,
   stay?: StaySignedIn,
+  grantSudo = false,
 ): Promise<boolean> {
   try {
     await sdcpCall('host.trust', {
@@ -935,6 +946,7 @@ export async function trustHost(
       ...(code === undefined || code.trim() === '' ? {} : { code: code.trim() }),
       ...(remember ? { remember } : {}),
       ...(stay === undefined ? {} : { staySignedIn: stay.on, ...(stay.on && stay.secret.trim() !== '' ? { totpSecret: stay.secret.trim() } : {}) }),
+      ...(grantSudo ? { grantSudo: true } : {}),
     });
 
     toast(strings.addHost.trust.pinned(fingerprint));

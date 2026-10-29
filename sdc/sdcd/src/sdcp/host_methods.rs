@@ -155,6 +155,8 @@ impl Daemon {
             let _ = crate::auth::keychain::delete(&secret_ref);
         }
         let keep = (!remembered && remember && !password.is_empty()).then(|| secret_ref.clone());
+        /* "Give SDC sudo permission on this server?" answered yes (1.0.4). Absent means no. */
+        let grant_sudo = envelope.opt_bool("grantSudo");
 
         let label = envelope
             .opt_str("label")
@@ -256,7 +258,7 @@ impl Daemon {
          */
         tokio::spawn(async move {
             if straight {
-                finish_connection(state, notifier, host_id, name, ssh, Secrets { password, code, keep: keep.clone(), stay: stay.clone() }, key_note).await;
+                finish_connection(state, notifier, host_id, name, ssh, Secrets { password, code, keep: keep.clone(), stay: stay.clone(), grant_sudo }, key_note).await;
 
                 return;
             }
@@ -268,7 +270,7 @@ impl Daemon {
 
             match seen {
                 Ok(crate::ssh::hostkey::Trust::Pinned(_)) => {
-                    finish_connection(state, notifier, host_id, name, ssh, Secrets { password, code, keep: keep.clone(), stay: stay.clone() }, key_note).await;
+                    finish_connection(state, notifier, host_id, name, ssh, Secrets { password, code, keep: keep.clone(), stay: stay.clone(), grant_sudo }, key_note).await;
                 }
                 Ok(crate::ssh::hostkey::Trust::Unknown(keys)) => {
                     let fingerprint = crate::ssh::hostkey::primary(&keys)
@@ -384,7 +386,7 @@ impl Daemon {
         let keep = ((envelope.opt_bool("remember") || matches!(Stay::from_envelope(envelope), Stay::On(_))) && !password.is_empty())
             .then(|| host_secret_ref(&ssh));
 
-        spawn_finish(state, notifier, host_id.clone(), name, ssh, Secrets { password, code, keep, stay: Stay::from_envelope(envelope) }, None);
+        spawn_finish(state, notifier, host_id.clone(), name, ssh, Secrets { password, code, keep, stay: Stay::from_envelope(envelope), grant_sudo: envelope.opt_bool("grantSudo") }, None);
 
         Ok(json!({ "trusted": true, "hostId": host_id, "fingerprint": fingerprint }))
     }

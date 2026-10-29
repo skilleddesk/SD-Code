@@ -68,6 +68,12 @@ struct Subscriber {
 pub struct Fanout {
     next: AtomicU64,
     subscribers: Mutex<HashMap<u64, Subscriber>>,
+    /// Held from an event's number to its broadcast (1.0.4), so the windows get events in `seq` order.
+    ///
+    /// The two were separate steps: with several tasks pushing at once, 101 could be broadcast before 100.
+    /// The window reads that as a gap, holds every event and asks `event.list` - and the voice answer waiting
+    /// among them is what "voice spins and hangs while several tasks run" looked like.
+    publish: Mutex<()>,
 }
 
 impl Fanout {
@@ -145,6 +151,8 @@ impl ChannelNotifier {
 
 impl Notifier for ChannelNotifier {
     fn push(&self, event: Value, session_id: Option<String>, turn_id: Option<String>) -> Option<i64> {
+        /* A poisoned lock still orders: the guard is only a turnstile. */
+        let _order = self.fanout.publish.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let stored = self.log.append(event, session_id, turn_id);
         let notification = Notification {
             v: crate::SDCP_VERSION.to_string(),
@@ -342,5 +350,43 @@ mod tests {
 
         assert_eq!(fanout.listeners(), 0, "at the limit the next broadcast lets it go");
         assert!(rx.try_recv().is_err());
+    }
+
+    /// 1.0.4: many threads pushing at once - several tasks and a voice answer - reach a window in `seq` order.
+    #[test]
+    fn events_pushed_from_many_threads_reach_a_window_in_seq_order() {
+        let log = Arc::new(EventLog::empty());
+        let fanout = Fanout::new();
+        let (window, mut window_rx) = unbounded_channel();
+
+        fanout.subscribe(window);
+
+        let notifier = Arc::new(ChannelNotifier::new(log, fanout));
+        let threads: Vec<_> = (0..8)
+            .map(|_| {
+                let notifier = notifier.clone();
+
+                std::thread::spawn(move || {
+                    for _ in 0..200 {
+                        notifier.push(serde_json::json!({ "type": "TurnDelta" }), None, None);
+                    }
+                })
+            })
+            .collect();
+
+        for thread in threads {
+            thread.join().unwrap();
+        }
+
+        let mut last = 0;
+
+        while let Ok(line) = window_rx.try_recv() {
+            let seq = serde_json::from_str::<Value>(&line).unwrap()["seq"].as_i64().unwrap();
+
+            assert_eq!(seq, last + 1, "no gap and no reordering");
+            last = seq;
+        }
+
+        assert_eq!(last, 1600);
     }
 }

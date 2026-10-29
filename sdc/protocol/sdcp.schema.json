@@ -747,7 +747,8 @@
             "code": "string?",
             "remember": "boolean?",
             "staySignedIn": "boolean?",
-            "totpSecret": "string?"
+            "totpSecret": "string?",
+            "grantSudo": "boolean?"
           },
           "result": {
             "hostId": "string",
@@ -762,7 +763,8 @@
             "code": "string?",
             "remember": "boolean?",
             "staySignedIn": "boolean?",
-            "totpSecret": "string?"
+            "totpSecret": "string?",
+            "grantSudo": "boolean?"
           },
           "result": {
             "trusted": "boolean",

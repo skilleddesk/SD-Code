@@ -92,6 +92,11 @@ export function AddHost() {
   const [staySecret, setStaySecret] = useState('');
   /** SDC already keeps both, so the card can sign in with nothing typed. */
   const [keptStay, setKeptStay] = useState(false);
+  /**
+   * "Give SDC sudo permission on this server?" (1.0.4). Off until a person ticks it: a yes is the only
+   * thing that lets the daemon spend the password on `/etc/sudoers.d/sdc`.
+   */
+  const [grantSudo, setGrantSudo] = useState(false);
   /** What `host.key` answered for the host in front of the user (0.7.13), if it has been asked. */
   const [scanned, setScanned] = useState<{ hostKey: string; keyType: string; matches: boolean | null; pinnedKey: string | null } | null>(
     null,
@@ -157,6 +162,7 @@ export function AddHost() {
     setSavedPassword(false);
     setKeptStay(false);
     setStaySecret('');
+    setGrantSudo(false);
   };
 
   /*
@@ -261,7 +267,7 @@ export function AddHost() {
     setInstalling(true);
     setAwaiting('sent');
 
-    void installHostKey(pending.hostId, password, code, remember || stay, { on: stay, secret: staySecret }).then((accepted) => {
+    void installHostKey(pending.hostId, password, code, remember || stay, { on: stay, secret: staySecret }, grantSudo).then((accepted) => {
       if (password !== '' && (remember || stay)) {
         setSavedPassword(true);
       }
@@ -286,6 +292,7 @@ export function AddHost() {
       ...(code.trim() === '' ? {} : { code: code.trim() }),
       ...(password !== '' && (remember || stay) ? { remember: true } : {}),
       ...(password !== '' ? { staySignedIn: stay, ...(stay && staySecret.trim() !== '' ? { totpSecret: staySecret.trim() } : {}) } : {}),
+      ...(password !== '' && grantSudo ? { grantSudo: true } : {}),
     }).then((answer) => {
       setBusy(false);
 
@@ -324,7 +331,7 @@ export function AddHost() {
     setTrusting(true);
 
     /* The password from the field is re-sent here, and only here: it is spent after the pin lands. */
-    void trustHost(pending.hostId, fingerprint, password, code, password !== '' && (remember || stay), { on: stay, secret: staySecret }).then((trusted) => {
+    void trustHost(pending.hostId, fingerprint, password, code, password !== '' && (remember || stay), { on: stay, secret: staySecret }, grantSudo).then((trusted) => {
       setTrusting(false);
       setCode('');
 
@@ -346,6 +353,30 @@ export function AddHost() {
     close();
     reset();
   };
+
+  /**
+   * The sudo question (1.0.4), asked in words and answered with a tick: the password it would spend is the
+   * one being typed right here, and it is used for this only when the box is ticked.
+   */
+  const sudoQuestion = (id: string, disabled: boolean) => (
+    <label
+      className="flex items-start gap-[7px] rounded-md border border-border-subtle bg-bg-base px-[10px] py-[8px] text-[11.5px] font-medium text-text-primary"
+      data-ssh-grant-sudo={grantSudo ? 'yes' : 'no'}
+    >
+      <input
+        type="checkbox"
+        className="mt-[2px] h-[14px] w-[14px] shrink-0 appearance-auto accent-[var(--accent)]"
+        id={id}
+        checked={grantSudo}
+        disabled={disabled}
+        onChange={(event) => setGrantSudo(event.target.checked)}
+      />
+      <span>
+        {strings.addHost.sudo.question}
+        <span className="mt-[2px] block text-[11px] font-normal leading-[1.5] text-text-secondary">{strings.addHost.sudo.help}</span>
+      </span>
+    </label>
+  );
 
   return (
     <Modal open={open} label={strings.addHost.title} onClose={shutdown} center className="addhost-dlg">
@@ -452,6 +483,8 @@ export function AddHost() {
               />
               {strings.addHost.signIn.remember}
             </label>
+
+            {password === '' ? null : sudoQuestion('sshAddGrantSudo', false)}
 
             <label className="flex flex-col gap-[5px]">
               <span className="text-[11.5px] font-medium text-text-secondary">
@@ -711,6 +744,8 @@ export function AddHost() {
                       ) : null}
                     </div>
                   ) : null}
+
+                  {signIn ? sudoQuestion('sshSignInGrantSudo', installing) : null}
 
                   {/* A sign-in is the footer's button (0.14.4); this one is for the key install only. */}
                   <div className={signIn ? 'hidden' : 'flex items-center gap-[8px]'}>

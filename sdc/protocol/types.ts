@@ -2084,6 +2084,12 @@ export interface SdcpMethodMap {
       staySignedIn?: boolean;
       /** The authenticator's setup key (base32). Empty: the daemon reads `~/.google_authenticator` on the host. */
       totpSecret?: string;
+      /**
+       * The person answered yes to "Give SDC sudo permission on this server?" (1.0.4): once connected, the
+       * password is used one more time to write `/etc/sudoers.d/sdc` (`NOPASSWD:ALL` for that user), then
+       * dropped. Absent means no.
+       */
+      grantSudo?: boolean;
     };
     /** `reused` is true when that `user@host` was already in the list - the row is returned as-is. */
     result: { hostId: string; reused: boolean };
@@ -2097,7 +2103,7 @@ export interface SdcpMethodMap {
    * one-time key install safe on a host whose identity was never checked.
    */
   'host.trust': {
-    params: { hostId: string; fingerprint: string; password?: string; code?: string; remember?: boolean; staySignedIn?: boolean; totpSecret?: string };
+    params: { hostId: string; fingerprint: string; password?: string; code?: string; remember?: boolean; staySignedIn?: boolean; totpSecret?: string; grantSudo?: boolean };
     result: { trusted: boolean; hostId: string; fingerprint: string };
   };
   /**

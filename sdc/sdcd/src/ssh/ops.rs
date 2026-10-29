@@ -1158,6 +1158,82 @@ pub fn refusal(label: &str, reason: &str) -> String {
     format!("{label} did not answer: {reason}")
 }
 
+/// What runs on the host when a person answers **yes** to "Give SDC sudo permission on this server?"
+/// (1.0.4): one `/etc/sudoers.d/sdc` line, `<user> ALL=(ALL) NOPASSWD:ALL`, so every later `sudo` runs
+/// without the password - and SDC never has to keep it.
+///
+/// It differs from the obvious one-liner (`echo "$PW" | sudo -S sh -c 'echo "$(whoami) ALL=…" >
+/// /etc/sudoers.d/sdc && visudo -c'`) in four places, and each one is a bug that line has:
+///
+/// * the name is read **before** `sudo` (`id -un`) and handed in as `$1`. Inside `sudo sh -c`, `whoami`
+///   is `root`, so the one-liner grants root what root already has and the person still gets a prompt;
+/// * the line is written to a temporary file that `sudo` ignores (a name with a `.` in it), checked on its
+///   own (`visudo -cf`), and only then moved into place. The one-liner writes the live file first and
+///   checks after: a bad line there is a server where `sudo` refuses everything, the way out included;
+/// * the password arrives on **stdin** and goes to `sudo -S` through `printf`, a shell builtin - it is
+///   never a word on a command line, so it is not in `ps`, in a shell history, or in a log;
+/// * root, and a user whose `sudo` already needs no password, are left alone.
+pub const SUDO_GRANT_SCRIPT: &str = r#"u=$(id -un)
+case "$u" in ''|*[!A-Za-z0-9._-]*) echo 'sdc-sudo: name'; exit 5;; esac
+if [ "$(id -u)" = 0 ]; then echo 'sdc-sudo: root'; exit 0; fi
+if sudo -n true 2>/dev/null; then echo 'sdc-sudo: already'; exit 0; fi
+IFS= read -r pw || [ -n "$pw" ]
+printf '%s\n' "$pw" | sudo -S -p '' sh -c 't=$(mktemp /etc/sudoers.d/.sdc.XXXXXX) || exit 6; printf "%s ALL=(ALL) NOPASSWD:ALL\n" "$1" > "$t" && chmod 0440 "$t" && visudo -cf "$t" >/dev/null && mv -f "$t" /etc/sudoers.d/sdc || { rm -f "$t"; exit 6; }' sdc "$u" || exit $?
+echo 'sdc-sudo: granted'"#;
+
+/// Runs [`SUDO_GRANT_SCRIPT`] once with `password` and says what happened, as a clause for the host's line.
+/// The password is spent here and dropped by the caller; nothing about it is in the answer.
+pub fn grant_sudo(ssh: &Ssh, password: &str) -> String {
+    /* `sh -c`: the host's login shell may be fish or csh, and the script is POSIX. */
+    let script = format!("command -v sudo >/dev/null 2>&1 || {{ echo 'sdc-sudo: missing'; exit 3; }}; sh -c {}", super::sh_quote(SUDO_GRANT_SCRIPT));
+
+    match ssh.run_with_stdin(&script, &format!("{password}\n"), super::QUICK) {
+        Ok(output) => sudo_sentence(&output),
+        Err(error) => format!("sudo was NOT set up: {}", error.message),
+    }
+}
+
+/// The clause for what [`SUDO_GRANT_SCRIPT`] printed - its own `sdc-sudo:` word first, `sudo`'s stderr after.
+pub fn sudo_sentence(output: &SshOutput) -> String {
+    let said = |word: &str| output.stdout.lines().any(|line| line.trim() == format!("sdc-sudo: {word}"));
+    let stderr = output.stderr.to_lowercase();
+
+    if output.ok() && said("granted") {
+        return "sudo is set up: /etc/sudoers.d/sdc lets this user run sudo without a password, and SDC did not keep the password".to_string();
+    }
+    if output.ok() && said("root") {
+        return "this user is root, so sudo needs no setup".to_string();
+    }
+    if output.ok() && said("already") {
+        return "sudo already runs without a password for this user; nothing was changed".to_string();
+    }
+    if said("missing") {
+        return "sudo was NOT set up: this server has no sudo command".to_string();
+    }
+    if said("name") {
+        return "sudo was NOT set up: the user name has characters a sudoers line cannot carry".to_string();
+    }
+    if output.timed_out {
+        return "sudo was NOT set up: the server did not answer in time".to_string();
+    }
+    if stderr.contains("not in the sudoers") || stderr.contains("not allowed") {
+        return "sudo was NOT set up: this user is not allowed to use sudo on the server (ask its administrator to add it to the sudo group)".to_string();
+    }
+    if stderr.contains("incorrect password") || stderr.contains("try again") || stderr.contains("no password was provided") {
+        return "sudo was NOT set up: sudo refused the password (the login password and the sudo password can differ)".to_string();
+    }
+    if stderr.contains("tty") {
+        return "sudo was NOT set up: this server's sudo only runs from a terminal (requiretty)".to_string();
+    }
+    if output.code == Some(6) {
+        return "sudo was NOT set up: the sudoers line did not pass visudo, so nothing was written".to_string();
+    }
+
+    let reason = output.stderr.lines().map(str::trim).find(|line| !line.is_empty()).unwrap_or("no answer");
+
+    format!("sudo was NOT set up: {reason}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1328,6 +1404,46 @@ mod tests {
         assert!(line.contains("echo SDC-NOTHING"), "{line}");
         assert!(line.contains("rm -f "), "the pid file does not outlive the turn: {line}");
         assert!(line.contains("if [ -r "), "a turn that already finished is not an error: {line}");
+    }
+
+    /// The sudoers grant (1.0.4): the user's own name, checked before it is live, password on stdin only.
+    #[test]
+    fn the_sudo_grant_names_the_user_checks_before_it_installs_and_never_puts_the_password_on_a_command_line() {
+        let script = SUDO_GRANT_SCRIPT;
+
+        assert!(!script.contains("whoami"), "inside `sudo sh -c`, whoami is root: {script}");
+        assert!(script.starts_with("u=$(id -un)"), "the name is read before sudo: {script}");
+        assert!(script.contains("' sdc \"$u\""), "and handed in as $1: {script}");
+        assert!(script.contains("NOPASSWD:ALL"), "{script}");
+        assert!(script.contains("mktemp /etc/sudoers.d/.sdc."), "a name with a dot, which sudo ignores: {script}");
+        let checked = script.find("visudo -cf").expect("the line is checked on its own");
+        let moved = script.find("mv -f \"$t\" /etc/sudoers.d/sdc").expect("then moved into place");
+        assert!(checked < moved, "checked before it is live: {script}");
+        assert!(script.contains("chmod 0440"), "{script}");
+        assert!(script.contains("IFS= read -r pw"), "the password comes from stdin: {script}");
+        assert!(script.contains("printf '%s\\n' \"$pw\" | sudo -S"), "and goes to sudo through a builtin: {script}");
+        assert!(script.contains("sudo -n true"), "a sudo that needs no password is left alone: {script}");
+    }
+
+    #[test]
+    fn the_sudo_sentence_says_what_happened() {
+        let out = |stdout: &str, stderr: &str, code: i32| SshOutput {
+            stdout: stdout.into(),
+            stderr: stderr.into(),
+            code: Some(code),
+            timed_out: false,
+            truncated: false,
+        };
+
+        assert!(sudo_sentence(&out("sdc-sudo: granted\n", "", 0)).starts_with("sudo is set up"));
+        assert!(sudo_sentence(&out("sdc-sudo: root\n", "", 0)).contains("root"));
+        assert!(sudo_sentence(&out("sdc-sudo: already\n", "", 0)).contains("nothing was changed"));
+        assert!(sudo_sentence(&out("sdc-sudo: missing\n", "", 3)).contains("no sudo command"));
+        assert!(sudo_sentence(&out("", "deploy is not in the sudoers file.  This incident will be reported.\n", 1)).contains("not allowed"));
+        assert!(sudo_sentence(&out("", "Sorry, try again.\nsudo: 1 incorrect password attempt\n", 1)).contains("refused the password"));
+        assert!(sudo_sentence(&out("", "", 6)).contains("visudo"));
+        /* "granted" with a failing exit is not a grant. */
+        assert!(sudo_sentence(&out("sdc-sudo: granted\n", "", 1)).starts_with("sudo was NOT set up"));
     }
 }
 

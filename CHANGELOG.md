@@ -10,6 +10,35 @@ This file describes what changed, not what is planned. Anything still open is na
 
 ---
 
+## [1.0.4] — 2026-10-29: sudo without keeping the password, and voice that does not hang while tasks run
+
+### Added — "Give SDC sudo permission on this server?"
+
+The Add a host form and a host's Sign in card ask it, next to the password, **unticked**. Only on a yes, and only
+once the host is connected, SDC uses that password one more time to write `/etc/sudoers.d/sdc`
+(`<user> ALL=(ALL) NOPASSWD:ALL`); after that `sudo` runs without a password and SDC does not have to keep it. The
+host's line says what happened (set up, already passwordless, root, not allowed to sudo, wrong sudo password).
+
+It is not the one-liner `echo "$PW" | sudo -S sh -c 'echo "$(whoami) ALL=…" > /etc/sudoers.d/sdc && visudo -c'`:
+
+- the user name is read **before** `sudo` - inside `sudo sh -c`, `whoami` is `root`, so that line granted nothing;
+- the line goes to a temporary file `sudo` ignores, is checked alone (`visudo -cf`) and only then moved into place -
+  the one-liner wrote the live file first, and a bad line there locks `sudo` out entirely;
+- the password travels on stdin to `sudo -S` through a shell builtin, never on a command line (`ps`, history, logs);
+- root, and a user whose `sudo` already needs no password, are left alone.
+
+### Fixed — voice spinning for a long time while several tasks run
+
+Two causes, both in the daemon:
+
+- **`voice.transcribe` waited in line.** A connection answers changing requests one at a time; voice was one of
+  them, so every phrase and every caption waited behind whatever was slow - an `ssh` call, a save, a turn
+  starting. It is now answered at once on its own task, with `voice.status` and `event.list`.
+- **Events could reach the window out of order.** An event's number and its broadcast were two steps, so with
+  several tasks pushing at once `101` could arrive before `100`. The window took that as a gap, held every event
+  - the voice answer included - and asked `event.list`, which waited in the same line. Numbering and broadcast
+  are now one step (tested with eight threads pushing at once: no gap, no reordering).
+
 ## [1.0.3] — 2026-10-28: voice that keeps listening, a new message box, Disconnect, and update notices
 
 ### Fixed — voice stopped hearing after a minute or so

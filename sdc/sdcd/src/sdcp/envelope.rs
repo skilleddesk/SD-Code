@@ -39,10 +39,26 @@ impl Envelope {
     /// True for a method that only looks: it changes nothing, so it may be answered while a slower request of the
     /// same connection is still running. The window's file tree depends on this - a Save that is waiting on a
     /// slow disk must not hold back the listing, the file read or the git badge that follow it.
+    ///
+    /// 1.0.4: voice and the event catch-up too. The report: voice "spins a long time and hangs" while several
+    /// tasks run. `voice.transcribe` answers at once (the work is on its own thread) and depends on no other
+    /// request, but it waited in line behind every slow one - an `ssh` call, a save, a turn starting - once per
+    /// phrase and once per caption. And `event.list`, which the window asks when it sees a gap in the events,
+    /// held every event behind it - the voice answer included - until the line reached it.
     pub fn is_read_lane(&self) -> bool {
         matches!(
             self.method.as_str(),
-            "fs.list" | "fs.read" | "fs.stat" | "fs.search" | "git.status" | "git.diff" | "pty.output" | "policy.get"
+            "fs.list"
+                | "fs.read"
+                | "fs.stat"
+                | "fs.search"
+                | "git.status"
+                | "git.diff"
+                | "pty.output"
+                | "policy.get"
+                | "voice.transcribe"
+                | "voice.status"
+                | "event.list"
         )
     }
 
