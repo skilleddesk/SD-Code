@@ -296,7 +296,7 @@ impl CliAdapter {
     /// starts - and `get_program`/`get_args` are how the batch-file wrap (`cmd.exe /c …` on Windows)
     /// survives the move from `std::process::Command` to tokio's.
     ///
-    /// `secrets` are API keys SDC itself holds (1.0.5: Gemini's, `gemini::remote_env_for`) - never a CLI's
+    /// `secrets` are what SDC itself holds (Gemini's key, 1.0.5; Claude's `setup-token` token, 1.0.6) - never a CLI's
     /// sign-in: written to the host over stdin into a private file the turn reads and deletes.
     fn remote_command(&self, prompt: &Prompt, args: &[String], secrets: &[(String, String)]) -> Result<Command, ErrorObject> {
         let Some(ssh) = prompt.remote.as_ref() else {
@@ -512,8 +512,9 @@ impl CliAdapter {
         let mut command = match prompt.remote {
             /* P0-2: nothing of this machine's CLI sign-in travels with a remote turn. SDC never reads, copies or
                forwards a CLI's token; on the host the CLI uses the sign-in the person made there. The one thing
-               that does go is an API key SDC itself holds - Gemini's Google key (1.0.5, `gemini::remote_env_for`). */
-            Some(_) => match self.remote_command(prompt, &args, &crate::engines::gemini::remote_env_for(self.spec.program)) {
+               that does go is a secret SDC itself holds - Gemini's Google key (1.0.5, `gemini::remote_env_for`), and the
+               token Claude Code's own `setup-token` made for servers (1.0.6, `auth::server_token`). */
+            Some(_) => match self.remote_command(prompt, &args, &[crate::engines::gemini::remote_env_for(self.spec.program), crate::auth::server_token::remote_env(self.spec.program)].concat()) {
                 Ok(command) => command,
                 Err(error) => {
                     sink.send(EngineEvent::Failed(error.message));

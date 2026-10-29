@@ -153,7 +153,7 @@ pub fn transcribe(audio: &[u8], mime: &str, language: Option<&str>, engine: Opti
     /* The one service the person chose is resting: say so, with the wait, rather than "it has no key". */
     if let Some(chosen) = chosen {
         if let Some(left) = resting_for(chosen) {
-            return Err(resting_sentence(&[chosen], left));
+            return Err(day_used_sentence(&[chosen]).unwrap_or_else(|| resting_sentence(&[chosen], left)));
         }
     }
 
@@ -161,7 +161,7 @@ pub fn transcribe(audio: &[u8], mime: &str, language: Option<&str>, engine: Opti
     if chosen.is_none() && ready.is_empty() && !keys.is_empty() && !has_local() {
         let names: Vec<&str> = keys.iter().map(|(id, _)| *id).collect();
 
-        return Err(resting_sentence(&names, retry_after().unwrap_or(Duration::from_secs(5))));
+        return Err(day_used_sentence(&names).unwrap_or_else(|| resting_sentence(&names, retry_after().unwrap_or(Duration::from_secs(5)))));
     }
 
     let asked: Vec<(&str, String)> = if interim && chosen.is_none() { ready.into_iter().take(1).collect() } else { ready };
@@ -200,6 +200,21 @@ pub fn retry_after() -> Option<Duration> {
     let now = std::time::Instant::now();
 
     resting().lock().ok()?.values().filter_map(|until| until.checked_duration_since(now)).filter(|left| !left.is_zero()).min()
+}
+
+/// The services resting because their **day** is used up (1.0.6), not because of a minute's limit.
+fn day_used() -> &'static std::sync::Mutex<std::collections::HashSet<String>> {
+    static DAY_USED: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<String>>> = std::sync::OnceLock::new();
+
+    DAY_USED.get_or_init(Default::default)
+}
+
+/// While every one of `names` rests on a used-up day, that is the sentence - not "slow down", which promises an answer
+/// a wait will not bring.
+fn day_used_sentence(names: &[&str]) -> Option<String> {
+    let used = day_used().lock().ok()?;
+
+    (!names.is_empty() && names.iter().all(|name| used.contains(*name) && resting_for(name).is_some())).then(|| GEMINI_DAY_USED.to_string())
 }
 
 fn resting_sentence(names: &[&str], left: Duration) -> String {
@@ -319,6 +334,9 @@ fn gemini_online(base: &str, key: &str, audio: &[u8], mime: &str, language: Opti
         ] }],
     });
     let mut last = String::new();
+    /* 1.0.6: a 429 is one model's quota, not the key's - the free tier counts each model apart. The report: the voice
+       button "spins and spins" on a key whose first model had used up its day; the other two were never asked. */
+    let mut refused: Vec<GeminiQuota> = Vec::new();
 
     for model in ["gemini-3.5-transcribe", "gemini-3.8-flash", "gemini-2.5-flash"] {
         let url = format!("{}/v1beta/models/{model}:generateContent", base.trim_end_matches('/'));
@@ -342,18 +360,76 @@ fn gemini_online(base: &str, key: &str, audio: &[u8], mime: &str, language: Opti
                 return Ok(heard);
             }
             Err(ureq::Error::Status(404, response)) => last = format!("{model} is not available to this key (HTTP 404): {}", response.into_string().unwrap_or_default().chars().take(160).collect::<String>()),
-            Err(ureq::Error::Status(code, response)) => {
-                if code == 429 {
-                    note_too_many("google", response.header("retry-after"));
-                }
+            Err(ureq::Error::Status(429, response)) => {
+                let header = response.header("retry-after").and_then(|value| value.trim().parse::<f64>().ok());
+                let mut quota = gemini_quota(&response.into_string().unwrap_or_default());
 
+                quota.retry_secs = header.or(quota.retry_secs);
+                refused.push(quota);
+                last = format!("{model} refused the recording (HTTP 429)");
+            }
+            Err(ureq::Error::Status(code, response)) => {
                 return Err(format!("Gemini refused the recording (HTTP {code}): {}", response.into_string().unwrap_or_default().chars().take(300).collect::<String>()));
             }
             Err(error) => return Err(format!("Gemini could not be reached: {error}")),
         }
     }
 
-    Err(last)
+    if refused.is_empty() {
+        return Err(last);
+    }
+
+    /* Every model that answered said 429. Only a per-minute limit is worth waiting for; a used-up day is said at once,
+       and Gemini rests for the longest SDC ever waits, so the window stops instead of asking again and again. */
+    if refused.iter().all(|quota| quota.daily) {
+        note_too_many("google", Some("300"));
+
+        if let Ok(mut used) = day_used().lock() {
+            used.insert("google".to_string());
+        }
+
+        return Err(GEMINI_DAY_USED.to_string());
+    }
+
+    if let Ok(mut used) = day_used().lock() {
+        used.remove("google");
+    }
+
+    let wait = refused.iter().filter(|quota| !quota.daily).filter_map(|quota| quota.retry_secs).fold(None, |shortest: Option<f64>, secs| Some(shortest.map_or(secs, |shortest| shortest.min(secs))));
+
+    note_too_many("google", wait.map(|secs| secs.ceil().to_string()).as_deref());
+
+    Err(format!("Gemini refused the recording (HTTP 429): too many requests this minute; SDC asks again in {} s.", wait.map_or(20.0, f64::ceil)))
+}
+
+/// What a Gemini key with no speech left today is told - the error the window shows, with the ways out.
+pub const GEMINI_DAY_USED: &str = "Gemini's free quota for today is used up on this key, so it cannot hear the recording. Add a free Groq key in Providers, or install the local transcriber in Settings -> Voice; Gemini hears again tomorrow.";
+
+/// One `429` from the Gemini API, read: whether the limit that was hit is a **day's** (`...PerDay...` in the quota
+/// id), and how long Google asked to wait (`RetryInfo.retryDelay`, `"37s"`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GeminiQuota {
+    pub daily: bool,
+    pub retry_secs: Option<f64>,
+}
+
+pub fn gemini_quota(body: &str) -> GeminiQuota {
+    let answer: Value = serde_json::from_str(body).unwrap_or(Value::Null);
+    let details = answer["error"]["details"].as_array().cloned().unwrap_or_default();
+    let ids: Vec<String> = details
+        .iter()
+        .flat_map(|detail| detail["violations"].as_array().cloned().unwrap_or_default())
+        .filter_map(|violation| violation["quotaId"].as_str().map(str::to_string))
+        .collect();
+    let retry_secs = details
+        .iter()
+        .find_map(|detail| detail["retryDelay"].as_str())
+        .and_then(|delay| delay.trim().trim_end_matches('s').parse::<f64>().ok())
+        .filter(|secs| secs.is_finite() && *secs >= 0.0);
+    /* No quota id and no delay: a plain "exceeded your current quota" is the billing kind - nothing a wait fixes. */
+    let daily = if ids.is_empty() { retry_secs.is_none() } else { ids.iter().all(|id| id.contains("PerDay")) };
+
+    GeminiQuota { daily, retry_secs }
 }
 
 /// The transcript in a `generateContent` answer: every part of the first candidate. `gemini-3.5-transcribe` puts it in
@@ -648,6 +724,92 @@ mod tests {
         assert!(resting_for("test-rest-none").is_none());
         assert!(retry_after().is_some());
         assert!(resting_sentence(&["groq"], Duration::from_secs(7)).contains("7 s"));
+    }
+
+    #[test]
+    fn a_gemini_429_is_read_as_a_used_up_day_or_a_wait_of_so_many_seconds() {
+        let day = r#"{"error":{"code":429,"message":"You exceeded your current quota","status":"RESOURCE_EXHAUSTED","details":[
+            {"@type":"type.googleapis.com/google.rpc.QuotaFailure","violations":[{"quotaId":"GenerateRequestsPerDayPerProjectPerModel-FreeTier"}]},
+            {"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":"41s"}]}}"#;
+        let minute = r#"{"error":{"code":429,"details":[
+            {"@type":"type.googleapis.com/google.rpc.QuotaFailure","violations":[{"quotaId":"GenerateRequestsPerMinutePerProjectPerModel-FreeTier"}]},
+            {"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":"12.5s"}]}}"#;
+
+        assert_eq!(gemini_quota(day), GeminiQuota { daily: true, retry_secs: Some(41.0) });
+        assert_eq!(gemini_quota(minute), GeminiQuota { daily: false, retry_secs: Some(12.5) });
+        assert!(gemini_quota(r#"{"error":{"code":429,"message":"You exceeded your current quota"}}"#).daily, "no id, no delay: billing - waiting does not help");
+    }
+
+    /// Answers one request per entry, in order, with that status line and body; hands back the paths asked.
+    fn gemini_server(answers: Vec<(&'static str, &'static str)>) -> (String, std::thread::JoinHandle<Vec<String>>) {
+        use std::io::{BufRead, BufReader, Write};
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            let mut asked = Vec::new();
+
+            for (status, answer) in answers {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut line = String::new();
+                let mut length = 0usize;
+
+                reader.read_line(&mut line).unwrap();
+                asked.push(line.split_whitespace().nth(1).unwrap_or_default().to_string());
+
+                loop {
+                    let mut header = String::new();
+
+                    reader.read_line(&mut header).unwrap();
+
+                    if let Some(value) = header.to_ascii_lowercase().strip_prefix("content-length:") {
+                        length = value.trim().parse().unwrap();
+                    }
+
+                    if header.trim().is_empty() {
+                        break;
+                    }
+                }
+
+                let mut body = vec![0u8; length];
+                reader.read_exact(&mut body).unwrap();
+
+                write!(stream, "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{answer}", answer.len()).unwrap();
+            }
+
+            asked
+        });
+
+        (base, server)
+    }
+
+    const DAY_USED_429: &str = r#"{"error":{"code":429,"details":[{"violations":[{"quotaId":"GenerateRequestsPerDayPerProjectPerModel-FreeTier"}]}]}}"#;
+
+    #[test]
+    fn every_gemini_model_is_asked_before_a_429_is_the_answer() {
+        let (base, server) = gemini_server(vec![
+            ("429 Too Many Requests", DAY_USED_429),
+            ("429 Too Many Requests", DAY_USED_429),
+            ("200 OK", r#"{"candidates":[{"content":{"parts":[{"text":"open the settings"}]}}]}"#),
+        ]);
+
+        let heard = gemini_online(&base, "test-key", &[0u8; 2000], "audio/wav", None).unwrap();
+        let asked = server.join().unwrap();
+
+        assert_eq!(heard, "open the settings");
+        assert_eq!(asked.len(), 3, "{asked:?}");
+        assert!(asked[2].contains("gemini-2.5-flash"), "{asked:?}");
+    }
+
+    #[test]
+    fn a_day_used_up_on_every_gemini_model_is_said_at_once() {
+        let (base, server) = gemini_server(vec![("429 Too Many Requests", DAY_USED_429); 3]);
+
+        let error = gemini_online(&base, "test-key", &[0u8; 2000], "audio/wav", None).unwrap_err();
+
+        server.join().unwrap();
+        assert_eq!(error, GEMINI_DAY_USED);
     }
 
     #[test]

@@ -173,6 +173,8 @@ function chosenEngine(): string | undefined {
 export function VoiceButton({ onText, onLive, onStart, sessionId }: { onText: (text: string) => void; onLive?: (text: string) => void; onStart?: () => void; sessionId?: string }) {
   const [state, setState] = useState<'idle' | 'recording' | 'working'>('idle');
   const stopRef = useRef<(() => void) | null>(null);
+  /* 1.0.6: while the last phrases are still being heard, a press gives up waiting - the button never holds anyone. */
+  const abandonRef = useRef<(() => void) | null>(null);
   /* The last few loudness readings (0..1), newest last: the wave. Flat while nobody speaks. */
   const [wave, setWave] = useState<number[]>(() => new Array<number>(WAVE_BARS).fill(0));
 
@@ -216,6 +218,7 @@ export function VoiceButton({ onText, onLive, onStart, sessionId }: { onText: (t
     let language = chosenLanguage();
     let warned = false;
     let listening = true;
+    let abandoned = false;
     let waveAt = 0;
 
     const show = (): void => {
@@ -271,7 +274,9 @@ export function VoiceButton({ onText, onLive, onStart, sessionId }: { onText: (t
 
           const asked = heard?.retryAfterMs ?? null;
 
-          if (asked !== null && asked > 0 && performance.now() - started < GIVE_UP_MS) {
+          /* 1.0.6: only a wait that ends inside the budget is waited for. A used-up day asks for minutes; waiting that out
+             is the button that "spins and spins" - the reason is said at once instead. */
+          if (asked !== null && asked > 0 && performance.now() - started + asked < GIVE_UP_MS && !abandoned) {
             /* Too many requests: rest as asked, then the same phrases again. */
             pacer.rest(performance.now(), asked + 250);
             await new Promise((resolve) => window.setTimeout(resolve, pacer.waitFor(performance.now())));
@@ -280,7 +285,7 @@ export function VoiceButton({ onText, onLive, onStart, sessionId }: { onText: (t
 
           failures += 1;
 
-          if (failures >= 3 || performance.now() - started >= GIVE_UP_MS) {
+          if (failures >= 3 || performance.now() - started >= GIVE_UP_MS || abandoned) {
             break;
           }
 
@@ -399,13 +404,8 @@ export function VoiceButton({ onText, onLive, onStart, sessionId }: { onText: (t
 
       setState('working');
 
-      const done = async (): Promise<void> => {
-        while (working !== null) {
-          await working;
-        }
-      };
-
-      void done().then(() => {
+      /* What was heard by the time the person gives up waiting is still put in the box. */
+      const deliver = (): void => {
         setState('idle');
 
         const text = tidyDictation(kept);
@@ -420,6 +420,27 @@ export function VoiceButton({ onText, onLive, onStart, sessionId }: { onText: (t
         if (lastHeard !== null) {
           toast(lastHeard.local ? strings.kernel.voice.heardLocally(lastHeard.engine ?? '') : strings.kernel.voice.heardOnline(lastHeard.engine ?? ''));
         }
+      };
+
+      abandonRef.current = () => {
+        abandonRef.current = null;
+        abandoned = true;
+        deliver();
+      };
+
+      const done = async (): Promise<void> => {
+        while (working !== null) {
+          await working;
+        }
+      };
+
+      void done().then(() => {
+        if (abandoned) {
+          return;
+        }
+
+        abandonRef.current = null;
+        deliver();
       });
     };
 
@@ -447,14 +468,15 @@ export function VoiceButton({ onText, onLive, onStart, sessionId }: { onText: (t
         'grid h-[30px] w-[30px] place-items-center rounded-full transition-all duration-fast ease-ease active:scale-[.94] ' +
         (state === 'recording' ? 'text-state-error hover:bg-state-error/15' : 'text-text-secondary hover:bg-bg-hover hover:text-text-primary')
       }
-      title={state === 'recording' ? `${strings.kernel.voice.listening} ${strings.kernel.voice.stop}` : strings.kernel.voice.start}
+      title={state === 'recording' ? `${strings.kernel.voice.listening} ${strings.kernel.voice.stop}` : state === 'working' ? strings.kernel.voice.stopWaiting : strings.kernel.voice.start}
       aria-label={state === 'recording' ? strings.kernel.voice.stop : strings.kernel.voice.start}
       aria-pressed={state === 'recording'}
       data-voice={state}
-      disabled={state === 'working'}
       onClick={() => {
         if (state === 'recording') {
           stopRef.current?.();
+        } else if (state === 'working') {
+          abandonRef.current?.();
         } else {
           void start();
         }

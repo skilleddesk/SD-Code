@@ -724,17 +724,24 @@ async fn run_turn(
                     _ => {}
                 }
 
-                out.push(
-                    event::error_raised(
-                        &plan.session_id,
-                        Some(&plan.turn_id),
-                        &translated.title,
-                        &translated.explanation,
-                        Some(&plan.engine_id),
-                    ),
-                    session.clone(),
-                    turn.clone(),
+                let mut raised = event::error_raised(
+                    &plan.session_id,
+                    Some(&plan.turn_id),
+                    &translated.title,
+                    &translated.explanation,
+                    Some(&plan.engine_id),
                 );
+
+                /* 1.0.6: Claude signed out on a server is one press away from working on every server - the card's
+                   button opens that approval (`auth::server_token`) instead of sending anyone to a terminal there. */
+                if let Some(action) = error_action(translated.rule, &plan.engine_id, plan.remote.is_some()) {
+                    if let Some(object) = raised.as_object_mut() {
+                        object.insert("action".to_string(), json!(action));
+                        object.insert("explanation".to_string(), json!(crate::auth::server_token::SIGNED_OUT));
+                    }
+                }
+
+                out.push(raised, session.clone(), turn.clone());
             }
             crate::engines::EngineEvent::Done { summary, meta, pass } => {
                 if summary.starts_with("Cut off") || summary.starts_with("Paused") {
@@ -931,6 +938,11 @@ fn take_card_session(permission_id: &str) -> Option<String> {
 /// The kernel stops a running turn (0.12): the cancel mark first, so the loop drops whatever the engine
 /// still says; the engine told to stop; and the turn closed with the kernel's own sentence, so the window
 /// never shows a turn that was stopped as one that finished.
+/// The button an error card gets beside `Fix this`, when one press fixes the failure (1.0.6).
+pub fn error_action(rule: &str, engine_id: &str, remote: bool) -> Option<&'static str> {
+    (remote && engine_id == "claude_code" && rule == "engine-signed-out").then_some(crate::auth::server_token::ACTION)
+}
+
 fn halt(out: &dyn Notifier, engine: &Arc<dyn crate::engines::Engine>, plan: &RunPlan, event_kind: &str, kind: &str, sentence: &str) {
     crate::engines::cancel::request(&plan.turn_id);
 

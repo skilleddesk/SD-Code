@@ -40,6 +40,14 @@ impl Daemon {
                         "note": recipe.note,
                         "installed": crate::host::doctor::has(recipe.program),
                     }))
+                    .chain(std::iter::once(json!({
+                        /* 1.0.6: one approval for Claude Code on every server (`auth::server_token`). */
+                        "providerId": crate::auth::server_token::PROVIDER,
+                        "label": crate::auth::server_token::LABEL,
+                        "program": "claude",
+                        "note": crate::auth::server_token::NOTE,
+                        "installed": crate::host::doctor::has("claude"),
+                    })))
                     .collect::<Vec<_>>()
             })),
 
@@ -738,15 +746,18 @@ impl Daemon {
             None => None,
         };
 
-        out.push(
-            event::provider_status(json!({
-                "id": provider_id,
-                "status": "connecting",
-                "detail": "signing in through the CLI",
-            })),
-            None,
-            None,
-        );
+        /* Claude on your servers is no provider card of its own: its approval says nothing to the cards. */
+        if provider_id != crate::auth::server_token::PROVIDER {
+            out.push(
+                event::provider_status(json!({
+                    "id": provider_id,
+                    "status": "connecting",
+                    "detail": "signing in through the CLI",
+                })),
+                None,
+                None,
+            );
+        }
 
         /* `prepared` names the file the prepare step touched, so the modal can say what was written
            rather than changing a user's configuration silently. */
@@ -808,6 +819,10 @@ impl Daemon {
         let login_id = envelope.require_str("loginId")?;
         let submitted = self.state.logins.submit_code(&login_id, &envelope.require_str("code")?)?;
         let status = self.state.logins.status(&login_id)?;
+
+        if crate::auth::server_token::owns(&login_id) {
+            return Ok(submitted);
+        }
 
         /* The provider card follows the login: `connecting` while the page is open, `connected` the
            moment the CLI says it signed in. The card is folded from this event, so a UI that reloads

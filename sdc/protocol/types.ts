@@ -1149,6 +1149,11 @@ export interface ErrorRaisedEvent {
   /** The raw line, kept for `Show code`. */
   source?: string;
   fixable?: boolean;
+  /**
+   * 1.0.6: a one-press fix the card offers beside `Fix this`. `connect:claude-servers` opens the one approval that
+   * makes Claude Code work on every server (`claude setup-token`, kept in SDC's key store).
+   */
+  action?: 'connect:claude-servers';
 }
 
 export interface PermissionRequestedEvent {

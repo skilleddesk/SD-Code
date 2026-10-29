@@ -165,7 +165,8 @@ export function Connect() {
     void loadModels(providerId, false).then(setModels);
   }, [open, mode, providerId]);
 
-  const name = provider?.name ?? providerId ?? '';
+  /* 1.0.6: an approval with no provider card of its own (Claude on your servers) is named by its recipe. */
+  const name = provider?.name ?? recipe?.label ?? providerId ?? '';
 
   /* The paste boxes are drawn only while the CLI is still waiting for a code. A sign-in that has stopped
      keeps no field: a box under a CLI that already said `Login failed` invites a person to paste into

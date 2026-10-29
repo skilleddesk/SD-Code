@@ -734,6 +734,7 @@ function reduce(state: AppState, entry: AppEvent): AppState {
           explanation: event.explanation,
           source: event.source,
           fixable: event.fixable ?? true,
+          ...(event.action === undefined ? {} : { action: event.action }),
         },
       }));
     }

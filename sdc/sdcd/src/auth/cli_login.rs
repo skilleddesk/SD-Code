@@ -429,6 +429,11 @@ impl LoginManager {
         args: Option<Vec<String>>,
         pump: Option<Vec<String>>,
     ) -> Result<Value, ErrorObject> {
+        /* 1.0.6: Claude on every server is its own sign-in - `claude setup-token`, in a real terminal. */
+        if provider_id == crate::auth::server_token::PROVIDER {
+            return crate::auth::server_token::start();
+        }
+
         let known = recipe(provider_id);
         let overridden = program.is_some();
         let (program, recipe_args, recipe_pump) = match (program, known) {
@@ -524,6 +529,10 @@ impl LoginManager {
     /// reality, and a CLI that printed its success line while nobody was polling is still recognised on
     /// the next poll.
     pub fn status(&self, id: &str) -> Result<Value, ErrorObject> {
+        if crate::auth::server_token::owns(id) {
+            return crate::auth::server_token::status(id);
+        }
+
         let snapshot = self
             .sessions
             .lock()
@@ -643,6 +652,10 @@ impl LoginManager {
             ));
         }
 
+        if crate::auth::server_token::owns(id) {
+            return crate::auth::server_token::submit_code(id, code);
+        }
+
         let pty_id = {
             let mut sessions =
                 self.sessions.lock().map_err(|_| ErrorObject::internal("login registry poisoned"))?;
@@ -670,6 +683,10 @@ impl LoginManager {
     /// Kills the login process. A cancelled login leaves nothing behind: the CLI had not written a
     /// credential yet, so there is nothing to clean up.
     pub fn cancel(&self, id: &str) -> Result<Value, ErrorObject> {
+        if crate::auth::server_token::owns(id) {
+            return crate::auth::server_token::cancel(id);
+        }
+
         let pty_id = {
             let mut sessions =
                 self.sessions.lock().map_err(|_| ErrorObject::internal("login registry poisoned"))?;

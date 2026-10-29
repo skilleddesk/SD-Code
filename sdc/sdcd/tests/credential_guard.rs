@@ -1,5 +1,6 @@
 //! **Claude credential guard (P0-2)**: SDC only launches the official `claude` CLI, where the person signed in
-//! themselves. It never reads, copies or proxies the CLI's OAuth token. This test fails when any source file names a
+//! themselves. It never reads, copies or proxies the CLI's OAuth token. (1.0.6: the token `claude setup-token` prints
+//! for other machines is the one exception, kept in SDC's key store - `auth/server_token.rs` only.) This test fails when any source file names a
 //! place where that token lives, or the token's own variable - the only allowed mention is `crash.rs`'s
 //! "is the sign-in file there" check, which asks the file system whether a path exists and never opens it.
 
@@ -30,9 +31,14 @@ fn no_code_path_reads_a_cli_sign_in() {
     for file in files {
         let text = std::fs::read_to_string(&file).unwrap();
         let existence_check_only = file.ends_with("crash.rs");
+        /* 1.0.6: the one file that names the token variable - for the token Claude Code's own `setup-token` printed
+           and SDC keeps in its key store. It still never names, opens or reads where the CLI keeps its sign-in. */
+        let setup_token = file.ends_with("server_token.rs");
 
         for (number, line) in text.lines().enumerate() {
-            if FORBIDDEN.iter().any(|needle| line.contains(needle)) && !(existence_check_only && !line.contains("read")) {
+            let allowed = (existence_check_only && !line.contains("read")) || (setup_token && line.contains("CLAUDE_CODE_OAUTH_TOKEN") && !FORBIDDEN.iter().filter(|needle| **needle != "CLAUDE_CODE_OAUTH_TOKEN").any(|needle| line.contains(needle)));
+
+            if FORBIDDEN.iter().any(|needle| line.contains(needle)) && !allowed {
                 offences.push(format!("{}:{}: {}", file.display(), number + 1, line.trim()));
             }
         }

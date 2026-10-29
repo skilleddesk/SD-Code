@@ -10,6 +10,30 @@ This file describes what changed, not what is planned. Anything still open is na
 
 ---
 
+## [1.0.6] — 2026-10-30: Claude on every server from one approval, and a voice button that never hangs
+
+### Added — "Claude is connected in SDC, but every VPS says it is signed out"
+
+- An error card for Claude Code signed out on a server now has **Connect Claude for all servers**. It runs Claude
+  Code's own `claude setup-token` - the command Anthropic made for machines without a browser - shows its approval
+  page in the Connect window, takes the code the person pastes, and keeps the one-year token the CLI prints in SDC's
+  key store (`auth::server_token`). Every Claude turn on every host then gets it as the CLI's environment variable,
+  over stdin into a file the turn reads and deletes. One approval, all servers, nothing typed on any of them.
+- `setup-token` needs a real terminal (over pipes it prints nothing), so this one sign-in runs in a pseudo-terminal
+  (`portable-pty`: ConPTY on Windows, `openpty` elsewhere), wide enough that the token is never wrapped.
+- The token never reaches the window or a log: the Connect window's copy of the CLI's screen has it redacted.
+- The credential guard (P0-2) is unchanged in what matters: SDC still never names, opens or reads the place a CLI
+  keeps its own sign-in. `auth/server_token.rs` is the one file allowed to name the token variable.
+
+### Fixed — the voice button "spins and spins"
+
+- A Gemini key's `429` was treated as "wait and ask again", and only the first of the three Gemini models was ever
+  asked. The free tier counts each model apart, so all three are now asked; a used-up **day** (`...PerDay...` in
+  the quota id) is said at once - with the ways out (a free Groq key, the local transcriber) - instead of being
+  waited on for three minutes; a per-minute limit waits as long as Google's `retryDelay` says.
+- The window only waits for a rest that ends inside its budget, and while the last phrases are being heard the
+  button can be pressed to stop waiting - what was heard so far is kept.
+
 ## [1.0.5] — 2026-10-29: a new VPS gets its coding CLIs by itself, and CI is green again
 
 Built on 1.0.4 (sudo without keeping the password, voice that does not hang) - everything in it is in this release.

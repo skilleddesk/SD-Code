@@ -717,6 +717,7 @@ export const bn: StringsPack = {
       start: 'বলুন (ভয়েস ইনপুট)',
       stop: 'শোনা থামান - বলার সাথে সাথেই কথা বক্সে লেখা হচ্ছে',
       listening: 'শুনছি…',
+      stopWaiting: 'এখনো শোনা হচ্ছে - অপেক্ষা থামাতে চাপুন, এ পর্যন্ত যা শোনা গেছে তা থাকবে',
       heardLocally: (engine: string): string => `এই মেশিনেই শোনা হয়েছে (${engine})`,
       heardOnline: (engine: string): string => `${engine} শুনেছে (আপনার রেকর্ডিং মেশিনের বাইরে গেছে)`,
       nothing: 'রেকর্ডিংয়ে কিছু শোনা যায়নি।',

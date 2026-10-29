@@ -1,9 +1,10 @@
-import { TriangleAlert, WandSparkles } from 'lucide-react';
+import { KeyRound, TriangleAlert, WandSparkles } from 'lucide-react';
 
 import { strings } from '../../strings';
 import { fixWithAgent } from '../../store/intents';
 import { requestEscalate } from '../../store/escalate';
 
+import { useOverlayStore } from '../../store/overlays';
 import { useSessionsStore } from '../../store/sessions';
 import { toast } from '../../store/toast';
 import { BTN, BTN_PRIMARY, BTN_SECONDARY } from '../ui/button';
@@ -62,9 +63,21 @@ export function ErrorCard({ error, canEscalate = false }: ErrorCardProps) {
       </div>
 
       <div className="error-actions flex flex-wrap gap-[6px]">
+        {error.action === 'connect:claude-servers' ? (
+          /* 1.0.6: one approval and Claude works on every server - the fix is a press, not a terminal on the VPS. */
+          <button
+            type="button"
+            className={BTN + ' ' + BTN_PRIMARY}
+            data-action="connect-claude-servers"
+            onClick={() => useOverlayStore.getState().openConnect('claude-servers', 'login')}
+          >
+            <KeyRound size={12} aria-hidden="true" />
+            {strings.turns.error.connectClaudeServers}
+          </button>
+        ) : null}
         <button
           type="button"
-          className={BTN + ' ' + BTN_PRIMARY}
+          className={BTN + ' ' + (error.action === undefined ? BTN_PRIMARY : BTN_SECONDARY)}
           onClick={fix}
         >
           <WandSparkles size={12} aria-hidden="true" />

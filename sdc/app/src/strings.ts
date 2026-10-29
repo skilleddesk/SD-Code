@@ -425,6 +425,8 @@ const english = {
     error: {
       escalate: 'Send this step to my chain…',
       fix: 'Fix this',
+      /** 1.0.6: the one approval that makes Claude Code work on every server. */
+      connectClaudeServers: 'Connect Claude for all servers',
       showCode: 'Show code',
       explainMore: 'Explain more',
       showCodeToast: 'Opened the file',

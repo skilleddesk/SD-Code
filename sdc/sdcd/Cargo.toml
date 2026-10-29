@@ -1,6 +1,6 @@
 [package]
 name = "sdcd"
-version = "1.0.5"
+version = "1.0.6"
 description = "SDC host daemon - session, engine, file, PTY, git and event-log service (spec section 3.1)"
 authors = ["Skilleddesk"]
 edition = "2021"
@@ -27,6 +27,8 @@ sha2 = "0.10"
 hex = "0.4"
 async-trait = "0.1"
 ureq = { version = "2", default-features = false, features = ["tls"] }
+# 1.0.6: `claude setup-token` draws with Ink and needs a real terminal (ConPTY / openpty) - auth::server_token.
+portable-pty = "0.9"
 # The Trust Kernel (0.12): `.sdc/policy.toml` is policy-as-code, and the secret / SAST scanners read a
 # diff with patterns a person can audit rather than with a model's opinion.
 toml = "0.8"

@@ -100,7 +100,7 @@ export function toTurns(
       error:
         turn.error === undefined
           ? undefined
-          : { title: turn.error.title, explanation: turn.error.explanation },
+          : { title: turn.error.title, explanation: turn.error.explanation, ...(turn.error.action === undefined ? {} : { action: turn.error.action }) },
       footer:
         turn.status === 'failed'
           ? /* An `ErrorRaised` turn never reaches `TurnCompleted`, so its totals can never arrive.
