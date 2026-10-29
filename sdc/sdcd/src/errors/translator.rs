@@ -198,7 +198,7 @@ pub fn translate(tool: &str, output: &str) -> Translation {
     {
         return rule(
             &format!("{program} is not installed where this chat runs"),
-            format!("`{first_line}`. The chat's folder is on a machine without `{program}`. Install it there, or pick an engine that is."),
+            format!("`{first_line}`. The chat's folder is on a machine without `{program}`. SDC installs it there before the next turn; if that keeps failing, open the host's doctor and press Install, or pick another engine."),
             false,
             "missing-program-remote",
         );

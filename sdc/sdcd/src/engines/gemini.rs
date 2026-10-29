@@ -91,8 +91,8 @@ pub fn auth_plan(credentials: bool, key: Option<String>, selected: Option<&str>)
 }
 
 /// The environment a **local** turn of `program` needs - today only Gemini has one: `GEMINI_API_KEY`
-/// from the connected Google provider, when OAuth has nothing better. A remote turn is left alone
-/// (the key would travel through a command line into another machine's process list).
+/// from the connected Google provider, when OAuth has nothing better. A remote turn gets its key through
+/// [`remote_env_for`] instead, over stdin - never on a command line, where the host's `ps` would show it.
 pub fn turn_env_for(program: &str) -> Vec<(&'static str, String)> {
     if program != "gemini" {
         return Vec::new();
@@ -116,6 +116,22 @@ pub fn turn_env_for(program: &str) -> Vec<(&'static str, String)> {
             vec![("GEMINI_API_KEY", key)]
         }
     }
+}
+
+/// The environment a **remote** turn of `program` gets (1.0.5): the Google key connected in Providers, as
+/// `GEMINI_API_KEY`, so a Gemini chat on a VPS works without signing Gemini in on that server. It travels the
+/// way `engines::cli` sends every secret to a host - over stdin into a private file the turn reads and deletes,
+/// never on a command line. Only an API key SDC itself holds; no CLI's sign-in is read (the credential guard,
+/// P0-2), and nothing for Claude Code or Codex, where a key would quietly move the turn off the subscription.
+pub fn remote_env_for(program: &str) -> Vec<(String, String)> {
+    if program != "gemini" {
+        return Vec::new();
+    }
+
+    crate::auth::keychain::get(&crate::providers::key_ref("google"))
+        .filter(|key| !key.trim().is_empty())
+        .map(|key| vec![("GEMINI_API_KEY".to_string(), key)])
+        .unwrap_or_default()
 }
 
 /// Google's own refusal of this CLI, turned into the way out (0.11.3).
@@ -202,6 +218,21 @@ mod tests {
     use super::*;
     use crate::engines::claude_code::{CLAUDE_SPEC, PARTIAL_MESSAGES_FLAG};
     use crate::engines::codex::CODEX_SPEC;
+
+    /// 1.0.5: the Google key goes to a Gemini turn on a host; Claude Code and Codex get nothing, key or not.
+    #[test]
+    fn only_a_gemini_turn_on_a_host_gets_the_google_key() {
+        let name = crate::providers::key_ref("google");
+
+        crate::auth::keychain::set(&name, "google-key-for-test").unwrap();
+
+        assert_eq!(remote_env_for("gemini"), vec![("GEMINI_API_KEY".to_string(), "google-key-for-test".to_string())]);
+        assert!(remote_env_for("claude").is_empty() && remote_env_for("codex").is_empty());
+
+        crate::auth::keychain::delete(&name).unwrap();
+
+        assert!(remote_env_for("gemini").is_empty(), "no key connected, nothing sent");
+    }
 
     /// The one assertion this file exists for (spec section 11.2: the flag is mandatory).
     #[test]

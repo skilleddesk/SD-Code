@@ -663,31 +663,106 @@ pub fn install_remote(ssh: crate::ssh::Ssh, host_id: &str, id: &str) -> Result<J
     Ok(spawn_job(&key, tool.label, move |progress| {
         progress.step("Finding the newest Node.js LTS");
 
-        let index: Value = serde_json::from_str(&get_text("https://nodejs.org/dist/index.json")?).map_err(|error| format!("nodejs.org's release list could not be read: {error}"))?;
-        let version = index
-            .as_array()
-            .and_then(|releases| releases.iter().find(|release| release["lts"].as_str().is_some()))
-            .and_then(|release| release["version"].as_str())
-            .ok_or("nodejs.org lists no LTS release")?
-            .to_string();
-        let script = remote_install_script(tool.id, &version).ok_or("no script for this tool")?;
+        let version = node_lts()?;
 
         progress.step(&format!("Installing {} on the server", tool.label));
 
-        let output = ssh.run(&script, Duration::from_secs(15 * 60)).map_err(|error| error.message)?;
-
-        for line in output.stdout.lines().chain(output.stderr.lines()) {
-            progress.line(line);
-        }
-
-        if !output.stdout.contains("SDC-INSTALLED") {
-            let tail: Vec<&str> = output.stdout.lines().chain(output.stderr.lines()).filter(|line| !line.trim().is_empty()).rev().take(3).collect();
-
-            return Err(if tail.is_empty() { "the install on the server did not finish".to_string() } else { tail.into_iter().rev().collect::<Vec<_>>().join(" · ") });
-        }
+        run_remote_install(&ssh, tool, &version, &|line| progress.line(line))?;
 
         Ok(format!("{} installed on the server", tool.label))
     }))
+}
+
+/// The newest Node.js LTS (`v24.21.0`), from nodejs.org's release list.
+fn node_lts() -> Result<String, String> {
+    let index: Value = serde_json::from_str(&get_text("https://nodejs.org/dist/index.json")?).map_err(|error| format!("nodejs.org's release list could not be read: {error}"))?;
+
+    index
+        .as_array()
+        .and_then(|releases| releases.iter().find(|release| release["lts"].as_str().is_some()))
+        .and_then(|release| release["version"].as_str())
+        .map(str::to_string)
+        .ok_or_else(|| "nodejs.org lists no LTS release".to_string())
+}
+
+/// Runs `tool`'s install script on the host, each line of its output handed to `line`.
+fn run_remote_install(ssh: &crate::ssh::Ssh, tool: &Tool, version: &str, line: &dyn Fn(&str)) -> Result<(), String> {
+    let script = remote_install_script(tool.id, version).ok_or("no script for this tool")?;
+    let output = ssh.run(&script, Duration::from_secs(15 * 60)).map_err(|error| error.message)?;
+
+    for text in output.stdout.lines().chain(output.stderr.lines()) {
+        line(text);
+    }
+
+    if !output.stdout.contains("SDC-INSTALLED") {
+        let tail: Vec<&str> = output.stdout.lines().chain(output.stderr.lines()).filter(|line| !line.trim().is_empty()).rev().take(3).collect();
+
+        return Err(if tail.is_empty() { "the install on the server did not finish".to_string() } else { tail.into_iter().rev().collect::<Vec<_>>().join(" · ") });
+    }
+
+    Ok(())
+}
+
+/// The line that says whether `program` is on a host's `PATH` - SDC's own `~/.sdc/tools` first, as a turn sees it.
+pub fn remote_probe_line(program: &str) -> String {
+    format!("{REMOTE_PATH}if command -v {program} >/dev/null 2>&1; then echo SDC-HAS; else echo SDC-MISSING; fi")
+}
+
+/// The hosts and CLIs already seen installed, `"<host>:<cli>"`, so a turn after the first costs no probe.
+fn remote_present() -> &'static Mutex<std::collections::HashSet<String>> {
+    static PRESENT: OnceLock<Mutex<std::collections::HashSet<String>>> = OnceLock::new();
+
+    PRESENT.get_or_init(Default::default)
+}
+
+/// A CLI turn on a host whose CLI is missing installs it there first (1.0.5) - the report "every new VPS says
+/// `claude` is not installed, though SDC already has it": connecting a server is enough, nobody presses Install.
+///
+/// `Ok(Some(label))` when it was installed now, `Ok(None)` when it was already there (or is not something SDC
+/// installs, or the host could not be asked - the turn then reports what really happened), `Err` when the
+/// install itself failed. Blocking: one `ssh` to look, minutes when it installs. Only the program goes over;
+/// the sign-in stays the one made on the host (the credential guard, P0-2).
+pub fn ensure_remote_cli(ssh: &crate::ssh::Ssh, program: &str, notice: &dyn Fn(String)) -> Result<Option<&'static str>, String> {
+    let Some(tool) = tool(program).filter(|tool| remote_installable(tool.id) && tool.id != "node") else {
+        return Ok(None);
+    };
+    let key = format!("{}:{}", ssh.label(), tool.id);
+
+    if remote_present().lock().is_ok_and(|present| present.contains(&key)) {
+        return Ok(None);
+    }
+
+    /* One install per host and CLI at a time: a second turn waits, then finds it there. */
+    static INSTALLING: Mutex<()> = Mutex::new(());
+    let _one = INSTALLING.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+
+    let Ok(output) = ssh.run(&remote_probe_line(tool.program), Duration::from_secs(30)) else {
+        return Ok(None);
+    };
+
+    if output.stdout.contains("SDC-HAS") {
+        if let Ok(mut present) = remote_present().lock() {
+            present.insert(key);
+        }
+
+        return Ok(None);
+    }
+
+    if !output.stdout.contains("SDC-MISSING") {
+        return Ok(None);
+    }
+
+    notice(format!("{} is not on {} yet - SDC is installing it there (one time, a minute or two)", tool.label, ssh.label()));
+
+    let version = node_lts()?;
+
+    run_remote_install(ssh, tool, &version, &|_| {})?;
+
+    if let Ok(mut present) = remote_present().lock() {
+        present.insert(key);
+    }
+
+    Ok(Some(tool.label))
 }
 
 /// Where the browser SDC installs lives: `<tools>/browser/chrome-headless-shell[.exe]`.
@@ -1339,6 +1414,33 @@ mod tests {
 
         println!("{found:?}");
         assert!(ripgrep_asset(&found.2));
+    }
+
+    #[test]
+    fn the_probe_looks_where_a_turn_looks_and_answers_in_one_word() {
+        let line = remote_probe_line("claude");
+
+        assert!(line.starts_with(REMOTE_PATH), "the probe must see ~/.sdc/tools the way the turn does");
+        assert!(line.contains("command -v claude") && line.contains("SDC-HAS") && line.contains("SDC-MISSING"));
+
+        /* Run it for real where a `sh` is: a program that is certainly there, and one that certainly is not. */
+        if let Some(sh) = crate::host::program::resolve("sh") {
+            let has = Command::new(&sh).arg("-c").arg(remote_probe_line("sh")).output().unwrap();
+            let missing = Command::new(&sh).arg("-c").arg(remote_probe_line("sdc-no-such-cli")).output().unwrap();
+
+            assert_eq!(String::from_utf8_lossy(&has.stdout).trim(), "SDC-HAS");
+            assert_eq!(String::from_utf8_lossy(&missing.stdout).trim(), "SDC-MISSING");
+        }
+    }
+
+    #[test]
+    fn only_the_coding_clis_are_installed_ahead_of_a_turn() {
+        let ssh = crate::ssh::Ssh::parse("root@vps.example").unwrap();
+
+        /* Not a CLI SDC installs on a server: nothing is asked of the host at all, so no connection is tried. */
+        for program in ["node", "git", "ollama", "aider"] {
+            assert_eq!(ensure_remote_cli(&ssh, program, &|_| panic!("no notice for {program}")), Ok(None));
+        }
     }
 
     #[test]

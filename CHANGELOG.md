@@ -10,6 +10,29 @@ This file describes what changed, not what is planned. Anything still open is na
 
 ---
 
+## [1.0.5] — 2026-10-29: a new VPS gets its coding CLIs by itself, and CI is green again
+
+Built on 1.0.4 (sudo without keeping the password, voice that does not hang) - everything in it is in this release.
+
+### Changed — a new VPS no longer says "`claude` is not installed where this chat runs"
+
+- A CLI turn (Claude Code, Codex, Gemini) on a host first checks, over SDC's own connection, that the CLI is on the
+  host's `PATH` (`~/.sdc/tools` first). When it is not, SDC installs it there - the same no-`sudo` install as the
+  host doctor's Install button - says so in the chat, and then runs the turn. A host and CLI seen installed are not
+  probed again while the daemon runs (`host::tools::ensure_remote_cli`).
+- A Gemini turn on a host gets the Google key connected in Providers as `GEMINI_API_KEY`, over stdin into a private
+  file the turn reads and deletes (`engines::gemini::remote_env_for`) - so Gemini on a VPS needs no sign-in there.
+- Claude Code and Codex still use the sign-in made on the host, once per server: SDC never reads or forwards a
+  CLI's own sign-in (the credential guard, P0-2, unchanged), and no API key is sent for them, which would move
+  the turn off the subscription.
+
+### Fixed
+
+- CI's Linux clippy (Rust 1.99) failed on `assertions_on_constants` in `providers/models.rs`: the check on
+  `REFRESH_EVERY_SECS` is now a `const { assert!(..) }`, proved when the test compiles.
+
+---
+
 ## [1.0.4] — 2026-10-29: sudo without keeping the password, and voice that does not hang while tasks run
 
 ### Added — "Give SDC sudo permission on this server?"

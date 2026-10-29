@@ -296,8 +296,8 @@ impl CliAdapter {
     /// starts - and `get_program`/`get_args` are how the batch-file wrap (`cmd.exe /c …` on Windows)
     /// survives the move from `std::process::Command` to tokio's.
     ///
-    /// `secrets` is this machine's sign-in for the CLI (0.12.5, `engines::credentials`): written to the
-    /// host over stdin into a private file the turn reads and deletes, so one sign-in serves every host.
+    /// `secrets` are API keys SDC itself holds (1.0.5: Gemini's, `gemini::remote_env_for`) - never a CLI's
+    /// sign-in: written to the host over stdin into a private file the turn reads and deletes.
     fn remote_command(&self, prompt: &Prompt, args: &[String], secrets: &[(String, String)]) -> Result<Command, ErrorObject> {
         let Some(ssh) = prompt.remote.as_ref() else {
             return Err(ErrorObject::internal("a remote turn without a host"));
@@ -395,6 +395,26 @@ impl CliAdapter {
     ///   talking. The prompt is still the only thing written to stdin, and stdin is still closed right
     ///   after it - the CLIs read the prompt, not the stream, from there.
     pub async fn run(&self, prompt: &Prompt, sink: &EventSink) {
+        /* 1.0.5: a host without this CLI gets it before the turn starts - only the program; the sign-in is the host's own. */
+        if let Some(ssh) = prompt.remote.clone() {
+            let program = self.spec.program;
+            let told = sink.clone();
+            let ensured = tokio::task::spawn_blocking(move || {
+                crate::host::tools::ensure_remote_cli(&ssh, program, &|text| told.send(EngineEvent::Notice { kind: "host_install".to_string(), text }))
+            })
+            .await;
+
+            match ensured {
+                Ok(Ok(Some(label))) => sink.send(EngineEvent::Notice { kind: "host_install".to_string(), text: format!("{label} is installed on the server") }),
+                Ok(Err(error)) => {
+                    sink.send(EngineEvent::Failed(format!("SDC could not install `{program}` on the server: {error}")));
+
+                    return;
+                }
+                _ => {}
+            }
+        }
+
         if prompt.resume.is_none() || self.spec.resume == Resume::None {
             return self.attempt(prompt, sink).await;
         }
@@ -491,8 +511,9 @@ impl CliAdapter {
            machine (0.7.13). */
         let mut command = match prompt.remote {
             /* P0-2: nothing of this machine's CLI sign-in travels with a remote turn. SDC never reads, copies or
-               forwards a CLI's token; on the host the CLI uses the sign-in the person made there. */
-            Some(_) => match self.remote_command(prompt, &args, &[]) {
+               forwards a CLI's token; on the host the CLI uses the sign-in the person made there. The one thing
+               that does go is an API key SDC itself holds - Gemini's Google key (1.0.5, `gemini::remote_env_for`). */
+            Some(_) => match self.remote_command(prompt, &args, &crate::engines::gemini::remote_env_for(self.spec.program)) {
                 Ok(command) => command,
                 Err(error) => {
                     sink.send(EngineEvent::Failed(error.message));

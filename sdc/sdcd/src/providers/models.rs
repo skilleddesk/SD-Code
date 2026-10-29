@@ -692,7 +692,7 @@ mod tests {
         assert!(refresh_due(0, 1_000, STALE_AFTER_SECS), "never fetched");
         assert!(!refresh_due(1_000, 1_000 + STALE_AFTER_SECS - 1, STALE_AFTER_SECS), "fetched a moment ago");
         assert!(refresh_due(1_000, 1_000 + STALE_AFTER_SECS, STALE_AFTER_SECS), "five minutes old");
-        assert!(REFRESH_EVERY_SECS <= 60 * 60, "the background clock asks at least hourly");
+        const { assert!(REFRESH_EVERY_SECS <= 60 * 60, "the background clock asks at least hourly") };
     }
 
     /// 1.0: on a US endpoint the same model's `-us` copy is used; a model with none gets the nearest one of its
