@@ -46,7 +46,18 @@ fn key_name() -> String {
 
 /// The token, when one was made.
 pub fn stored() -> Option<String> {
-    crate::auth::keychain::get(&key_name()).filter(|token| !token.trim().is_empty())
+    crate::auth::keychain::get(&key_name()).map(|token| healed(&token)).filter(|token| !token.trim().is_empty())
+}
+
+/// The token with what 1.0.6 glued to it taken off: the start of the next line, `Store this token securely`.
+/// A token saved by 1.0.6 works again without a second approval.
+pub fn healed(token: &str) -> String {
+    let token = token.trim();
+
+    match token.strip_suffix("Store") {
+        Some(cut) if cut.ends_with("AA") => cut.to_string(),
+        _ => token.to_string(),
+    }
 }
 
 /// Forgets the token - a server that says it was refused gets a fresh approval, not the same refusal again.
@@ -79,6 +90,14 @@ pub fn plain(raw: &str) -> String {
             Some('[') => {
                 for next in chars.by_ref() {
                     if ('@'..='~').contains(&next) {
+                        /* 1.0.7: a cursor move is where one piece of the screen ends and the next begins. Dropped
+                           without a trace, it glued the token to the word after it: Ink moves the cursor between the
+                           token and "Store this token securely", and the token was saved as `…AAStore`. Only a
+                           colour change (`m`) sits inside a run of text. */
+                        if next != 'm' {
+                            out.push('\n');
+                        }
+
                         break;
                     }
                 }
@@ -112,6 +131,7 @@ fn token_char(c: char) -> bool {
 pub fn extract_token(text: &str) -> Option<String> {
     let start = text.find(TOKEN_PREFIX)?;
     let token: String = text[start..].chars().take_while(|c| token_char(*c)).collect();
+    let token = healed(&token);
 
     (token.len() >= 40).then_some(token)
 }
@@ -336,6 +356,17 @@ mod tests {
         assert_eq!(extract_token(&text).as_deref(), Some("sk-ant-oat01-test-test-test-test-test-test-test-test-test-test-test-test"));
         assert_eq!(extract_token("Paste code here if prompted >"), None);
         assert_eq!(extract_token("sk-ant-oat01-short"), None, "a cut-off token is not a token");
+    }
+
+    /// 1.0.7, the report "after signing in, the same error again": the real screen moves the cursor between the
+    /// token and the next sentence, and the saved token ended in `Store`.
+    #[test]
+    fn a_cursor_move_after_the_token_does_not_glue_the_next_word_to_it() {
+        let screen = "Your OAuth token (valid for 1 year):\u{1b}[1B\u{1b}[2Gsk-ant-oat01-test-test-test-test-test-test-test-test-test-test-test-testAA\u{1b}[2B\u{1b}[2GStore this token securely.";
+
+        assert_eq!(extract_token(&plain(screen)).as_deref(), Some("sk-ant-oat01-test-test-test-test-test-test-test-test-test-test-test-testAA"));
+        assert_eq!(healed("sk-ant-oat01-test-test-test-test-test-test-testAAStore"), "sk-ant-oat01-test-test-test-test-test-test-testAA", "a 1.0.6 token works again");
+        assert_eq!(healed("sk-ant-oat01-test-test-testAA"), "sk-ant-oat01-test-test-testAA");
     }
 
     #[test]

@@ -10,6 +10,17 @@ This file describes what changed, not what is planned. Anything still open is na
 
 ---
 
+## [1.0.7] — 2026-10-30: the Claude server token is saved whole
+
+### Fixed — "after signing in, the same error again"
+
+- `claude setup-token` moves the cursor between the token and the next line, `Store this token securely`. SDC
+  dropped that cursor move without a trace, so the saved token ended in `…AAStore` and every server refused it. A
+  cursor move now separates what is on screen (`server_token::plain`), and a token saved by 1.0.6 is mended when it is
+  read (`server_token::healed`) - no second approval.
+- The error card for a signed-out CLI on a server keeps the CLI's own line above the advice, so a refused token no
+  longer looks the same as no token at all.
+
 ## [1.0.6] — 2026-10-30: Claude on every server from one approval, Codex from the app, and a voice button that never hangs
 
 ### Added — "Claude is connected in SDC, but every VPS says it is signed out"

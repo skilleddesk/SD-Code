@@ -737,7 +737,11 @@ async fn run_turn(
                 if let Some(action) = error_action(translated.rule, &plan.engine_id, plan.remote.is_some()) {
                     if let Some(object) = raised.as_object_mut() {
                         object.insert("action".to_string(), json!(action));
-                        object.insert("explanation".to_string(), json!(if action == CODEX_HOST_ACTION { CODEX_SIGNED_OUT } else { crate::auth::server_token::SIGNED_OUT }));
+                        /* 1.0.7: the CLI's own line stays on the card - without it a refused token looked exactly like no token. */
+                        let said = translated.explanation.split("`. ").next().unwrap_or_default().trim_start_matches('`');
+                        let advice = if action == CODEX_HOST_ACTION { CODEX_SIGNED_OUT } else { crate::auth::server_token::SIGNED_OUT };
+
+                        object.insert("explanation".to_string(), json!(if said.is_empty() { advice.to_string() } else { format!("`{said}`. {advice}") }));
                     }
                 }
 
