@@ -75,6 +75,17 @@ export function ErrorCard({ error, canEscalate = false }: ErrorCardProps) {
             {strings.turns.error.connectClaudeServers}
           </button>
         ) : null}
+        {error.action === 'connect:codex-host' && activeTab !== null ? (
+          <button
+            type="button"
+            className={BTN + ' ' + BTN_PRIMARY}
+            data-action="connect-codex-host"
+            onClick={() => useOverlayStore.getState().openConnect(`codex-host:${activeTab}`, 'login')}
+          >
+            <KeyRound size={12} aria-hidden="true" />
+            {strings.turns.error.signInCodexHost}
+          </button>
+        ) : null}
         <button
           type="button"
           className={BTN + ' ' + (error.action === undefined ? BTN_PRIMARY : BTN_SECONDARY)}

@@ -352,7 +352,8 @@ mod tests {
 
         assert_eq!(error_action("engine-signed-out", "claude_code", true), Some(ACTION));
         assert_eq!(error_action("engine-signed-out", "claude_code", false), None, "on this PC the Providers card signs in");
-        assert_eq!(error_action("engine-signed-out", "codex", true), None);
+        assert_eq!(error_action("codex-signed-out", "codex", true), Some(crate::sdcp::methods::CODEX_HOST_ACTION));
+        assert_eq!(error_action("codex-signed-out", "codex", false), None);
         assert_eq!(error_action("missing-program-remote", "claude_code", true), None);
     }
 

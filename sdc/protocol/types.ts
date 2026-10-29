@@ -1151,9 +1151,10 @@ export interface ErrorRaisedEvent {
   fixable?: boolean;
   /**
    * 1.0.6: a one-press fix the card offers beside `Fix this`. `connect:claude-servers` opens the one approval that
-   * makes Claude Code work on every server (`claude setup-token`, kept in SDC's key store).
+   * makes Claude Code work on every server (`claude setup-token`, kept in SDC's key store); `connect:codex-host`
+   * signs Codex in on the chat's server through its own device sign-in.
    */
-  action?: 'connect:claude-servers';
+  action?: 'connect:claude-servers' | 'connect:codex-host';
 }
 
 export interface PermissionRequestedEvent {

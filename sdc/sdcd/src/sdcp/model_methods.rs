@@ -48,6 +48,15 @@ impl Daemon {
                         "note": crate::auth::server_token::NOTE,
                         "installed": crate::host::doctor::has("claude"),
                     })))
+                    .chain(std::iter::once(json!({
+                        /* 1.0.6: Codex signed in on a chat's server - `codex-host:<sessionId>` in `cli.login`. */
+                        "providerId": crate::auth::cli_login::CODEX_HOST,
+                        "label": crate::auth::cli_login::CODEX_HOST_RECIPE.label,
+                        "program": "codex",
+                        "note": crate::auth::cli_login::CODEX_HOST_RECIPE.note,
+                        /* Installed on the server by SDC before the turn that asked for this. */
+                        "installed": true,
+                    })))
                     .collect::<Vec<_>>()
             })),
 
@@ -723,6 +732,19 @@ impl Daemon {
                     .map(str::to_string)
                     .collect()
             });
+        /* 1.0.6: Codex signed in on the server a chat runs on (`codex-host:<sessionId>`). */
+        if let Some(session_id) = crate::auth::cli_login::codex_host_session(&provider_id) {
+            let host_id = self
+                .store()
+                .session(session_id)
+                .map_err(ErrorObject::internal)?
+                .and_then(|session| session["hostId"].as_str().map(str::to_string))
+                .ok_or_else(|| ErrorObject::not_found("this chat does not run on a server"))?;
+            let ssh = self.ssh_for(&host_id)?.ok_or_else(|| ErrorObject::not_found("this chat's server has no SSH address"))?;
+
+            return self.state.logins.start_on_host(&provider_id, ssh);
+        }
+
         let started = self.state.logins.start(
             &provider_id,
             envelope.opt_str("program").as_deref(),
@@ -786,7 +808,10 @@ impl Daemon {
             .logins
             .status_announcing(&envelope.require_str("loginId")?)?;
 
-        if announce {
+        /* A sign-in on one server, or for all servers, is no provider card: nothing to mark or announce. */
+        let card = answer["providerId"].as_str().is_some_and(|id| !id.contains(':') && id != crate::auth::server_token::PROVIDER);
+
+        if announce && card {
             let detail = format!(
                 "signed in through `{}`'s own CLI",
                 answer["providerLabel"].as_str().unwrap_or("the")
@@ -820,7 +845,7 @@ impl Daemon {
         let submitted = self.state.logins.submit_code(&login_id, &envelope.require_str("code")?)?;
         let status = self.state.logins.status(&login_id)?;
 
-        if crate::auth::server_token::owns(&login_id) {
+        if crate::auth::server_token::owns(&login_id) || status["providerId"].as_str().is_some_and(|id| id.contains(':')) {
             return Ok(submitted);
         }
 

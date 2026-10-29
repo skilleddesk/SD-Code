@@ -737,7 +737,7 @@ async fn run_turn(
                 if let Some(action) = error_action(translated.rule, &plan.engine_id, plan.remote.is_some()) {
                     if let Some(object) = raised.as_object_mut() {
                         object.insert("action".to_string(), json!(action));
-                        object.insert("explanation".to_string(), json!(crate::auth::server_token::SIGNED_OUT));
+                        object.insert("explanation".to_string(), json!(if action == CODEX_HOST_ACTION { CODEX_SIGNED_OUT } else { crate::auth::server_token::SIGNED_OUT }));
                     }
                 }
 
@@ -940,8 +940,17 @@ fn take_card_session(permission_id: &str) -> Option<String> {
 /// never shows a turn that was stopped as one that finished.
 /// The button an error card gets beside `Fix this`, when one press fixes the failure (1.0.6).
 pub fn error_action(rule: &str, engine_id: &str, remote: bool) -> Option<&'static str> {
-    (remote && engine_id == "claude_code" && rule == "engine-signed-out").then_some(crate::auth::server_token::ACTION)
+    match (remote, engine_id, rule) {
+        (true, "claude_code", "engine-signed-out") => Some(crate::auth::server_token::ACTION),
+        (true, "codex", "codex-signed-out" | "engine-signed-out") => Some(CODEX_HOST_ACTION),
+        _ => None,
+    }
 }
+
+/// The error card's button that signs Codex in on the chat's server (1.0.6).
+pub const CODEX_HOST_ACTION: &str = "connect:codex-host";
+/// What the card says when Codex on a server is signed out.
+pub const CODEX_SIGNED_OUT: &str = "Codex on this server is not signed in. Press **Sign Codex in on this server**: SDC starts Codex's own device sign-in there and shows the link and a one-time code here - approve it in your browser, nothing is typed on the server. Send the message again afterwards.";
 
 fn halt(out: &dyn Notifier, engine: &Arc<dyn crate::engines::Engine>, plan: &RunPlan, event_kind: &str, kind: &str, sentence: &str) {
     crate::engines::cancel::request(&plan.turn_id);

@@ -10,7 +10,7 @@ This file describes what changed, not what is planned. Anything still open is na
 
 ---
 
-## [1.0.6] — 2026-10-30: Claude on every server from one approval, and a voice button that never hangs
+## [1.0.6] — 2026-10-30: Claude on every server from one approval, Codex from the app, and a voice button that never hangs
 
 ### Added — "Claude is connected in SDC, but every VPS says it is signed out"
 
@@ -24,6 +24,15 @@ This file describes what changed, not what is planned. Anything still open is na
 - The token never reaches the window or a log: the Connect window's copy of the CLI's screen has it redacted.
 - The credential guard (P0-2) is unchanged in what matters: SDC still never names, opens or reads the place a CLI
   keeps its own sign-in. `auth/server_token.rs` is the one file allowed to name the token variable.
+
+### Added — Codex signed in on a server without touching the server
+
+- Codex signed out on a server: the error card offers **Sign Codex in on this server**. SDC runs Codex's own
+  `codex login --device-auth` there, over its own connection, and the Connect window shows the link and the one-time
+  code - approve in the browser, nothing typed on the server (`cli_login::CODEX_HOST_RECIPE`).
+- Why not one approval for every server, as for Claude: Codex's tokens for other machines (`CODEX_ACCESS_TOKEN`) are
+  for ChatGPT Business and Enterprise workspaces only, and copying this PC's sign-in would read the CLI's credential
+  (never, P0-2) and leave both copies refused at their next refresh. So Codex is one browser approval per server.
 
 ### Fixed — the voice button "spins and spins"
 

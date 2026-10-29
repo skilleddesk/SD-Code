@@ -338,9 +338,41 @@ pub const RECIPES: &[LoginRecipe] = &[
     },
 ];
 
+/// The prefix of a Codex sign-in **on a server** (1.0.6): `codex-host:<sessionId>`, the chat whose host it is.
+pub const CODEX_HOST: &str = "codex-host";
+
+/// Codex signed in on the host a chat runs on, through Codex's own device sign-in (1.0.6).
+///
+/// The report: "connect Codex once and every server must work". A ChatGPT Plus or Pro sign-in cannot be made for
+/// another machine - Codex's access tokens are for Business and Enterprise workspaces only - and copying this PC's
+/// sign-in would read the CLI's credential (never, P0-2) and end with both copies refused at their next refresh. What
+/// SDC can do is run `codex login --device-auth` **on the server**, over its own connection, and show the link and the
+/// one-time code here: approve in the browser, nothing is typed on the server.
+pub const CODEX_HOST_RECIPE: LoginRecipe = LoginRecipe {
+    provider_id: CODEX_HOST,
+    label: "Codex on this server",
+    program: "codex",
+    args: &["login", "--device-auth"],
+    pump: &[],
+    answers: &[],
+    opens_browser: false,
+    success: &["successfully logged in", "login successful"],
+    note: "Codex is signing in on the server this chat runs on. Open the link, sign in to ChatGPT and enter the one-time code shown below - nothing to paste here, and nothing to type on the server. (If ChatGPT says device sign-in is off, turn on device code sign-in for Codex in ChatGPT's security settings and press Sign in again.)",
+    prepare: Prepare::Nothing,
+};
+
 /// The recipe for a provider, or `None` when that provider does not sign in through a CLI.
 pub fn recipe(provider_id: &str) -> Option<&'static LoginRecipe> {
+    if provider_id.split(':').next() == Some(CODEX_HOST) && provider_id.contains(':') {
+        return Some(&CODEX_HOST_RECIPE);
+    }
+
     RECIPES.iter().find(|recipe| recipe.provider_id == provider_id)
+}
+
+/// The chat a `codex-host:<sessionId>` sign-in is for.
+pub fn codex_host_session(provider_id: &str) -> Option<&str> {
+    provider_id.strip_prefix(CODEX_HOST)?.strip_prefix(':').filter(|session| !session.is_empty())
 }
 
 /// The login URL in some output.
@@ -470,29 +502,7 @@ impl LoginManager {
             }
         })?;
         let pty_id = opened["ptyId"].as_str().unwrap_or_default().to_string();
-        let id = {
-            let mut next = self.next_id.lock().map_err(|_| ErrorObject::internal("login registry poisoned"))?;
-
-            *next += 1;
-
-            format!("login-{}", *next)
-        };
-
-        self.sessions
-            .lock()
-            .map_err(|_| ErrorObject::internal("login registry poisoned"))?
-            .insert(
-                id.clone(),
-                LoginSession {
-                    provider_id: provider_id.to_string(),
-                    pty_id: pty_id.clone(),
-                    url: None,
-                    state: "starting".to_string(),
-                    code_sent: false,
-                    announced: false,
-                    started: Instant::now(),
-                },
-            );
+        let id = self.register(provider_id, &pty_id)?;
 
         /* Typing the CLI's prompt has to wait for its screen to be drawn, and the response must not
            wait with it: the UI wants the id immediately, and the URL a moment later. */
@@ -504,7 +514,8 @@ impl LoginManager {
                 std::thread::sleep(std::time::Duration::from_millis(1200));
 
                 for line in pump {
-                    let _ = pty.write(&pty_id, &format!("{line}\n"));
+                    let _ = pty.write(&pty_id, &format!("{line}
+"));
                     std::thread::sleep(std::time::Duration::from_millis(400));
                 }
             });
@@ -521,6 +532,53 @@ impl LoginManager {
         }
 
         Ok(json!({ "loginId": id, "ptyId": pty_id, "program": program, "providerId": provider_id }))
+    }
+
+    /// `codex login --device-auth` on the host `ssh` reaches (1.0.6, [`CODEX_HOST_RECIPE`]), tracked like any sign-in.
+    pub fn start_on_host(&self, provider_id: &str, ssh: crate::ssh::Ssh) -> Result<Value, ErrorObject> {
+        let recipe = &CODEX_HOST_RECIPE;
+        let args: Vec<String> = recipe.args.iter().map(|arg| (*arg).to_string()).collect();
+        let pid_file = crate::ssh::ops::pid_file(&format!("login-{}", uuid::Uuid::new_v4().simple()));
+        let line = crate::ssh::ops::process_line(recipe.program, &args, None, &pid_file)?;
+        let (program, mut ssh_args) = ssh.launcher(None)?;
+        let label = format!("codex login on {}", ssh.label());
+
+        ssh_args.push(line);
+
+        let opened = self.pty.open(&program, &ssh_args, None, Some(&label), Some((ssh, pid_file)))?;
+        let pty_id = opened["ptyId"].as_str().unwrap_or_default().to_string();
+        let id = self.register(provider_id, &pty_id)?;
+
+        Ok(json!({ "loginId": id, "ptyId": pty_id, "program": "codex login --device-auth", "providerId": provider_id }))
+    }
+
+    /// A started sign-in, put in the registry under a fresh id.
+    fn register(&self, provider_id: &str, pty_id: &str) -> Result<String, ErrorObject> {
+        let id = {
+            let mut next = self.next_id.lock().map_err(|_| ErrorObject::internal("login registry poisoned"))?;
+
+            *next += 1;
+
+            format!("login-{}", *next)
+        };
+
+        self.sessions
+            .lock()
+            .map_err(|_| ErrorObject::internal("login registry poisoned"))?
+            .insert(
+                id.clone(),
+                LoginSession {
+                    provider_id: provider_id.to_string(),
+                    pty_id: pty_id.to_string(),
+                    url: None,
+                    state: "starting".to_string(),
+                    code_sent: false,
+                    announced: false,
+                    started: Instant::now(),
+                },
+            );
+
+        Ok(id)
     }
 
     /// The state of a login, derived from the CLI's own output every time it is asked.
@@ -962,6 +1020,26 @@ mod tests {
         }
 
         assert!(recipe("openai-api").is_none(), "an API provider signs in with a key");
+    }
+
+    #[test]
+    fn codex_on_a_server_is_the_device_sign_in_for_that_chats_host() {
+        let found = recipe("codex-host:session-42").expect("a recipe");
+
+        assert_eq!(found.args, ["login", "--device-auth"]);
+        assert_eq!(codex_host_session("codex-host:session-42"), Some("session-42"));
+        assert_eq!(codex_host_session("codex-host:"), None);
+        assert_eq!(codex_host_session("openai"), None);
+        assert!(recipe("codex-host").is_none(), "without a chat there is no server to sign in on");
+        assert!(is_authenticated("Successfully logged in", found));
+        assert_eq!(
+            extract_url("Follow these steps to sign in with ChatGPT using device code authorization:
+1. Open this link in your browser
+   https://auth.openai.com/codex/device
+2. Enter this one-time code
+   ABCD-12345").as_deref(),
+            Some("https://auth.openai.com/codex/device")
+        );
     }
 
     #[test]

@@ -199,7 +199,8 @@ export async function loadCliRecipe(providerId: string): Promise<CliRecipeView |
   try {
     const { recipes } = await sdcpCall('cli.recipes', {});
 
-    return recipes.find((recipe) => recipe.providerId === providerId) ?? null;
+    /* 1.0.6: `codex-host:<sessionId>` is the `codex-host` recipe, for that chat's server. */
+    return recipes.find((recipe) => recipe.providerId === providerId) ?? recipes.find((recipe) => providerId.startsWith(`${recipe.providerId}:`)) ?? null;
   } catch {
     /* A recipe that cannot be read is not worth a toast: the dialog still has its Sign in button, and the
        daemon's own sentence arrives if the program really is missing. */

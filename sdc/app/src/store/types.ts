@@ -139,7 +139,7 @@ export interface ErrorView {
   source?: string;
   fixable: boolean;
   /** 1.0.6: the one-press fix the daemon offered (`ErrorRaised.action`). */
-  action?: 'connect:claude-servers';
+  action?: 'connect:claude-servers' | 'connect:codex-host';
 }
 
 export interface TurnView {

@@ -149,7 +149,7 @@ export interface ErrorCardData {
   title: string;
   explanation: string;
   /** 1.0.6: the one-press fix the daemon offered (`ErrorRaised.action`). */
-  action?: 'connect:claude-servers';
+  action?: 'connect:claude-servers' | 'connect:codex-host';
 }
 
 /** `Done · 1m 12s · 12,400 tokens · $0.16` - two pieces so the verb can be weighted. */

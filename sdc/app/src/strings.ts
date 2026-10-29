@@ -427,6 +427,8 @@ const english = {
       fix: 'Fix this',
       /** 1.0.6: the one approval that makes Claude Code work on every server. */
       connectClaudeServers: 'Connect Claude for all servers',
+      /** 1.0.6: Codex's own device sign-in, run on the chat's server. */
+      signInCodexHost: 'Sign Codex in on this server',
       showCode: 'Show code',
       explainMore: 'Explain more',
       showCodeToast: 'Opened the file',
