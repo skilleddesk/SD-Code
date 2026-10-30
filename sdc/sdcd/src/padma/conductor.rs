@@ -290,10 +290,12 @@ mod tests {
         let recorder = Recorder::new();
         let units = ["a", "b", "c"];
         let mut seen = Vec::new();
-        let short = Budget { unit_calls: UNIT_CALLS, turn: Duration::from_millis(300) };
+        /* Wide enough that a slow CI runner's setup does not spend it before the first unit (1.0.9: the Windows
+           release runner paused with 0 done at 300 ms), and one unit always spends it. */
+        let short = Budget { unit_calls: UNIT_CALLS, turn: Duration::from_millis(2_000) };
         let first = conduct(&mut ledger, "t1", "file", &units, &recorder.sink(), false, short, |unit, _| {
             seen.push(unit.to_string());
-            std::thread::sleep(Duration::from_millis(350));
+            std::thread::sleep(Duration::from_millis(2_100));
 
             UnitRun { calls: 1, result: Ok(format!("reviewed {unit}")) }
         });
