@@ -6,7 +6,7 @@ import {
   Paperclip,
   X,
 } from 'lucide-react';
-import { useEffect, useRef, useState, type ClipboardEvent, type KeyboardEvent } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type ClipboardEvent, type KeyboardEvent } from 'react';
 
 import { strings } from '../../strings';
 import { pickFiles, type PickKind, type PickedFile } from '../../lib/picker';
@@ -18,9 +18,11 @@ import { QuestionCard } from './QuestionCard';
 import { runSlash, type SlashOutcome } from './slash';
 import { useAppStore } from '../../store/store';
 import { useModelStore } from '../../store/model';
+import { draftOf, EMPTY_DRAFT, useDraftsStore } from '../../store/drafts';
 import { toast } from '../../store/toast';
 import { IconButton } from '../ui/IconButton';
 import { FolderChip } from './FolderChip';
+import { GitHubButton } from './GitHubButton';
 import { ModelSelector } from './ModelSelector';
 import { QueuedChips } from './QueuedChips';
 import { IntentCard } from '../../kernel/IntentCard';
@@ -112,6 +114,16 @@ export interface PromptAreaProps {
 
 export function PromptArea({ sessionId }: PromptAreaProps = {}) {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  /* 1.0.8: everything this box holds is its own chat's (`store/drafts.ts`) - never another chat's. */
+  const draftKey = sessionId ?? '';
+  const text = useDraftsStore((state) => state.drafts[draftKey]?.text ?? '');
+  const images = useDraftsStore((state) => state.drafts[draftKey]?.images ?? EMPTY_DRAFT.images);
+  const attached = useDraftsStore((state) => state.drafts[draftKey]?.attached ?? EMPTY_DRAFT.attached);
+  const setText = (value: string): void => useDraftsStore.getState().setText(draftKey, value);
+  const setImages = (change: (current: readonly TurnImage[]) => readonly TurnImage[]): void =>
+    useDraftsStore.getState().setImages(draftKey, change(draftOf(draftKey).images));
+  const setAttached = (change: (current: readonly PickedFile[]) => readonly PickedFile[]): void =>
+    useDraftsStore.getState().setAttached(draftKey, change(draftOf(draftKey).attached));
   /* What the box held when dictation started (1.0, live voice): the spoken words are written after it. */
   const voiceBase = useRef('');
   /* This chat's turn that is still running, if any: while there is one, Send becomes Stop. */
@@ -127,22 +139,14 @@ export function PromptArea({ sessionId }: PromptAreaProps = {}) {
     return null;
   });
 
-  /*
-   * What this prompt will carry besides the text - and it starts at nothing, because that is the
-   * truth for a window that has attached nothing. `attached` is filled by the paperclip and the image
-   * button (`lib/picker.ts`, a real dialog), and `tokens` is the context the daemon reports for the
-   * last turn of this chat, which a fresh window has not run. Both chips are therefore absent on first
-   * run: no decoration, no invented `12.4k`.
-   */
-  const [attached, setAttached] = useState<readonly PickedFile[]>([]);
-  /* Images for the next turn (0.13): pasted, dropped or picked - sent with it, then cleared. */
-  const [images, setImages] = useState<readonly TurnImage[]>([]);
   const [menu, setMenu] = useState<MenuState | null>(null);
   const menuRequest = useRef(0);
   /* The chat whose Intent Contract card this box shows (0.12): the pane's own, or the open one. */
   const activeTab = usePrefsStore((state) => state.activeTab);
   const cardSession = sessionId ?? activeTab;
   const draft = useModelStore((state) => state.draft);
+  /* A prompt handed over from elsewhere goes to the chat on screen - in split view, the active one only. */
+  const takesHandover = sessionId === undefined || sessionId === activeTab;
 
   /* The chat's turn ended: the next queued prompt for it goes out now. */
   useEffect(() => {
@@ -161,17 +165,20 @@ export function PromptArea({ sessionId }: PromptAreaProps = {}) {
   useEffect(() => {
     const textarea = textareaRef.current;
 
-    if (draft === null || textarea === null) {
+    if (draft === null || textarea === null || !takesHandover) {
       return;
     }
 
-    textarea.value = draft;
+    useDraftsStore.getState().setText(draftKey, draft);
     textarea.focus();
-    textarea.setSelectionRange(draft.length, draft.length);
-    textarea.style.height = 'auto';
-    textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`;
     useModelStore.getState().setDraft(null);
-  }, [draft]);
+    window.requestAnimationFrame(() => textarea.setSelectionRange(draft.length, draft.length));
+  }, [draft, draftKey, takesHandover]);
+
+  /* The box fits what it holds - typed, spoken, handed over, or restored when the chat is opened again. */
+  useLayoutEffect(() => {
+    grow();
+  }, [text]);
   const context = { files: attached.length };
 
   /**
@@ -259,7 +266,7 @@ export function PromptArea({ sessionId }: PromptAreaProps = {}) {
     }
 
     if (menu.kind === 'slash') {
-      textarea.value = `${item.label} `;
+      setText(`${item.label} `);
       setMenu(null);
 
       if (IMMEDIATE.has(item.label.slice(1)) && item.badge === undefined) {
@@ -270,13 +277,12 @@ export function PromptArea({ sessionId }: PromptAreaProps = {}) {
     } else {
       const caret = textarea.selectionStart ?? textarea.value.length;
 
-      textarea.value = `${textarea.value.slice(0, menu.start)}@${item.detail} ${textarea.value.slice(caret)}`;
+      setText(`${textarea.value.slice(0, menu.start)}@${item.detail} ${textarea.value.slice(caret)}`);
       setMenu(null);
     }
 
     textarea.focus();
-    textarea.setSelectionRange(textarea.value.length, textarea.value.length);
-    grow();
+    window.requestAnimationFrame(() => textarea.setSelectionRange(textarea.value.length, textarea.value.length));
   };
 
   /** A pasted screenshot becomes an image of the next turn, not a file path or nothing at all. */
@@ -332,11 +338,10 @@ export function PromptArea({ sessionId }: PromptAreaProps = {}) {
         }
 
         const references = picked.map((file) => `@${file.path}`).join(' ');
-        const present = textarea.value.trimEnd();
+        const present = draftOf(draftKey).text.trimEnd();
 
-        textarea.value = present === '' ? `${references} ` : `${present} ${references} `;
+        setText(present === '' ? `${references} ` : `${present} ${references} `);
         textarea.focus();
-        grow();
         setAttached((current) => [...current, ...picked]);
       })
       .catch((error: unknown) => {
@@ -360,9 +365,9 @@ export function PromptArea({ sessionId }: PromptAreaProps = {}) {
 
   const send = (): void => {
     const textarea = textareaRef.current;
-    const text = textarea?.value.trim() ?? '';
+    const prompt = draftOf(draftKey).text.trim();
 
-    if (!textarea || text === '') {
+    if (!textarea || prompt === '') {
       toast(strings.prompt.empty);
       return;
     }
@@ -376,14 +381,11 @@ export function PromptArea({ sessionId }: PromptAreaProps = {}) {
      * happened (`Sent to …`, or the daemon's own error) because a button that looks like it worked is
      * worse than one that admits it did not.
      */
-    const prompt = text;
-
     /* This chat's turn is still running. First the words go **into** it (0.12.5): an agent turn reads
        them between steps and changes course, as Claude Code does. A turn that cannot take them (a CLI
        turn) leaves them queued as the next turn, as before. */
     if (running !== null && sessionId !== undefined) {
-      textarea.value = '';
-      textarea.style.height = 'auto';
+      setText('');
 
       void steerTurn(running, prompt).then((accepted) => {
         if (accepted) {
@@ -394,7 +396,8 @@ export function PromptArea({ sessionId }: PromptAreaProps = {}) {
 
         if (!useModelStore.getState().enqueue(sessionId, prompt)) {
           toast(strings.prompt.queued.full);
-          useModelStore.getState().setDraft(prompt);
+          /* The words go back into this chat's own box, not whichever box is on screen now. */
+          useDraftsStore.getState().setText(sessionId, prompt);
 
           return;
         }
@@ -405,16 +408,15 @@ export function PromptArea({ sessionId }: PromptAreaProps = {}) {
       return;
     }
 
-    textarea.value = '';
-    textarea.style.height = 'auto';
+    setText('');
     setMenu(null);
     /* The picked paths travelled *inside* `prompt`, so the count is about the next turn and starts
        again at nothing. */
-    setAttached([]);
+    setAttached(() => []);
 
-    const withImages = images;
+    const withImages = draftOf(draftKey).images;
 
-    setImages([]);
+    setImages(() => []);
 
     /* A `/` command (0.13) runs here or becomes the words that are sent. */
     const outgoing: Promise<SlashOutcome> = prompt.startsWith('/') ? runSlash(prompt, sessionId ?? null) : Promise.resolve({ kind: 'send', prompt });
@@ -431,9 +433,9 @@ export function PromptArea({ sessionId }: PromptAreaProps = {}) {
         if (turnId === null) {
           /* Nothing was accepted, so the words go back: a send that quietly ate the prompt would be the
              same lie as a Send button that only toasts. */
-          textarea.value = prompt;
-          setImages(withImages);
-          grow();
+          /* Into this chat's draft, so it is back even if the person moved to another chat meanwhile. */
+          useDraftsStore.getState().setText(draftKey, prompt);
+          setImages(() => withImages);
         }
       });
     });
@@ -491,14 +493,9 @@ export function PromptArea({ sessionId }: PromptAreaProps = {}) {
         {cardSession === null ? null : <QuestionCard sessionId={cardSession} />}
         <ResearchCard
           sessionId={cardSession}
-          onCancel={(text) => {
-            const textarea = textareaRef.current;
-
-            if (textarea !== null) {
-              textarea.value = text;
-              textarea.focus();
-              grow();
-            }
+          onCancel={(words) => {
+            setText(words);
+            textareaRef.current?.focus();
           }}
         />
 
@@ -529,8 +526,9 @@ export function PromptArea({ sessionId }: PromptAreaProps = {}) {
             className="block max-h-[240px] min-h-[52px] w-full resize-none bg-transparent px-[16px] pb-[4px] pt-[14px] text-[14px] leading-[1.6] text-text-primary outline-none placeholder:text-text-muted focus-visible:outline-none"
             placeholder={typing ? strings.prompt.steerPlaceholder : strings.prompt.placeholder}
             aria-label={strings.prompt.placeholder}
+            value={text}
+            onChange={(event) => setText(event.target.value)}
             onInput={() => {
-              grow();
               updateMenu();
               /* 0.21: the provider connection opens while the person types. */
               warmProvider(sessionId);
@@ -573,9 +571,14 @@ export function PromptArea({ sessionId }: PromptAreaProps = {}) {
             tooltip now - and "model on the left, attachment, image and microphone in the middle, the file
             on the right, and only the send icon at the end". A three-column grid, so the tools stay in
             the true centre however long the model's name or the folder's is.
+
+            1.0.8: the row follows **the box's own width**, not the window's (container queries in globals.css,
+            `.prompt-box`) - a sidebar, the right panel or split view narrow the box while the window stays wide.
+            The right column is never narrower than what it holds, so nothing slides under the tools; as the box
+            narrows the chips keep only their icon, then the folder and the model keep only theirs.
           */}
-          <div className="prompt-footer grid min-w-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-[8px] px-[10px] pb-[10px] pt-[4px] max-600:gap-[6px] max-600:px-[8px]">
-            <div className="flex min-w-0 items-center justify-start">
+          <div className="prompt-footer grid min-w-0 grid-cols-[minmax(0,1fr)_auto_minmax(max-content,1fr)] items-center gap-[8px] px-[10px] pb-[10px] pt-[4px]">
+            <div className="composer-model flex min-w-0 items-center justify-start">
               <ModelSelector sessionId={cardSession} />
             </div>
 
@@ -589,38 +592,33 @@ export function PromptArea({ sessionId }: PromptAreaProps = {}) {
               <VoiceButton
                 {...(sessionId === undefined ? {} : { sessionId })}
                 /* 1.0: the words are written into the box while the person speaks - after what was typed before. */
+                /* 1.0.8: the spoken words go into **this chat's** draft - a dictation that ends after the person
+                   moved to another chat lands here, never in the box on screen. */
                 onStart={() => {
-                  voiceBase.current = textareaRef.current?.value.trimEnd() ?? '';
+                  voiceBase.current = draftOf(draftKey).text.trimEnd();
                 }}
                 onLive={(spoken) => {
+                  useDraftsStore.getState().setText(draftKey, [voiceBase.current, spoken].filter((part) => part !== '').join(' '));
+
                   const textarea = textareaRef.current;
 
-                  if (textarea === null) {
-                    return;
+                  if (textarea !== null) {
+                    window.requestAnimationFrame(() => {
+                      textarea.scrollTop = textarea.scrollHeight;
+                    });
                   }
-
-                  textarea.value = [voiceBase.current, spoken].filter((part) => part !== '').join(' ');
-                  textarea.scrollTop = textarea.scrollHeight;
-                  grow();
                 }}
                 onText={(spoken) => {
-                  const textarea = textareaRef.current;
-
-                  if (textarea === null) {
-                    return;
-                  }
-
-                  textarea.value = [voiceBase.current, spoken].filter((part) => part !== '').join(' ');
-                  textarea.focus();
-                  grow();
+                  useDraftsStore.getState().setText(draftKey, [voiceBase.current, spoken].filter((part) => part !== '').join(' '));
+                  textareaRef.current?.focus();
                 }}
               />
             </div>
 
-            <div className="flex min-w-0 items-center justify-end gap-[6px]">
+            <div className="composer-right flex min-w-0 items-center justify-end gap-[6px]">
               {/* Real counts only: an attachment the box does not have is not shown (0.7.x). */}
               {context.files > 0 ? (
-                <span className={CHIP + ' max-900:hidden'}>
+                <span className={CHIP + ' composer-files'}>
                   <Hash size={11} aria-hidden="true" />
                   <span>{strings.prompt.filesChip(context.files)}</span>
                 </span>
@@ -630,12 +628,8 @@ export function PromptArea({ sessionId }: PromptAreaProps = {}) {
                 sessionId={sessionId}
                 running={running !== null}
                 onCompact={() => {
-                  const textarea = textareaRef.current;
-
-                  if (textarea !== null) {
-                    textarea.value = '/compact';
-                    textarea.focus();
-                  }
+                  setText('/compact');
+                  textareaRef.current?.focus();
                 }}
               />
               <NoticeChip sessionId={sessionId} />
@@ -643,9 +637,12 @@ export function PromptArea({ sessionId }: PromptAreaProps = {}) {
 
               {/* Which folder this chat works in (0.7.6) - and the way to change it. The pane's own chat, so
                   split view's second box never shows the first box's folder (0.10.0). */}
-              <div className="flex min-w-0 items-center max-600:hidden">
+              <div className="composer-folder flex min-w-0 items-center">
                 <FolderChip sessionId={sessionId} />
               </div>
+
+              {/* 1.0.8: this project's own GitHub repository - one click pushes it (GitHubButton.tsx). */}
+              <GitHubButton sessionId={sessionId} />
 
               {typing ? (
                 <>

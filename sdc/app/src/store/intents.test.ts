@@ -136,6 +136,13 @@ describe('emptySessionOn', () => {
   it('answers nothing for a host that is not in the tree', () => {
     expect(emptySessionOn(host(['s1']), turns(), 'vps-1', null)).toBeNull();
   });
+
+  it('will not land on a chat holding an unsent message (1.0.8)', () => {
+    const drafted = (id: string): boolean => id === 's2';
+
+    expect(emptySessionOn(host(['s1', 's2']), turns(), 'local', 's2', undefined, drafted)).toBe('s1');
+    expect(emptySessionOn(host(['s2']), turns(), 'local', 's2', undefined, drafted)).toBeNull();
+  });
 });
 
 /**

@@ -364,6 +364,9 @@
           "github.connect",
           "github.disconnect",
           "github.push",
+          "github.repo",
+          "github.link",
+          "github.repos",
           "tool.list",
           "tool.install",
           "tool.status",
@@ -2662,6 +2665,45 @@
             "branch": "string",
             "created": "boolean",
             "committed": "boolean"
+          }
+        },
+        "github.repo": {
+          "params": {
+            "sessionId": "string?",
+            "root": "string?",
+            "hostId": "string?"
+          },
+          "result": {
+            "isRepo": "boolean",
+            "remote": "string?",
+            "url": "string?",
+            "fullName": "string?",
+            "onGitHub": "boolean",
+            "branch": "string?",
+            "changes": "number"
+          }
+        },
+        "github.link": {
+          "params": {
+            "sessionId": "string?",
+            "root": "string?",
+            "hostId": "string?",
+            "repo": "string",
+            "private": "boolean?"
+          },
+          "result": {
+            "isRepo": "boolean",
+            "remote": "string?",
+            "url": "string?",
+            "fullName": "string?",
+            "onGitHub": "boolean",
+            "created": "boolean"
+          }
+        },
+        "github.repos": {
+          "params": {},
+          "result": {
+            "repos": "array"
           }
         },
         "tool.list": {

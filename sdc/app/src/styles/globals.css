@@ -567,6 +567,81 @@
     inset 0 1px 0 var(--edge-light);
 }
 
+/*
+ * The composer's action row follows the box's own width (1.0.8), not the window's: the sidebar, the right panel and
+ * split view all narrow the box while the window stays wide, and the row used to keep its full-size controls until
+ * they slid over each other. Step by step as the box narrows: the chips keep only their icon, the folder keeps only
+ * its icon, the model keeps only its icon, and at the very narrowest the folder leaves the row (it is still in the
+ * chat's header and the palette). Nothing ever overlaps - the right column is never narrower than its content.
+ */
+.prompt-box {
+  container-type: inline-size;
+  container-name: composer;
+}
+
+@container composer (max-width: 680px) {
+  .composer-right .chip > span:not(:only-child) {
+    display: none;
+  }
+
+  .composer-right .chip {
+    padding-inline: 7px;
+  }
+
+  .composer-files {
+    display: none !important;
+  }
+}
+
+@container composer (max-width: 580px) {
+  .composer-folder .folder-chip {
+    width: 34px;
+    padding: 0;
+    justify-content: center;
+  }
+
+  .composer-folder .folder-label {
+    display: none;
+  }
+
+  .composer-model .model-trigger {
+    max-width: 170px;
+  }
+}
+
+@container composer (max-width: 470px) {
+  .prompt-footer {
+    gap: 6px;
+    padding-inline: 8px;
+  }
+
+  .composer-model .model-trigger {
+    padding-right: 6px;
+    gap: 4px;
+  }
+
+  .composer-model .mmodel {
+    display: none;
+  }
+
+  .composer-right {
+    gap: 4px;
+  }
+
+  .composer-tools .icon-btn,
+  .composer-tools [data-voice] {
+    width: 28px;
+    height: 28px;
+  }
+}
+
+@container composer (max-width: 380px) {
+  .composer-folder,
+  .github-btn-menu {
+    display: none;
+  }
+}
+
 /* ---- The work stream (0.18): the timeline of what the agent does, step by step. ---- */
 
 /* The rail: one hairline the step dots sit on, fading out at its end. */

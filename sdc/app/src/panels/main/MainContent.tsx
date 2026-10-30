@@ -42,11 +42,11 @@ export function MainContent() {
         <EmptyState />
       ) : split && secondary !== null ? (
         <>
-          <Pane session={primary.session} host={primary.host} showHeader />
-          <Pane session={secondary.session} host={secondary.host} showHeader />
+          <Pane key={primary.session.id} session={primary.session} host={primary.host} showHeader />
+          <Pane key={secondary.session.id} session={secondary.session} host={secondary.host} showHeader />
         </>
       ) : (
-        <Pane session={primary.session} host={primary.host} showHeader={false} />
+        <Pane key={primary.session.id} session={primary.session} host={primary.host} showHeader={false} />
       )}
     </div>
   );

@@ -1,32 +1,30 @@
-import { Copy, ExternalLink, GitBranch, LoaderCircle, LogOut, Upload } from 'lucide-react';
+import { Copy, ExternalLink, GitBranch, LoaderCircle, LogOut, Server } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 import { copyText, openOutside } from '../lib/external';
-import { pickFolder } from '../lib/picker';
-import { storedSettings, storeSetting } from '../lib/settings';
+import { nameOf } from '../lib/picker';
 import { strings } from '../strings';
-import { pushToGitHub, useGitHubStore } from '../store/github';
+import { placeOf, useGitHubStore } from '../store/github';
 import { daemonSetting } from '../store/kernelIntents';
 import { useSessionsStore } from '../store/sessions';
 import { toast } from '../store/toast';
+import { RepoPicker } from './RepoPicker';
 import { Badge } from '../panels/ui/Badge';
 import { BTN, BTN_PRIMARY, BTN_SECONDARY, BTN_SM } from '../panels/ui/button';
 
 const inputClass = 'rounded-md border border-border-default bg-bg-input px-[8px] py-[5px] text-[12px] text-text-primary';
 
 /**
- * Settings → GitHub (1.0.0): connect by approving on GitHub (no token to make or paste), disconnect, and push the
- * open chat's folder - on this computer or on its VPS - or any folder on this computer.
+ * Settings → GitHub (1.0.0): connect by approving on GitHub (no token to make or paste), and disconnect.
+ *
+ * 1.0.8: pushing left this tab - it happens in the chat, from the GitHub button beside Send (or by typing "push"). What
+ * is here instead is every project with the repository it pushes to, each changeable: a project on this computer and
+ * one on a VPS, or two projects on one machine, each have their own.
  */
 export function GitHubTab() {
   const k = strings.kernel.github;
   const { status, code, error, refresh, connect, disconnect } = useGitHubStore();
-  const { activeTab } = useSessionsStore();
   const [clientId, setClientId] = useState('');
-  const [privateRepo, setPrivateRepo] = useState(() => storedSettings()['github-private'] !== false);
-  const [commitMessage, setCommitMessage] = useState('');
-  const [pushing, setPushing] = useState(false);
-  const [result, setResult] = useState<{ url: string } | { error: string } | null>(null);
 
   useEffect(() => {
     void refresh();
@@ -34,17 +32,6 @@ export function GitHubTab() {
 
   const waiting = status?.pending?.state === 'waiting';
   const canConnect = status !== null && (status.deviceFlow || status.credentialManager);
-
-  const push = (target: { sessionId?: string; root?: string }): void => {
-    setPushing(true);
-    setResult(null);
-    void pushToGitHub(target, { private: privateRepo, message: commitMessage.trim() === '' ? undefined : commitMessage.trim() })
-      .then((answer) => {
-        setResult(answer);
-        toast('url' in answer ? k.pushed(answer.url) : k.pushFailed(answer.error));
-      })
-      .finally(() => setPushing(false));
-  };
 
   return (
     <div data-github-tab="">
@@ -119,65 +106,79 @@ export function GitHubTab() {
         )}
       </section>
 
-      <section className="mt-[16px] rounded-lg border border-border-subtle p-[14px]" aria-disabled={!status?.connected}>
-        <h3 className="m-0 text-[13.5px] font-semibold text-text-primary">{k.pushTitle}</h3>
-        <p className="mb-[10px] mt-[4px] text-[11.5px] text-text-muted">{k.pushHelp}</p>
-        <div className="flex flex-col gap-[8px]">
-          <label className="flex items-center gap-[8px] text-[12px] text-text-primary">
-            <input
-              type="checkbox"
-              className="accent-[var(--accent)]"
-              checked={privateRepo}
-              onChange={(event) => {
-                setPrivateRepo(event.target.checked);
-                storeSetting('github-private', event.target.checked);
-              }}
-            />
-            {k.private}
-          </label>
-          <label className="flex flex-col gap-[4px] text-[12px] text-text-primary">
-            {k.message}
-            <input className={inputClass} value={commitMessage} placeholder={k.messagePlaceholder} onChange={(event) => setCommitMessage(event.target.value)} />
-          </label>
-          <div className="flex flex-wrap gap-[8px]">
-            <button
-              type="button"
-              className={BTN + ' ' + BTN_PRIMARY}
-              disabled={!status?.connected || pushing || activeTab === null}
-              onClick={() => activeTab !== null && push({ sessionId: activeTab })}
-              data-github-push=""
-            >
-              {pushing ? <LoaderCircle size={13} className="animate-spin motion-reduce:animate-none" aria-hidden="true" /> : <Upload size={13} aria-hidden="true" />}
-              {pushing ? k.pushing : k.push}
-            </button>
-            <button
-              type="button"
-              className={BTN + ' ' + BTN_SECONDARY}
-              disabled={!status?.connected || pushing}
-              onClick={() =>
-                void pickFolder().then((root) => {
-                  if (root !== null) {
-                    push({ root });
-                  }
-                })
-              }
-            >
-              {k.pickFolder}
-            </button>
-          </div>
-          {activeTab === null ? <p className="m-0 text-[11.5px] text-text-muted">{k.noChatFolder}</p> : null}
-          {result === null ? null : 'url' in result ? (
-            <p className="m-0 flex items-center gap-[8px] text-[12px] text-state-success">
-              {k.pushed(result.url)}
-              <button type="button" className="text-accent hover:underline" onClick={() => void openOutside(result.url)}>
-                {k.open}
-              </button>
-            </p>
-          ) : (
-            <p className="m-0 text-[12px] text-state-error">{k.pushFailed(result.error)}</p>
-          )}
-        </div>
-      </section>
+      {status?.connected ? <ProjectRepos /> : null}
     </div>
+  );
+}
+
+/** Every project the chats work in - here and on each server - with its own repository. */
+function ProjectRepos() {
+  const k = strings.kernel.github;
+  const { hosts } = useSessionsStore();
+  const repos = useGitHubStore((state) => state.repos);
+  const [editing, setEditing] = useState<string | null>(null);
+  const projects = new Map<string, { sessionId: string; hostName: string; root: string }>();
+
+  for (const host of hosts) {
+    for (const session of host.sessions) {
+      const place = placeOf(host.id, session.projectRoot);
+
+      if (place !== null && session.projectRoot && !projects.has(place)) {
+        projects.set(place, { sessionId: session.id, hostName: host.name, root: session.projectRoot });
+      }
+    }
+  }
+
+  useEffect(() => {
+    for (const [place, project] of projects) {
+      if (useGitHubStore.getState().repos[place] === undefined) {
+        void useGitHubStore.getState().loadRepo(project.sessionId, place);
+      }
+    }
+    /* Read once per project that appears; the map is rebuilt every render, its keys are what matter. */
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [[...projects.keys()].join('|')]);
+
+  return (
+    <section className="mt-[16px] rounded-lg border border-border-subtle p-[14px]" data-github-projects="">
+      <h3 className="m-0 text-[13.5px] font-semibold text-text-primary">{k.projectsTitle}</h3>
+      <p className="mb-[10px] mt-[4px] text-[11.5px] text-text-muted">{k.projectsHelp}</p>
+      {projects.size === 0 ? <p className="m-0 text-[12px] text-text-muted">{k.noProjects}</p> : null}
+      <ul className="m-0 flex list-none flex-col gap-[6px] p-0">
+        {[...projects].map(([place, project]) => {
+          const info = repos[place];
+          const linked = info !== undefined && !('error' in info) && info.onGitHub ? info : null;
+
+          return (
+            <li key={place} className="rounded-md border border-border-subtle bg-bg-raised px-[10px] py-[8px]">
+              <div className="flex items-center gap-[8px]">
+                <Server size={12} aria-hidden="true" className="shrink-0 text-text-muted" />
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-[12.5px] text-text-primary" title={project.root}>
+                    {nameOf(project.root)} <span className="font-mono text-[10.5px] text-text-muted">· {project.hostName}</span>
+                  </div>
+                  <div className="truncate font-mono text-[11px] text-text-secondary">
+                    {info === undefined ? k.loading : 'error' in info ? info.error : info.gitMissing ? k.gitMissing : linked !== null ? linked.fullName : k.noRepo}
+                  </div>
+                </div>
+                {linked?.url ? (
+                  <button type="button" className={BTN_SM + ' ' + BTN_SECONDARY} onClick={() => void openOutside(linked.url ?? '')} title={k.open} aria-label={k.open}>
+                    <ExternalLink size={11} aria-hidden="true" />
+                  </button>
+                ) : null}
+                <button type="button" className={BTN_SM + ' ' + BTN_SECONDARY} aria-expanded={editing === place} onClick={() => setEditing(editing === place ? null : place)}>
+                  {k.change}
+                </button>
+              </div>
+              {editing === place ? (
+                <div className="mt-[8px]">
+                  <RepoPicker sessionId={project.sessionId} place={place} folderName={nameOf(project.root)} current={linked?.fullName ?? null} onDone={() => setEditing(null)} />
+                </div>
+              ) : null}
+            </li>
+          );
+        })}
+      </ul>
+    </section>
   );
 }

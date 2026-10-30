@@ -10,6 +10,44 @@ This file describes what changed, not what is planned. Anything still open is na
 
 ---
 
+## [1.0.8] — 2026-10-30: every chat its own message box, every project its own GitHub repository
+
+### Fixed — "what I type in one chat shows in every chat"
+
+- The message box was one textarea that React reused for whichever chat was open, and its images lived in that one
+  component - so moving to another chat, another project or another server only changed the label on the same box.
+  Each chat's pane is now its own (keyed by the chat), and what its box holds - the words, pasted or picked images,
+  picked files - is kept per chat (`store/drafts.ts`). Leave a chat half-written, come back, and it is as it was;
+  nothing ever shows in another chat. The words survive a restart; images stay for the run.
+- Voice writes into the chat it was spoken in: a dictation that finishes after the person moved on lands there, not in
+  the box on screen. A send that fails, a queued prompt that does not fit and a cancelled intent card all put the
+  words back into their own chat.
+- **New chat** no longer reopens the chat just left when it holds an unsent message (it counted as "empty" and was
+  reused - which looked exactly like the text following you).
+
+### Added — "each project its own GitHub repository, pushed from the chat box"
+
+- A **GitHub button beside Send**. Not connected: one click opens GitHub's approval (the device code is already on the
+  clipboard) and SDC connects by itself once it is approved. Connected: one click pushes this chat's project; the
+  small arrow beside it changes the repository or opens it on GitHub; a dot says files changed since the last commit.
+- **Each project its own repository**, on this computer and on every VPS: the binding is the project folder's own
+  `origin`, so two projects on one machine, or the same folder name on two servers, never share one. Pick one of
+  your repositories, paste a URL or `owner/name`, or type a new name (made under your account, private by default).
+  New daemon methods `github.repo`, `github.link` and `github.repos`.
+- A push that GitHub refuses because the repository has commits the folder lacks (a README made on GitHub, a push
+  from another machine) is caught up by a rebase and pushed again; a conflict is undone and explained.
+- Settings → GitHub keeps Connect / Disconnect and now lists every project with the repository it pushes to, each
+  changeable. Its old "Push a project" section is gone - pushing happens in the chat (the button, or typing `push`).
+- The release build passes `SDC_GITHUB_CLIENT_ID` (a repository variable) to the daemon, so GitHub's browser approval
+  works on every platform once it is set; without it Windows uses Git Credential Manager's sign-in.
+
+### Fixed — the message box's bottom row when the window is resized
+
+- The model, the tools and the folder/Send group were sized by the window, not the box, so with the sidebar, the
+  right panel or split view open they slid over each other. The row now follows the box's own width (container
+  queries): the chips keep only their icon, then the folder and the model keep only theirs, and the right group is
+  never narrower than what it holds. Checked from 320 px to 960 px: nothing overlaps.
+
 ## [1.0.7] — 2026-10-30: the Claude server token is saved whole
 
 ### Fixed — "after signing in, the same error again"

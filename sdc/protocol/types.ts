@@ -293,6 +293,9 @@ export type SdcpMethod =
   | 'github.connect'
   | 'github.disconnect'
   | 'github.push'
+  | 'github.repo'
+  | 'github.link'
+  | 'github.repos'
   /** 0.21: SDC installs and runs what it needs itself - Node, the coding CLIs, Ollama, ripgrep, Git - so no platform needs a terminal. */
   | 'tool.list'
   | 'tool.install'
@@ -1582,6 +1585,36 @@ export interface GitHubStatus {
   pending: null | { state: 'waiting' | 'done' | 'failed'; method?: string; userCode?: string; verificationUri?: string; login?: string; error?: string };
 }
 
+/**
+ * `github.repo` / `github.link` (1.0.8): a project folder's own repository. The binding is the folder's `origin`, so it
+ * lives with the folder - on this computer or on a VPS - and every chat in that folder shares it.
+ */
+export interface GitHubRepoInfo {
+  isRepo: boolean;
+  /** Git itself is missing where the folder is. */
+  gitMissing: boolean;
+  remote: string | null;
+  /** The repository's web page. */
+  url: string | null;
+  /** `owner/name` when `origin` is on GitHub. */
+  fullName: string | null;
+  onGitHub: boolean;
+  branch: string | null;
+  /** Files changed since the last commit. */
+  changes: number;
+  /** `github.link` only: a repository made now, and the `origin` it replaced. */
+  created?: boolean;
+  previous?: string | null;
+}
+
+export interface GitHubRepoRow {
+  fullName: string;
+  private: boolean;
+  url: string;
+  description: string | null;
+  pushedAt: string | null;
+}
+
 export interface UpdateInfo {
   channel: string;
   current: string;
@@ -2801,6 +2834,9 @@ export interface SdcpMethodMap {
     params: { sessionId?: string; root?: string; hostId?: string; repo?: string; private?: boolean; message?: string };
     result: { url: string; branch: string; created: boolean; committed: boolean; login: string };
   };
+  'github.repo': { params: { sessionId?: string; root?: string; hostId?: string }; result: GitHubRepoInfo };
+  'github.link': { params: { sessionId?: string; root?: string; hostId?: string; repo: string; private?: boolean }; result: GitHubRepoInfo };
+  'github.repos': { params: Record<string, never>; result: { repos: GitHubRepoRow[] } };
   'tool.list': { params: Record<string, never>; result: { tools: ToolRow[]; root: string } };
   'tool.install': { params: { id: string; hostId?: string }; result: ToolJob };
   'tool.status': { params: { jobId: string }; result: ToolJob };

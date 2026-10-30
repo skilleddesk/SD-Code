@@ -15,6 +15,12 @@
 //! **Pushing** a folder: a folder that is not a repository becomes one (`main`), the work is committed (with the GitHub
 //! account's no-reply address when the folder has no identity), a private repository named after the folder is created
 //! when there is no `origin`, and the branch is pushed.
+//!
+//! **Each project its own repository** (1.0.8): one account, many projects - on this computer and on every VPS - and
+//! each pushes to its own repository. The binding is the project folder's own `origin` (`.git/config`), so it lives
+//! with the folder on whichever machine holds it, two chats in one folder share it, and a folder already cloned from
+//! GitHub needs nothing. `github.repo` reads it, `github.link` sets it (an existing repository, or a new one made
+//! under the account), and `github.repos` lists the account's repositories to choose from.
 
 use std::path::Path;
 use std::process::Stdio;
@@ -456,7 +462,30 @@ fn push_steps(
 
     let (_, branch) = run(&["rev-parse", "--abbrev-ref", "HEAD"]);
     let branch = branch.trim().to_string();
-    let (ok, text) = run(&["push", "-u", "origin", "HEAD"]);
+    let (mut ok, mut text) = run(&["push", "-u", "origin", "HEAD"]);
+
+    /* 1.0.8: a repository that already has commits this folder lacks (a README made on GitHub, a push from another
+       machine) is caught up first - its commits under this folder's, by a rebase - and pushed again. A rebase that
+       meets a conflict is undone, so the folder is exactly as it was, and the person is told. */
+    if !ok && rejected_as_behind(&text) {
+        let mut pull: Vec<String> = commit_args.iter().take_while(|arg| *arg != "commit").cloned().collect();
+
+        pull.extend(["pull".into(), "--rebase".into(), "--allow-unrelated-histories".into(), "origin".into(), branch.clone()]);
+
+        let args: Vec<&str> = pull.iter().map(String::as_str).collect();
+        let (pulled, pull_text) = run(&args);
+
+        if !pulled {
+            run(&["rebase", "--abort"]);
+
+            return Err(ErrorObject::bad_request(format!(
+                "GitHub has changes this folder does not, and they touch the same lines - nothing was changed here. Ask the agent to merge them (git pull), then push again. ({})",
+                pull_text.trim().lines().last().unwrap_or_default()
+            )));
+        }
+
+        (ok, text) = run(&["push", "-u", "origin", "HEAD"]);
+    }
 
     if !ok {
         return Err(ErrorObject::bad_request(format!("git push failed: {}", text.trim())));
@@ -465,42 +494,240 @@ fn push_steps(
     Ok(json!({ "url": web_url(&remote), "branch": branch, "created": created, "committed": committed, "login": login }))
 }
 
-/// `github.push` for a folder on this computer.
-pub fn push_local(root: &Path, options: &PushOptions) -> Result<Value, ErrorObject> {
-    let token = token_required()?;
-    let env = auth_env(&token);
-    let folder = root.file_name().and_then(|name| name.to_str()).unwrap_or("project").to_string();
-    let mut run = |args: &[&str]| -> (bool, String) {
-        let Some(mut git) = git_command() else {
-            return (false, "Git is not installed - Settings → Environment installs it".into());
-        };
+/// `git <args>` in a project folder, answering `(ok, stdout+stderr)`.
+type Git<'s> = Box<dyn FnMut(&[&str]) -> (bool, String) + 's>;
 
-        match git.current_dir(root).args(args).envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str()))).stdin(Stdio::null()).output() {
-            Ok(output) => (output.status.success(), format!("{}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr))),
-            Err(error) => (false, error.to_string()),
-        }
-    };
-
-    push_with(&folder, options, &mut run)
+/// Where a project folder is: on this computer, or on a host reached over SSH.
+pub enum Place<'a> {
+    Local(&'a Path),
+    Remote(&'a crate::ssh::Ssh, &'a str),
 }
 
-/// `github.push` for a folder on a host: every `git` runs there, the token travels on the SSH session's stdin.
-pub fn push_remote(ssh: &crate::ssh::Ssh, root: &str, options: &PushOptions) -> Result<Value, ErrorObject> {
-    let token = token_required()?;
-    let exports: String = auth_env(&token).iter().map(|(key, value)| format!("export {key}={}\n", crate::ssh::sh_quote(value))).collect();
-    let folder = root.trim_end_matches('/').rsplit('/').next().unwrap_or("project").to_string();
-    let cd = format!("cd {} || exit 97\n", crate::ssh::sh_quote(root));
-    let mut run = |args: &[&str]| -> (bool, String) {
-        let command: Vec<String> = args.iter().map(|arg| crate::ssh::sh_quote(arg)).collect();
-        let script = format!("{exports}{cd}git {} 2>&1\n", command.join(" "));
+impl Place<'_> {
+    /// The folder's own name - what a new repository is called when none was chosen.
+    fn folder_name(&self) -> String {
+        match self {
+            Place::Local(root) => root.file_name().and_then(|name| name.to_str()).unwrap_or("project").to_string(),
+            Place::Remote(_, root) => root.trim_end_matches('/').rsplit('/').next().filter(|name| !name.is_empty()).unwrap_or("project").to_string(),
+        }
+    }
 
-        match ssh.run_with_stdin("sh -s", &script, Duration::from_secs(180)) {
-            Ok(output) => (output.ok(), output.stdout),
-            Err(error) => (false, error.message),
+    /// `git <args>` in the folder, as `(ok, stdout+stderr)`. With a token, `git` may reach GitHub as the account - the
+    /// token only ever in the environment (here) or on the SSH session's stdin (a host), never a command line.
+    fn git<'s>(&'s self, token: Option<&str>) -> Git<'s> {
+        let env = token.map(auth_env).unwrap_or_else(|| vec![("GIT_TERMINAL_PROMPT".into(), "0".into())]);
+
+        match *self {
+            Place::Local(root) => Box::new(move |args: &[&str]| -> (bool, String) {
+                let Some(mut git) = git_command() else {
+                    return (false, "Git is not installed - Settings → Environment installs it".into());
+                };
+
+                match git.current_dir(root).args(args).envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str()))).stdin(Stdio::null()).output() {
+                    Ok(output) => (output.status.success(), format!("{}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr))),
+                    Err(error) => (false, error.to_string()),
+                }
+            }),
+            Place::Remote(ssh, root) => {
+                let exports: String = env.iter().map(|(key, value)| format!("export {key}={}\n", crate::ssh::sh_quote(value))).collect();
+                let cd = format!("cd {} || exit 97\n", crate::ssh::sh_quote(root));
+
+                Box::new(move |args: &[&str]| -> (bool, String) {
+                    let command: Vec<String> = args.iter().map(|arg| crate::ssh::sh_quote(arg)).collect();
+                    let script = format!("{exports}{cd}command -v git >/dev/null 2>&1 || {{ echo 'Git is not installed on this server'; exit 98; }}\ngit {} 2>&1\n", command.join(" "));
+
+                    match ssh.run_with_stdin("sh -s", &script, Duration::from_secs(180)) {
+                        Ok(output) => (output.ok(), output.stdout),
+                        Err(error) => (false, error.message),
+                    }
+                })
+            }
+        }
+    }
+}
+
+/// `github.push` for a project folder, here or on a host (every `git` runs where the folder is).
+pub fn push(place: &Place, options: &PushOptions) -> Result<Value, ErrorObject> {
+    let token = token_required()?;
+    let mut run = place.git(Some(&token));
+
+    push_with(&place.folder_name(), options, &mut *run)
+}
+
+/// A push GitHub refused because the branch there has commits this one does not.
+fn rejected_as_behind(text: &str) -> bool {
+    text.contains("fetch first") || text.contains("non-fast-forward") || text.contains("[rejected]")
+}
+
+/* ------------------------------------------------------------------------------------------------
+ * Each project its own repository (1.0.8).
+ * ---------------------------------------------------------------------------------------------- */
+
+/// What a person typed as a repository.
+#[derive(Debug, PartialEq, Eq)]
+pub enum RepoSpec {
+    /// `owner/name`, `https://github.com/owner/name(.git)` or `git@github.com:owner/name(.git)`.
+    Existing { owner: String, name: String },
+    /// A bare name: a repository under the account, made when it does not exist yet.
+    New { name: String },
+}
+
+fn valid_part(part: &str) -> bool {
+    !part.is_empty() && part.len() <= 100 && part.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+}
+
+/// Reads a repository from what was typed or pasted; `None` when it is not one.
+pub fn parse_repo(input: &str) -> Option<RepoSpec> {
+    let text = input.trim().trim_end_matches('/');
+
+    if text.is_empty() {
+        return None;
+    }
+
+    let path = text
+        .strip_prefix("git@github.com:")
+        .or_else(|| text.strip_prefix("ssh://git@github.com/"))
+        .or_else(|| text.strip_prefix("https://github.com/"))
+        .or_else(|| text.strip_prefix("http://github.com/"))
+        .or_else(|| text.strip_prefix("https://www.github.com/"))
+        .or_else(|| text.strip_prefix("github.com/"))
+        .unwrap_or(text);
+    let path = path.strip_suffix(".git").unwrap_or(path);
+    let parts: Vec<&str> = path.split('/').collect();
+
+    match parts.as_slice() {
+        [name] if !text.contains("://") && !text.contains(':') => {
+            let name = repo_name(name);
+
+            valid_part(&name).then_some(RepoSpec::New { name })
+        }
+        [owner, name, ..] if valid_part(owner) && valid_part(name) && (parts.len() == 2 || text.contains("github.com")) => {
+            Some(RepoSpec::Existing { owner: (*owner).to_string(), name: (*name).to_string() })
+        }
+        _ => None,
+    }
+}
+
+/// `owner/name` of a GitHub remote, when it is one.
+pub fn full_name(remote: &str) -> Option<String> {
+    match parse_repo(remote) {
+        Some(RepoSpec::Existing { owner, name }) if remote.contains("github.com") => Some(format!("{owner}/{name}")),
+        _ => None,
+    }
+}
+
+/// `github.repo`: the project folder's repository - whether it is one, its `origin`, branch and unsaved changes.
+pub fn repo_info(place: &Place) -> Value {
+    let mut run = place.git(None);
+
+    info_with(&mut *run)
+}
+
+fn info_with(run: &mut dyn FnMut(&[&str]) -> (bool, String)) -> Value {
+    let (is_repo, answer) = run(&["rev-parse", "--is-inside-work-tree"]);
+
+    if !is_repo || answer.trim() != "true" {
+        let missing = answer.contains("not installed");
+
+        return json!({ "isRepo": false, "gitMissing": missing, "remote": null, "url": null, "fullName": null, "onGitHub": false, "branch": null, "changes": 0 });
+    }
+
+    let (has_origin, origin) = run(&["remote", "get-url", "origin"]);
+    let remote = if has_origin && !origin.trim().is_empty() { Some(origin.trim().to_string()) } else { None };
+    let (_, branch) = run(&["rev-parse", "--abbrev-ref", "HEAD"]);
+    let (_, changes) = run(&["status", "--porcelain"]);
+    let full = remote.as_deref().and_then(full_name);
+
+    json!({
+        "isRepo": true,
+        "gitMissing": false,
+        "remote": remote,
+        "url": remote.as_deref().map(web_url),
+        "fullName": full,
+        "onGitHub": full.is_some(),
+        "branch": Some(branch.trim()).filter(|branch| !branch.is_empty() && *branch != "HEAD"),
+        "changes": changes.lines().filter(|line| !line.trim().is_empty()).count(),
+    })
+}
+
+/// `github.link`: points the project folder's `origin` at a repository - an existing one the account can reach, or a new
+/// one made under the account. A folder that is not a repository becomes one first.
+pub fn link(place: &Place, input: &str, private: bool) -> Result<Value, ErrorObject> {
+    let spec = parse_repo(input).ok_or_else(|| ErrorObject::bad_request(format!("`{input}` is not a GitHub repository - use owner/name, its URL, or a new name")))?;
+    let token = token_required()?;
+    let user = whoami(&token).map_err(ErrorObject::bad_request)?;
+    let login = user["login"].as_str().unwrap_or_default().to_string();
+    let mut resolve = |spec: &RepoSpec| -> Result<(String, bool), ErrorObject> {
+        match spec {
+            RepoSpec::New { name } => ensure_repository(&token, &login, name, private),
+            RepoSpec::Existing { owner, name } => match api(&token, "GET", &format!("/repos/{owner}/{name}"), None) {
+                Ok(found) => Ok((found["clone_url"].as_str().map(str::to_string).unwrap_or_else(|| format!("https://github.com/{owner}/{name}.git")), false)),
+                /* The account's own repository that is not there yet is made; someone else's is a typo or no access. */
+                Err((404, _)) if owner.eq_ignore_ascii_case(&login) => ensure_repository(&token, &login, name, private),
+                Err((404, _)) => Err(ErrorObject::bad_request(format!("{owner}/{name} was not found, or {login} has no access to it"))),
+                Err((_, message)) => Err(ErrorObject::bad_request(format!("GitHub did not answer for {owner}/{name}: {message}"))),
+            },
         }
     };
+    let mut run = place.git(None);
 
-    push_with(&folder, options, &mut run)
+    link_steps(&spec, &mut resolve, &mut *run)
+}
+
+/// The git half of a link, given a way to find or make the repository - no network of its own.
+fn link_steps(spec: &RepoSpec, resolve: &mut CreateRepositoryFor, run: &mut dyn FnMut(&[&str]) -> (bool, String)) -> Result<Value, ErrorObject> {
+    let (inside, answer) = run(&["rev-parse", "--is-inside-work-tree"]);
+
+    if !inside || answer.trim() != "true" {
+        let (ok, text) = run(&["init", "-b", "main"]);
+
+        if !ok {
+            return Err(ErrorObject::bad_request(format!("git init failed: {}", text.trim())));
+        }
+    }
+
+    let (url, created) = resolve(spec)?;
+    let (has_origin, origin) = run(&["remote", "get-url", "origin"]);
+    let (ok, text) = if has_origin && !origin.trim().is_empty() { run(&["remote", "set-url", "origin", &url]) } else { run(&["remote", "add", "origin", &url]) };
+
+    if !ok {
+        return Err(ErrorObject::bad_request(format!("Could not set the repository: {}", text.trim())));
+    }
+
+    let mut info = info_with(run);
+
+    info["created"] = json!(created);
+    info["previous"] = json!(Some(origin.trim()).filter(|origin| has_origin && !origin.is_empty()));
+
+    Ok(info)
+}
+
+/// Finds or makes the repository a spec names: its clone URL, and whether it was made now.
+type CreateRepositoryFor<'a> = dyn FnMut(&RepoSpec) -> Result<(String, bool), ErrorObject> + 'a;
+
+/// `github.repos`: the account's repositories, most recently pushed first - what the picker offers.
+pub fn repos() -> Result<Value, ErrorObject> {
+    let token = token_required()?;
+    let list = api(&token, "GET", "/user/repos?per_page=100&sort=pushed&affiliation=owner,collaborator,organization_member", None)
+        .map_err(|(_, message)| ErrorObject::bad_request(format!("GitHub did not list the repositories: {message}")))?;
+    let rows: Vec<Value> = list
+        .as_array()
+        .map(|rows| {
+            rows.iter()
+                .map(|row| {
+                    json!({
+                        "fullName": row["full_name"],
+                        "private": row["private"].as_bool().unwrap_or(false),
+                        "url": row["html_url"],
+                        "description": row["description"],
+                        "pushedAt": row["pushed_at"],
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    Ok(json!({ "repos": rows }))
 }
 
 #[cfg(test)]
@@ -567,6 +794,80 @@ mod tests {
         assert!(calls.iter().any(|call| call == "-c user.name=Me -c user.email=7+me@users.noreply.github.com commit -m Update from SDC"));
         assert!(calls.iter().any(|call| call == "remote add origin https://github.com/me/My-Shop.git"));
         assert_eq!(calls.last().unwrap(), "push -u origin HEAD");
+    }
+
+    #[test]
+    fn what_a_person_types_becomes_a_repository() {
+        let existing = |owner: &str, name: &str| Some(RepoSpec::Existing { owner: owner.into(), name: name.into() });
+
+        assert_eq!(parse_repo("me/site"), existing("me", "site"));
+        assert_eq!(parse_repo("https://github.com/me/site.git"), existing("me", "site"));
+        assert_eq!(parse_repo("https://github.com/me/site/"), existing("me", "site"));
+        assert_eq!(parse_repo("https://github.com/me/site/tree/main"), existing("me", "site"));
+        assert_eq!(parse_repo("git@github.com:me/site.git"), existing("me", "site"));
+        assert_eq!(parse_repo("github.com/me/site"), existing("me", "site"));
+        assert_eq!(parse_repo("My Shop"), Some(RepoSpec::New { name: "My-Shop".into() }));
+        assert_eq!(parse_repo("https://gitlab.com/me/site"), None);
+        assert_eq!(parse_repo("a/b/c"), None);
+        assert_eq!(parse_repo("  "), None);
+        assert_eq!(full_name("https://github.com/me/site.git").as_deref(), Some("me/site"));
+        assert_eq!(full_name("https://gitlab.com/me/site.git"), None);
+    }
+
+    #[test]
+    fn a_project_is_pointed_at_its_own_repository() {
+        let calls = std::cell::RefCell::new(Vec::<String>::new());
+        let mut run = |args: &[&str]| -> (bool, String) {
+            calls.borrow_mut().push(args.join(" "));
+
+            match args {
+                ["rev-parse", "--is-inside-work-tree"] => (true, "true\n".into()),
+                ["remote", "get-url", "origin"] if calls.borrow().iter().filter(|call| call.starts_with("remote get-url")).count() == 1 => {
+                    (true, "https://github.com/me/old.git\n".into())
+                }
+                ["remote", "get-url", "origin"] => (true, "https://github.com/me/shop.git\n".into()),
+                ["rev-parse", "--abbrev-ref", "HEAD"] => (true, "main\n".into()),
+                ["status", "--porcelain"] => (true, " M index.html\n".into()),
+                _ => (true, String::new()),
+            }
+        };
+        let mut resolve = |spec: &RepoSpec| -> Result<(String, bool), ErrorObject> {
+            assert_eq!(spec, &RepoSpec::Existing { owner: "me".into(), name: "shop".into() });
+            Ok(("https://github.com/me/shop.git".into(), false))
+        };
+        let info = link_steps(&parse_repo("me/shop").unwrap(), &mut resolve, &mut run).unwrap();
+
+        assert!(calls.borrow().iter().any(|call| call == "remote set-url origin https://github.com/me/shop.git"));
+        assert_eq!(info["fullName"], "me/shop");
+        assert_eq!(info["previous"], "https://github.com/me/old.git");
+        assert_eq!(info["changes"], 1);
+    }
+
+    #[test]
+    fn a_push_github_is_ahead_of_is_caught_up_and_pushed_again() {
+        let calls = std::cell::RefCell::new(Vec::<String>::new());
+        let mut run = |args: &[&str]| -> (bool, String) {
+            calls.borrow_mut().push(args.join(" "));
+
+            match args {
+                ["rev-parse", "--is-inside-work-tree"] | ["rev-parse", "--verify", "HEAD"] => (true, "true".into()),
+                ["config", "user.email"] => (true, "me@example.com".into()),
+                ["status", "--porcelain"] => (true, String::new()),
+                ["remote", "get-url", "origin"] => (true, "https://github.com/me/shop.git".into()),
+                ["rev-parse", "--abbrev-ref", "HEAD"] => (true, "main".into()),
+                ["push", ..] if calls.borrow().iter().filter(|call| call.starts_with("push")).count() == 1 => {
+                    (false, " ! [rejected]        HEAD -> main (fetch first)".into())
+                }
+                _ => (true, String::new()),
+            }
+        };
+        let mut create = |_: &str| -> Result<(String, bool), ErrorObject> { panic!("the folder has its repository") };
+        let options = PushOptions { repo: None, private: true, message: None };
+        let answer = push_steps("shop", &options, &json!({ "login": "me", "id": 1 }), &mut create, &mut run).unwrap();
+
+        assert_eq!(answer["url"], "https://github.com/me/shop");
+        assert!(calls.borrow().iter().any(|call| call == "pull --rebase --allow-unrelated-histories origin main"));
+        assert_eq!(calls.borrow().iter().filter(|call| call.starts_with("push")).count(), 2);
     }
 
     #[test]

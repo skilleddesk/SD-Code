@@ -1,4 +1,5 @@
 import type { FsEntry, LocalTuning, PermissionDecision, PermissionRisk, SecretFinding, TierName } from '../../../protocol/types';
+import { hasDraft, useDraftsStore } from './drafts';
 import { isPushRequest, pushToGitHub } from './github';
 import { nameOf, pickFolder } from '../lib/picker';
 import { sdcpCall } from '../lib/sdcp';
@@ -428,6 +429,11 @@ export function emptySessionOn(
   activeTab: string | null,
   /** 0.12.5: only an empty chat **of this project** is reused (`null`: a chat with no folder). */
   projectId?: string | null,
+  /**
+   * 1.0.8: a chat holding an unsent message is not empty. Reusing it made "New chat" open the chat just left, words and
+   * all - which read as "what I type in one chat shows in every chat".
+   */
+  drafted: (sessionId: string) => boolean = () => false,
 ): string | null {
   const host = hosts.find((candidate) => candidate.id === hostId);
 
@@ -438,6 +444,7 @@ export function emptySessionOn(
   const empty = host.sessions.filter(
     (session) =>
       !turns.some((turn) => turn.sessionId === session.id) &&
+      !drafted(session.id) &&
       (projectId === undefined || (session.projectId ?? null) === projectId),
   );
 
@@ -723,6 +730,7 @@ export async function newChatOnHost(hostId: string, inProject?: string | null): 
     hostId,
     usePrefsStore.getState().activeTab,
     projectId,
+    hasDraft,
   );
 
   if (existing !== null) {
@@ -1892,8 +1900,8 @@ export async function openFolderIn(root: string, hostId = 'local'): Promise<stri
     /* An empty chat already in this folder is reused; one that belongs to another project is not
        taken over (0.12.5) - each project keeps its own chats. A folderless empty chat is given it. */
     const empty =
-      emptySessionOn(state.hosts, state.turns, hostId, usePrefsStore.getState().activeTab, projectId) ??
-      emptySessionOn(state.hosts, state.turns, hostId, usePrefsStore.getState().activeTab, null);
+      emptySessionOn(state.hosts, state.turns, hostId, usePrefsStore.getState().activeTab, projectId, hasDraft) ??
+      emptySessionOn(state.hosts, state.turns, hostId, usePrefsStore.getState().activeTab, null, hasDraft);
 
     if (empty !== null) {
       await sdcpCall('session.update', { sessionId: empty, projectId });
@@ -2706,7 +2714,8 @@ export function cancelPendingIntent(sessionId: string): void {
 
   useKernelUi.getState().clearPending(sessionId);
   void cancelIntent(pending.intentId);
-  useModelStore.getState().setDraft(pending.text);
+  /* Back into that chat's own box (1.0.8) - not whichever chat is on screen when Cancel lands. */
+  useDraftsStore.getState().setText(sessionId, pending.text);
 }
 
 /** `Enter` in the prompt area: the daemon appends `TurnStarted` and starts streaming. */

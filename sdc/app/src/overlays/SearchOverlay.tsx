@@ -3,6 +3,7 @@ import { Search } from 'lucide-react';
 
 import { Modal } from '../modals/Modal';
 import { allSessions } from '../store/reducer';
+import { useModelStore } from '../store/model';
 import { useOverlayStore } from '../store/overlays';
 import { usePrefsStore } from '../store/prefs';
 import { useAppStore } from '../store/store';
@@ -52,13 +53,8 @@ export function SearchOverlay() {
   const insertPrompt = (body: string, title: string): void => {
     close();
 
-    const textarea = document.querySelector<HTMLTextAreaElement>('.prompt-box textarea');
-
-    if (textarea) {
-      textarea.value = body;
-      textarea.dispatchEvent(new Event('input', { bubbles: true }));
-      textarea.focus();
-    }
+    /* The open chat's box takes it (1.0.8: each box is its own chat's draft, not a shared textarea). */
+    useModelStore.getState().setDraft(body);
 
     toast(strings.search.insertedPrompt(title));
   };

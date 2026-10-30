@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 
+import { useDraftsStore } from './drafts';
 import { useAppStore } from './store';
 import { ensureSplitSecondary, usePrefsStore } from './prefs';
 import {
@@ -96,6 +97,7 @@ export const sessionActions = {
 
   deleteSession: (id: string): void => {
     usePrefsStore.getState().closeTab(id);
+    useDraftsStore.getState().clear(id);
     void closeSession(id);
   },
 

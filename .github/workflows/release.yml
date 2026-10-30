@@ -323,6 +323,9 @@ jobs:
           # architecture they are producing - including the Intel `.dmg`, which is cross-built on an
           # Apple Silicon runner because an Intel runner can queue for a very long time.
           SDC_TARGET_TRIPLE: ${{ matrix.target }}
+          # 1.0.8: SDC's GitHub OAuth App client ID (public, not a secret) - a repository *variable*. With it, Connect
+          # GitHub is GitHub's own browser approval on every platform; without it, Windows uses Git Credential Manager.
+          SDC_GITHUB_CLIENT_ID: ${{ vars.SDC_GITHUB_CLIENT_ID }}
         with:
           projectPath: sdc/app
           releaseId: ${{ needs.prepare.outputs.release_id }}

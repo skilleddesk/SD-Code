@@ -54,7 +54,7 @@ export function FolderChip({ sessionId }: FolderChipProps = {}) {
       onClick={() => void changeFolder(session.id)}
     >
       <FolderOpen size={14} aria-hidden="true" className="shrink-0 text-accent" />
-      <span className="truncate">
+      <span className="folder-label truncate">
         {name === null ? strings.folder.none : name}
       </span>
     </button>

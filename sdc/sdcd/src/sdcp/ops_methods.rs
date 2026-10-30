@@ -70,6 +70,15 @@ impl Daemon {
             "github.connect" => crate::github::connect(self.store()),
             "github.disconnect" => crate::github::disconnect(),
             "github.push" => self.github_push(envelope),
+            /* 1.0.8: each project its own repository - read, set, and the account's list to choose from. */
+            "github.repo" => self.github_place(envelope, |place| Ok(crate::github::repo_info(place))),
+            "github.link" => {
+                let repo = envelope.require_str("repo")?;
+                let private = envelope.params.get("private").and_then(Value::as_bool).unwrap_or(true);
+
+                self.github_place(envelope, |place| crate::github::link(place, &repo, private))
+            }
+            "github.repos" => crate::github::repos(),
 
             /* 0.21: SDC installs and runs what it needs itself - no terminal on any platform. */
             "tool.list" => Ok(crate::host::tools::list()),
@@ -749,12 +758,18 @@ impl Daemon {
             private: envelope.params.get("private").and_then(Value::as_bool).unwrap_or(true),
             message: envelope.opt_str("message"),
         };
+        self.github_place(envelope, |place| crate::github::push(place, &options))
+    }
+
+    /// The chat's project folder - on this computer or on its host - for a GitHub method.
+    fn github_place(&self, envelope: &Envelope, act: impl FnOnce(&crate::github::Place) -> Result<Value, ErrorObject>) -> Result<Value, ErrorObject> {
         let remote = self.remote_for(envelope)?;
         let root = self.root_required(envelope)?;
+        let root_text = root.to_string_lossy().to_string();
 
-        match remote {
-            Some(ssh) => crate::github::push_remote(&ssh, &root.to_string_lossy(), &options),
-            None => crate::github::push_local(&root, &options),
+        match &remote {
+            Some(ssh) => act(&crate::github::Place::Remote(ssh, &root_text)),
+            None => act(&crate::github::Place::Local(&root)),
         }
     }
 
