@@ -27,6 +27,20 @@ Every `git` SDC runs - locally and on a server - trusts the folder the person op
 VPS). See `host::env_path::trust_project_folders`, `github.rs` `TRUST_FOLDER`, `ssh::ops::TRUST`/`TRUST_ENV`.
 Test: `host::env_path::tests::git_trusts_the_project_folder_after_any_config_already_given`.
 
+## 2b. Push is "what I worked on", from any folder
+
+The person opens any folder, picks a repository, presses Push - and gets exactly what `git add`, `commit`, `push`
+by hand would give, with no errors to understand (`sdcd/src/github.rs`, `push_steps`):
+
+- A folder with no commit, pushed to a repository that already has files, takes that repository's history first
+  (`fetch` + `reset`, no file in the folder changes) and lands as one commit on top - never a force push, never
+  unrelated histories. Files only GitHub has stay (`skip-worktree`), on this push and the next.
+- Never sent: package stores and build output (`NEVER_SENT`), junk and key files (`NEVER_SENT_FILES`), a file holding
+  a key (`KEY_PATTERNS`, and `KEY_ASSIGNMENT` in text/config files), a repository inside the folder. The window says
+  what was kept back and why.
+- A git lock held by another git is waited for, not shown as an error; `status` never takes the lock.
+- Test: `github::tests::a_folder_opened_anywhere_is_pushed_into_a_repository_that_already_has_files` (real git).
+
 ## 3. The update notice
 
 Top right, closes by itself after a while, has a cross, and comes back every time SDC opens until SDC is updated

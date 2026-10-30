@@ -2832,7 +2832,8 @@ export interface SdcpMethodMap {
   'github.disconnect': { params: Record<string, never>; result: { connected: false; revokeUrl: string } };
   'github.push': {
     params: { sessionId?: string; root?: string; hostId?: string; repo?: string; private?: boolean; message?: string };
-    result: { url: string; branch: string; created: boolean; committed: boolean; login: string };
+    /** 1.0.10: what the push left out, and why (a package store, a file holding a key, a repository inside). */
+    result: { url: string; branch: string; created: boolean; committed: boolean; login: string; skipped?: { path: string; why: string }[] };
   };
   'github.repo': { params: { sessionId?: string; root?: string; hostId?: string }; result: GitHubRepoInfo };
   'github.link': { params: { sessionId?: string; root?: string; hostId?: string; repo: string; private?: boolean }; result: GitHubRepoInfo };

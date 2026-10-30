@@ -4,6 +4,8 @@ import type { GitHubRepoInfo, GitHubRepoRow, GitHubStatus } from '../../../proto
 import { copyText, openOutside } from '../lib/external';
 import { sdcpCall } from '../lib/sdcp';
 import { isSdcpError } from '../lib/transport';
+import { strings } from '../strings';
+import { toast } from './toast';
 
 /**
  * GitHub (1.0.0): the connected account, a browser approval in progress, and pushes.
@@ -186,6 +188,13 @@ export async function pushToGitHub(target: { sessionId?: string; root?: string }
     /* The projects' repositories are read again: a push made a commit, may have made a repository, and the chat-box
        button's "changed files" dot must not outlive it - whichever way the push came (button, chip, "push"). */
     useGitHubStore.setState({ repos: {} });
+
+    /* 1.0.10: said once, here, whichever way the push came - what stayed on this computer, and why. */
+    const skipped = answer.skipped ?? [];
+
+    if (skipped.length > 0) {
+      toast(strings.kernel.github.leftOut(skipped.map((row) => `${row.path} (${row.why})`)), undefined, 12000);
+    }
 
     return { url: answer.url };
   } catch (reason) {

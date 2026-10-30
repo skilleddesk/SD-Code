@@ -933,6 +933,7 @@ export const bn: StringsPack = {
       push: 'GitHub-এ পুশ',
       pushing: 'পুশ হচ্ছে…',
       pushed: (url: string): string => `পুশ হয়েছে — ${url}`,
+      leftOut: (rows: string[]): string => `এগুলো এই কম্পিউটারেই রইল, পুশ হয়নি: ${rows.slice(0, 3).join('; ')}${rows.length > 3 ? ` আর আরো ${rows.length - 3}টা` : ''}`,
       pushFailed: (error: string): string => `পুশ ব্যর্থ: ${error}`,
       open: 'GitHub-এ খুলুন',
       footerPush: 'GitHub-এ পুশ',

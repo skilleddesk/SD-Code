@@ -10,6 +10,27 @@ This file describes what changed, not what is planned. Anything still open is na
 
 ---
 
+## [1.0.10] — 2026-10-30: Push sends what you worked on, from any folder
+
+### Fixed — "I picked my repository and pressed Push, and got errors I don't understand"
+
+- **Any folder, any repository.** A folder with no commit of its own, pushed to a repository that already has files,
+  now takes that repository's history first (nothing in the folder changes) and lands as one commit on top - exactly
+  like cloning, copying your files in and committing. No force push, no "unrelated histories". Files that only GitHub
+  has are kept, on this push and every one after; a file you delete is deleted.
+- **Only your work is sent.** Package stores and build output (`node_modules`, `.pnpm-store`, `target`, `.venv`,
+  `.next`…), SDC's own working data, system junk (`._*`, `.DS_Store`, logs) and key files (`.env`, `*.pem`…) are never
+  pushed, even without a `.gitignore`. A file that holds a key - a known provider key anywhere, or a `…KEY=` /
+  `TOKEN=` / `PASSWORD=` line in a text or config file - stays on the computer, and so does a repository inside the
+  folder. The window says what was kept back and why.
+- **No more `index.lock` errors.** A git lock held by another git is waited for; the change count no longer takes the
+  lock at all; a lock that does not clear is explained in plain words.
+- **No more `HEAD fatal: ambiguous argument 'HEAD'`** as a branch name: a folder with no commit shows its branch.
+- `github::tests::a_folder_opened_anywhere_is_pushed_into_a_repository_that_already_has_files` runs the whole case
+  with real git; `CLAUDE.md` lists it as a rule that must not change.
+
+---
+
 ## [1.0.9] — 2026-10-30: a message sent mid-turn goes into the turn for every AI, and git works in any folder
 
 ### Changed — "a prompt sent while it works is taken into the work, for every AI, not queued"

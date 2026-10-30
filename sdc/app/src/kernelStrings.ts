@@ -492,6 +492,7 @@ export const kernelStrings = {
     push: 'Push to GitHub',
     pushing: 'Pushing…',
     pushed: (url: string): string => `Pushed - ${url}`,
+    leftOut: (rows: string[]): string => `Kept on this computer, not pushed: ${rows.slice(0, 3).join('; ')}${rows.length > 3 ? ` and ${rows.length - 3} more` : ''}`,
     pushFailed: (error: string): string => `Push failed: ${error}`,
     open: 'Open on GitHub',
     footerPush: 'Push to GitHub',

@@ -383,6 +383,197 @@ fn push_with(folder_name: &str, options: &PushOptions, run: &mut dyn FnMut(&[&st
     push_steps(folder_name, options, &user, &mut create, run)
 }
 
+/// What a push never sends, whatever the folder's own `.gitignore` says (1.0.10): installed packages, build output,
+/// caches, SDC's own working data, system junk and key files. A push is "what I worked on", and none of this is -
+/// a folder without a `.gitignore` sent 18,370 files of `.pnpm-store` (the report, 2026-10-30). Written as pathspecs,
+/// so the same list works on this computer and on a server, and nothing is written into the folder.
+const NEVER_SENT: &[&str] = &[
+    "node_modules",
+    ".pnpm-store",
+    ".yarn/cache",
+    ".npm",
+    "bower_components",
+    "target",
+    "__pycache__",
+    ".venv",
+    "venv",
+    ".next",
+    ".nuxt",
+    ".turbo",
+    ".parcel-cache",
+    ".gradle",
+    ".sdc/objects",
+    ".sdc/vault",
+    ".sdc/tx",
+    ".sdc/audit",
+    ".sdc/padma",
+    ".sdc/knowledge",
+];
+
+/// Files never sent by name (1.0.10): system junk, and files that hold keys.
+const NEVER_SENT_FILES: &[&str] = &[
+    ".DS_Store",
+    "Thumbs.db",
+    "desktop.ini",
+    "._*",
+    "*.log",
+    ".env",
+    ".env.local",
+    ".env.*.local",
+    ".env.production",
+    "*.pem",
+    "*.key",
+    "*.p12",
+    "*.pfx",
+    "id_rsa*",
+    "id_ed25519*",
+    "id_ecdsa*",
+];
+
+/// What a key looks like inside a file (1.0.10) - the providers SDC talks to, and private keys. A file that holds one is
+/// left out of the push and named, so a key typed into `notes.txt` never reaches GitHub. Extended regular expressions,
+/// for `git grep -E`, which reads the staged copy wherever the folder is.
+const KEY_PATTERNS: &[&str] = &[
+    "AIza[0-9A-Za-z_-]{35}",
+    "sk-ant-[A-Za-z0-9_-]{20,}",
+    "sk-(proj-)?[A-Za-z0-9_-]{32,}",
+    "gh[pousr]_[A-Za-z0-9]{36}",
+    "github_pat_[A-Za-z0-9_]{40,}",
+    "glpat-[A-Za-z0-9_-]{20}",
+    "xox[abprs]-[A-Za-z0-9-]{10,}",
+    "AKIA[0-9A-Z]{16}",
+    "-----BEGIN ([A-Z]+ )?PRIVATE KEY-----",
+];
+
+/// A key written as a setting - `GEMINI_API_KEY=…`, `"password": "…"`, `token: …` - whatever the provider (the report's
+/// `geminiapi.txt` held one in a form no provider pattern knew). Read only in [`KEY_FILES`], where such a line is a
+/// value and not code: `token = getToken()` in a source file is not a key.
+const KEY_ASSIGNMENT: &str = "(api[_-]?key|secret|token|passw(or)?d|private[_-]?key|access[_-]?key)[a-z0-9_]*[\"']?[[:space:]]*[:=][[:space:]]*[\"']?[a-z0-9._/+=-]{16,}";
+
+/// The files where a setting line is read as a possible key.
+const KEY_FILES: &[&str] = &["*.txt", "*.env", "*.ini", "*.cfg", "*.conf", "*.properties", "*.yaml", "*.yml", "*.toml", "*.json", "*.md"];
+
+/// The pathspecs that stage a folder: all of it, less [`NEVER_SENT`] and [`NEVER_SENT_FILES`].
+fn stage_pathspecs() -> Vec<String> {
+    let mut specs = vec![".".to_string()];
+
+    specs.extend(NEVER_SENT.iter().map(|dir| format!(":(exclude,glob)**/{dir}/**")));
+    specs.extend(NEVER_SENT_FILES.iter().map(|file| format!(":(exclude,glob)**/{file}")));
+    specs
+}
+
+/// Why a file was left out of a push.
+fn skipped(path: &str, why: &str) -> Value {
+    json!({ "path": path, "why": why })
+}
+
+/// After a folder took a repository's history: the files only GitHub has stay there (1.0.10). They are not in this
+/// folder, and git would read that as "deleted" - on this push and every one after. `skip-worktree` tells git their
+/// absence here is not a change; nothing is written into the folder. A file the person had and deletes is deleted.
+fn keep_theirs(run: &mut dyn FnMut(&[&str]) -> (bool, String)) {
+    let (_, missing) = run(&["-c", "core.quotePath=false", "ls-files", "--deleted"]);
+    let paths: Vec<&str> = missing.lines().map(str::trim).filter(|path| !path.is_empty()).collect();
+
+    for batch in paths.chunks(200) {
+        let mut args = vec!["update-index", "--skip-worktree", "--"];
+
+        args.extend(batch);
+        run(&args);
+    }
+}
+
+/// Stages what the person worked on (1.0.10) and answers what was left out, and why.
+fn stage(run: &mut dyn FnMut(&[&str]) -> (bool, String)) -> Result<Vec<Value>, ErrorObject> {
+    let specs = stage_pathspecs();
+    let mut args: Vec<&str> = vec!["add", "-A", "--"];
+
+    args.extend(specs.iter().map(String::as_str));
+
+    let (ok, text) = run(&args);
+
+    if !ok {
+        return Err(ErrorObject::bad_request(friendly_git_error("git add", &text)));
+    }
+
+    let mut left_out = Vec::new();
+
+    /* A folder inside that is its own repository is pushed from its own project, not as a broken link in this one. */
+    let (_, index) = run(&["-c", "core.quotePath=false", "ls-files", "--stage"]);
+    let (_, modules) = run(&["config", "--file", ".gitmodules", "--get-regexp", "path"]);
+
+    for line in index.lines().filter(|line| line.starts_with("160000 ")) {
+        let Some(path) = line.split('\t').nth(1) else { continue };
+
+        if !modules.lines().any(|module| module.split_whitespace().nth(1) == Some(path)) {
+            unstage(run, path);
+            left_out.push(skipped(path, "its own repository - open it as its own project to push it"));
+        }
+    }
+
+    /* A new or changed file that holds a key stays on this computer. */
+    let (_, staged) = run(&["-c", "core.quotePath=false", "diff", "--cached", "--name-only", "--diff-filter=AM"]);
+
+    if !staged.trim().is_empty() {
+        let mut grep: Vec<&str> = vec!["-c", "core.quotePath=false", "grep", "--cached", "-l", "-I", "-E"];
+
+        for pattern in KEY_PATTERNS {
+            grep.extend(["-e", pattern]);
+        }
+
+        let (_, mut hits) = run(&grep);
+        /* And a key written as a setting, in the files where such a line is a value. */
+        let mut settings: Vec<&str> = vec!["-c", "core.quotePath=false", "grep", "--cached", "-l", "-I", "-i", "-E", "-e", KEY_ASSIGNMENT, "--"];
+
+        settings.extend(KEY_FILES.iter().copied());
+        hits.push('\n');
+        hits.push_str(&run(&settings).1);
+
+        let changed: Vec<&str> = staged.lines().map(str::trim).collect();
+        let mut found: Vec<&str> = hits.lines().map(str::trim).filter(|path| changed.contains(path)).collect();
+
+        found.sort_unstable();
+        found.dedup();
+
+        for path in found {
+            unstage(run, path);
+            left_out.push(skipped(path, "holds a key or password - kept on this computer"));
+        }
+    }
+
+    Ok(left_out)
+}
+
+/// Takes one path's change out of the commit, leaving the file as it is - a file already on GitHub stays there as it was.
+fn unstage(run: &mut dyn FnMut(&[&str]) -> (bool, String), path: &str) {
+    if !run(&["reset", "-q", "--", path]).0 {
+        /* No commit yet: there is nothing to reset to, and the path was only ever added. */
+        run(&["rm", "--cached", "-q", "-r", "--", path]);
+    }
+}
+
+/// The default branch of `origin`, when it has any commits - `None` for an empty repository.
+fn remote_branch(run: &mut dyn FnMut(&[&str]) -> (bool, String)) -> Option<String> {
+    let (ok, text) = run(&["ls-remote", "--symref", "origin", "HEAD"]);
+
+    if !ok {
+        return None;
+    }
+
+    text.lines()
+        .find_map(|line| line.strip_prefix("ref: refs/heads/")?.split_whitespace().next().map(str::to_string))
+}
+
+/// Git's own sentence, in words a person can act on where SDC knows better.
+fn friendly_git_error(step: &str, text: &str) -> String {
+    let text = text.trim();
+
+    if text.contains("index.lock") {
+        return "Another git program is still working in this folder. Wait a moment and push again - if it keeps saying this, close other git tools (an editor's git panel, GitHub Desktop) and try once more.".to_string();
+    }
+
+    format!("{step} failed: {text}")
+}
+
 /// Creates (or finds) a repository by name: its clone URL, and whether it was created now.
 type CreateRepository<'a> = dyn FnMut(&str) -> Result<(String, bool), ErrorObject> + 'a;
 
@@ -413,34 +604,7 @@ fn push_steps(
         commit_args.extend(["-c".into(), format!("user.name={display}"), "-c".into(), format!("user.email={email}")]);
     }
 
-    let (_, changes) = run(&["status", "--porcelain"]);
-    let mut committed = false;
-
-    if !changes.trim().is_empty() {
-        let (ok, text) = run(&["add", "-A"]);
-
-        if !ok {
-            return Err(ErrorObject::bad_request(format!("git add failed: {text}")));
-        }
-
-        let message = options.message.clone().filter(|message| !message.trim().is_empty()).unwrap_or_else(|| "Update from SDC".to_string());
-
-        commit_args.extend(["commit".into(), "-m".into(), message]);
-
-        let args: Vec<&str> = commit_args.iter().map(String::as_str).collect();
-        let (ok, text) = run(&args);
-
-        if !ok {
-            return Err(ErrorObject::bad_request(format!("git commit failed: {text}")));
-        }
-
-        committed = true;
-    }
-
-    if !run(&["rev-parse", "--verify", "HEAD"]).0 {
-        return Err(ErrorObject::bad_request("The folder has no files to push yet"));
-    }
-
+    /* Where it goes comes first (1.0.10): what is committed depends on whether that repository already has files. */
     let (has_origin, origin) = run(&["remote", "get-url", "origin"]);
     let (remote, created) = if has_origin && !origin.trim().is_empty() {
         (origin.trim().to_string(), false)
@@ -458,6 +622,60 @@ fn push_steps(
 
     if !remote.contains("github.com") {
         return Err(ErrorObject::bad_request(format!("This folder's origin is not on GitHub ({remote})")));
+    }
+
+    /* 1.0.10: a folder with no commit of its own, sent to a repository that already has files - the report's case: a
+       folder opened in SDC, a repository picked, Push. What a person means is "put my work on top of what is there",
+       exactly as if they had cloned it, copied their files in and committed. So the folder takes the repository's
+       history first (`reset`, which changes no file here), and its work becomes one commit on top: a plain
+       fast-forward push - nothing on GitHub is overwritten, and a file only GitHub has stays. */
+    let fresh = !run(&["rev-parse", "--verify", "HEAD"]).0;
+
+    if fresh && !created {
+        if let Some(theirs) = remote_branch(run) {
+            let (fetched, text) = run(&["fetch", "-q", "origin", &theirs]);
+
+            if !fetched {
+                return Err(ErrorObject::bad_request(friendly_git_error("Reading the repository from GitHub", &text)));
+            }
+
+            run(&["symbolic-ref", "HEAD", &format!("refs/heads/{theirs}")]);
+
+            let (reset, text) = run(&["reset", "-q", "FETCH_HEAD"]);
+
+            if !reset {
+                return Err(ErrorObject::bad_request(friendly_git_error("Taking the repository's history", &text)));
+            }
+
+            keep_theirs(run);
+        }
+    }
+
+    let left_out = stage(run)?;
+    let mut committed = false;
+
+    /* `diff --cached --quiet` fails exactly when something is staged. */
+    if !run(&["diff", "--cached", "--quiet"]).0 {
+        let message = options.message.clone().filter(|message| !message.trim().is_empty()).unwrap_or_else(|| "Update from SDC".to_string());
+
+        commit_args.extend(["commit".into(), "-q".into(), "-m".into(), message]);
+
+        let args: Vec<&str> = commit_args.iter().map(String::as_str).collect();
+        let (ok, text) = run(&args);
+
+        if !ok {
+            return Err(ErrorObject::bad_request(friendly_git_error("git commit", &text)));
+        }
+
+        committed = true;
+    }
+
+    if !run(&["rev-parse", "--verify", "HEAD"]).0 {
+        return Err(ErrorObject::bad_request(if left_out.is_empty() {
+            "The folder has no files to push yet".to_string()
+        } else {
+            format!("Nothing to push - the only new files were left out: {}", left_out.iter().filter_map(|row| row["path"].as_str()).collect::<Vec<_>>().join(", "))
+        }));
     }
 
     let (_, branch) = run(&["rev-parse", "--abbrev-ref", "HEAD"]);
@@ -488,16 +706,41 @@ fn push_steps(
     }
 
     if !ok {
-        return Err(ErrorObject::bad_request(format!("git push failed: {}", text.trim())));
+        return Err(ErrorObject::bad_request(friendly_git_error("git push", &text)));
     }
 
-    Ok(json!({ "url": web_url(&remote), "branch": branch, "created": created, "committed": committed, "login": login }))
+    Ok(json!({ "url": web_url(&remote), "branch": branch, "created": created, "committed": committed, "login": login, "skipped": left_out }))
 }
 
 /// Put before every `git` SDC runs in a project folder: the person chose the folder, so git's ownership check (1.0.9) must
 /// not refuse it - a drive formatted exFAT/FAT records no owner ("detected dubious ownership"), and a server folder is
 /// often owned by another user. Only these commands are told; the person's own git config is left alone.
 const TRUST_FOLDER: &[&str] = &["-c", "safe.directory=*"];
+
+/// How long a git command waits, before each try, for another git in the same folder to let go of its lock: at once,
+/// then for up to about eleven seconds in all.
+const LOCK_WAITS: &[Duration] = &[Duration::ZERO, Duration::from_millis(500), Duration::from_secs(1), Duration::from_secs(2), Duration::from_secs(3), Duration::from_secs(5)];
+
+/// Whether git refused because another git holds the folder's lock (`Unable to create '…/.git/index.lock': File exists`).
+fn held_by_another(text: &str) -> bool {
+    text.contains(".lock") && (text.contains("File exists") || text.contains("Another git process"))
+}
+
+/// Runs one git command, again after a pause while another git holds the folder's lock (1.0.10).
+fn with_lock_waits(mut once: impl FnMut() -> (bool, String)) -> (bool, String) {
+    let mut answer = (false, String::new());
+
+    for wait in LOCK_WAITS {
+        std::thread::sleep(*wait);
+        answer = once();
+
+        if answer.0 || !held_by_another(&answer.1) {
+            break;
+        }
+    }
+
+    answer
+}
 
 /// `git <args>` in a project folder, answering `(ok, stdout+stderr)`.
 type Git<'s> = Box<dyn FnMut(&[&str]) -> (bool, String) + 's>;
@@ -524,14 +767,19 @@ impl Place<'_> {
 
         match *self {
             Place::Local(root) => Box::new(move |args: &[&str]| -> (bool, String) {
-                let Some(mut git) = git_command() else {
+                if git_command().is_none() {
                     return (false, "Git is not installed - Settings → Environment installs it".into());
-                };
-
-                match git.current_dir(root).args(TRUST_FOLDER).args(args).envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str()))).stdin(Stdio::null()).output() {
-                    Ok(output) => (output.status.success(), format!("{}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr))),
-                    Err(error) => (false, error.to_string()),
                 }
+
+                /* Another git in the same folder (an editor's, or SDC's own a moment ago) holds the lock for a moment:
+                   wait for it rather than fail (1.0.10). */
+                with_lock_waits(|| match git_command() {
+                    Some(mut git) => match git.current_dir(root).args(TRUST_FOLDER).args(args).envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str()))).stdin(Stdio::null()).output() {
+                        Ok(output) => (output.status.success(), format!("{}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr))),
+                        Err(error) => (false, error.to_string()),
+                    },
+                    None => (false, "Git is not installed - Settings → Environment installs it".into()),
+                })
             }),
             Place::Remote(ssh, root) => {
                 let exports: String = env.iter().map(|(key, value)| format!("export {key}={}\n", crate::ssh::sh_quote(value))).collect();
@@ -541,10 +789,10 @@ impl Place<'_> {
                     let command: Vec<String> = TRUST_FOLDER.iter().chain(args).map(|arg| crate::ssh::sh_quote(arg)).collect();
                     let script = format!("{exports}{cd}command -v git >/dev/null 2>&1 || {{ echo 'Git is not installed on this server'; exit 98; }}\ngit {} 2>&1\n", command.join(" "));
 
-                    match ssh.run_with_stdin("sh -s", &script, Duration::from_secs(180)) {
+                    with_lock_waits(|| match ssh.run_with_stdin("sh -s", &script, Duration::from_secs(180)) {
                         Ok(output) => (output.ok(), output.stdout),
                         Err(error) => (false, error.message),
-                    }
+                    })
                 })
             }
         }
@@ -639,8 +887,17 @@ fn info_with(run: &mut dyn FnMut(&[&str]) -> (bool, String)) -> Value {
 
     let (has_origin, origin) = run(&["remote", "get-url", "origin"]);
     let remote = if has_origin && !origin.trim().is_empty() { Some(origin.trim().to_string()) } else { None };
-    let (_, branch) = run(&["rev-parse", "--abbrev-ref", "HEAD"]);
-    let (_, changes) = run(&["status", "--porcelain"]);
+    /* A folder with no commit yet has a branch but no `HEAD` to ask: `rev-parse` answers with an error, which used to be
+       shown as the branch's name ("HEAD fatal: ambiguous argument 'HEAD'"). `symbolic-ref` knows it either way. */
+    let (_, branch) = run(&["symbolic-ref", "--short", "-q", "HEAD"]);
+    /* Read-only, so it never takes git's lock from a push running at the same moment (1.0.10). The count leaves out
+       what a push never sends, so it is the number a push will actually commit. */
+    let specs = stage_pathspecs();
+    let mut status: Vec<&str> = vec!["--no-optional-locks", "status", "--porcelain", "--"];
+
+    status.extend(specs.iter().map(String::as_str));
+
+    let (_, changes) = run(&status);
     let full = remote.as_deref().and_then(full_name);
 
     json!({
@@ -650,7 +907,7 @@ fn info_with(run: &mut dyn FnMut(&[&str]) -> (bool, String)) -> Value {
         "url": remote.as_deref().map(web_url),
         "fullName": full,
         "onGitHub": full.is_some(),
-        "branch": Some(branch.trim()).filter(|branch| !branch.is_empty() && *branch != "HEAD"),
+        "branch": Some(branch.trim()).filter(|branch| !branch.is_empty() && *branch != "HEAD" && !branch.contains(' ')),
         "changes": changes.lines().filter(|line| !line.trim().is_empty()).count(),
     })
 }
@@ -774,6 +1031,8 @@ mod tests {
                 ["status", "--porcelain"] => (true, "?? index.html
 ".into()),
                 ["remote", "get-url", "origin"] => (false, String::new()),
+                /* Something is staged: `diff --cached --quiet` fails exactly then. */
+                ["diff", "--cached", "--quiet"] => (false, String::new()),
                 ["rev-parse", "--abbrev-ref", "HEAD"] => (true, "main
 ".into()),
                 _ => (true, String::new()),
@@ -796,9 +1055,11 @@ mod tests {
         let calls = calls.borrow();
 
         assert_eq!(calls[1], "init -b main");
-        assert!(calls.iter().any(|call| call == "-c user.name=Me -c user.email=7+me@users.noreply.github.com commit -m Update from SDC"));
+        assert!(calls.iter().any(|call| call == "-c user.name=Me -c user.email=7+me@users.noreply.github.com commit -q -m Update from SDC"));
         assert!(calls.iter().any(|call| call == "remote add origin https://github.com/me/My-Shop.git"));
         assert_eq!(calls.last().unwrap(), "push -u origin HEAD");
+        assert!(calls.iter().any(|call| call.starts_with("add -A -- . :(exclude,glob)**/node_modules/**")), "what a push never sends is left out: {calls:?}");
+        assert!(!calls.iter().any(|call| call.starts_with("fetch")), "a repository made now has nothing to take");
     }
 
     #[test]
@@ -831,8 +1092,8 @@ mod tests {
                     (true, "https://github.com/me/old.git\n".into())
                 }
                 ["remote", "get-url", "origin"] => (true, "https://github.com/me/shop.git\n".into()),
-                ["rev-parse", "--abbrev-ref", "HEAD"] => (true, "main\n".into()),
-                ["status", "--porcelain"] => (true, " M index.html\n".into()),
+                ["symbolic-ref", "--short", "-q", "HEAD"] => (true, "main\n".into()),
+                ["--no-optional-locks", "status", "--porcelain", ..] => (true, " M index.html\n".into()),
                 _ => (true, String::new()),
             }
         };
@@ -889,5 +1150,168 @@ mod tests {
         let error = push_steps("site", &options, &json!({ "login": "me", "id": 1 }), &mut create, &mut run).unwrap_err();
 
         assert!(error.message.contains("not on GitHub"));
+    }
+
+    /// Real git, a fake GitHub: `https://github.com/` is a folder on this machine, so the whole push runs offline.
+    fn real_git(dir: &Path, hub: &Path) -> impl FnMut(&[&str]) -> (bool, String) {
+        let (dir, hub) = (dir.to_path_buf(), format!("{}/", hub.display().to_string().replace('\\', "/")));
+
+        move |args: &[&str]| {
+            /* `remote get-url` applies the redirect too; SDC must still see the GitHub address it was given. */
+            let redirect = if args.starts_with(&["remote", "get-url"]) { String::new() } else { format!("url.{hub}.insteadOf=https://github.com/") };
+            let output = std::process::Command::new("git")
+                .current_dir(&dir)
+                .args(["-c", "safe.directory=*", "-c", "init.defaultBranch=main"])
+                .args(if redirect.is_empty() { Vec::new() } else { vec!["-c", redirect.as_str()] })
+                .args(args)
+                .env("GIT_TERMINAL_PROMPT", "0")
+                .output()
+                .unwrap();
+
+            (output.status.success(), format!("{}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr)))
+        }
+    }
+
+    fn git_here(dir: &Path, args: &[&str]) {
+        let output = std::process::Command::new("git")
+            .current_dir(dir)
+            .args(["-c", "safe.directory=*", "-c", "user.name=t", "-c", "user.email=t@t", "-c", "init.defaultBranch=main"])
+            .args(args)
+            .output()
+            .unwrap();
+
+        assert!(output.status.success(), "git {args:?} in {}: {}", dir.display(), String::from_utf8_lossy(&output.stderr));
+    }
+
+    fn write(path: std::path::PathBuf, text: &str) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    }
+
+    /// 1.0.10, the report end to end: "a folder opened in SDC, a repository picked, Push" - a folder with no commit of
+    /// its own, a repository that already has files, no `.gitignore`, a package store, a key in a text file and a
+    /// repository inside. The push puts the work on top of what is there, sends none of the rest, overwrites and
+    /// deletes nothing on GitHub - and the next push does the same.
+    #[test]
+    fn a_folder_opened_anywhere_is_pushed_into_a_repository_that_already_has_files() {
+        if !std::process::Command::new("git").arg("--version").output().is_ok_and(|output| output.status.success()) {
+            return;
+        }
+
+        let root = std::env::temp_dir().join(format!("sdc-push-{}", uuid::Uuid::new_v4()));
+        let hub = root.join("hub");
+        let bare = hub.join("me").join("shop.git");
+
+        std::fs::create_dir_all(&bare).unwrap();
+        git_here(&bare, &["init", "-q", "--bare"]);
+
+        /* GitHub already has two files. */
+        let seed = root.join("seed");
+
+        std::fs::create_dir_all(&seed).unwrap();
+        git_here(&seed, &["init", "-q"]);
+        write(seed.join("README.md"), "# shop\n");
+        write(seed.join("docs/guide.md"), "only on GitHub\n");
+        git_here(&seed, &["add", "-A"]);
+        git_here(&seed, &["commit", "-q", "-m", "first"]);
+        git_here(&seed, &["push", "-q", bare.to_str().unwrap(), "HEAD:main"]);
+
+        /* The folder the person opened: their work, and everything a push must not send. */
+        let work = root.join("work");
+
+        write(work.join("index.html"), "<h1>my work</h1>\n");
+        write(work.join("README.md"), "# shop - my version\n");
+        write(work.join(".pnpm-store/v10/files/00/abc"), "package cache\n");
+        write(work.join("node_modules/lib/index.js"), "module.exports = 1;\n");
+        write(work.join("notes.txt"), "gemini key AIzaSyA1234567890abcdefghijklmnopqrstuv\n");
+        /* The report's own file: a key as a setting, in a shape no provider pattern knows. */
+        write(work.join("geminiapi.txt"), "GEMINI_API_KEY=AQ.Ab8RN6Lx0aZq-3vT9_kPq2Wm7YcD1eFgHiJkLmNoPqRsTuVw\n");
+        /* Code that only mentions a token is the person's work, and is sent. */
+        write(work.join("app.js"), "const token = getTokenFromTheServer();\n");
+        write(work.join("._index.html"), "macOS junk\n");
+        write(work.join(".env"), "SECRET=1\n");
+        write(work.join("inner/app.txt"), "a project of its own\n");
+        git_here(&work.join("inner"), &["init", "-q"]);
+        git_here(&work.join("inner"), &["add", "-A"]);
+        git_here(&work.join("inner"), &["commit", "-q", "-m", "inner"]);
+        git_here(&work, &["init", "-q"]);
+        git_here(&work, &["remote", "add", "origin", "https://github.com/me/shop.git"]);
+
+        let mut run = real_git(&work, &hub);
+        let user = json!({ "login": "me", "id": 7, "name": "Me" });
+        let options = PushOptions { repo: None, private: true, message: Some("my work".into()) };
+        let mut create = |_: &str| -> Result<(String, bool), ErrorObject> { panic!("the repository exists") };
+        let answer = push_steps("work", &options, &user, &mut create, &mut run).unwrap_or_else(|error| panic!("{}", error.message));
+        let skipped: Vec<String> = answer["skipped"].as_array().unwrap().iter().map(|row| row["path"].as_str().unwrap().to_string()).collect();
+
+        assert!(skipped.contains(&"notes.txt".to_string()) && skipped.contains(&"geminiapi.txt".to_string()) && skipped.contains(&"inner".to_string()), "{skipped:?}");
+        assert!(!skipped.contains(&"app.js".to_string()), "code that mentions a token is sent: {skipped:?}");
+
+        /* What GitHub has now. */
+        let check = root.join("check");
+
+        git_here(&root, &["clone", "-q", bare.to_str().unwrap(), check.to_str().unwrap()]);
+
+        /* The check clone may turn line ends into CRLF on Windows (`core.autocrlf`); the content is what is compared. */
+        let read = |name: &str| std::fs::read_to_string(check.join(name)).unwrap().replace("\r\n", "\n");
+
+        assert_eq!(read("index.html"), "<h1>my work</h1>\n");
+        assert_eq!(read("README.md"), "# shop - my version\n", "the folder's work is the newest");
+        assert!(check.join("docs/guide.md").exists(), "a file only GitHub had is kept");
+
+        assert!(check.join("app.js").exists());
+
+        for never in [".pnpm-store", "node_modules", "notes.txt", "geminiapi.txt", "._index.html", ".env", "inner"] {
+            assert!(!check.join(never).exists(), "{never} was sent");
+        }
+
+        let (_, log) = real_git(&check, &hub)(&["log", "--format=%s"]);
+
+        assert_eq!(log.lines().collect::<Vec<_>>(), ["my work", "first"], "on top of GitHub's history, nothing rewritten");
+        assert!(!work.join("docs").exists(), "nothing was written into the person's folder");
+
+        /* The next push: one more change, and the file only GitHub has is still not deleted. */
+        write(work.join("about.html"), "about\n");
+
+        let options = PushOptions { repo: None, private: true, message: Some("more".into()) };
+
+        push_steps("work", &options, &user, &mut create, &mut run).unwrap_or_else(|error| panic!("{}", error.message));
+        git_here(&check, &["pull", "-q"]);
+
+        assert!(check.join("about.html").exists());
+        assert!(check.join("docs/guide.md").exists(), "still kept on the second push");
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_folder_with_no_commit_shows_its_branch_not_an_error() {
+        let mut run = |args: &[&str]| -> (bool, String) {
+            match args {
+                ["rev-parse", "--is-inside-work-tree"] => (true, "true\n".into()),
+                ["symbolic-ref", "--short", "-q", "HEAD"] => (true, "main\n".into()),
+                ["rev-parse", ..] => (false, "fatal: ambiguous argument 'HEAD': unknown revision".into()),
+                _ => (true, String::new()),
+            }
+        };
+
+        assert_eq!(info_with(&mut run)["branch"], "main");
+    }
+
+    #[test]
+    fn a_lock_held_by_another_git_is_waited_for() {
+        let mut tries = 0;
+        let answer = with_lock_waits(|| {
+            tries += 1;
+
+            if tries < 3 {
+                (false, "fatal: Unable to create 'F:/x/.git/index.lock': File exists.".into())
+            } else {
+                (true, "done".into())
+            }
+        });
+
+        assert_eq!((answer.0, tries), (true, 3));
+        assert!(friendly_git_error("git add", "fatal: Unable to create '.git/index.lock': File exists.").contains("Another git program"));
     }
 }
