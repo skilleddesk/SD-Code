@@ -494,6 +494,11 @@ fn push_steps(
     Ok(json!({ "url": web_url(&remote), "branch": branch, "created": created, "committed": committed, "login": login }))
 }
 
+/// Put before every `git` SDC runs in a project folder: the person chose the folder, so git's ownership check (1.0.9) must
+/// not refuse it - a drive formatted exFAT/FAT records no owner ("detected dubious ownership"), and a server folder is
+/// often owned by another user. Only these commands are told; the person's own git config is left alone.
+const TRUST_FOLDER: &[&str] = &["-c", "safe.directory=*"];
+
 /// `git <args>` in a project folder, answering `(ok, stdout+stderr)`.
 type Git<'s> = Box<dyn FnMut(&[&str]) -> (bool, String) + 's>;
 
@@ -523,7 +528,7 @@ impl Place<'_> {
                     return (false, "Git is not installed - Settings → Environment installs it".into());
                 };
 
-                match git.current_dir(root).args(args).envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str()))).stdin(Stdio::null()).output() {
+                match git.current_dir(root).args(TRUST_FOLDER).args(args).envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str()))).stdin(Stdio::null()).output() {
                     Ok(output) => (output.status.success(), format!("{}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr))),
                     Err(error) => (false, error.to_string()),
                 }
@@ -533,7 +538,7 @@ impl Place<'_> {
                 let cd = format!("cd {} || exit 97\n", crate::ssh::sh_quote(root));
 
                 Box::new(move |args: &[&str]| -> (bool, String) {
-                    let command: Vec<String> = args.iter().map(|arg| crate::ssh::sh_quote(arg)).collect();
+                    let command: Vec<String> = TRUST_FOLDER.iter().chain(args).map(|arg| crate::ssh::sh_quote(arg)).collect();
                     let script = format!("{exports}{cd}command -v git >/dev/null 2>&1 || {{ echo 'Git is not installed on this server'; exit 98; }}\ngit {} 2>&1\n", command.join(" "));
 
                     match ssh.run_with_stdin("sh -s", &script, Duration::from_secs(180)) {

@@ -68,6 +68,13 @@ pub const CLAUDE_SPEC: CliSpec = CliSpec {
     ],
     resume: Resume::Flag("--resume"),
     image_flag: None,
+    /* 1.0.9: a message sent while `claude` works goes into the turn. With `--input-format stream-json` stdin
+       stays open and takes one JSON user message per line; Claude Code reads one that arrives mid-turn at its
+       next step and changes course in the same turn. `--replay-user-messages` echoes each message once it has
+       been read, which is how the runner knows the turn is not over yet. Measured on 2.1.314: a message sent
+       during `sleep 4; echo ONE` was echoed at once and acted on before the turn's only `result`; one sent
+       while the final answer was being written started a second `result` right after the first. */
+    steer: &["--input-format", "stream-json", "--replay-user-messages"],
 };
 
 pub struct ClaudeCode {

@@ -2419,10 +2419,11 @@ fn drive(
     let mut too_large_units = 0u32;
     /* The edit count when the checks last ran: they run again only after the agent changed something. */
     let mut checked_at = usize::MAX;
-    /* Words sent while the turn runs join it between steps (0.12.5) - closed when the loop returns. */
-    let inbox = crate::engines::steer::open(&turn_id);
+    /* Words sent while the turn runs join it between steps (0.12.5): the loop reads the turn's mailbox itself, so
+       `steer::drive` never stops it for them (1.0.9). */
+    crate::engines::steer::go_live(&turn_id);
     let steer = |messages: &mut Vec<Value>| -> bool {
-        let texts = inbox.take();
+        let texts = crate::engines::steer::take(&turn_id);
 
         if texts.is_empty() {
             return false;

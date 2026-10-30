@@ -12,7 +12,6 @@ import { HostIcon } from '../ui/HostIcon';
 import { HOST_STATUS_CLASS, HOST_STATUS_LABEL } from '../ui/status';
 import { FilesSection } from './FilesSection';
 import { SessionRow } from './SessionRow';
-import { UpdateNotice } from './UpdateNotice';
 
 /**
  * The sidebar (0.12.5 redesign): one machine at a time, its projects, each project's chats.
@@ -120,9 +119,6 @@ export function Sidebar() {
 
         <FilesSection />
       </div>
-
-      {/* 1.0.3: a new release, said where it is seen and closed with one click. */}
-      <UpdateNotice />
     </aside>
   );
 }

@@ -29,6 +29,8 @@ interface GitHubState {
   pushing: Record<string, boolean>;
   /** The account's repositories, for the picker; `null` until asked. */
   accountRepos: GitHubRepoRow[] | null;
+  /** Why the account's repositories could not be read (1.0.9) - shown in the picker instead of an empty list. */
+  accountReposError: string | null;
   loadRepo: (sessionId: string, place: string) => Promise<GitHubRepoInfo | null>;
   link: (sessionId: string, place: string, repo: string, isPrivate: boolean) => Promise<GitHubRepoInfo | { error: string }>;
   loadAccountRepos: () => Promise<void>;
@@ -46,6 +48,7 @@ export const useGitHubStore = create<GitHubState>((set, get) => ({
   repos: {},
   pushing: {},
   accountRepos: null,
+  accountReposError: null,
 
   refresh: async () => {
     try {
@@ -149,9 +152,9 @@ export const useGitHubStore = create<GitHubState>((set, get) => ({
     try {
       const answer = await sdcpCall('github.repos', {});
 
-      set({ accountRepos: answer.repos });
-    } catch {
-      set({ accountRepos: [] });
+      set({ accountRepos: answer.repos, accountReposError: null });
+    } catch (reason) {
+      set({ accountRepos: [], accountReposError: message(reason) });
     }
   },
 

@@ -71,6 +71,9 @@ pub struct CliSpec {
     pub resume: Resume,
     /// The flag that attaches an image file to the prompt, when the CLI has one (`codex -i <file>`).
     pub image_flag: Option<&'static str>,
+    /// The flags that keep the CLI listening while it works (1.0.9), so a message sent mid-turn goes **into** the
+    /// turn - see [`Steering`]. Empty: the CLI reads one prompt, stdin is closed, and such a message is queued.
+    pub steer: &'static [&'static str],
 }
 
 /// How a CLI picks up its own earlier conversation (0.13) - measured on each, 2026-09-28:
@@ -264,6 +267,9 @@ pub struct CliAdapter {
     /// which pid file to read on that host (`ssh::ops::kill_line`), so a Stop button stops the process
     /// rather than the pipe. See `turn_line` for why the pid in that file is the CLI's own.
     remotes: Arc<Mutex<HashMap<String, (crate::ssh::Ssh, String)>>>,
+    /// The machines whose CLI refused the steering flags (an older `claude`, 1.0.9): their turns read one prompt
+    /// and a message sent mid-turn is queued, as before. `""` is this computer, otherwise the host's label.
+    steer_refused: Arc<Mutex<std::collections::HashSet<String>>>,
 }
 
 impl Default for CliAdapter {
@@ -272,6 +278,7 @@ impl Default for CliAdapter {
             spec: crate::engines::claude_code::CLAUDE_SPEC,
             children: Arc::new(Mutex::new(HashMap::new())),
             remotes: Arc::new(Mutex::new(HashMap::new())),
+            steer_refused: Arc::default(),
         }
     }
 }
@@ -282,6 +289,7 @@ impl CliAdapter {
             spec,
             children: Arc::new(Mutex::new(HashMap::new())),
             remotes: Arc::new(Mutex::new(HashMap::new())),
+            steer_refused: Arc::default(),
         }
     }
 
@@ -468,7 +476,7 @@ impl CliAdapter {
             state.2.iter().any(|event| matches!(event, EngineEvent::Failed(reason) if connection_failure(reason)))
         });
 
-        if failed_early && !unreachable && !crate::engines::cancel::requested(&prompt.turn_id) {
+        if failed_early && !unreachable && !crate::engines::cancel::requested(&prompt.turn_id) && !crate::engines::steer::interrupting(&prompt.turn_id) {
             sink.send(EngineEvent::Thinking(
                 "The earlier conversation could not be resumed; starting it again with this chat's history.
 ".to_string(),
@@ -490,6 +498,14 @@ impl CliAdapter {
         /* The body is built first, because an argument-placed prompt has to go in with the flags. */
         let body = turn_body(&self.spec, prompt);
         let mut args = turn_args(&self.spec, prompt, &body);
+        let machine = prompt.remote.as_ref().map(crate::ssh::Ssh::label).unwrap_or_default();
+        let steers = !self.spec.steer.is_empty()
+            && self.spec.prompt == PromptPlacement::Stdin
+            && !self.steer_refused.lock().is_ok_and(|refused| refused.contains(&machine));
+
+        if steers {
+            args.extend(self.spec.steer.iter().map(|arg| arg.to_string()));
+        }
 
         /* A CLI whose conversation SDC names (Gemini): a fresh turn starts one under a new id, and says so
            once it has ended well - a turn that failed before the CLI wrote its session leaves no record. */
@@ -582,20 +598,36 @@ impl CliAdapter {
             })
         });
 
-        if let Some(mut stdin) = child.stdin.take() {
-            if self.spec.prompt == PromptPlacement::Stdin {
-                let _ = stdin.write_all(body.as_bytes()).await;
-                let _ = stdin.flush().await;
-            }
+        /* A steerable CLI keeps its stdin for the person's messages while it works (1.0.9); the others get the
+           prompt and a closed pipe. */
+        let mut steering: Option<SteerLink> = None;
 
-            /* Closing stdin is what tells all three CLIs the prompt is complete. */
-            drop(stdin);
+        if let Some(mut stdin) = child.stdin.take() {
+            if steers {
+                let _ = stdin.write_all(user_line(&body).as_bytes()).await;
+                let _ = stdin.flush().await;
+
+                steering = Some(Steering::start(&prompt.turn_id, stdin, sink));
+            } else {
+                if self.spec.prompt == PromptPlacement::Stdin {
+                    let _ = stdin.write_all(body.as_bytes()).await;
+                    let _ = stdin.flush().await;
+                }
+
+                /* Closing stdin is what tells all three CLIs the prompt is complete. */
+                drop(stdin);
+            }
         }
 
         let (lines, ended, question) = match child.stdout.take() {
-            Some(stdout) => read_structured(stdout, sink).await,
+            Some(stdout) => read_structured(stdout, sink, steering.as_ref()).await,
             None => (Vec::new(), false, None),
         };
+
+        /* Whatever happened, the turn takes no more messages and the CLI has no more input. */
+        if let Some(link) = &steering {
+            link.lock().await.finish();
+        }
 
         if let (Some(id), true) = (&chosen, ended) {
             sink.send(EngineEvent::SessionRef(id.clone()));
@@ -623,6 +655,18 @@ impl CliAdapter {
             Some(task) => task.await.unwrap_or_default(),
             None => String::new(),
         };
+
+        /* An older `claude` that does not know the steering flags stops before it starts: the turn runs again
+           without them, and that machine is not asked with them again while SDC runs. */
+        if steers && !ended && refused_steering(&self.spec, &stderr) {
+            if let Ok(mut refused) = self.steer_refused.lock() {
+                refused.insert(machine);
+            }
+
+            crate::engines::steer::stand_down(&prompt.turn_id);
+
+            return Box::pin(self.attempt(prompt, sink)).await;
+        }
 
         /* A CLI that stopped on a question gets the one sentence that says what to do about it,
            instead of `explain_failure`'s generic one - the question itself is the explanation. */
@@ -768,6 +812,168 @@ pub fn model_args(flag: Option<&'static str>, model: &str) -> Vec<String> {
 /// writes whole lines, and a model's silence has no half-line in front of it.
 const INTERACTIVE_STALL: std::time::Duration = std::time::Duration::from_secs(15);
 
+/// Whether a CLI stopped because it does not know one of the steering flags (`error: unknown option '--replay-user-messages'`).
+fn refused_steering(spec: &CliSpec, stderr: &str) -> bool {
+    let said = stderr.to_lowercase();
+
+    (said.contains("unknown option") || said.contains("unrecognized") || said.contains("invalid choice"))
+        && spec.steer.iter().filter(|arg| arg.starts_with("--")).any(|flag| said.contains(flag))
+}
+
+/// How often a steerable turn looks for the person's new messages.
+const STEER_POLL: std::time::Duration = std::time::Duration::from_millis(250);
+
+/// One message for a CLI that reads `--input-format stream-json`: a line of JSON, the person's words in it.
+fn user_line(text: &str) -> String {
+    format!("{}\n", serde_json::json!({ "type": "user", "message": { "role": "user", "content": text } }))
+}
+
+/// A line where the CLI echoes one of the person's messages back (`--replay-user-messages`): it has read it. A
+/// tool's result is a `user` line too, and a sub-agent's prompt has a parent - neither counts.
+fn person_echo(value: &serde_json::Value) -> bool {
+    if value.get("type").and_then(serde_json::Value::as_str) != Some("user") || value.get("parent_tool_use_id").is_some_and(|parent| !parent.is_null()) {
+        return false;
+    }
+
+    match value.pointer("/message/content") {
+        Some(serde_json::Value::String(_)) => true,
+        Some(serde_json::Value::Array(blocks)) => {
+            let kind = |block: &serde_json::Value| block.get("type").and_then(serde_json::Value::as_str).map(str::to_string);
+
+            blocks.iter().any(|block| kind(block).as_deref() == Some("text")) && !blocks.iter().any(|block| kind(block).as_deref() == Some("tool_result"))
+        }
+        _ => false,
+    }
+}
+
+/// A Claude Code turn the person can still talk to (1.0.9).
+///
+/// The report: *"ami jodi kaj cholar moddhe abar ekta prompt dei, o seta kajer moddhei porbe, adjust kore ekshathe
+/// kaj ta complete korbe - ekhon seta queue te thakche"*. SDC's own agent has done this since 0.12.5
+/// (`engines::steer`); a CLI turn had no inbox, so the message waited for the whole turn to end.
+///
+/// Now what arrives in the turn's mailbox (`steer::drive` keeps it open) is written to `claude`'s stdin as a user
+/// message. Claude Code reads it at its next step and changes course in the same turn. One case needs care: a
+/// message that lands while the model writes its final answer is read only after the `result`, as a second
+/// round. So a `result` that comes while a message is still unread (`echoed < written`) is **held**, and the
+/// round that answers the message streams into the same turn; its own `result` ends it. A held `result` with
+/// nothing after it for [`INTERACTIVE_STALL`] means the CLI is not going to answer, and the turn ends on it.
+pub(crate) struct Steering {
+    turn_id: String,
+    stdin: Option<Box<dyn tokio::io::AsyncWrite + Send + Unpin>>,
+    /// The person's messages written to the CLI, the prompt included.
+    written: usize,
+    /// The ones it has echoed back - read, and part of its conversation.
+    echoed: usize,
+    /// A `result` that came while a message was unread.
+    held: Option<String>,
+    /// Lines that came after `held`.
+    since_held: usize,
+}
+
+type SteerLink = Arc<tokio::sync::Mutex<Steering>>;
+
+impl Steering {
+    /// Starts carrying the turn's messages to the CLI, which reads them itself - so `steer::drive` does not stop it
+    /// for them. The prompt is already written.
+    fn start(turn_id: &str, stdin: impl tokio::io::AsyncWrite + Send + Unpin + 'static, sink: &EventSink) -> SteerLink {
+        let link = Arc::new(tokio::sync::Mutex::new(Steering {
+            turn_id: turn_id.to_string(),
+            stdin: Some(Box::new(stdin)),
+            written: 1,
+            echoed: 0,
+            held: None,
+            since_held: 0,
+        }));
+        let (poll, sink) = (link.clone(), sink.clone());
+
+        crate::engines::steer::go_live(turn_id);
+
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(STEER_POLL).await;
+
+                let mut state = poll.lock().await;
+                if state.stdin.is_none() {
+                    break;
+                }
+
+                let texts = crate::engines::steer::take(&state.turn_id);
+
+                state.send(texts, &sink).await;
+            }
+        });
+
+        link
+    }
+
+    /// Writes the person's messages to the CLI, and shows each in the turn as sent while it worked.
+    async fn send(&mut self, texts: Vec<String>, sink: &EventSink) {
+        for text in texts {
+            let Some(stdin) = self.stdin.as_mut() else { return };
+
+            if stdin.write_all(user_line(&text).as_bytes()).await.is_err() || stdin.flush().await.is_err() {
+                self.finish();
+
+                return;
+            }
+
+            self.written += 1;
+            sink.send(EngineEvent::Steered(text));
+        }
+    }
+
+    /// Whether a line of the CLI's stream goes on to the turn now - `false` only for a `result` that is held.
+    async fn passes(&mut self, line: &str, sink: &EventSink) -> bool {
+        if self.held.is_some() {
+            self.since_held += 1;
+        }
+
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else { return true };
+
+        if person_echo(&value) {
+            self.echoed += 1;
+
+            return true;
+        }
+
+        if value.get("type").and_then(serde_json::Value::as_str) != Some("result") || self.stdin.is_none() {
+            return true;
+        }
+
+        /* The turn would end here. What is still in the mailbox goes in first, and the turn goes on. */
+        let left = crate::engines::steer::take(&self.turn_id);
+
+        if !left.is_empty() {
+            self.send(left, sink).await;
+        }
+
+        if self.echoed < self.written && self.stdin.is_some() {
+            self.held = Some(line.to_string());
+            self.since_held = 0;
+
+            return false;
+        }
+
+        self.held = None;
+        self.finish();
+
+        true
+    }
+
+    /// A held `result` with nothing after it: the CLI is done, so its stdin closes and it leaves.
+    fn give_up_if_idle(&mut self) {
+        if self.held.is_some() && self.since_held == 0 {
+            self.finish();
+        }
+    }
+
+    /// No more input. A message after this stays in the mailbox, and `steer::drive` goes on with it in the same turn.
+    fn finish(&mut self) {
+        self.stdin = None;
+    }
+}
+
 /// Reads a CLI's structured stream **in bytes, not lines** - pushing each complete line's events as
 /// it arrives, and watching the half-written tail for a question.
 ///
@@ -782,9 +988,13 @@ const INTERACTIVE_STALL: std::time::Duration = std::time::Duration::from_secs(15
 /// A known question (`interactive_prompt`) is recognised the moment it arrives; any other
 /// half-written non-JSON line is given `INTERACTIVE_STALL` of silence first, because a chunk
 /// boundary can split an honest JSON line anywhere.
+///
+/// With `steering` (a Claude Code turn, 1.0.9), a `result` that comes while one of the person's messages is still
+/// unread is held, and the reading goes on: the CLI answers that message next, in the same turn on screen.
 async fn read_structured(
     mut stdout: impl tokio::io::AsyncRead + Unpin,
     sink: &EventSink,
+    steering: Option<&SteerLink>,
 ) -> (Vec<String>, bool, Option<String>) {
     let mut lines = Vec::new();
     let mut ended = false;
@@ -803,6 +1013,12 @@ async fn read_structured(
                     let raw: Vec<u8> = pending.drain(..=end).collect();
                     let line = String::from_utf8_lossy(&raw).trim_end().to_string();
 
+                    if let Some(link) = steering {
+                        if !link.lock().await.passes(&line, sink).await {
+                            continue;
+                        }
+                    }
+
                     take_stream_line(line, &mut lines, &mut ended, sink, &mut drafts, &mut background);
                 }
 
@@ -820,6 +1036,12 @@ async fn read_structured(
                 if !tail.is_empty() && !tail.starts_with('{') {
                     return (lines, ended, Some(tail));
                 }
+
+                /* A held `result` and nothing since: the CLI did not take up the message after all. Its stdin
+                   closes, it leaves, and the held `result` ends the turn below. */
+                if let Some(link) = steering {
+                    link.lock().await.give_up_if_idle();
+                }
             }
         }
     }
@@ -831,7 +1053,21 @@ async fn read_structured(
     let last = String::from_utf8_lossy(&pending).trim().to_string();
 
     if !last.is_empty() && serde_json::from_str::<serde_json::Value>(&last).is_ok() {
-        take_stream_line(last, &mut lines, &mut ended, sink, &mut drafts, &mut background);
+        let passes = match steering {
+            Some(link) => link.lock().await.passes(&last, sink).await,
+            None => true,
+        };
+
+        if passes {
+            take_stream_line(last, &mut lines, &mut ended, sink, &mut drafts, &mut background);
+        }
+    }
+
+    /* A `result` held for a message the CLI never answered is still how the turn ended. */
+    if let Some(link) = steering {
+        if let Some(held) = link.lock().await.held.take() {
+            take_stream_line(held, &mut lines, &mut ended, sink, &mut drafts, &mut background);
+        }
     }
 
     (lines, ended, None)
@@ -1345,7 +1581,7 @@ mod tests {
         let (mut writer, reader) = tokio::io::duplex(1024);
         let recorder = crate::engines::Recorder::new();
         let sink = recorder.sink();
-        let read = tokio::spawn(async move { read_structured(reader, &sink).await });
+        let read = tokio::spawn(async move { read_structured(reader, &sink, None).await });
 
         writer
             .write_all(
@@ -1366,6 +1602,117 @@ mod tests {
         drop(writer);
     }
 
+    const STEER_RESULT: &[u8] = b"{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"OK\"}\n";
+
+    fn echo(text: &str) -> Vec<u8> {
+        format!("{}\n", serde_json::json!({ "type": "user", "message": { "role": "user", "content": text }, "parent_tool_use_id": null })).into_bytes()
+    }
+
+    async fn written_to_cli(input: &mut tokio::io::DuplexStream) -> String {
+        let mut buffer = vec![0u8; 4096];
+        let read = tokio::time::timeout(std::time::Duration::from_secs(5), input.read(&mut buffer)).await.expect("nothing reached the CLI").unwrap();
+
+        String::from_utf8_lossy(&buffer[..read]).to_string()
+    }
+
+    /// 1.0.9: a message sent while Claude Code works is written into the running CLI, shown in the turn, and the
+    /// turn ends once - at the `result` that comes after the CLI has read it.
+    #[tokio::test]
+    async fn a_message_sent_mid_turn_goes_into_the_running_cli() {
+        let (to_cli, mut cli_input) = tokio::io::duplex(4096);
+        let (mut cli_output, from_cli) = tokio::io::duplex(4096);
+        let recorder = crate::engines::Recorder::new();
+        let sink = recorder.sink();
+        let mailbox = crate::engines::steer::open("turn-cli-steer-1");
+        let link = Steering::start("turn-cli-steer-1", to_cli, &sink);
+        let reading = link.clone();
+        let read = tokio::spawn(async move { read_structured(from_cli, &sink, Some(&reading)).await });
+
+        cli_output.write_all(&echo("build the page")).await.unwrap();
+        assert!(crate::engines::steer::push("turn-cli-steer-1", "use blue, not red"));
+
+        let line = written_to_cli(&mut cli_input).await;
+
+        assert!(line.contains("\"type\":\"user\"") && line.contains("use blue, not red"), "{line}");
+
+        cli_output.write_all(&echo("use blue, not red")).await.unwrap();
+        cli_output.write_all(STEER_RESULT).await.unwrap();
+        drop(cli_output);
+
+        let (_, ended, _) = tokio::time::timeout(std::time::Duration::from_secs(5), read).await.expect("the reader hung").unwrap();
+        let events = recorder.events();
+
+        assert!(ended);
+        assert!(events.contains(&EngineEvent::Steered("use blue, not red".into())));
+        assert_eq!(events.iter().filter(|event| event.is_terminal()).count(), 1);
+        /* After its `result` the CLI is done; a message now waits for `steer::drive` to go on with it. */
+        assert!(crate::engines::steer::push("turn-cli-steer-1", "one more"));
+        tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+        assert_eq!(mailbox.take(), vec!["one more".to_string()], "nothing is written to a CLI that has finished");
+    }
+
+    /// The case that needs the hold: the message is read only after the CLI's first `result` (it came while the
+    /// final answer was written). That `result` must not end the turn - the round that answers it does.
+    #[tokio::test]
+    async fn a_result_before_the_message_was_read_does_not_end_the_turn() {
+        let (to_cli, mut cli_input) = tokio::io::duplex(4096);
+        let (mut cli_output, from_cli) = tokio::io::duplex(4096);
+        let recorder = crate::engines::Recorder::new();
+        let sink = recorder.sink();
+        let _mailbox = crate::engines::steer::open("turn-cli-steer-2");
+        let link = Steering::start("turn-cli-steer-2", to_cli, &sink);
+        let reading = link.clone();
+        let read = tokio::spawn(async move { read_structured(from_cli, &sink, Some(&reading)).await });
+
+        cli_output.write_all(&echo("write about rivers")).await.unwrap();
+        assert!(crate::engines::steer::push("turn-cli-steer-2", "and lakes"));
+        written_to_cli(&mut cli_input).await;
+
+        /* The first round ends before the CLI has read "and lakes". */
+        cli_output.write_all(STEER_RESULT).await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        assert_eq!(recorder.events().iter().filter(|event| event.is_terminal()).count(), 0, "the first result is held");
+
+        cli_output.write_all(&echo("and lakes")).await.unwrap();
+        cli_output
+            .write_all(b"{\"type\":\"stream_event\",\"event\":{\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"Lakes too.\"}}}\n")
+            .await
+            .unwrap();
+        cli_output.write_all(STEER_RESULT).await.unwrap();
+
+        /* The turn is over: the CLI's stdin is closed, which is what lets it leave. */
+        let mut rest = Vec::new();
+
+        tokio::time::timeout(std::time::Duration::from_secs(5), cli_input.read_to_end(&mut rest)).await.expect("stdin stayed open").unwrap();
+        drop(cli_output);
+
+        let (_, ended, _) = tokio::time::timeout(std::time::Duration::from_secs(5), read).await.expect("the reader hung").unwrap();
+        let events = recorder.events();
+
+        assert!(ended);
+        assert!(events.iter().any(|event| matches!(event, EngineEvent::Delta(text) if text.contains("Lakes too."))), "{events:?}");
+        assert_eq!(events.iter().filter(|event| event.is_terminal()).count(), 1);
+    }
+
+    #[test]
+    fn an_older_claude_that_refuses_the_flags_is_recognised() {
+        assert!(refused_steering(&CLAUDE_SPEC, "error: unknown option '--replay-user-messages'
+"));
+        assert!(refused_steering(&CLAUDE_SPEC, "error: unknown option '--input-format'"));
+        assert!(!refused_steering(&CLAUDE_SPEC, "Invalid API key - please run /login"));
+        assert!(!refused_steering(&CODEX_SPEC, "error: unknown option '--input-format'"));
+    }
+
+    #[test]
+    fn only_the_persons_own_messages_count_as_read() {
+        let parse = |line: &str| serde_json::from_str::<serde_json::Value>(line).unwrap();
+
+        assert!(person_echo(&parse(r#"{"type":"user","message":{"role":"user","content":"hi"},"parent_tool_use_id":null}"#)));
+        assert!(!person_echo(&parse(r#"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"ok"}]}}"#)));
+        assert!(!person_echo(&parse(r#"{"type":"user","message":{"role":"user","content":"sub task"},"parent_tool_use_id":"toolu_1"}"#)));
+        assert!(!person_echo(&parse(r#"{"type":"assistant","message":{"content":"hi"}}"#)));
+    }
+
     /// A turn that answered in full and whose `result` line arrives without its newline, then EOF, is a finished
     /// turn - not `the engine's stream ended without a result`.
     #[tokio::test]
@@ -1373,7 +1720,7 @@ mod tests {
         let (mut writer, reader) = tokio::io::duplex(1024);
         let recorder = crate::engines::Recorder::new();
         let sink = recorder.sink();
-        let read = tokio::spawn(async move { read_structured(reader, &sink).await });
+        let read = tokio::spawn(async move { read_structured(reader, &sink, None).await });
 
         writer
             .write_all(b"{\"type\":\"init\"}\n{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"OK\"}")
@@ -1396,7 +1743,7 @@ mod tests {
         let (mut writer, reader) = tokio::io::duplex(1024);
         let recorder = crate::engines::Recorder::new();
         let sink = recorder.sink();
-        let read = tokio::spawn(async move { read_structured(reader, &sink).await });
+        let read = tokio::spawn(async move { read_structured(reader, &sink, None).await });
 
         writer.write_all(b"{\"type\":\"init\"}\n{\"type\":\"stream_event\",\"event\":{\"type\":\"content_block_delta\",\"delta\":{\"te").await.unwrap();
         drop(writer);

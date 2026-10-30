@@ -50,6 +50,31 @@ pub fn widen() {
     }
 }
 
+/// Lets every `git` this daemon starts work in the folder the person opened (1.0.9). Git refuses a repository it
+/// does not think the current user owns - "detected dubious ownership" - and that is every repository on a drive
+/// formatted exFAT or FAT (an external disk, a second partition), which records no owner at all, and every folder
+/// another account made. The person chose the folder; SDC's checkpoints, diffs, pushes and the agent's own `git`
+/// commands all inherit this, so none of them meets the refusal. The person's own git config is not touched, and a
+/// `GIT_CONFIG_COUNT` already in the environment is kept - ours is added after it.
+///
+/// Like [`widen`], it changes the process environment: call it once in `main`, before any thread exists.
+pub fn trust_project_folders() {
+    for (key, value) in trust_entries(std::env::var("GIT_CONFIG_COUNT").ok().as_deref()) {
+        std::env::set_var(key, value);
+    }
+}
+
+/// The variables that add `safe.directory=*` after `existing` entries of `GIT_CONFIG_COUNT`.
+pub fn trust_entries(existing: Option<&str>) -> Vec<(String, String)> {
+    let index = existing.and_then(|count| count.trim().parse::<usize>().ok()).unwrap_or(0);
+
+    vec![
+        (format!("GIT_CONFIG_KEY_{index}"), "safe.directory".to_string()),
+        (format!("GIT_CONFIG_VALUE_{index}"), "*".to_string()),
+        ("GIT_CONFIG_COUNT".to_string(), (index + 1).to_string()),
+    ]
+}
+
 /// `current` first (what the parent chose wins), then the login shell's entries, then `extra` - each
 /// directory once, and only extras that exist.
 pub fn merge(current: &OsString, shell: Option<&str>, extra: &[PathBuf]) -> OsString {
@@ -206,6 +231,21 @@ pub fn between(text: &str, start: &str, end: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn git_trusts_the_project_folder_after_any_config_already_given() {
+        let fresh = trust_entries(None);
+
+        assert!(fresh.contains(&("GIT_CONFIG_KEY_0".into(), "safe.directory".into())));
+        assert!(fresh.contains(&("GIT_CONFIG_VALUE_0".into(), "*".into())));
+        assert!(fresh.contains(&("GIT_CONFIG_COUNT".into(), "1".into())));
+
+        let after_two = trust_entries(Some("2"));
+
+        assert!(after_two.contains(&("GIT_CONFIG_KEY_2".into(), "safe.directory".into())));
+        assert!(after_two.contains(&("GIT_CONFIG_COUNT".into(), "3".into())));
+        assert!(trust_entries(Some("junk")).contains(&("GIT_CONFIG_COUNT".into(), "1".into())));
+    }
 
     #[test]
     fn the_value_between_the_markers_survives_a_noisy_profile() {

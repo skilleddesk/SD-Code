@@ -630,13 +630,13 @@ pub fn locate_project(ssh: &Ssh, query: &str) -> Result<Vec<Value>, ErrorObject>
 /// *subdirectory* of a repository still reports the repository it belongs to.
 pub fn git_status(ssh: &Ssh, root: &str) -> Result<(String, i64), ErrorObject> {
     let expr = remote_expr(root)?;
-    let branch = ssh.run(&format!("git -C {expr} rev-parse --abbrev-ref HEAD 2>/dev/null"), QUICK)?;
+    let branch = ssh.run(&format!("git {TRUST} -C {expr} rev-parse --abbrev-ref HEAD 2>/dev/null"), QUICK)?;
 
     if !branch.ok() {
         return Ok((String::new(), 0));
     }
 
-    let output = ssh.run(&format!("git -C {expr} status --porcelain 2>/dev/null"), QUICK)?;
+    let output = ssh.run(&format!("git {TRUST} -C {expr} status --porcelain 2>/dev/null"), QUICK)?;
 
     if !output.ok() {
         return Err(failed(ssh, "reading git status", &output));
@@ -651,8 +651,8 @@ pub fn git_status(ssh: &Ssh, root: &str) -> Result<(String, i64), ErrorObject> {
 pub fn git_diff(ssh: &Ssh, root: &str, since: Option<&str>) -> Result<String, ErrorObject> {
     let expr = remote_expr(root)?;
     let script = match since {
-        Some(sha) => format!("git -C {expr} diff {}", sh_quote(sha)),
-        None => format!("git -C {expr} diff HEAD"),
+        Some(sha) => format!("git {TRUST} -C {expr} diff {}", sh_quote(sha)),
+        None => format!("git {TRUST} -C {expr} diff HEAD"),
     };
     let output = ssh.run(&script, TRANSFER)?;
 
@@ -866,7 +866,7 @@ pub fn shadow_dir(root: &str) -> String {
 fn shadow_git(root: &str, shadow: &str, args: &[&str]) -> Result<String, ErrorObject> {
     let quoted_root = remote_expr(root)?;
     let mut line = format!(
-        "git -c user.name=sdcd -c user.email=sdcd@localhost --git-dir={shadow}/.git --work-tree={quoted_root}"
+        "git {TRUST} -c user.name=sdcd -c user.email=sdcd@localhost --git-dir={shadow}/.git --work-tree={quoted_root}"
     );
 
     for arg in args {
@@ -1012,6 +1012,13 @@ pub fn shadow_restore_file(ssh: &Ssh, root: &str, sha: &str, path: &str) -> Resu
  * One command, and one question
  * ------------------------------------------------------------------------------------------ */
 
+/// Put after `git` on a host: the folder the person chose is a repository git works in, even one another account
+/// owns ("detected dubious ownership" - a site folder made by `www-data`, a clone made as root). Only that command.
+pub const TRUST: &str = "-c safe.directory='*'";
+
+/// The same for a whole command and every `git` it starts, as assignments before it - so a shell builtin is fine too.
+pub const TRUST_ENV: &str = "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0='*'";
+
 /// `shell.run` on a host: one command, both streams captured, the same answer shape the local runner
 /// gives (`pty::run_once`).
 ///
@@ -1039,6 +1046,8 @@ pub fn shell(
         line.push_str(&sh_quote(arg));
     }
 
+    /* 1.0.9: any `git` the command starts works in the project folder, whoever owns it (`TRUST_ENV`). */
+    let line = format!("{TRUST_ENV} {line}");
     let script = match cwd {
         Some(cwd) => format!("cd {} && {line}", remote_expr(cwd)?),
         None => line,

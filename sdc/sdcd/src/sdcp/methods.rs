@@ -338,7 +338,9 @@ async fn run_turn(
     * **a single place that talks to the notifier** (this loop, never the engine). */
     let (sink, mut stream) = EventSink::channel();
     let running = tokio::spawn(async move {
-        engine.start(prompt, &sink).await;
+        /* 1.0.9: every engine through `steer::drive` - a message sent while the turn runs goes into it, whatever the
+           engine (see that module before changing this line). */
+        crate::engines::steer::drive(engine, prompt, sink).await;
 
         /* `sink` is dropped here, which is what ends the loop below: no separate "done" signal can be
         lost on the way. */

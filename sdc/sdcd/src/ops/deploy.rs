@@ -288,7 +288,7 @@ pub async fn run(state: Arc<DaemonState>, out: Arc<dyn Notifier>, request: Reque
                     &format!(
                         "[ \"$(pwd)\" = {root} ] || [ -d {root} ] || {{ echo 'missing: the site folder is not there'; exit 3; }}; \
                          df -P . | tail -1 | awk '{{print \"disk:\"$5\" free:\"$4}}'; command -v tar >/dev/null || {{ echo 'missing: tar'; exit 4; }}; \
-                         [ -d .git ] && echo \"git-dirty:$(git status --porcelain 2>/dev/null | wc -l)\"; true",
+                         [ -d .git ] && echo \"git-dirty:$(git -c safe.directory='*' status --porcelain 2>/dev/null | wc -l)\"; true",
                         root = quote(&root)
                     ),
                     crate::ssh::QUICK,

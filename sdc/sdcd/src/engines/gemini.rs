@@ -46,6 +46,7 @@ pub const GEMINI_SPEC: CliSpec = CliSpec {
        but its source resolves a uuid too, and `--session-id` starts one under the uuid given. */
     resume: Resume::Chosen { start: "--session-id", resume: "--resume" },
     image_flag: None,
+    steer: &[],
 };
 
 /// What a local Gemini turn should do about signing in, decided from three facts.

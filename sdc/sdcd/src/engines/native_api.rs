@@ -546,7 +546,7 @@ impl<R: Read> Read for Patient<R> {
                 Err(error) if error.kind() == Interrupted => continue,
                 Err(error) if matches!(error.kind(), WouldBlock | TimedOut) => {
                     /* Not `Interrupted`: the standard line reader retries that kind for ever. */
-                    if crate::engines::cancel::requested(&self.turn_id) {
+                    if crate::engines::cancel::requested(&self.turn_id) || crate::engines::steer::interrupting(&self.turn_id) {
                         return Err(std::io::Error::new(std::io::ErrorKind::ConnectionAborted, "stopped"));
                     }
 
@@ -1104,7 +1104,8 @@ impl Engine for NativeApi {
         the shape of a live turn: the future stays pending while the events land one by one. */
         let _ = tokio::task::spawn_blocking(move || {
             let mut card = RetryCard::new(&sink, &turn_id, &url);
-            let stop = move || crate::engines::cancel::requested(&turn_id);
+            /* 1.0.9: a message from the person stops this answer too - the turn goes on with it (`steer::drive`). */
+            let stop = move || crate::engines::cancel::requested(&turn_id) || crate::engines::steer::interrupting(&turn_id);
             /* Only the opening is asked again: once words have arrived, a new request would write them twice. */
             let opened = with_retries(&stop, |tries, wait, reason| card.notice(tries, wait, reason), || open_stream(&url, &headers, &body));
 

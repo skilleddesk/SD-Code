@@ -24,6 +24,7 @@ import { NewChatPopover } from './overlays/NewChatPopover';
 import { Palette } from './overlays/Palette';
 import { SearchOverlay } from './overlays/SearchOverlay';
 import { Toast } from './overlays/Toast';
+import { UpdateNotice } from './overlays/UpdateNotice';
 import { Agency } from './kernel/Agency';
 import { Ops } from './kernel/Ops';
 import { Onboarding } from './kernel/Onboarding';
@@ -168,6 +169,8 @@ export function App() {
       {/* Last of the dialogs: a turn waiting for an approval must never sit under another dialog. */}
       <Permission />
 
+      {/* 1.0.9: a new release, at the top right - it leaves by itself and comes back the next time SDC opens. */}
+      <UpdateNotice />
       <Toast />
     </>
   );

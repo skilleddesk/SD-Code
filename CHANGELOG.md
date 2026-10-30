@@ -10,6 +10,43 @@ This file describes what changed, not what is planned. Anything still open is na
 
 ---
 
+## [1.0.9] — 2026-10-30: a message sent mid-turn goes into the turn for every AI, and git works in any folder
+
+### Changed — "a prompt sent while it works is taken into the work, for every AI, not queued"
+
+- Every turn of every engine now runs through `engines::steer::drive`. A message sent while a turn runs is accepted
+  for **any** AI - SDC's agent with any API (DeepSeek, OpenAI, …), Claude Code, Codex, Gemini CLI, Ollama, and any
+  engine added later - and never waits in the queue for the turn to end.
+- **Claude Code** reads it mid-turn: `claude` now runs with `--input-format stream-json --replay-user-messages`, its
+  stdin stays open, and the words reach it at its next step. A message that arrives while the final answer is being
+  written is answered in the same turn instead of being lost or queued. An older `claude` that does not know the
+  flags is run the old way automatically.
+- **Every other engine** (Codex, Gemini CLI, a plain API or Ollama chat) is stopped the moment the message arrives,
+  and the same turn goes on at once with the message and everything said so far (a CLI resumes its own
+  conversation).
+- `CLAUDE.md` / `AGENTS.md` record this as a rule that must not change, and `engines::steer::tests::every_*` guard it.
+
+### Fixed — "detected dubious ownership" on push, and for every user
+
+- Git refused repositories on exFAT/FAT drives and folders owned by another account (`www-data` on a VPS), so setting
+  a project's repository, pushing, checkpoints and diffs failed. Every `git` SDC runs - locally, on a server, and the
+  agent's own commands - now trusts the folder the person opened (`safe.directory=*`), without touching the person's
+  own git config.
+
+### Changed — the update notice
+
+- It is a card at the **top right** instead of the foot of the sidebar: redesigned, sized to the window, with the
+  versions side by side. It closes itself after 15 seconds (paused while the pointer is on it), has a cross and
+  **Later**, and comes back every time SDC opens until SDC is updated - there is no "skip this version" any more.
+
+### Changed — Settings → GitHub and the repository picker
+
+- The lock beside a repository is now a labelled **Private** badge with an explanation; the list shows how many
+  repositories the account has and up to 50 of them; a list that could not be read says why, with **Try again**,
+  instead of looking empty.
+
+---
+
 ## [1.0.8] — 2026-10-30: every chat its own message box, every project its own GitHub repository
 
 ### Fixed — "what I type in one chat shows in every chat"

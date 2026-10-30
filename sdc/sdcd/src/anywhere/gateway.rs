@@ -756,14 +756,14 @@ fn fs_git(ctx: &Ctx, params: &Value) -> Result<Value, ErrorObject> {
     let (branch, dirty, files) = match ssh_for(ctx.state, &target.host)? {
         Some(ssh) => {
             let (branch, dirty) = crate::ssh::ops::git_status(&ssh, &root)?;
-            let listing = ssh.run(&format!("cd {} && git status --porcelain=v1 2>/dev/null | head -n 500", crate::ssh::ops::remote_expr(&root)?), Duration::from_secs(20))?;
+            let listing = ssh.run(&format!("cd {} && git -c safe.directory='*' status --porcelain=v1 2>/dev/null | head -n 500", crate::ssh::ops::remote_expr(&root)?), Duration::from_secs(20))?;
 
             (branch, dirty as u64, if listing.ok() { parse_porcelain(&listing.stdout) } else { Vec::new() })
         }
         None => {
             /* A verbatim Windows path (\\?\C:\...) is fine for the file system and not for every program; git gets the plain one. */
             let plain = display_path(&root);
-            let output = crate::host::program::command("git").map(|mut command| command.args(["status", "--porcelain=v1"]).current_dir(&plain).output());
+            let output = crate::host::program::command("git").map(|mut command| command.args(["-c", "safe.directory=*", "status", "--porcelain=v1"]).current_dir(&plain).output());
             let files = match output {
                 Some(Ok(out)) if out.status.success() => parse_porcelain(&String::from_utf8_lossy(&out.stdout)),
                 _ => Vec::new(),

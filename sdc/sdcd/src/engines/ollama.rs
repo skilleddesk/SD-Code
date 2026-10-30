@@ -133,7 +133,7 @@ fn not_running() -> String {
 ///
 /// This is the local engine, and its tokens are the fastest the app ever draws - which is exactly why
 /// collecting the whole body before parsing it was the wrong shape: a fast model arrived in one piece.
-fn chat(body: &str, sink: &EventSink) {
+fn chat(body: &str, sink: &EventSink, turn_id: &str) {
     let address: SocketAddr = match ENDPOINT.parse() {
         Ok(address) => address,
         Err(error) => {
@@ -194,7 +194,8 @@ fn chat(body: &str, sink: &EventSink) {
         return;
     }
 
-    drain_chat(body_lines(reader, head.chunked), sink);
+    /* 1.0.9: the person sent a message - the turn goes on with it (`steer::drive`), so this answer stops here. */
+    drain_chat(body_lines(reader, head.chunked), sink, &|| crate::engines::cancel::requested(turn_id) || crate::engines::steer::interrupting(turn_id));
 }
 
 /// Reads the NDJSON stream to its end, pushing each object as the line it arrived on.
@@ -202,12 +203,16 @@ fn chat(body: &str, sink: &EventSink) {
 /// Ollama's last line carries `"done": true`. A stream that stops without it is still the end of what
 /// the model had to say - so the turn ends here rather than waiting for a timeout - and a stream with
 /// nothing in it keeps the sentence the collected version had.
-fn drain_chat(mut lines: impl std::io::BufRead, sink: &EventSink) {
+fn drain_chat(mut lines: impl std::io::BufRead, sink: &EventSink, stop: &dyn Fn() -> bool) {
     let mut ended = false;
     let mut spoken = false;
     let mut line = String::new();
 
     loop {
+        if stop() {
+            return;
+        }
+
         line.clear();
 
         match lines.read_line(&mut line) {
@@ -392,7 +397,8 @@ impl Engine for Ollama {
 
         /* The socket read blocks for as long as the model talks, so it runs on the blocking pool -
         and the answer travels out through the sink while this future is still pending. */
-        let _ = tokio::task::spawn_blocking(move || chat(&body, &sink)).await;
+        let turn_id = prompt.turn_id.clone();
+        let _ = tokio::task::spawn_blocking(move || chat(&body, &sink, &turn_id)).await;
 
         /* P0-9: measured once, after the answer, as in Agent mode. */
         crate::sme::probe::after_use(&model);
@@ -449,6 +455,7 @@ mod tests {
                 &b"{\"message\":{\"content\":\"Hel\"},\"done\":false}\n{\"message\":{\"content\":\"lo\"},\"done\":true}\n"[..],
             ),
             &recorder.sink(),
+            &|| false,
         );
 
         assert!(
@@ -464,7 +471,7 @@ mod tests {
         /* A stream with nothing usable in it keeps the sentence the collected version had. */
         let empty = Recorder::new();
 
-        drain_chat(std::io::BufReader::new(&b"5b\n"[..]), &empty.sink());
+        drain_chat(std::io::BufReader::new(&b"5b\n"[..]), &empty.sink(), &|| false);
 
         assert!(
             matches!(empty.events().as_slice(), [EngineEvent::Failed(_)]),

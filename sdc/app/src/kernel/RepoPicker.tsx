@@ -32,6 +32,7 @@ export interface RepoPickerProps {
 export function RepoPicker({ sessionId, place, folderName, current, offerPush = false, onDone }: RepoPickerProps) {
   const k = strings.kernel.github;
   const accountRepos = useGitHubStore((state) => state.accountRepos);
+  const reposError = useGitHubStore((state) => state.accountReposError);
   const [value, setValue] = useState(current ?? '');
   const [privateRepo, setPrivateRepo] = useState(() => storedSettings()['github-private'] !== false);
   const [busy, setBusy] = useState(false);
@@ -45,7 +46,7 @@ export function RepoPicker({ sessionId, place, folderName, current, offerPush = 
 
   const query = value.trim().toLowerCase();
   const matches = useMemo(
-    () => (accountRepos ?? []).filter((repo) => query === '' || repo.fullName.toLowerCase().includes(query)).slice(0, 6),
+    () => (accountRepos ?? []).filter((repo) => query === '' || repo.fullName.toLowerCase().includes(query)).slice(0, 50),
     [accountRepos, query],
   );
   /* A bare word that is none of theirs is a new repository; empty means one named after the folder. */
@@ -107,8 +108,21 @@ export function RepoPicker({ sessionId, place, folderName, current, offerPush = 
             <LoaderCircle size={11} className="animate-spin motion-reduce:animate-none" aria-hidden="true" />
             {k.loading}
           </span>
+        ) : reposError !== null ? (
+          <span className="flex flex-wrap items-center gap-[6px] px-[8px] py-[6px] text-[11.5px] text-state-error">
+            <span className="min-w-0 flex-1 break-words">{k.reposFailed(reposError)}</span>
+            <button type="button" className={BTN_SM + ' ' + BTN_SECONDARY} onClick={() => void useGitHubStore.getState().loadAccountRepos()}>
+              {k.retry}
+            </button>
+          </span>
+        ) : matches.length === 0 ? (
+          <span className="px-[8px] py-[6px] text-[11.5px] text-text-muted">{k.noAccountRepos}</span>
         ) : (
-          matches.map((repo) => (
+          [
+            <span key="" className="sticky top-0 bg-bg-raised px-[8px] pb-[3px] pt-[5px] text-[10.5px] font-medium uppercase tracking-wide text-text-muted">
+              {k.yourRepos(accountRepos.length)}
+            </span>,
+            ...matches.map((repo) => (
             <button
               key={repo.fullName}
               type="button"
@@ -118,9 +132,15 @@ export function RepoPicker({ sessionId, place, folderName, current, offerPush = 
               onClick={() => setValue(repo.fullName)}
             >
               <span className="min-w-0 flex-1 truncate">{repo.fullName}</span>
-              {repo.private ? <Lock size={10} aria-hidden="true" className="shrink-0 text-text-muted" /> : null}
+              {repo.private ? (
+                <span className="inline-flex shrink-0 items-center gap-[3px] rounded-full border border-border-subtle px-[6px] py-[1px] font-sans text-[10px] text-text-muted" title={k.privateHelp}>
+                  <Lock size={9} aria-hidden="true" />
+                  {k.privateBadge}
+                </span>
+              ) : null}
             </button>
-          ))
+            )),
+          ]
         )}
       </div>
 

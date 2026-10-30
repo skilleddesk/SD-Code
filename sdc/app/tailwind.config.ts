@@ -202,6 +202,16 @@ const config: Config = {
           from: { transform: 'translateY(12px) scale(.96)', opacity: '0' },
           to: { transform: 'translateY(0) scale(1)', opacity: '1' },
         },
+        /* The update notice comes in from the right edge (1.0.9). */
+        slideInRight: {
+          from: { transform: 'translateX(24px)', opacity: '0' },
+          to: { transform: 'translateX(0)', opacity: '1' },
+        },
+        /* A bar that empties - how long a notice still stays; it starts from `--drain-from` when it was paused. */
+        drain: {
+          from: { transform: 'scaleX(var(--drain-from, 1))' },
+          to: { transform: 'scaleX(0)' },
+        },
       },
       animation: {
         'pulse-ring': 'pulseRing 1.5s infinite',
@@ -209,6 +219,8 @@ const config: Config = {
         'drop-up': 'dropUp 180ms var(--spring)',
         'drop-down': 'dropDown 180ms var(--spring)',
         'toast-in': 'toastIn 240ms var(--spring)',
+        'slide-in-right': 'slideInRight 260ms var(--spring)',
+        drain: 'drain 15s linear forwards',
       },
     },
   },

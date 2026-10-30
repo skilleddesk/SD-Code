@@ -49,6 +49,8 @@ fn main() -> Result<()> {
     /* Before the runtime exists, because it changes the process environment: a daemon started from the
        macOS Dock has only `/usr/bin:/bin:/usr/sbin:/sbin`, and found none of the CLIs (0.15.8). */
     sdcd::host::env_path::widen();
+    /* 1.0.9: git works in any folder the person opens - an exFAT drive or another account's folder included. */
+    sdcd::host::env_path::trust_project_folders();
 
     /* v3 W1: `sdcd bench …` measures; it starts daemons of its own and needs no runtime here. */
     {

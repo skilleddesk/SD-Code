@@ -43,6 +43,7 @@ pub const CODEX_SPEC: CliSpec = CliSpec {
     ],
     resume: Resume::CodexExec,
     image_flag: Some("-i"),
+    steer: &[],
 };
 
 pub struct Codex {
